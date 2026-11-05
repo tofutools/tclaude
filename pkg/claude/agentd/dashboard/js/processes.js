@@ -3,9 +3,10 @@
 // visibility and redirects an active hidden tab.
 import { $, $$ } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
+import { processesAvailable } from './feature-availability.js';
 
 export function applyProcessesTabVisibility(data) {
-  const visible = !!data?.processes_enabled;
+  const visible = processesAvailable(data);
   document.body.classList.toggle('hide-processes', !visible);
   if (!visible && $('#tab-processes')?.classList.contains('active')) {
     $$('nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === 'groups'));

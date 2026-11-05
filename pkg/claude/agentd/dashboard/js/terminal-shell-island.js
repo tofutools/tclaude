@@ -70,6 +70,7 @@ import { ProcessMenuList } from './process-collab-menu.js';
 import { isWizardActive } from './slop.js';
 import { PagePane } from './page-view.js';
 import { pagePaneKey, registerPageStrip, revealPageWindow, unseenPages, watchLivePages } from './page-place.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 // Read at render time, so the label follows the keyboard layout once it loads.
@@ -592,7 +593,7 @@ function BoardMenu({ state, snapshot }) {
   // waiting for them.
   useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
   if (onPeerPage()) return null;
-  const processes = snapshot?.value?.processes_enabled === true;
+  const processes = processesAvailable(snapshot?.value);
   const shown = processes ? section : 'boards';
   const wizard = isWizardActive();
   const pick = (next) => {
@@ -618,9 +619,9 @@ function BoardMenu({ state, snapshot }) {
 
 // PaneProcessOverlay reads the snapshot signal itself so only this small
 // component, not the pane around the opaque xterm host, re-renders on each
-// snapshot; it shows nothing unless features.processes is on.
+// snapshot; it shows nothing where processes are unavailable.
 function PaneProcessOverlay({ agentId, snapshot, onComposeMessage }) {
-  const enabled = !!snapshot?.value?.processes_enabled;
+  const enabled = processesAvailable(snapshot?.value);
   const [actions] = useState(() => processOverlayActions());
   return html`<${ProcessPaneOverlay} agentId=${agentId} enabled=${enabled}
     bounds=${enabled ? agentRunBounds(snapshot?.value, agentId) : null}
@@ -966,7 +967,7 @@ function PaneTab({
       <span class="mux-tab-label">${paneTitle(pane)}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
-        enabled=${!!snapshot?.value?.processes_enabled} />` : null}
+        enabled=${processesAvailable(snapshot?.value)} />` : null}
       <button data-ui-exempt
         type="button"
         class="mux-tab-close"
@@ -1907,7 +1908,7 @@ function TerminalTabs({
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate}><div>Or open a board${snapshot.value?.processes_enabled === true ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
+          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
         </div><//>
       ` : null}
       ${hasPanes || !empty ? html`

@@ -546,12 +546,11 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	}
 
 	// The graph core and validation loop stay out of every eager entry module:
-	// only the lazily imported editor may import them (flag-off page loads
-	// render nothing).
+	// only the lazily imported editor may import them.
 	for _, entry := range []string{"js/dashboard.js", "js/tabs.js", "js/processes.js", "js/processes-state.js", "js/processes-actions.js"} {
 		for _, banned := range []string{"process-graph.js", "process-validation.js"} {
 			if strings.Contains(read(entry), banned) {
-				t.Errorf("%s eagerly imports %s; flag-off must render nothing", entry, banned)
+				t.Errorf("%s eagerly imports %s; only the lazy editor may", entry, banned)
 			}
 		}
 	}

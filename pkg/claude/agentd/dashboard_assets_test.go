@@ -1010,10 +1010,8 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
 		"js/config-form-markup.js": {
-			`id="cfg-feature-processes"`, `features.processes`,
 			`id="cfg-processes-refuse-unsigned"`, `processes.refuse_unsigned_imports`,
 			`id="cfg-steward-enabled"`, `steward.disabled`,
-			`id="cfg-feature-triggers"`, `features.triggers`,
 			`id="cfg-feature-groups-route-map"`, `features.groups_route_map`,
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
 			`id="cfg-feature-terminal-command-palette-shortcut"`,
@@ -1022,10 +1020,9 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 			`features.recorded_sandbox_details`,
 		},
 		"js/config-form-adapter.js": {
-			"#cfg-feature-processes", "feats.processes = true",
 			"#cfg-processes-refuse-unsigned", "processes.refuse_unsigned_imports = true",
 			"#cfg-steward-enabled", "steward.disabled = true",
-			"#cfg-feature-triggers", "feats.triggers = true",
+			"delete feats.processes", "delete feats.triggers",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",
@@ -1044,7 +1041,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_ProcessesTabWired pins the feature-gated template shell
+// TestDashboardAssets_ProcessesTabWired pins the Processes template shell
 // and the stable editor mount contract.
 // The module has no build step, so literal asset pins catch a renamed
 // DOM id or route before it becomes a browser-only failure.

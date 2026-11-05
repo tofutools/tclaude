@@ -27,7 +27,6 @@ function controlForLabel(root, prefix) {
 
 function page(name = 'Daily summary') {
   return {
-    triggers_enabled: true,
     export_jobs_active: 1,
     jobs: [
       { kind: 'cron', cron: {
@@ -202,7 +201,7 @@ test('Standing-order target renders from the stable agent without a live convers
   await mounted.unmount();
 });
 
-test('cron spawn rows expose honest action and worker outcomes while feature-off editing stays inert', async (t) => {
+test('cron spawn rows expose honest action and worker outcomes while a peer without triggers keeps editing inert', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createJobsState }, { JobsApp }] = await Promise.all([
     harness.importDashboardModule('js/jobs-state.js'),
@@ -258,23 +257,23 @@ test('cron spawn rows expose honest action and worker outcomes while feature-off
   assert.match(refreshedDetail.textContent, /long actionable failure detail/);
   assert.equal(refreshedDetail.title, refreshedDetail.textContent, 'full error detail is exposed accessibly');
 
-  await harness.act(() => { snapshot.value = { ...data, triggers_enabled: false }; });
+  await harness.act(() => { snapshot.value = { ...data, peer_view: { level: 'restricted' } }; });
   const gatedRow = mounted.container.querySelector('tr[data-key="cron-11"]');
   assert.equal(getByRole(gatedRow, 'button', { name: 'edit' }).disabled, true);
   assert.equal(getByRole(gatedRow, 'button', { name: 'duplicate' }).disabled, true);
-  assert.match(getByRole(gatedRow, 'button', { name: 'edit' }).title, /features\.triggers/);
-  assert.match(gatedRow.textContent, /features\.triggers is off.*editing unavailable/);
-  assert.match(gatedRow.textContent, /⚡ spawn/, 'feature-off history remains readable');
+  assert.match(getByRole(gatedRow, 'button', { name: 'edit' }).title, /Triggers off/);
+  assert.match(gatedRow.textContent, /Triggers are off on this node.*editing unavailable/);
+  assert.match(gatedRow.textContent, /⚡ spawn/, 'history on such a peer remains readable');
   await mounted.unmount();
 });
 
-test('Triggers sub-view stays absent and a stale deep link falls back while the feature is off', async (t) => {
+test('Triggers sub-view stays absent and a stale deep link falls back on a peer without triggers', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createJobsState }, { JobsApp }] = await Promise.all([
     harness.importDashboardModule('js/jobs-state.js'),
     harness.importDashboardModule('js/jobs-island.js'),
   ]);
-  const snapshot = harness.signals.signal({ ...page(), triggers_enabled: false });
+  const snapshot = harness.signals.signal({ ...page(), peer_view: { level: 'restricted' } });
   const state = createJobsState({ snapshot, prefs: prefs() });
   state.initialize();
   state.setKind('trigger');
@@ -719,10 +718,11 @@ test('a fused view lists the other nodes\' automations under their node pills an
   await mounted.unmount(); fleet.dispose();
 });
 
-test('Triggers stays out of the subnav until a snapshot turns it on', async (t) => {
+test('Triggers stays out of the subnav only on a peer that does not offer it', async (t) => {
   const harness = await createPreactHarness(t);
   const { automationsSubnavEntries } = await harness.importDashboardModule('js/automations-subnav.js');
-  assert.equal(automationsSubnavEntries(null).includes('trigger'), false);
-  assert.equal(automationsSubnavEntries({ triggers_enabled: false }).includes('trigger'), false);
-  assert.equal(automationsSubnavEntries({ triggers_enabled: true }).includes('trigger'), true);
+  assert.equal(automationsSubnavEntries(null).includes('trigger'), true, 'this node before its snapshot');
+  assert.equal(automationsSubnavEntries(null).includes('processes'), true);
+  assert.equal(automationsSubnavEntries({ peer_view: { level: 'restricted' } }).includes('trigger'), false);
+  assert.equal(automationsSubnavEntries({}).includes('trigger'), true);
 });

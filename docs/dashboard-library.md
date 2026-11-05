@@ -15,7 +15,7 @@ From top to bottom:
 | 🎭 **Roles** | Guidance and permissions for a job, such as `dev` or `reviewer` |
 | 📝 **Saved prompts** | Reusable task text; see [below](#saved-prompts) |
 | 🧩 **Group templates** | A blueprint for a team. See [Teams at scale](teams-at-scale.md). |
-| ◈ **Processes** | Saved process templates, with `features.processes` on. See [Processes](processes.md). |
+| ◈ **Processes** | Saved process templates. See [Processes](processes.md). |
 | 🛡 **Sandbox profiles** | What agents may reach. See [Sandboxing](sandboxing.md). |
 | 💰 **Usage profiles** | Budgets you can apply to agents and groups |
 | 🚦 **Usage limits & alerts** | Spending caps and quota guards. See [Usage and costs](usage-and-costs.md). |

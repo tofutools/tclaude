@@ -40,7 +40,7 @@ async function mountFocus(t, props = {}) {
   const source = props.source || fakeSource(harness, props.sourceOptions);
   const groups = props.groups || GROUPS;
   const allGroups = props.allGroups || groups;
-  const snapshot = { processes_enabled: true, groups: allGroups.filter((group) => !group.virtual) };
+  const snapshot = { groups: allGroups.filter((group) => !group.virtual) };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${groups} allGroups=${allGroups} source=${source}
       filter=${props.filter || 'running'} api=${props.api} wizard=${props.wizard || false}
@@ -412,7 +412,7 @@ test('the group row mirrors the Agents row: agent process, group process, resume
     harness.importDashboardModule('js/groups-interactions.js'),
   ]);
   const source = fakeSource(harness, { context });
-  const snapshot = { processes_enabled: true, groups: GROUPS.filter((group) => !group.virtual) };
+  const snapshot = { groups: GROUPS.filter((group) => !group.virtual) };
   const { container } = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS} source=${source} filter="done" api=${api} runApi=${runApi}
       notify=${(message, isError) => notes.push([message, isError])} onFocusRun=${() => {}}>

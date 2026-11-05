@@ -14,31 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
-
-func TestProcessTemplateRoutes404WhenFeatureOff(t *testing.T) {
-	f := newFlow(t)
-	for _, test := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/v1/process/templates"},
-		{http.MethodGet, "/v1/process/template-heads"},
-		{http.MethodGet, "/v1/process/templates/example"},
-		{http.MethodPost, "/v1/process/templates/example"},
-		{http.MethodPost, "/v1/process/validate"},
-		{http.MethodGet, "/v1/process/templates/example/export"},
-		{http.MethodPost, "/v1/process/import"},
-	} {
-		rec := processTemplateRequest(t, f, test.method, test.path, map[string]any{})
-		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", test.method, test.path, rec.Body.String())
-	}
-}
 
 func TestProcessTemplatePermissionSlugsAreRegistered(t *testing.T) {
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessTemplatesRead))
@@ -958,16 +938,6 @@ func TestDeferredProcessRuntimeHTTPRoutesRemainAbsent(t *testing.T) {
 		rec := processTemplateRequest(t, f, test.method, test.path, map[string]any{})
 		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", test.method, test.path, rec.Body.String())
 	}
-}
-
-func TestDashboardSnapshotDynamicallyGatesProcessesTab(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	newFlow(t)
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.False(t, snap.ProcessesEnabled)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
-	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.True(t, snap.ProcessesEnabled)
 }
 
 type processEditResponse struct {

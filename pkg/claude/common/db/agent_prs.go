@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // AgentPR is one explicitly presented pull request. The agent_id is the stable
@@ -105,19 +103,16 @@ func upsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 	}
 	row.CreatedAt = created.Time()
 	row.UpdatedAt = updated.Time()
-	cfg, configErr := config.Load()
-	if configErr == nil && cfg.TriggersEnabled() {
-		if !existed {
-			err = enqueueTriggerPREventTx(tx, row, branch, draft, now)
-		} else {
-			err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRUpdated, previousState, state, branch, draft, now)
-			if err == nil && !strings.EqualFold(strings.TrimSpace(previousState), "merged") && strings.EqualFold(state, "merged") {
-				err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRMerged, previousState, "merged", branch, draft, now)
-			}
+	if !existed {
+		err = enqueueTriggerPREventTx(tx, row, branch, draft, now)
+	} else {
+		err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRUpdated, previousState, state, branch, draft, now)
+		if err == nil && !strings.EqualFold(strings.TrimSpace(previousState), "merged") && strings.EqualFold(state, "merged") {
+			err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRMerged, previousState, "merged", branch, draft, now)
 		}
-		if err != nil {
-			return AgentPR{}, err
-		}
+	}
+	if err != nil {
+		return AgentPR{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentPR{}, err
@@ -217,8 +212,7 @@ func updateAgentPRState(agentID, prURL, state string, emitTrigger bool) (int64, 
 	if err != nil || n == 0 {
 		return n, err
 	}
-	if cfg, cfgErr := config.Load(); emitTrigger && cfgErr == nil && cfg.TriggersEnabled() &&
-		!strings.EqualFold(strings.TrimSpace(before.State), "merged") && strings.EqualFold(state, "merged") {
+	if emitTrigger && !strings.EqualFold(strings.TrimSpace(before.State), "merged") && strings.EqualFold(state, "merged") {
 		previous := before.State
 		before.State = state
 		before.UpdatedAt = now

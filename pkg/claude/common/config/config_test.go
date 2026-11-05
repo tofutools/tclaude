@@ -1263,23 +1263,36 @@ func TestMatchSudoOverride_Keying(t *testing.T) {
 	})
 }
 
-// ProcessesEnabled must be nil-safe and default to FALSE: a nil Config, an
-// absent features block, and an unset flag all keep the in-development
-// Processes feature dark; only an explicit features.processes:true enables it.
-func TestProcessesEnabled(t *testing.T) {
-	var nilCfg *Config
-	assert.False(t, nilCfg.ProcessesEnabled(), "nil config → false")
-	assert.False(t, (&Config{}).ProcessesEnabled(), "no features block → false")
-	assert.False(t, (&Config{Features: &FeaturesConfig{}}).ProcessesEnabled(), "features block, flag unset → false")
-	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
-}
+// Processes and Triggers graduated and lost their features.processes /
+// features.triggers flags. A config that still carries either key, true or
+// false, loads and validates cleanly, is not reported as unknown, and drops
+// the keys on its next save while keeping the flags that remain.
+func TestFeaturesConfig_GraduatedFlagsLoadAndDrop(t *testing.T) {
+	for _, legacy := range []string{
+		`{"features": {"processes": true, "triggers": true, "groups_route_map": true}}`,
+		`{"features": {"processes": false, "triggers": false, "groups_route_map": true}}`,
+	} {
+		t.Run(legacy, func(t *testing.T) {
+			isolateConfigHome(t)
+			require.NoError(t, os.MkdirAll(DataDir(), 0o700))
+			require.NoError(t, os.WriteFile(ConfigPath(), []byte(legacy), 0o644))
 
-func TestTriggersEnabled(t *testing.T) {
-	var nilCfg *Config
-	assert.False(t, nilCfg.TriggersEnabled(), "nil config → false")
-	assert.False(t, (&Config{}).TriggersEnabled(), "no features block → false")
-	assert.False(t, (&Config{Features: &FeaturesConfig{}}).TriggersEnabled(), "features block, flag unset → false")
-	assert.True(t, (&Config{Features: &FeaturesConfig{Triggers: true}}).TriggersEnabled(), "explicit true → true")
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Empty(t, Validate(cfg))
+			assert.True(t, cfg.GroupsRouteMapEnabled())
+			preserved, dropped := UnknownConfigKeys([]byte(legacy))
+			assert.Empty(t, preserved)
+			assert.Empty(t, dropped)
+
+			require.NoError(t, Save(cfg))
+			data, err := os.ReadFile(ConfigPath())
+			require.NoError(t, err)
+			assert.NotContains(t, string(data), `"processes"`)
+			assert.NotContains(t, string(data), `"triggers"`)
+			assert.Contains(t, string(data), `"groups_route_map": true`)
+		})
+	}
 }
 
 func TestGroupsRouteMapEnabled(t *testing.T) {
@@ -1334,8 +1347,6 @@ func TestRecordedSandboxDetailsEnabled(t *testing.T) {
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		GroupsRouteMap:                 true,
-		Processes:                      true,
-		Triggers:                       true,
 		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
 		RecordedSandboxDetails:         true,
@@ -1343,12 +1354,10 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"groups_route_map":true,"processes":true,"triggers":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
+		`"features":{"groups_route_map":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
-	assert.True(t, out.ProcessesEnabled())
-	assert.True(t, out.TriggersEnabled())
 	assert.True(t, out.GroupsRouteMapEnabled())
 	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
@@ -1407,10 +1416,10 @@ func TestStewardsEnabled(t *testing.T) {
 
 	t.Setenv("HOME", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
-	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"features":{"collab":false,"processes":true}}`), 0o600))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"features":{"collab":false,"groups_route_map":true}}`), 0o600))
 	loaded, err := Load()
 	require.NoError(t, err, "a retired features.collab must not break loading")
-	assert.True(t, loaded.Features.Processes)
+	assert.True(t, loaded.Features.GroupsRouteMap)
 	assert.True(t, loaded.StewardsEnabled(), "features.collab=false is ignored, not read as the steward opt-out")
 }
 

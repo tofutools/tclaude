@@ -279,24 +279,25 @@ Certificate management is below the Remote access group. See
 
 Auto-cleanup is irreversible.
 
+## Processes
+
+`/config/processes`: policy for [Processes](processes.md).
+
+| Label | Key | Default | What it does |
+|---|---|---|---|
+| Refuse unsigned workflows | `processes.refuse_unsigned_imports` | off | Refuses to [import a workflow file](pwf.md#refusing-unsigned-files) without a valid signature |
+
 ## Experimental
 
-`/config/experimental`: feature flags, under **Feature flags**, and process
-policy, under **Processes**.
+`/config/experimental`: feature flags, under **Feature flags**.
 
 | Label | Key | Default | What it adds |
 |---|---|---|---|
-| Processes | `features.processes` | off | [Processes](processes.md) |
-| Triggers | `features.triggers` | off | [Triggers](dashboard-automations.md#triggers), and spawn cron jobs |
 | Groups Route map | `features.groups_route_map` | off | [Group routes](group-routes.md) map view |
 | Group attachments | `features.group_attachments` | off | A group's link or attachment panel |
 | Command palette in terminals | `features.terminal_command_palette_shortcut` | off | Ctrl K (⌘ K on a Mac) inside a terminal |
 | Recorded sandbox details | `features.recorded_sandbox_details` | off | A `›` details link on the sandbox badge |
 | Agent dirs: mount parent | `features.agent_dirs_mount_parent` | **on** | See [Sandboxing](sandboxing.md) |
-
-| Label | Key | Default | What it does |
-|---|---|---|---|
-| Refuse unsigned workflows | `processes.refuse_unsigned_imports` | off | Refuses to [import a workflow file](pwf.md#refusing-unsigned-files) without a valid signature |
 
 ## Advanced
 

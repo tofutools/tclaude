@@ -95,12 +95,11 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		".process-overlay-anchor.overlay-error .process-overlay-ring",
 		".process-edge-badge-warning")
 
-	// The core must stay inert and feature-flag-safe: no production dashboard
-	// entry module imports it. The Processes host ticket imports it only after
-	// config.ProcessesEnabled gates that tab; this standalone ticket adds no tab.
+	// The core stays lazy: no production dashboard entry module imports it
+	// eagerly; the Processes host loads it on demand.
 	for _, entry := range []string{"js/dashboard.js", "js/tabs.js"} {
 		if strings.Contains(read(entry), "process-graph.js") {
-			t.Errorf("%s eagerly imports process-graph.js; flag-off must render nothing", entry)
+			t.Errorf("%s eagerly imports process-graph.js; it must load on demand", entry)
 		}
 	}
 }

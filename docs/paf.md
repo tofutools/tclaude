@@ -449,8 +449,7 @@ one.
 In the dashboard, *import workflow* accepts a `.paf`. Its review lists the
 agents the file ships, each with *Land it…*, and the agent import dialog offers
 *Review workflows…* for a file that carries them. Both export dialogs offer
-*Carry its workflows*. Shipping performers is on the command line for now. All of
-this is hidden when processes are turned off.
+*Carry its workflows*. Shipping performers is on the command line for now.
 
 ### What sharing does to a carried workflow
 

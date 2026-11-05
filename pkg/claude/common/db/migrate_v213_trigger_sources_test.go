@@ -6,12 +6,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 func TestMigrateV212toV213PreservesRuleEventAndFiringLedger(t *testing.T) {
 	setupTestDB(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	ruleID, err := InsertTriggerRule(&TriggerRule{Name: "migrated-open", Enabled: true, OperatorAuthored: true,
 		ScopeKind: TriggerScopeGlobal, Source: TriggerSourcePROpened, DraftFilter: TriggerDraftInclude,
 		Actions: []TriggerAction{{Type: TriggerActionMessage, Message: &TriggerMessageAction{BodyTemplate: "review"}}}})

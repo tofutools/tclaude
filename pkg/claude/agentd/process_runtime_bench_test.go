@@ -61,7 +61,7 @@ func BenchmarkProcessRuntimeSequentialMVP(b *testing.B) {
 	})
 	b.Cleanup(executor.SetProgramPerformForTest(noopBenchmarkProgram))
 
-	if err := config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}); err != nil {
+	if err := config.Save(&config.Config{}); err != nil {
 		b.Fatal(err)
 	}
 	database, err := db.Open()

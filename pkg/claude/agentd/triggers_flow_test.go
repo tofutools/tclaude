@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -62,11 +61,6 @@ func TestTriggerCIPollerUsesFreshTransitionsAndDurableBaseline(t *testing.T) {
 	firings, err = db.ListTriggerFirings(ruleID, 10)
 	require.NoError(t, err)
 	assert.Len(t, firings, 1)
-
-	require.NoError(t, config.Save(&config.Config{}))
-	before := calls.Load()
-	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
-	assert.Equal(t, before, calls.Load(), "flag-off poller does not resolve GitHub state")
 }
 
 func TestTriggerCIPollerAppliesTerminalStateBeforeChecks(t *testing.T) {
@@ -203,15 +197,6 @@ func TestTriggerCIPollerDedupesCanonicalPRIdentityAcrossPresentations(t *testing
 	assert.Equal(t, int32(3), calls.Load())
 }
 
-func TestDashboardSnapshotDynamicallyGatesTriggers(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	newFlow(t)
-	handler := agentd.BuildDashboardHandlerForTest()
-	assert.False(t, fetchDashSnapshot(t, handler).TriggersEnabled)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
-	assert.True(t, fetchDashSnapshot(t, handler).TriggersEnabled)
-}
-
 func triggerMessageBody(group string, debounce int64) map[string]any {
 	return map[string]any{
 		"name": "review-nudge", "enabled": true, "scope": "group", "group": group,
@@ -228,58 +213,30 @@ func triggerFlow(t *testing.T) *testharness.Flow {
 	agentd.ResetTriggerCIWatchStateForTest()
 	t.Cleanup(agentd.ResetTriggerCIWatchStateForTest)
 	f := newFlow(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	return f
 }
 
-func TestTriggersFeatureFlagGatesRoutesAndEngine(t *testing.T) {
+// Triggers are always on: with a fresh config the routes answer and a
+// presented PR persists its opening edge for the engine.
+func TestTriggersAlwaysServeRoutesAndEngine(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	dash := agentd.BuildDashboardHandlerForTest()
 
-	for _, route := range []struct {
-		handler http.Handler
-		req     *http.Request
-	}{
-		{dash, dashReq(t, http.MethodGet, "/api/triggers", nil)},
-		{f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/triggers", nil), "flag-author")},
-	} {
-		rec := testharness.Serve(route.handler, route.req)
-		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-		assert.Contains(t, rec.Body.String(), `"code":"triggers_disabled"`)
-		assert.Contains(t, rec.Body.String(), config.TriggersDisabledMessage)
-	}
-	readInfo := func() bool {
-		rec := testharness.Serve(f.Mux, testharness.JSONRequest(t, http.MethodGet, "/v1/info", nil))
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		var body struct {
-			Triggers bool `json:"triggers"`
-		}
-		testharness.DecodeJSON(t, rec, &body)
-		return body.Triggers
-	}
-	assert.False(t, readInfo(), "daemon capability defaults off")
-
-	f.HaveConvWithTitle("flag-author", "author")
-	f.HaveMember("alpha", "flag-author")
-	authorAgent, err := db.AgentIDForConv("flag-author")
-	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/1", "off", "open")
-	require.NoError(t, err)
-	agentd.RunTriggerTickForTest(time.Now())
-	events, err := db.ListPendingTriggerPREvents(10)
-	require.NoError(t, err)
-	assert.Empty(t, events, "disabled fire point and sweep are no-ops")
-
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
-	assert.True(t, readInfo(), "daemon capability reflects explicit enablement")
 	rec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/triggers", nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/2", "on", "open")
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/triggers", nil)))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	f.HaveConvWithTitle("always-author", "author")
+	f.HaveMember("alpha", "always-author")
+	authorAgent, err := db.AgentIDForConv("always-author")
 	require.NoError(t, err)
-	events, err = db.ListPendingTriggerPREvents(10)
+	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/1", "on", "open")
 	require.NoError(t, err)
-	require.NotEmpty(t, events, "enabled fire point persists the opening edge")
+	events, err := db.ListPendingTriggerPREvents(10)
+	require.NoError(t, err)
+	require.NotEmpty(t, events, "the fire point persists the opening edge")
 }
 
 func TestTriggerRuntimeHotEnableStartsDormantSchedulers(t *testing.T) {
@@ -296,7 +253,6 @@ func TestTriggerRuntimeHotEnableStartsDormantSchedulers(t *testing.T) {
 	agentd.StartTriggerRuntimeForTest(stop)
 	t.Cleanup(func() { close(stop) })
 
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	g, err := db.GetAgentGroupByName("hot-enable")
 	require.NoError(t, err)
 	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "hot-enabled", Enabled: true, OperatorAuthored: true,

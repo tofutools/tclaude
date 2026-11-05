@@ -568,9 +568,7 @@ function populateConfigForm(cfg) {
   // off; group attachments has off/float/fixed presentation modes; mounting
   // the shared agent-directory parent defaults on and only an explicit false
   // unchecks it.
-  $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
   $('#cfg-processes-refuse-unsigned').checked = !!(cfg.processes && cfg.processes.refuse_unsigned_imports);
-  $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
   setSelectValue(
     $('#cfg-feature-group-attachments'),
@@ -943,14 +941,15 @@ function assembleConfig() {
 
   // features is an optional block for in-development feature switches. Clone
   // the existing one so a future flag with no widget round-trips. Groups Route
-  // map, Processes, Triggers, terminal_command_palette_shortcut, and
+  // map, terminal_command_palette_shortcut, and
   // recorded_sandbox_details default off; group_attachments omits its "off"
   // default; collab is always stored and agent_dirs_mount_parent defaults on. Drop the block when it is
   // empty so an all-default config does not marshal a spurious "features": {}
   // diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
-  if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
-  if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
+  // Processes and Triggers graduated: their old flags go on the next save.
+  delete feats.processes;
+  delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
   // Collab is always on; a features.collab left by an older build goes.
   delete feats.collab;

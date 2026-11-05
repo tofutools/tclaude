@@ -13,6 +13,7 @@ import {
   resetCronDraftForAnother, validateCronDraft,
 } from './jobs-dialog-model.js';
 import { SpawnActionFields } from './spawn-action-fields.js';
+import { triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 const INTERVAL_PRESETS = ['5m', '15m', '1h', '4h', '24h'];
@@ -158,7 +159,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
   const dirty = cronDraftDirty(draft, initial);
   const editing = descriptor.kind === 'edit';
   const scope = draft.target.scopeGroup;
-  const triggersEnabled = snapshot?.triggers_enabled === true;
+  const triggersEnabled = triggersAvailable(snapshot);
   const profileOptions = [...new Set((snapshot?.profiles || []).flatMap((profile) => [
     profile.name, ...(profile.aliases || []),
   ]).filter(Boolean))];

@@ -38,7 +38,9 @@ async function setup(t, { enabled = true, prefs = {} } = {}) {
     reorder: (groups) => groups,
   });
   state.initialize();
-  state.publish(snapshot(GROUPS, { processes_enabled: enabled }));
+  // A fresh snapshot carries no processes flag: this node always has them.
+  // A peer that does not share them is the one place the switch goes.
+  state.publish(snapshot(GROUPS, enabled ? {} : { peer_view: { level: 'restricted' } }));
   const navigated = [];
   const onNavigated = (event) => navigated.push(event.detail.location);
   harness.document.addEventListener('tclaude:navigated', onNavigated);
@@ -52,7 +54,7 @@ async function setup(t, { enabled = true, prefs = {} } = {}) {
   return { harness, state, store, navigated, mounted, root: mounted.container };
 }
 
-test('the focus switch is hidden while features.processes is off', async (t) => {
+test('the focus switch is hidden on a peer that does not offer processes', async (t) => {
   const { root, state } = await setup(t, { enabled: false, prefs: { 'tclaude.dash.groups.focus': 'processes' } });
   assert.equal(root.querySelector('.groups-focus-switch'), null);
   assert.equal(state.focus.value, 'processes', 'the remembered focus survives');
@@ -175,7 +177,7 @@ test('the palette offers every lens while processes are on and switches through 
   const focusCommands = () => buildCommands({ groups: [], agents: [] }).filter((c) => /^groups focus /.test(c.keywords || ''));
 
   harness.document.body.classList.add('hide-processes');
-  assert.equal(focusCommands().length, 0, 'no focus commands while processes are off');
+  assert.equal(focusCommands().length, 0, 'no focus commands where processes are unavailable');
   harness.document.body.classList.remove('hide-processes');
   const commands = focusCommands();
   assert.deepEqual(commands.map((c) => c.label), ['Groups › Both focus', 'Groups › Processes focus', 'Groups › Agents focus']);

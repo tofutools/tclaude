@@ -37,16 +37,14 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	// "processes" is the agent-reachable capability projection of the
-	// experimental Processes feature flag: a single boolean, never the
-	// private config contents. It lets a sandboxed CLI that cannot read
-	// ~/.tclaude/data/config.json still resolve enabled/disabled state
-	// through the daemon. Open like the rest of /v1/info.
+	// "processes" and "triggers" are always true. They once projected the
+	// retired features.processes / features.triggers flags; an older CLI
+	// still probes "processes" before `process templates ls`, so they stay.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"popup_base_url": popupBaseURL,
 		"idempotency":    "v1",
-		"processes":      processRoutesEnabled(),
-		"triggers":       triggerRoutesEnabled(),
+		"processes":      true,
+		"triggers":       true,
 		"proxy":          gitProxyRoutesEnabled(r),
 	})
 }

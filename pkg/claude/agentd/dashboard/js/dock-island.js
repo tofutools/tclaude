@@ -17,6 +17,7 @@ import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
 import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -669,7 +670,7 @@ export function Dock({
   `;
   // Local groups only: pin and start go to this daemon's routes by name.
   const groups = (snapshot?.groups || []).filter((group) => !group.fleet_node).map((group) => group.name).filter(Boolean);
-  const processes = !!snapshot?.processes_enabled;
+  const processes = processesAvailable(snapshot);
   const shown = [...sections.map((section) => section.key), ...(processes ? ['processes'] : [])];
   const nothing = terms.length > 0 && shown.every((key) => matches[key] === 0);
   return [

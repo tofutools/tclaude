@@ -21,7 +21,6 @@ function choose(select, value) {
 function snapshot(revision = 1) {
   return {
     revision,
-    triggers_enabled: true,
     profiles: [{ name: 'reviewer', aliases: ['review-kit'] }],
     agents: [
       { agent_id: 'agt_one', conv_id: 'conv-one', title: 'One', online: true },
@@ -238,7 +237,7 @@ test('cron action picker gates spawn and submits the full scheduled-worker paylo
   });
   await mounted.unmount();
 
-  const disabledSnapshot = { ...snapshot(), triggers_enabled: false };
+  const disabledSnapshot = { ...snapshot(), peer_view: { level: 'restricted' } };
   const gated = await harness.mount(harness.html`<${CronDialog} descriptor=${createDescriptor({ launchID: 2 })}
     snapshot=${disabledSnapshot} actions=${actions} confirmDiscard=${async () => true} />`);
   assert.deepEqual([...gated.container.querySelector('#cron-create-action-kind').options].map((option) => option.value), ['message']);

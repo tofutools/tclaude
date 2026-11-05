@@ -49,8 +49,7 @@ func (e *pageEnv) groupPages(t *testing.T, group string) []groupContextPage {
 func TestPageSavedWithItsGroupClosesReopensAndDeletes(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
 	}))
 	shower := e.agent(t, "saver", true)
 	e.f.HaveGroup("crew")
@@ -141,8 +140,7 @@ func TestPageSavedReopenNeedsItsSource(t *testing.T) {
 func TestPagePrivateIsNotSaved(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
 	}))
 	shower := e.agent(t, "private", true)
 	e.f.HaveGroup("crew")
@@ -159,8 +157,7 @@ func TestPagePrivateIsNotSaved(t *testing.T) {
 func TestPageSavedLockAndMembershipHold(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
 	}))
 	shower := e.agent(t, "two-groups", true)
 	e.f.HaveGroup("crew")

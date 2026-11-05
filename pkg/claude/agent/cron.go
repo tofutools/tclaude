@@ -174,7 +174,7 @@ func cronTargetLabel(j cronJobJSON) string {
 // ---- add ----
 
 type cronAddParams struct {
-	Action            string   `long:"action" optional:"true" help:"Action per tick: message (default) or spawn. Spawn is gated by features.triggers."`
+	Action            string   `long:"action" optional:"true" help:"Action per tick: message (default) or spawn."`
 	Target            string   `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
 	Interval          string   `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
 	Cron              string   `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`

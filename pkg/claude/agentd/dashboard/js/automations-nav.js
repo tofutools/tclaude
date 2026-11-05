@@ -24,7 +24,7 @@ export function noteAutomationsSection(tab) {
 // Automations redirects: inside it, the anchor keeps its own meaning, and a
 // click driven by clickNavExactly (the router restoring a location, the subnav
 // picking a kind) is never redirected. `processesUsable` is false while the
-// processes feature is off or not offered on this view.
+// view does not offer processes (a peer that does not share them).
 export function automationsNavTarget(tab, activeTab, processesUsable) {
   if (exact || tab !== 'jobs' || AUTOMATIONS_TABS.has(activeTab)) return tab;
   return lastSection === 'processes' && processesUsable ? 'processes' : tab;

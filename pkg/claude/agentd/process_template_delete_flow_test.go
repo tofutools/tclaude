@@ -51,7 +51,7 @@ func TestProcessTemplateDeleteRejectsInvalidID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
-func TestProcessTemplateDelete404WhenFeatureOff(t *testing.T) {
+func TestProcessTemplateDeleteUnknownIs404(t *testing.T) {
 	f := newFlow(t)
 	rec := processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/example", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())

@@ -10,7 +10,7 @@ import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
-const ON = { processes_enabled: true, agents: [], groups: [] };
+const ON = { agents: [], groups: [] };
 const TEMPLATES = [
   { id: 'release-train', name: 'Release train', versionCount: 3, pinnedGroups: ['tclaude'] },
   { id: 'triage', name: 'Triage', versionCount: 1 },
@@ -265,9 +265,9 @@ test('a crafted seed cannot give a process tab a socket or a colliding key', asy
   assert.equal(seed.key, 'process:triage');
 });
 
-test('with Processes off the ＋ menu is boards only', async (t) => {
+test('on a peer without Processes the ＋ menu is boards only', async (t) => {
   fakeDaemon(t);
-  const env = await mountShell(t, { ...ON, processes_enabled: false });
+  const env = await mountShell(t, { ...ON, peer_view: { level: 'restricted' } });
   const { harness, host } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
   assertAbsent(host.querySelector('.mux-add-sections'), 'no Processes half');

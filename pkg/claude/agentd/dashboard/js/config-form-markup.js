@@ -181,6 +181,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
+  { id: 'processes', icon: '🔁', title: 'Processes', lede: 'Policy for process workflows shared as .pwf files.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
   { id: 'advanced', icon: '{ }', title: 'Advanced', lede: 'Structures without a dedicated form, edited as raw JSON.' },
 ]);
@@ -1178,22 +1179,22 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${ExternalStewardGroup} loads=${loads} />
     </${Panel}>
 
+    <${Panel} id="processes" active=${active}>
+      <${Group} title="Workflow files">
+        <${Setting} title="Refuse unsigned workflows" forId="cfg-processes-refuse-unsigned" k="processes.refuse_unsigned_imports"
+          summary=${html`refuse to import a <code>.pwf</code> workflow file without a valid signature`}
+          more="The import review still shows such a file and says why it is refused. A valid signature from a key this node does not know passes: the file is unchanged since signing, but the signer is not known. Off by default.">
+          <${Toggle} id="cfg-processes-refuse-unsigned" />
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
     <${Panel} id="experimental" active=${active}>
       <${Group} title="Feature flags"
         lede=${html`Opt-in flags for features under active development. Most ship dark on
           <code>main</code> — off by default and invisible in normal use — so they can land in
           small increments without a long-lived feature branch, and a few stay listed while on by default. Expect rough edges while a
           flag is listed here; when a feature graduates, its flag disappears.`}>
-        <${Setting} title="Processes" forId="cfg-feature-processes" k="features.processes"
-          summary=${html`enable the in-development <strong>Processes</strong> feature`}
-          more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
-          <${Toggle} id="cfg-feature-processes" />
-        </${Setting}>
-        <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
-          summary=${html`enable the in-development <strong>Triggers</strong> automation feature`}
-          more="PR-opened rules with bounded spawn and message actions. Off by default; the Automations subview, Groups projection, engine, and API stay absent until enabled.">
-          <${Toggle} id="cfg-feature-triggers" />
-        </${Setting}>
         <${Setting} title="Groups Route map" forId="cfg-feature-groups-route-map" k="features.groups_route_map" badges=${['refresh']}
           summary=${html`enable the opt-in <strong>Members | Route map</strong> Groups view`}
           more="Read-only agent route leases and health for selected groups. Off by default; the route map and its snapshot projection stay absent until enabled.">
@@ -1222,13 +1223,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary=${html`mount the shared parent root of <strong>agent-owned directories</strong> read-write`}
           more="On by default: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Uncheck to opt out and restore per-directory grants — the agent can write inside each directory but cannot delete it.">
           <${Toggle} id="cfg-feature-agent-dirs-mount-parent" />
-        </${Setting}>
-      </${Group}>
-      <${Group} title="Processes">
-        <${Setting} title="Refuse unsigned workflows" forId="cfg-processes-refuse-unsigned" k="processes.refuse_unsigned_imports"
-          summary=${html`refuse to import a <code>.pwf</code> workflow file without a valid signature`}
-          more="The import review still shows such a file and says why it is refused. A valid signature from a key this node does not know passes: the file is unchanged since signing, but the signer is not known. Off by default.">
-          <${Toggle} id="cfg-processes-refuse-unsigned" />
         </${Setting}>
       </${Group}>
     </${Panel}>

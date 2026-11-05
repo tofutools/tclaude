@@ -953,9 +953,6 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 // the periodic fallback never materializes aggregate snapshots/checkpoints or
 // repeatedly prepares definitions awaiting human reconciliation.
 func sweepProcessRuns() {
-	if !processRoutesEnabled() {
-		return
-	}
 	if count, err := db.OrphanProcessRunsWithMissingScope(); err != nil {
 		slog.Warn("process runtime: scope orphan sweep failed", "error", err)
 	} else if count > 0 {

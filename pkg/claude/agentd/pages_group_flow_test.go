@@ -29,10 +29,8 @@ func (e *pageEnv) createGroupPage(t *testing.T, group, name string) pageOut {
 
 func TestPageOperatorCreatedInAGroupIsTheGroupsUntilAMemberTakesItOver(t *testing.T) {
 	e := newPageEnv(t)
-	// Processes on, for the group context the Resources section reads.
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesRead, agentd.PermGroupsPagesPatch}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesRead, agentd.PermGroupsPagesPatch}},
 	}))
 	member := e.agent(t, "gp-member", true)
 	other := e.agent(t, "gp-other", true)

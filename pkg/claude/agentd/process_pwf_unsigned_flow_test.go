@@ -92,7 +92,7 @@ func TestProcessWorkflowImportRefusesUnsignedByPolicy(t *testing.T) {
 	refused, _ := review(unsigned)
 	assert.Empty(t, refused, "off by default")
 
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true},"processes":{"refuse_unsigned_imports":true}}`), 0o644))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"processes":{"refuse_unsigned_imports":true}}`), 0o644))
 
 	refused, digest := review(unsigned)
 	assert.Contains(t, refused, "without a valid signature")

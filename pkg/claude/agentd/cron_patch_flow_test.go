@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -83,47 +82,6 @@ func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
 	assert.Equal(t, db.CronActionMessage, got.ActionKind)
 	assert.Equal(t, "scanner", got.SpawnProfile, "inactive spawn payload is retained")
 	assert.Equal(t, []string{"reviewer"}, got.SpawnRoleRefs)
-}
-
-func TestCronPatch_SpawnFeatureOffRefusesSpawnEditsOnly(t *testing.T) {
-	f := newFlow(t)
-	group := f.HaveGroup("patch-off")
-	spawnID, err := db.InsertAgentCronJob(&db.AgentCronJob{
-		Name: "spawn", TargetKind: db.CronTargetGroup, GroupID: group.ID,
-		IntervalSeconds: 600, ActionKind: db.CronActionSpawn, SpawnProfile: "scanner",
-		SpawnInstructionTemplate: "scan", SpawnConcurrencyPolicy: db.CronConcurrencyForbid,
-		SpawnMaxLiveWorkers: 1, Enabled: true,
-	})
-	require.NoError(t, err)
-	messageID, err := db.InsertAgentCronJob(&db.AgentCronJob{
-		Name: "message", TargetKind: db.CronTargetGroup, GroupID: group.ID,
-		IntervalSeconds: 600, ActionKind: db.CronActionMessage, Body: "ping", Enabled: true,
-	})
-	require.NoError(t, err)
-
-	for _, body := range []map[string]any{{"name": "blocked"}, {"action_kind": "message", "body": "convert"}} {
-		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
-			"/v1/cron/"+strconv.FormatInt(spawnID, 10), body)))
-		assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-		assert.Contains(t, rec.Body.String(), config.TriggersDisabledMessage)
-	}
-	gotSpawn, err := db.GetAgentCronJob(spawnID)
-	require.NoError(t, err)
-	assert.Equal(t, db.CronActionSpawn, gotSpawn.ActionKind)
-	assert.Equal(t, "spawn", gotSpawn.Name)
-
-	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
-		"/v1/cron/"+strconv.FormatInt(messageID, 10), map[string]any{"name": "message-edited"})))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
-		"/v1/cron/"+strconv.FormatInt(messageID, 10), map[string]any{
-			"action_kind": "spawn", "spawn_profile": "scanner", "spawn_instruction_template": "scan",
-		})))
-	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-	gotMessage, err := db.GetAgentCronJob(messageID)
-	require.NoError(t, err)
-	assert.Equal(t, "message-edited", gotMessage.Name)
-	assert.Equal(t, db.CronActionMessage, gotMessage.ActionKind)
 }
 
 // Scenario: PATCH /v1/cron/{id} with just `enabled:false` flips

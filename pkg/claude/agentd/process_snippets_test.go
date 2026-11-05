@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
@@ -25,7 +24,6 @@ func enableProcessSnippetTests(t *testing.T) {
 	t.Helper()
 	setupTestDB(t)
 	withDashboardAuth(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
 }
 
 func serveProcessSnippetRequest(r *http.Request) *httptest.ResponseRecorder {

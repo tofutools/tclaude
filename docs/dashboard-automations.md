@@ -6,10 +6,8 @@ separate tab for shell steps you switch on and off.
 
 ## Automations
 
-Subtabs are **All** (the default), **Exports**, **Cron jobs** and **Standing
-orders**. **Triggers** appears with `features.triggers` on, and **Processes** with
-`features.processes` on. Each is under
-[Config › Experimental](dashboard-config.md#experimental).
+Subtabs are **All** (the default), **Exports**, **Cron jobs**, **Standing
+orders**, **Triggers** and **Processes**.
 
 Lists have a filter bar, sortable columns and page sizes from 25 to 200. Use **+
 new cron job** and **+ new standing order** to add one. A badge on the tab counts
@@ -26,10 +24,9 @@ Send a message or start an agent on a schedule, as an interval of 30 seconds or
 more, or a cron expression. Each job has run-now, a recent-runs log, edit,
 duplicate, enable and delete.
 
-**Spawn** jobs need `features.triggers`. They take a spawn profile, roles and a
-concurrency rule: Forbid, Replace (stop the live worker first), or Allow with a
-max number of live workers. With the flag off, existing spawn jobs still list,
-but you can't edit or duplicate them.
+**Spawn** jobs take a spawn profile, roles and a concurrency rule: Forbid,
+Replace (stop the live worker first), or Allow with a max number of live
+workers.
 
 The CLI equivalent is `tclaude agent cron`.
 

@@ -63,7 +63,7 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
   const opened = [];
   t.after(registerCompanionController({ open: (agentId, options) => { opened.push({ agentId, ...options }); return true; } }));
-  const snapshot = { processes_enabled: true, groups: GROUPS };
+  const snapshot = { groups: GROUPS };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${[...GROUPS, ...extraGroups]} source=${source} filter="running" api=${api} confirm=${confirm}
       notify=${(message, error) => notes.push({ message, error: !!error })}>

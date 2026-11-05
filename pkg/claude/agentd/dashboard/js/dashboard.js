@@ -436,10 +436,9 @@ async function settleInitialLayout() {
   // The static shell deliberately starts paint-curtained: URL theme classes,
   // server-backed dock preferences, and snapshot-owned feature islands all
   // change geometry during bootstrap. Complete one authoritative refresh before
-  // restoring the URL so snapshot-gated tab visibility is known: Processes, for
-  // example, starts CSS-hidden until processes_enabled arrives. Restoring its
-  // route any earlier would mistake that provisional hidden state for a stale link
-  // and rewrite /automations/processes/... to the home screen. Two animation-frame turns
+  // restoring the URL so snapshot-gated tab visibility is known. Restoring a
+  // route any earlier would mistake a provisional hidden state for a stale
+  // link and rewrite it to the home screen. Two animation-frame turns
   // then let Preact/Signals and the
   // ResizeObserver-driven dock/nav geometry settle before visibility changes.
   // dashboard.css carries an eight-second CSS-only failsafe in case the module

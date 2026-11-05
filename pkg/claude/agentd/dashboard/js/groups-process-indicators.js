@@ -18,6 +18,7 @@ import { focusRun, groupsRunLocation, revealRunsLens, showRunsLens } from './gro
 import { setFusedSectionOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
 import { useProcessScope } from './groups-process-scope.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -97,7 +98,7 @@ function cssString(value) {
 }
 
 export function enabled(snapshot, source) {
-  return snapshot?.processes_enabled === true && source.status.value === 'ready';
+  return processesAvailable(snapshot) && source.status.value === 'ready';
 }
 
 // GRAPH_STATES is the process twin of group-activity.js's bot row: one

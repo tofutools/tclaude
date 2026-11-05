@@ -33,9 +33,9 @@ import { MEMBER_COLS } from './sort.js';
 // the column's default (mirrors the sort state's single-key storage).
 const COLS_LS_KEY = 'tclaude.dash.members.hidden';
 
-// columnAvailable drops feature-gated columns while their feature is off:
-// the Process column exists only while features.processes is on, which
-// processes.js mirrors onto body.hide-processes.
+// columnAvailable drops the Process column where processes are unavailable
+// (a peer that does not share them), which processes.js mirrors onto
+// body.hide-processes.
 function columnAvailable(c) {
   return !c.processes || !globalThis.document?.body?.classList.contains('hide-processes');
 }

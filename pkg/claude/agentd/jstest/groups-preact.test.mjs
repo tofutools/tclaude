@@ -1045,7 +1045,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(fullSnapshot);
-  // Processes are off (the shell's boot class), so the gated Process column is absent.
+  // body.hide-processes (a peer without processes) leaves the Process column out.
   harness.document.body.classList.add('hide-processes');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
@@ -1487,7 +1487,7 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   ]);
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
-  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: true });
+  state.publish(snapshot([{ id: 3, name: 'alpha', members: [] }]));
   const rules = Array.from({ length: 6 }, (_, index) => ({
     id: index + 1, name: `rule ${index + 1}`, enabled: true,
     scope: index === 0 ? 'global' : 'group', group: index === 0 ? '' : 'alpha',
@@ -1512,7 +1512,7 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   await mounted.unmount();
 });
 
-test('Groups omits the trigger projection and its API load while the feature is off', async (t) => {
+test('Groups omits the trigger projection and its API load on a peer that does not offer triggers', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
@@ -1520,7 +1520,7 @@ test('Groups omits the trigger projection and its API load while the feature is 
   ]);
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
-  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: false });
+  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), peer_view: { level: 'restricted' } });
   let loads = 0;
   const actions = {
     sort: () => {}, page: () => {}, setPageSize: () => {},
@@ -1644,7 +1644,7 @@ test('missing extension status has a diagnostic badge only while online', async 
   await offline.unmount();
 });
 
-test('the column menu recomputes when processes turn on or off', async (t) => {
+test('the column menu recomputes when processes come and go, as on a switch to a peer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
@@ -1661,7 +1661,8 @@ test('the column menu recomputes when processes turn on or off', async (t) => {
     },
   });
   state.initialize();
-  state.publish(snapshot([{ name: 'alpha', members: [] }]));
+  const peer = { ...snapshot([{ name: 'alpha', members: [] }]), peer_view: { level: 'restricted' } };
+  state.publish(peer);
   const source = { context: harness.signals.signal(null), status: harness.signals.signal('idle'), error: harness.signals.signal(''), refresh: () => Promise.resolve() };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   t.after(() => host.remove());
@@ -1669,11 +1670,11 @@ test('the column menu recomputes when processes turn on or off', async (t) => {
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 
   available = true;
-  await harness.act(() => state.publish({ ...snapshot([{ name: 'alpha', members: [] }]), processes_enabled: true }));
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role', 'process']);
 
   available = false;
-  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
+  await harness.act(() => state.publish(peer));
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 });
 

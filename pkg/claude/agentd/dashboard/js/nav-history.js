@@ -67,8 +67,8 @@ let ready = false;
 // default rather than stranding on a blank hidden section.
 //
 // Processes is the exception: it is reached through the Automations sub-nav, so
-// its nav button is permanently CSS-hidden and only the feature flag decides
-// whether it is reachable.
+// its nav button is permanently CSS-hidden and only body.hide-processes (a
+// peer that does not offer Processes) decides whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   // Boards has no nav anchor: a board is a tab of the Terminals section.
@@ -119,9 +119,9 @@ function defaultGroupsLocation() {
 }
 
 // The Groups lenses (/groups/agents, /groups/processes) and the single-run
-// focus (/groups/runs/...) exist only while the
-// processes feature is on; processes.js mirrors that onto body.hide-processes.
-// Without it there is one lens, and it lives at bare /groups.
+// focus (/groups/runs/...) exist wherever processes are available (always on
+// this node); processes.js mirrors a peer without them onto
+// body.hide-processes. Without them there is one lens, at bare /groups.
 function groupsProcessesFocusAvailable() {
   return !document.body.classList.contains('hide-processes');
 }
