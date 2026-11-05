@@ -21,7 +21,7 @@ import (
 // explicit review decision instead of a silent regression.
 var codexAppServerKeystrokeSinkFiles = map[string]string{
 	"pane_input_guard.go": "legacy spawn welcomes retry only human-input holds; every attempt refuses a selected managed drive",
-	"handlers.go":         "lifecycle commands route selected Codex conversations to typed RPC before pane input",
+	"pane_inject.go":      "lifecycle commands route selected Codex conversations to typed RPC before pane input",
 	"flush.go":            "durable inbox nudges route selected Codex conversations to typed RPC and hold on failure",
 	"unread_reminder.go":  "unread reminders use the same typed route as their durable inbox nudge",
 	"lifecycle_stop.go":   "soft exit deliberately remains signal-key driven because app-server cannot end the TUI process",
