@@ -1234,9 +1234,9 @@ func OneShotLaunchPosture(
 	launchWriteDirs := append(launchGitWriteDirs,
 		sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	if implementation.UsesTclaudeLayer() {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, CanonicalSandboxPath(cwd))
 		for _, mount := range sandboxSnapshotTmpfs(effectiveSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
+			launchWriteDirs = AppendUniqueDir(launchWriteDirs, mount.Path)
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
@@ -1299,7 +1299,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	if params.ManagedInstructionsRoot != "" {
-		readDirs = appendUniqueDir(readDirs, params.ManagedInstructionsRoot)
+		readDirs = AppendUniqueDir(readDirs, params.ManagedInstructionsRoot)
 	}
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -1308,7 +1308,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		// outside a Git repository. The workspace is an invariant launch
 		// requirement rather than an optional grant, so reopen it explicitly.
 		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-			writeDirs = appendUniqueDir(writeDirs, workspace)
+			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
 	// Codex needs the verified split-policy backend for exactly the shape it
@@ -1352,20 +1352,20 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 func denyNarrowedGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
 	var out []string
 	if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-		out = appendUniqueDir(out, workspace)
+		out = AppendUniqueDir(out, workspace)
 	}
 	common := filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if common == "." || !filepath.IsAbs(common) {
 		return out
 	}
-	out = appendUniqueDir(out, common)
+	out = AppendUniqueDir(out, common)
 	for _, candidate := range candidates {
 		candidate = filepath.Clean(strings.TrimSpace(candidate))
 		// A candidate at/below the verified common directory is an exact Git
 		// admin identity (for linked worktrees Codex needs the more-specific
 		// worktrees/<name> reopen). Ancestors such as ~/git are discarded.
 		if candidate != "." && filepath.IsAbs(candidate) && sandboxpolicy.PathContainsOrEqual(common, candidate) {
-			out = appendUniqueDir(out, candidate)
+			out = AppendUniqueDir(out, candidate)
 		}
 	}
 	return out
@@ -1387,7 +1387,8 @@ func canonicalLaunchWorkspace(cwd string) string {
 	return filepath.Clean(resolved)
 }
 
-func appendUniqueDir(dirs []string, dir string) []string {
+// AppendUniqueDir appends dir unless dirs already holds it.
+func AppendUniqueDir(dirs []string, dir string) []string {
 	for _, existing := range dirs {
 		if existing == dir {
 			return dirs
@@ -1475,14 +1476,14 @@ func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]str
 	return out
 }
 
-// canonicalSandboxPath symlink-resolves a launch-time path so it can be
+// CanonicalSandboxPath symlink-resolves a launch-time path so it can be
 // compared against effective grants, which normalization has already fully
 // resolved. Without this a cwd reached through a symlinked ancestor (macOS
 // /var → /private/var, or a symlinked home) would not appear to be covered by a
 // deny that does cover it, and the launch contract would silently skip the
 // reopens the agent needs. Falls back to the lexical form when the path cannot
 // be resolved; the ordinary cwd checks report that failure.
-func canonicalSandboxPath(path string) string {
+func CanonicalSandboxPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
 		return ""
@@ -1501,7 +1502,7 @@ func sandboxDenyCoversPath(snapshot *sandboxpolicy.Snapshot, path string) bool {
 	if snapshot == nil {
 		return false
 	}
-	path = canonicalSandboxPath(path)
+	path = CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -1555,11 +1556,11 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalSandboxPath(candidate)
+		candidate = CanonicalSandboxPath(candidate)
 		if candidate == "" || !sandboxDenyCoversPath(snapshot, candidate) {
 			continue
 		}
-		out = appendUniqueDir(out, candidate)
+		out = AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
