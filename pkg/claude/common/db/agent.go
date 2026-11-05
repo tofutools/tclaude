@@ -326,54 +326,6 @@ func replaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, 
 	return tx.Commit()
 }
 
-// HasAgentGroupPermission reports whether the actor currently belongs to at
-// least one active group granting slug. Group nesting deliberately does not
-// imply membership or permission inheritance.
-func HasAgentGroupPermission(convID, slug string) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	agentID, err := AgentIDForConv(convID)
-	if err != nil || agentID == "" {
-		return false, err
-	}
-	var n int
-	err = d.QueryRow(`
-		SELECT COUNT(*)
-		FROM agent_group_permissions gp
-		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
-		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
-		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
-	return n > 0, err
-}
-
-// ListAgentGroupPermissionSlugsForConv lists every distinct slug granted to
-// convID by the active groups it belongs to — the enumerating twin of
-// HasAgentGroupPermission, sharing its membership/liveness conditions. It
-// backs the effective-permissions listing, which must know WHICH slugs to
-// ask the resolver about; the allow/deny decision itself still goes through
-// the resolver, never through this list.
-func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	agentID, err := AgentIDForConv(convID)
-	if err != nil || agentID == "" {
-		return nil, err
-	}
-	return queryRows(d, scanString, `
-		SELECT DISTINCT gp.slug
-		FROM agent_group_permissions gp
-		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
-		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
-		WHERE gm.agent_id = ?
-		ORDER BY gp.slug`, agentID)
-}
-
 // ListAgentGroupPermissionRowsForConv returns every active group grant for an
 // actor, preserving one row per group so a later resolver can union scopes
 // within the group tier. Phase 1 uses the rows only for provenance display.
@@ -404,37 +356,6 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 		ORDER BY gp.slug, gp.group_id`, agentID)
 }
 
-// HasAgentGroupPermissionForGroup reports whether convID is a current member
-// of groupID and that exact group grants slug. It intentionally does not use
-// the union-shaped HasAgentGroupPermission helper: route authorization must
-// preserve the target-group provenance of a capability.
-func HasAgentGroupPermissionForGroup(convID string, groupID int64, slug string) (bool, error) {
-	agentID, err := AgentIDForConv(convID)
-	if err != nil || agentID == "" {
-		return false, err
-	}
-	return HasAgentGroupPermissionForAgent(agentID, groupID, slug)
-}
-
-// HasAgentGroupPermissionForAgent is the stable-identity variant used by
-// lifecycle paths that already resolved an actor. The group must be active.
-func HasAgentGroupPermissionForAgent(agentID string, groupID int64, slug string) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	var n int
-	err = d.QueryRow(`
-		SELECT COUNT(*)
-		FROM agent_group_permissions gp
-		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
-		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
-		WHERE gm.agent_id = ? AND gp.group_id = ? AND gp.slug = ?`,
-		agentID, groupID, slug).Scan(&n)
-	return n > 0, err
-}
-
 // IsAgentGroupRouteEnabled reports whether a group has either route
 // capability in its own policy. Group membership remains ordinary unless the
 // group deliberately opts into the route contract.
@@ -447,33 +368,6 @@ func IsAgentGroupRouteEnabled(groupID int64, publishSlug, consumeSlug string) (b
 	err = d.QueryRow(`SELECT COUNT(*) FROM agent_group_permissions
 		WHERE group_id = ? AND slug IN (?, ?)`, groupID, publishSlug, consumeSlug).Scan(&n)
 	return n > 0, err
-}
-
-// HasAgentPermissionRow reports whether (convID, slug) is GRANTED in the
-// agent_permissions table. A deny-effect row reads as false here — the
-// daemon's per-agent override lookup wants "does an additive grant
-// exist," and a deny is the opposite. Errors propagate so the caller can
-// refuse rather than silently allow. Callers needing the full tri-state
-// should use AgentPermissionOverride instead.
-func HasAgentPermissionRow(convID, slug string) (bool, error) {
-	db, err := Open()
-	if err != nil {
-		return false, err
-	}
-	agentID, err := AgentIDForConv(convID)
-	if err != nil {
-		return false, err
-	}
-	if agentID == "" {
-		return false, nil
-	}
-	var n int
-	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ? AND slug = ? AND effect = ?`,
-		agentID, slug, PermEffectGrant).Scan(&n)
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
 }
 
 // AgentPermissionOverride returns the tri-state per-conv override for

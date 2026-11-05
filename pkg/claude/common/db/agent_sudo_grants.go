@@ -147,35 +147,6 @@ func GetSudoGrant(id int64) (*SudoGrant, error) {
 	return g, err
 }
 
-// HasActiveSudoGrant returns true when convID currently holds an
-// active grant for slug. The hot path called from requirePermission;
-// indexed lookup, no scan.
-func HasActiveSudoGrant(convID, slug string) (bool, error) {
-	if convID == "" || slug == "" {
-		return false, nil
-	}
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	agentID, err := AgentIDForConv(convID)
-	if err != nil {
-		return false, err
-	}
-	if agentID == "" {
-		return false, nil
-	}
-	cutoff := dbTime(time.Now())
-	var n int
-	err = d.QueryRow(`SELECT COUNT(*) FROM agent_sudo_grants
-		WHERE agent_id = ? AND slug = ? AND revoked_at IS NULL AND expires_at > ? AND (uses_limit = 0 OR uses_left > 0)`,
-		agentID, slug, cutoff).Scan(&n)
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // LookupActiveSudoGrantID returns the id of an active grant for
 // (convID, slug), or 0 if none. Used by the audit-string composer in
 // agentd: when requirePermission only passed because of a sudo grant,

@@ -142,9 +142,9 @@ func TestEnrollment_RetireDemotesAndRevokes(t *testing.T) {
 	assert.True(t, retiredInSnap(post.Retired, conv), "retired agent must appear in retired[]")
 	assert.False(t, flowGroupHasMember(f, "alpha", conv), "retire must drop group membership")
 
-	hasPerm, err := db.HasAgentPermissionRow(conv, "self.rename")
+	granted, err := db.ListAgentPermissionsForConv(conv)
 	require.NoError(t, err)
-	assert.False(t, hasPerm, "retire must revoke permission grants")
+	assert.NotContains(t, granted, "self.rename", "retire must revoke permission grants")
 
 	// The conversation data itself survives — conv_index row intact.
 	row, err := db.GetConvIndex(conv)
