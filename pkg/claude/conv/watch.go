@@ -2628,11 +2628,25 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// reopen-under-deny gate on these rendered rules, except for an
 		// unconfined implementation (off, resource-only), which it skips there
 		// as it did before this step was shared.
+		profileLaunchID := session.GenerateSessionID()
 		profileName, profilePath, capability, err := session.EnsureCodexManagedLaunchProfile(
 			session.CodexManagedProfileRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs},
-			effectiveSandbox, session.GenerateSessionID())
+			effectiveSandbox, profileLaunchID)
 		if err != nil {
 			return "", "", nil, err
+		}
+		// And, as `session new` does, join an installed native registry, so
+		// Codex's requirements allow the profile the pane is started with
+		// rather than falling back to another one. The relaunch carries the
+		// generation to activation or removal; without one (tests) nothing is
+		// registered.
+		if relaunch != nil {
+			generation, err := session.RegisterCodexLaunchNativeProfile(
+				profileLaunchID, profileName, profilePath, convID, sessionID)
+			if err != nil {
+				return "", "", nil, err
+			}
+			relaunch.nativeGeneration = generation
 		}
 		splitCapability = capability
 		spec.HarnessBuiltinMode = ""
@@ -3317,6 +3331,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
+	relaunch.activateNativeProfile()
 	// resumeLaunchCmd already applied these to the pane's environment; this
 	// write is what keeps them alive for the NEXT resume, since the fresh row
 	// otherwise reports "nothing recorded". What this surface may and may not

@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // A standalone relaunch (`tclaude conv resume`, the conversation watch TUI)
@@ -52,9 +53,9 @@ func (e *StandaloneRelaunchUnavailable) Error() string { return e.Warning }
 
 // Warnings for a launch under the stored policy, one per reason.
 const (
-	AgentdNotRunning = "agentd is not running, so the sandbox profiles were not re-read and the stored policy is used. Start agentd (tclaude agentd), then resume again to apply profile changes."
+	AgentdNotRunning  = "agentd is not running, so the sandbox profiles were not re-read and the stored policy is used. Start agentd (tclaude agentd), then resume again to apply profile changes."
 	AgentdNotOperator = "agentd did not confirm this terminal as the operator, so the sandbox profiles were not re-read and the stored policy is used. Export TCLAUDE_HUMAN_TOKEN from agentd, then resume again to apply profile changes."
-	AgentdTooOld = "the running agentd predates sandbox re-reading for conv resume, so the stored policy is used. Restart agentd, then resume again to apply profile changes."
+	AgentdTooOld      = "the running agentd predates sandbox re-reading for conv resume, so the stored policy is used. Restart agentd, then resume again to apply profile changes."
 )
 
 // standaloneRelaunch is a prepared relaunch to settle once the pane has, or
@@ -65,6 +66,11 @@ type standaloneRelaunch struct {
 	out     io.Writer
 	// remoteControlDecision is agentd's Remote Access decision, or nil.
 	remoteControlDecision *bool
+	// nativeGeneration is the resume's generated Codex profile in the native
+	// permission registry, or "" when none was registered.
+	nativeGeneration string
+	// nativeLaunched is set once the pane has started with that profile.
+	nativeLaunched bool
 }
 
 // prepareStandaloneRelaunch prepares convID's relaunch sandbox when it belongs
@@ -120,13 +126,44 @@ func (r *standaloneRelaunch) remoteControl(h *harness.Harness, convID string) (b
 	return remoteControl, nil
 }
 
-// settle reports the launch's outcome to agentd, once.
+// settle reports the launch's outcome to agentd, once. A resume whose pane
+// never started also leaves the native Codex registry: nothing runs with its
+// profile.
 func (r *standaloneRelaunch) settle(launched bool) {
-	if r == nil || !r.pending || StandaloneRelaunchSettle == nil {
+	if r == nil {
+		return
+	}
+	if launched {
+		r.nativeLaunched = true
+	} else if r.nativeGeneration != "" && !r.nativeLaunched {
+		if err := session.UnregisterCodexNativePermissionProfile(r.nativeGeneration); err != nil {
+			slog.Warn("could not remove the resume's generated Codex profile from the native registry",
+				"conv_id", r.convID, "generation", r.nativeGeneration, "error", err)
+		}
+		r.nativeGeneration = ""
+	}
+	if !r.pending || StandaloneRelaunchSettle == nil {
 		return
 	}
 	r.pending = false
 	r.warn(StandaloneRelaunchSettle(r.convID, launched)...)
+}
+
+// activateNativeProfile marks the resume's registered Codex profile ready
+// once its session row is saved, as `session new` does at its launch
+// boundary: the row is what keeps it live, and readiness prunes the
+// conversation's superseded profiles. The pane is already running, so a
+// failure is a warning; the registration stays and later reconciliation
+// decides it.
+func (r *standaloneRelaunch) activateNativeProfile() {
+	if r == nil || r.nativeGeneration == "" {
+		return
+	}
+	generation := r.nativeGeneration
+	r.nativeGeneration = ""
+	if err := session.ActivateCodexNativePermissionProfile(generation); err != nil {
+		r.warn(fmt.Sprintf("could not activate the resumed Codex permission profile: %v", err))
+	}
 }
 
 func (r *standaloneRelaunch) warn(lines ...string) {

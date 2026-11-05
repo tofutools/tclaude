@@ -52,7 +52,22 @@ type CodexNativeRegistryOptions struct {
 	UserUID    uint32
 }
 
+// codexNativeRegistryOptionsForTest replaces the host registry location for
+// tests in other packages, which cannot install /etc/codex.
+var codexNativeRegistryOptionsForTest *CodexNativeRegistryOptions
+
+// SetCodexNativeRegistryOptionsForTest points every registry operation at
+// opts until the returned restore runs. Tests only.
+func SetCodexNativeRegistryOptionsForTest(opts CodexNativeRegistryOptions) (restore func()) {
+	previous := codexNativeRegistryOptionsForTest
+	codexNativeRegistryOptionsForTest = &opts
+	return func() { codexNativeRegistryOptionsForTest = previous }
+}
+
 func defaultCodexNativeRegistryOptions() (CodexNativeRegistryOptions, error) {
+	if codexNativeRegistryOptionsForTest != nil {
+		return *codexNativeRegistryOptionsForTest, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return CodexNativeRegistryOptions{}, err
@@ -256,6 +271,31 @@ func RegisterCodexNativePermissionProfileIfInstalled(profile db.CodexNativePermi
 		return false, nil
 	}
 	return registerCodexNativePermissionProfileIfInstalled(opts, profile, profilePath)
+}
+
+// RegisterCodexLaunchNativeProfile joins an ordinary generated launch profile
+// to an installed native registry, owned by ownerConvID's agent and kept live
+// by the session row launchID. It returns the registry generation, or "" when
+// no registry is installed. `session new` and a resume both launch this way;
+// the caller activates the generation once the launch is durable, and
+// unregisters it when the pane never starts.
+func RegisterCodexLaunchNativeProfile(profileLaunchID, profileName, profilePath, ownerConvID, launchID string) (string, error) {
+	ownerAgentID, err := db.AgentIDForConv(ownerConvID)
+	if err != nil {
+		return "", fmt.Errorf("resolve generated Codex profile owner: %w", err)
+	}
+	generation := "launch:" + profileLaunchID
+	registered, err := RegisterCodexNativePermissionProfileIfInstalled(db.CodexNativePermissionProfile{
+		Generation: generation, ProfileName: profileName,
+		OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: launchID,
+	}, profilePath)
+	if err != nil {
+		return "", fmt.Errorf("join installed Codex permission registry: %w", err)
+	}
+	if !registered {
+		return "", nil
+	}
+	return generation, nil
 }
 
 // CodexNativePermissionProfileRegistration is one generated definition and
