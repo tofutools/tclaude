@@ -225,3 +225,19 @@ func TestUtilitySkillFrontmatterIsValidYAML(t *testing.T) {
 		})
 	}
 }
+
+// Every skill directory in the source tree must be registered (and so
+// embedded and installed): a SKILL.md that is never listed silently ships to
+// nobody.
+func TestEverySkillDirectoryIsRegistered(t *testing.T) {
+	dirs, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
+	require.NoError(t, err)
+	require.NotEmpty(t, dirs)
+	registered := append(append([]string{}, bundledSkills...), bundledProxySkills...)
+	for _, file := range dirs {
+		name := filepath.Base(filepath.Dir(file))
+		assert.Contains(t, registered, name, "skills/%s is not in bundledSkills or bundledProxySkillSpecs", name)
+		_, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
+		assert.NoError(t, err, "skills/%s/SKILL.md is not in the //go:embed list", name)
+	}
+}
