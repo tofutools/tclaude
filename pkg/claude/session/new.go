@@ -1,7 +1,6 @@
 package session
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -818,44 +817,9 @@ func runNew(params *NewParams) error {
 			_ = darwinRouteReservation.Release()
 		}
 	}()
-	if params.DarwinRouteCapable {
-		if runtime.GOOS != "darwin" {
-			return fmt.Errorf("darwin route-capable launch requires macOS")
-		}
-		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("darwin route-capable launch requires the pane tclaude’s sandbox")
-		}
-		if rowConvID == "" {
-			return fmt.Errorf("darwin route-capable launch requires a conversation generation")
-		}
-		resolvedAgentID, resolveErr := db.AgentIDForConv(rowConvID)
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Darwin route agent identity: %w", resolveErr)
-		}
-		if params.DarwinRouteAgentID != "" && params.DarwinRouteAgentID != resolvedAgentID {
-			return fmt.Errorf("darwin route agent identity does not match conversation owner")
-		}
-		params.DarwinRouteAgentID = resolvedAgentID
-		if params.DarwinRouteAgentID == "" {
-			return fmt.Errorf("darwin route-capable launch requires a stable agent identity")
-		}
-		darwinRouteReservation, err = ReserveDarwinRouteSlots()
-		if err != nil {
-			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
-		}
-		// Claim the kernel-reserved slots before any launch contract is
-		// rendered. The normalized DB claims are the logical exclusion that
-		// survives reservation-FD closure; every later rendering/launch step
-		// is therefore downstream of one pending exact-generation claim.
-		if err := db.RegisterDarwinRouteLaunch(
-			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
-			return fmt.Errorf("register Darwin route launch contract: %w", err)
-		}
-		launchUndo.Add(func() {
-			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
-				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
-			}
-		})
+	darwinRouteReservation, err = claimDarwinRouteLaunch(params, h.Name, outerLayer, rowConvID, exitGeneration, &launchUndo)
+	if err != nil {
+		return err
 	}
 
 	// A Codex launch that asks for no sandbox may still run in one: managed
@@ -873,85 +837,19 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	launchCreated := time.Now()
-	state := &SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		Cwd:                      cwd,
-		ConvID:                   rowConvID,
-		Status:                   StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       sandboxDescr(harnessBuiltinMode, params.PermissionProfile),
-		SandboxImplementation:    string(sandboxImplementation),
-		HarnessBuiltinModeSource: sandboxChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         effectiveSandbox,
-		ApprovalPolicy:           recordedApprovalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchCreated,
-		Updated:                  launchCreated,
-	}
-	if h.UsesCommandInput() {
-		state.Status = StatusRunning
-	}
-	// Establish the fresh launch identity before any private barrier/token
-	// filesystem setup. Row reuse therefore cannot retain predecessor callback
-	// or lifecycle-intent authority when that optional setup degrades.
-	//
-	// A launch that fails between this row write and its pane surviving must
-	// take the row back out: the row may carry a preset conv-id that will now
-	// never exist, and a dead convless row lingers as a ghost session the
-	// operator has to clear by hand (the "command too long" incident's second
-	// bug). Only a row this launch CREATED is deleted — a resume/relaunch
-	// reuses its existing row (same PK) and keeps its prior state on failure,
-	// exactly as before.
-	priorRow, err := db.LoadSession(sessionID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check for existing session row: %w", err)
-	}
-	launchRowOwned := priorRow == nil
 	// launchPaneCommand is assigned once the pane command is fully assembled,
-	// so the rollback below can report what this launch actually tried to run.
+	// so the row rollback can report what this launch actually tried to run.
 	launchPaneCommand := ""
-	launchUndo.Add(func() {
-		if !launchRowOwned {
-			return
-		}
-		// Rolling the row back also destroys the exit audit's only anchor: a
-		// pane-died callback arriving afterwards cannot load the session and
-		// fails with "sql: no rows in result set", so neither the pane's output
-		// nor the command that produced it is recorded anywhere. Write the
-		// command here, where it is still known.
-		//
-		// Redacted: the command carries the whole forwarded environment, and
-		// output.log is not a place for the operator's API keys.
-		if launchPaneCommand != "" {
-			if redacted, ok := RedactPaneCommand(
-				launchPaneCommand, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
-				slog.Error("launch failed; rolling back its session row",
-					"session_id", sessionID, "tmux_session", tmuxSession,
-					"pane_command", redacted)
-			} else {
-				// Fail closed: without proof the environment was removed, the
-				// command cannot be written at all.
-				slog.Error("launch failed; rolling back its session row",
-					"session_id", sessionID, "tmux_session", tmuxSession,
-					"pane_command", "<withheld: environment prefix could not be located to redact>")
-			}
-		}
-		// Generation-conditional: a concurrent same-label launch that re-wrote
-		// the row after us must keep it — only the exact row THIS launch wrote
-		// (still stamped with our exit generation) is rolled back.
-		if derr := db.DeleteSessionForLaunchGeneration(sessionID, exitGeneration); derr != nil {
-			slog.Warn("launch failed; could not remove its session row",
-				"session_id", sessionID, "error", derr)
-		}
-	})
-	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
-		return fmt.Errorf("prepare managed pane exit identity: %w", err)
+	state, err := createLaunchRow(launchRowInput{
+		sessionID: sessionID, tmuxSession: tmuxSession, cwd: cwd, convID: rowConvID,
+		exitGeneration: exitGeneration, h: h, params: params,
+		harnessBuiltinMode: harnessBuiltinMode, sandboxImplementation: sandboxImplementation,
+		sandboxChosenBy: sandboxChosenBy, osSandbox: launchOSSandbox, effectiveSandbox: effectiveSandbox,
+		approvalPolicy: recordedApprovalPolicy, autoReview: autoReview, askTimeout: askTimeout,
+		envExports: envExports, paneCommand: &launchPaneCommand,
+	}, &launchUndo)
+	if err != nil {
+		return err
 	}
 	// Save the off/unavailable verdict before refusing so a resume of an
 	// existing conversation cannot leave a stale "on" badge behind.
