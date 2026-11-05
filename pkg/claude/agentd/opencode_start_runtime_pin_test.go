@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,14 +39,25 @@ func openCodeStartPin(t *testing.T, opencodeScript string) (cwd string) {
 	// delegated tmux.
 	t.Setenv(session.ResourceDelegationDirEnv, "")
 	t.Setenv("TMUX", "")
-	home := testutil.CanonicalTempDir(t)
-	t.Setenv("HOME", home)
 	return testutil.CanonicalTempDir(t)
 }
 
 func startPinnedOpenCodeRuntime(sessionID, cwd, resumeID, permissionJSON string) (*openCodeLaunch, error) {
 	return startOpenCodeRuntime(sessionID, cwd, "pin title", resumeID, permissionJSON,
 		string(sandboxpolicy.ImplementationOff), nil, "")
+}
+
+// recordOpenCodeCgroupRemovals swaps the cgroup removal for a recorder.
+func recordOpenCodeCgroupRemovals(t *testing.T) *[]string {
+	t.Helper()
+	previous := removeOpenCodeResourceCgroup
+	t.Cleanup(func() { removeOpenCodeResourceCgroup = previous })
+	var removed []string
+	removeOpenCodeResourceCgroup = func(dir string) error {
+		removed = append(removed, dir)
+		return nil
+	}
+	return &removed
 }
 
 func TestStartOpenCodeRuntime_RefusesMissingOrInvalidPermission(t *testing.T) {
@@ -87,10 +99,11 @@ func TestStartOpenCodeRuntime_RefusesAnInvalidPersistedRuntimeAndKeepsIt(t *test
 }
 
 func TestStartOpenCodeRuntime_RefusesToReplaceALiveUnprovenUnixRuntime(t *testing.T) {
+	live := openCodePinnedLiveProcess(t) // before openCodeStartPin narrows PATH
 	cwd := openCodeStartPin(t, "")
 	existing := db.OpenCodeRuntime{
 		SessionID: "spwn-pin-unix", ServerURL: "http://opencode.invalid", Cwd: t.TempDir(),
-		PID:                 os.Getpid(), // alive, and not a server this daemon started
+		PID:                 live, // alive, and not a server this daemon started
 		Transport:           db.OpenCodeTransportUnixRelay,
 		ControlSocketPath:   filepath.Join(t.TempDir(), "absent.sock"),
 		ControlSocketDevice: 1, ControlSocketInode: 1,
@@ -106,6 +119,43 @@ func TestStartOpenCodeRuntime_RefusesToReplaceALiveUnprovenUnixRuntime(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, row, "the live runtime is not retired")
 	assert.Equal(t, existing.PID, row.PID)
+}
+
+// openCodePinnedLiveProcess is a live child the test owns, so a regression
+// that retires the runtime kills it rather than the test binary.
+func openCodePinnedLiveProcess(t *testing.T) int {
+	t.Helper()
+	sleep, err := exec.LookPath("sleep")
+	require.NoError(t, err)
+	cmd := exec.Command(sleep, "60")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
+// A same-session replacement that reuses the retired server's resource cgroup
+// keeps it while it retires the old server, and removes it once when the new
+// launch then fails, so a failed replacement never orphans the cgroup.
+func TestStartOpenCodeRuntime_AFailedReplacementRemovesTheReusedCgroupOnce(t *testing.T) {
+	cwd := openCodeStartPin(t, "")
+	removed := recordOpenCodeCgroupRemovals(t)
+	const cgroup = "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-pin"
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-pin-cgroup", ServerURL: "http://127.0.0.1:43210",
+		Cwd: t.TempDir(), Transport: db.OpenCodeTransportLoopbackTCP,
+		ResourceCgroupDir: cgroup,
+	}))
+
+	launch, err := startOpenCodeRuntime("spwn-pin-cgroup", cwd, "pin title", "",
+		openCodePinnedPermission, string(sandboxpolicy.ImplementationOff), nil, cgroup)
+
+	require.ErrorContains(t, err, "find OpenCode executable")
+	assert.Nil(t, launch)
+	assert.Equal(t, []string{cgroup}, *removed,
+		"the reused cgroup is kept through retirement and removed once on failure")
 }
 
 // A same-session runtime that cannot be reused is retired before the new
@@ -155,6 +205,7 @@ func TestStartOpenCodeRuntime_GivesUpAfterThreePortAttempts(t *testing.T) {
 	launch, err := startPinnedOpenCodeRuntime("spwn-pin-ports", cwd, "", openCodePinnedPermission)
 
 	require.ErrorContains(t, err, "start OpenCode server after 3 port attempts: ")
+	assert.Contains(t, err.Error(), "pinned server refusal", "the error carries the server's stderr")
 	assert.Nil(t, launch)
 	raw, err := os.ReadFile(launches)
 	require.NoError(t, err)
