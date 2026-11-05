@@ -86,7 +86,7 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 		if grant == nil {
 			for i := range grants {
 				g := &grants[i]
-				if g.Slug == PermModelsProxy && (g.Scope == "" || g.Scope == "http_proxy="+name) && (grant == nil || g.Scope != "") {
+				if g.Slug == PermModelsProxy && grantCoversProxy(*g, name) && (grant == nil || g.Scope != "") {
 					grant = g
 				}
 			}
@@ -113,7 +113,7 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 		if !unrestricted {
 			for i := range grants {
 				g := &grants[i]
-				if g.Slug != PermModelsProxy || (g.Scope != "" && g.Scope != "http_proxy="+name) {
+				if g.Slug != PermModelsProxy || !grantCoversProxy(*g, name) {
 					continue
 				}
 				if g.ExpiresAt == nil {
