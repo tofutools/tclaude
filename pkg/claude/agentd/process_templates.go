@@ -159,8 +159,14 @@ func (e *processTemplateStoredValidationError) Error() string {
 }
 
 func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
-		return
+	// A member without process.templates.read lists the templates pinned to
+	// its groups (groups.resources.read).
+	memberOnly, limited := memberReadableProcessTemplates(r)
+	if !limited || len(memberOnly) == 0 {
+		memberOnly, limited = nil, false
+		if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+			return
+		}
 	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
@@ -193,6 +199,9 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	grouped := make(map[string][]store.TemplateRecord)
 	for _, record := range records {
 		if unlisted[record.ID] && !includeUnlisted {
+			continue
+		}
+		if limited && !memberOnly[record.ID] {
 			continue
 		}
 		grouped[record.ID] = append(grouped[record.ID], record)
@@ -334,7 +343,7 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 }
 
 func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.FS) {
-	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
+	if _, ok := requireProcessTemplateAccess(w, r, r.PathValue("id"), false); !ok {
 		return
 	}
 	version := r.URL.Query().Get("version")
@@ -485,7 +494,9 @@ func newProcessTemplateID() string {
 }
 
 func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store.FS) {
-	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
+	// A member saves a template pinned to its groups (groups.resources.write
+	// in each); a new template, or one pinned nowhere, needs the global slug.
+	caller, ok := requireProcessTemplateAccess(w, r, r.PathValue("id"), true)
 	if !ok {
 		return
 	}
@@ -497,6 +508,15 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	if body.Template == nil && strings.TrimSpace(body.Source) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "template or source is required")
 		return
+	}
+	// Membership saves the template's content only: its library listing and
+	// its pins stay process.templates.manage's.
+	if caller != "" && (body.Listed != nil || strings.TrimSpace(body.PinGroup) != "") {
+		if allowed, _, _ := permissionAllowsAction(r, caller, PermProcessTemplatesManage, ActionContext{}); !allowed {
+			if _, ok := requirePermission(w, r, PermProcessTemplatesManage); !ok {
+				return
+			}
+		}
 	}
 	pin, ok := resolveProcessTemplatePin(w, r, body.PinGroup)
 	if !ok {

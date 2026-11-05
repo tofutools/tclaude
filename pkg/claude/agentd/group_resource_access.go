@@ -241,3 +241,129 @@ func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// ---- process templates and runs ----
+//
+// A process template pinned to a group is one of that group's resources, and
+// so is a run scoped to it. Membership confers:
+//   - read: list and show the templates pinned to the group (any one of its
+//     groups suffices), and list (?group=), show and read the events of the
+//     runs scoped to it;
+//   - write: save a new version of a template pinned to the group, when the
+//     caller is a member of every group it is pinned to (a save changes it
+//     for all of them). The lock still refuses it.
+// Run mutations (pause, resume, decide, assign, reissue, resolve-blocked,
+// record-outcome, rescope) stay on process.runs.manage: they steer other
+// agents' work, beside program-profile authorization. Creating, deleting,
+// listing in the library and pinning stay on process.templates.manage.
+
+// processTemplateGroups names the active groups a template is pinned to.
+func processTemplateGroups(id string) []string {
+	pinned, err := db.ProcessTemplatePinnedGroups()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, name := range pinned[id] {
+		if g, err := db.GetAgentGroupByName(name); err == nil && g != nil && !g.IsArchived() {
+			out = append(out, g.Name)
+		}
+	}
+	return out
+}
+
+// requireGroupsResourceAccess is requireGroupResourceAccess for a resource
+// in several groups: a read passes through any one of them, a write needs
+// every one.
+func requireGroupsResourceAccess(w http.ResponseWriter, r *http.Request, global string, groups []string, write bool) (string, bool) {
+	if len(groups) <= 1 {
+		group := ""
+		if len(groups) == 1 {
+			group = groups[0]
+		}
+		return requireGroupResourceAccess(w, r, global, group, write)
+	}
+	clearAuthorizedPermission(r)
+	conv := confirmedAgentConv(r)
+	if conv == "" {
+		return requirePermissionEx(w, r, global)
+	}
+	if silentAgentAllows(r, conv, global, ActionContext{}) {
+		return conv, true
+	}
+	missing := ""
+	for _, g := range groups {
+		held := agentHoldsGroupResource(r, conv, g, write)
+		if held && !write {
+			return conv, true
+		}
+		if !held && missing == "" {
+			missing = g
+		}
+	}
+	if write && missing == "" {
+		return conv, true
+	}
+	if missing == "" {
+		missing = groups[0]
+	}
+	if resolvePermissionVerdictForRequest(r, conv, global).Resolution != permUndecided {
+		return requirePermissionEx(w, r, global)
+	}
+	slug := PermGroupsResourcesRead
+	if write {
+		slug = PermGroupsResourcesWrite
+	}
+	return requirePermissionEx(w, r, slug, groupResourceContext(missing))
+}
+
+// requireProcessTemplateAccess gates a read (or a save) of one template.
+func requireProcessTemplateAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
+	global := PermProcessTemplatesRead
+	if write {
+		global = PermProcessTemplatesManage
+	}
+	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), write)
+}
+
+// memberReadableProcessTemplates is, for an agent without the global read,
+// the templates it reads through its groups; nil when it has the global read
+// or is not an agent the membership source applies to.
+func memberReadableProcessTemplates(r *http.Request) (map[string]bool, bool) {
+	clearAuthorizedPermission(r)
+	conv := confirmedAgentConv(r)
+	if conv == "" || silentAgentAllows(r, conv, PermProcessTemplatesRead, ActionContext{}) {
+		return nil, false
+	}
+	pinned, err := db.ProcessTemplatePinnedGroups()
+	if err != nil {
+		return nil, false
+	}
+	readable := map[string]bool{}
+	held := map[string]bool{}
+	for id, groups := range pinned {
+		for _, name := range groups {
+			ok, seen := held[name]
+			if !seen {
+				g, err := db.GetAgentGroupByName(name)
+				ok = err == nil && g != nil && !g.IsArchived() && agentHoldsGroupResource(r, conv, name, false)
+				held[name] = ok
+			}
+			if ok {
+				readable[id] = true
+				break
+			}
+		}
+	}
+	return readable, true
+}
+
+// requireProcessRunRead gates the read of one run: process.runs.read, or the
+// group read slug in the group the run is scoped to.
+func requireProcessRunRead(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {
+	group := ""
+	if scope, err := db.GetProcessRunScope(runID); err == nil && scope.Kind == db.ProcessRunScopeGroup {
+		group = scope.GroupName
+	}
+	return requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false)
+}

@@ -53,6 +53,16 @@ Two permissions govern authoring, and neither executes anything:
   agent default by `tclaude setup --install-default-agent-permissions`.
 - `process.templates.manage` — save, import. Never a default.
 
+A template pinned to a group is also one of that group's resources. Its
+members, with neither slug, list and show it (`groups.resources.read`, which
+membership confers), and save a new version of it (`groups.resources.write`)
+when they are members of every group it is pinned to: a save changes it for
+all of them. Creating a template, deleting one, its library listing and its
+pins stay `process.templates.manage`'s, and a lock on the template refuses a
+member's save as it does any agent's. See
+[Boards › Group boards are their members'](boards.md#group-boards-are-their-members)
+for how the membership source works.
+
 ### Sharing workflows
 
 A process can be shared as a `.pwf` file that carries the template and every
@@ -202,6 +212,15 @@ Ownership confers reads only — mutations always need an explicit
 explicit per-agent deny overrides everything, the owner grant included. See
 [Permissions and audit](permissions-and-audit.md). Starting a run bound to a
 group or an agent uses the scope gates below instead.
+
+A run scoped to a group is that group's resource too: its members read it
+without `process.runs.read`. They list the group's runs with
+`runs ls --group <g>`, and `show` and `events` them (`groups.resources.read`,
+conferred by membership). The boundary is deliberate: membership confers no
+mutation. Pausing, resuming, deciding, assigning, reissuing, resolving a
+block or recording an outcome steers other agents' work, so they stay on
+`process.runs.manage`. An unfiltered `runs ls` still needs
+`process.runs.read`.
 
 ## Run scope
 
