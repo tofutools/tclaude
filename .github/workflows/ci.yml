@@ -160,7 +160,7 @@ jobs:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
-          python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY" || true
           dump="$RUNNER_TEMP/seatbelt-profile-dumps"
           rm -rf "$dump" && mkdir -p "$dump"
           go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
@@ -222,7 +222,7 @@ jobs:
           else
             echo "screen_locked=false at $(date -u +%H:%M:%SZ)"
           fi
-          python3 scripts/ci/seatbelt-profile-replay.py "$dump" 10 | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/ci/seatbelt-profile-replay.py "$dump" 10 | tee -a "$GITHUB_STEP_SUMMARY" || true
           for sb in "$dump"/*.sb; do [ -e "$sb" ] || continue; echo "== $sb"; cat "$sb"; done
           echo "== kernel Sandbox denials (network), last 4 minutes"
           log show --last 6m --style compact --predicate 'sender == "Sandbox"' > "$RUNNER_TEMP/sandbox-log.txt" 2>&1 || true

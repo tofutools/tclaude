@@ -72,7 +72,12 @@ def one(form, same_port):
             listener.close()
             return "no-lan-address"
         other = socket.socket()
-        other.bind((addr, port))
+        try:
+            other.bind((addr, port))
+        except OSError:
+            other.close()
+            listener.close()
+            return "port-busy"
         other.listen(8)
     try:
         out = subprocess.run(

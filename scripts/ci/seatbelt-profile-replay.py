@@ -174,6 +174,43 @@ def main():
                           else "dir" if os.path.isdir(value) else "file" if os.path.isfile(value)
                           else "MISSING")
                 print(f"  param {name}={value} [{kind_p}]")
+            # Direct test of the existence hypothesis: the unix-socket deny
+            # params present (throwaway unix listeners at their exact paths)
+            # vs absent, for literal and path-literal.
+            unix_params = sorted(set(re.findall(r'\(param "([^"]+)"\)', "\n".join(unix))))
+            def with_sockets(fn_inner):
+                made, created_dirs = [], []
+                try:
+                    for name in unix_params:
+                        path = params.get(name, "")
+                        if not path or os.path.exists(path):
+                            continue
+                        parent = os.path.dirname(path)
+                        if not os.path.isdir(parent):
+                            os.makedirs(parent, exist_ok=True)
+                            created_dirs.append(parent)
+                        try:
+                            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                            sock.bind(path)
+                            sock.listen(4)
+                            made.append((sock, path))
+                        except OSError as err:
+                            print(f"  exist-test: cannot bind {path}: {err}")
+                    return fn_inner(), len(made)
+                finally:
+                    for sock, path in made:
+                        sock.close()
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+            for form_name, block in (("literal", unix),
+                                     ("path-literal", [u.replace("(literal (param", "(path-literal (param") for u in unix])):
+                text = "\n".join(head + net + block)
+                absent = rate_with(connect_py, text, params, port, 5)
+                present, bound = with_sockets(lambda: rate_with(connect_py, text, params, port, 5))
+                print(f"  exist-test: {form_name}: sockets absent ok={absent[0]}/5; "
+                      f"sockets present ({bound} bound) ok={present[0]}/5 {present[1]}")
             for k, u in enumerate(unix):
                 pl = u.replace("(literal (param", "(path-literal (param")
                 for conn_name, fn, _ in connectors()[:2]:
