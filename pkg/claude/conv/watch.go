@@ -2274,6 +2274,11 @@ func resumeLaunchCmd(
 		harnessName, sessionID, convID, extraArgs, nil, nil)
 }
 
+// resolveResumeTclaudeLayer is the bubblewrap capability probe and binary
+// resolution for a resume behind tclaude's sandbox. A variable so tests on
+// hosts without unprivileged user namespaces can pin the command it builds.
+var resolveResumeTclaudeLayer = session.ResolveTclaudeLayerForEngineWithIdentity
+
 // resumeLaunchCmdWithEffectiveSandbox is resumeLaunchCmd that also hands back
 // the effective sandbox snapshot the launch was rendered from, so a caller can
 // disclose its access notices, and launches with what agentd prepared for the
@@ -2331,6 +2336,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	// exclusions from an earlier launch. Deny-row clamping remains an agentd
 	// lifecycle responsibility.
 	var launchGrants []sandboxpolicy.FilesystemGrant
+	var tmpfsDirs []string
 	var agentDirPaths []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
@@ -2450,6 +2456,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if sandboxpolicy.SupportsTmpfsMounts(implementation, runtime.GOOS) {
 			for _, mount := range validated.Effective.Tmpfs {
 				writeDirs = append(writeDirs, mount.Path)
+				tmpfsDirs = append(tmpfsDirs, mount.Path)
 			}
 		}
 	}
@@ -2599,6 +2606,12 @@ func resumeLaunchCmdWithEffectiveSandbox(
 					plannedAxes.Network, err)
 		}
 	}
+	// The posture gate every tclaude-layer launch boundary runs: a harness
+	// whose own sandbox the launch cannot turn off has it verified off, and a
+	// pass-through argument that would turn it back on is refused.
+	if err := session.GateTclaudeLayerHarnessPosture(h, outerLayer, effectiveSandbox, extraArgs); err != nil {
+		return "", "", nil, err
+	}
 	approvalState, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
@@ -2682,8 +2695,8 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	}
 	if outerLayer {
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
-			tclaudeLayerContractWriteDirs = appendUniqueResumeDir(tclaudeLayerContractWriteDirs, workspace)
+			writeDirs = session.AppendUniqueDir(writeDirs, workspace)
+			tclaudeLayerContractWriteDirs = session.AppendUniqueDir(tclaudeLayerContractWriteDirs, workspace)
 		}
 	}
 	if workspaceDenied {
@@ -2693,13 +2706,13 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// WRITE on every harness — not just Codex — or a resumed agent in a plain
 		// directory silently loses write access it had at spawn.
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+			writeDirs = session.AppendUniqueDir(writeDirs, workspace)
 		}
 	}
 	// Launch contract: pair explicit read reopens for everything tclaude
 	// requires the resumed agent to reach when a deny covers it. Mirrors the
 	// spawn path — see session.sandboxLaunchContractReadDirs.
-	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, append([]string{resumeCwd}, writeDirs...))...)
+	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, resumeContractReadCandidates(resumeCwd, writeDirs, launchGrants, tmpfsDirs))...)
 	// Re-gate on the rules that will actually be emitted: the launch contract
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
@@ -2855,35 +2868,25 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			return "", "", nil, engineErr
 		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayerForEngineWithIdentity(
+		binary, _, resolveErr = resolveResumeTclaudeLayer(
 			posture, root, engine,
 			posture == sandboxpolicy.NetworkFiltered &&
 				engine == sandboxpolicy.NetworkEnginePacket)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
-		var harnessReadPaths []string
-		if h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			// The same resolution `session new` performs: a constructed root
-			// cannot see a Gemini or Node installed under the home directory.
-			resolved, resolveErr := harness.ResolveGeminiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		// The same pinning `session new` performs, so a resumed pane starts the
+		// binary a new one would: a constructed root cannot see a harness
+		// installed under the home directory.
+		pinned, pinnedExecutable, pinErr := session.ResolveTclaudeLayerExecutable(h.Name, root)
+		if pinErr != nil {
+			return "", "", nil, pinErr
 		}
-		if h.Name == harness.PiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			resolved, resolveErr := harness.ResolvePiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		var harnessReadPaths []string
+		if pinnedExecutable {
+			spec.ExecutablePath = pinned.Path
+			spec.ExecutableInterpreter = pinned.Interpreter
+			harnessReadPaths = pinned.ReadPaths
 		}
 		if statusExtensionDir != "" {
 			// As in `session new`: mounted read-only, and reaching tclaude
@@ -2964,7 +2967,7 @@ func canonicalResumeWorkspace(cwd string) string {
 // reached through a symlinked ancestor must be resolved before comparison or a
 // covering deny goes undetected and the workspace is never reopened.
 func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) bool {
-	path = canonicalResumeSandboxPath(path)
+	path = session.CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -2977,6 +2980,33 @@ func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) b
 		}
 	}
 	return false
+}
+
+// resumeContractReadCandidates is the host-path candidate list for
+// resumeLaunchContractReadDirs: the workspace plus the write dirs, minus the
+// sandbox-side path of every remapped write grant and every tmpfs mount. Each
+// candidate is resolved against the HOST, so a sandbox-side spelling would
+// mint a read reopen for whatever sits at that spelling on the host; and
+// neither needs a reopen, because its mount is applied after the deny that
+// would have masked it. Same candidates as session.sandboxLaunchContractReadDirs,
+// which never sees tmpfs mounts or remapped guests.
+func resumeContractReadCandidates(cwd string, writeDirs []string, grants []sandboxpolicy.FilesystemGrant, tmpfsDirs []string) []string {
+	mounted := make(map[string]bool, len(tmpfsDirs))
+	for _, dir := range tmpfsDirs {
+		mounted[dir] = true
+	}
+	for _, grant := range grants {
+		if grant.Access == sandboxpolicy.AccessWrite && grant.IsRemapped() {
+			mounted[grant.GuestPath()] = true
+		}
+	}
+	candidates := []string{cwd}
+	for _, dir := range writeDirs {
+		if !mounted[dir] {
+			candidates = append(candidates, dir)
+		}
+	}
+	return candidates
 }
 
 // resumeLaunchContractReadDirs mirrors session.sandboxLaunchContractReadDirs on
@@ -2997,36 +3027,14 @@ func resumeLaunchContractReadDirs(grants []sandboxpolicy.FilesystemGrant, agentD
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalResumeSandboxPath(candidate)
+		candidate = session.CanonicalSandboxPath(candidate)
 		if candidate == "" || !resumeDenyCoversPath(grants, candidate) {
 			continue
 		}
-		out = appendUniqueResumeDir(out, candidate)
+		out = session.AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// canonicalResumeSandboxPath mirrors session.canonicalSandboxPath: resolve when
-// possible, fall back to the lexical form otherwise.
-func canonicalResumeSandboxPath(path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || !filepath.IsAbs(path) {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(resolved)
-	}
-	return path
-}
-
-func appendUniqueResumeDir(dirs []string, dir string) []string {
-	for _, existing := range dirs {
-		if existing == dir {
-			return dirs
-		}
-	}
-	return append(dirs, dir)
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {
@@ -3300,14 +3308,14 @@ func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
 	// Git common/admin descendants only.
 	var narrow []string
 	if workspace := canonicalResumeWorkspace(cwd); workspace != "" {
-		narrow = appendUniqueResumeDir(narrow, workspace)
+		narrow = session.AppendUniqueDir(narrow, workspace)
 	}
 	commonDir = filepath.Clean(commonDir)
-	narrow = appendUniqueResumeDir(narrow, commonDir)
+	narrow = session.AppendUniqueDir(narrow, commonDir)
 	for _, dir := range dirs {
 		dir = filepath.Clean(dir)
 		if sandboxpolicy.PathContainsOrEqual(commonDir, dir) {
-			narrow = appendUniqueResumeDir(narrow, dir)
+			narrow = session.AppendUniqueDir(narrow, dir)
 		}
 	}
 	return narrow, nil
