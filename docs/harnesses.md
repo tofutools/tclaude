@@ -466,7 +466,7 @@ preserved across clone, resume, and reincarnate.
 sub-agent such as `explore` or `general`, is always denied under tclaude, in
 every sandbox mode and whatever the tool-governance setting. OpenCode then
 hides the tool, so the main agent reads and searches files itself, and every
-OpenCode spawn says so in its launch notes. The reason: tclaude's permission
+OpenCode agent spawn says so in its launch notes. The reason: tclaude's permission
 policy is a per-session rule list that starts by denying everything and then
 allows what the launch may do. When OpenCode (1.18.6) creates a sub-agent
 session, it copies only the parent's deny rules into it, so the sub-agent got

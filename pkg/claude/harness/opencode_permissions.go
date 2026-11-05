@@ -102,14 +102,14 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 // produce a working sub-agent, so letting one re-enable task would only bring
 // the broken delegation back. Lift this once OpenCode can hand a child the
 // parent's full session ruleset.
-// OpenCodeSubagentsOffNote is the launch note every OpenCode spawn carries.
-const OpenCodeSubagentsOffNote = "OpenCode sub-agents (its task tool) are off under tclaude: " +
-	"OpenCode gives a sub-agent only the deny rules of tclaude's permission policy, " +
-	"so it could not read or search files. The main agent does that work itself."
-
 var openCodeSubagentDenyRule = OpenCodePermissionRule{
 	Permission: "task", Pattern: "*", Action: openCodeActionDeny,
 }
+
+// OpenCodeSubagentsOffNote is the launch note every daemon OpenCode spawn (and its preview) carries.
+const OpenCodeSubagentsOffNote = "OpenCode sub-agents (its task tool) are off under tclaude: " +
+	"OpenCode gives a sub-agent only the deny rules of tclaude's permission policy, " +
+	"so it could not read or search files. The main agent does that work itself."
 
 func buildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
 	harnessBuiltinMode, err := (openCodeSandbox{}).ValidateMode(spec.HarnessBuiltinMode)

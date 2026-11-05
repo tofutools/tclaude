@@ -245,7 +245,7 @@ type SpawnArgs struct {
 	Approval string
 
 	// ToolGovernance is OpenCode's uniform allow/ask/deny action for the
-	// bash/glob/grep/lsp/task/skill block. Empty omits --tools; daemon-owned
+	// bash/glob/grep/lsp/skill block. Empty omits --tools; daemon-owned
 	// launches resolve it to allow before constructing SpawnArgs.
 	ToolGovernance string
 

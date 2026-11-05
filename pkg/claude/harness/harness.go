@@ -187,7 +187,7 @@ type Harness struct {
 	AskTimeout AskTimeoutCatalog
 	// ToolGovernance names the uniform allow/ask/deny action applied to a
 	// harness-defined built-in tool group. OpenCode supplies this catalog for
-	// bash/glob/grep/lsp/task/skill; Claude Code and Codex leave it nil.
+	// bash/glob/grep/lsp/skill; Claude Code and Codex leave it nil.
 	ToolGovernance ToolGovernanceCatalog
 	// HostControlSandbox is the optional harness-native launch preparation that
 	// keeps an agent from reaching tclaude's host control plane. nil means the
