@@ -44,7 +44,7 @@ type newLaunchOptions struct {
 // resolveNewLaunch validates params and resolves the launch options from
 // them, normalizing params in place. It creates nothing, so any error leaves
 // no state behind.
-func resolveNewLaunch(params *NewParams, effectiveSandbox, launchSandbox *sandboxpolicy.Snapshot) (*newLaunchOptions, error) {
+func resolveNewLaunch(params *NewParams, launchSandbox *sandboxpolicy.Snapshot) (*newLaunchOptions, error) {
 	// The spawn command, model/effort validation and resume form all come
 	// from the selected harness behind the seam (pkg/claude/harness).
 	// --harness picks it (default "claude"); an unknown value errors here

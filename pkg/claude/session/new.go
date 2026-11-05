@@ -565,7 +565,7 @@ func runNew(params *NewParams) error {
 		return runNewShell(params)
 	}
 
-	opts, err := resolveNewLaunch(params, effectiveSandbox, launchSandbox)
+	opts, err := resolveNewLaunch(params, launchSandbox)
 	if err != nil {
 		return err
 	}
