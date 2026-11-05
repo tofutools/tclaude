@@ -23,8 +23,10 @@ func TestResolveSpawnLaunchSeamEnrollsImportsBeforeLaunch(t *testing.T) {
 	require.Nil(t, fail)
 	assert.False(t, enroll)
 
-	imported = "imported-conv"
-	enroll, _, fail = resolveSpawnLaunchSeam(nil, &spawnParams{}, codex, false, "", noHistory, &imported)
+	// The history install writes the imported id; the seam reads it afterwards.
+	imported = ""
+	install := func(*harness.Harness) *spawnFailure { imported = "imported-conv"; return nil }
+	enroll, _, fail = resolveSpawnLaunchSeam(nil, &spawnParams{}, codex, false, "", install, &imported)
 	require.Nil(t, fail)
 	assert.True(t, enroll, "an import enrolls before launch")
 }
