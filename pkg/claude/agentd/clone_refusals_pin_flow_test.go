@@ -16,6 +16,9 @@ import (
 // These pin runCloneOrchestration's pre-spawn refusals that no other clone
 // test reaches by code, before it is split into steps: each is refused with
 // its status, code and message, and none of them spawns or registers a clone.
+// The shell-harness refusal (unsupported_harness) is not among them: a
+// recorded relaunch profile carries an approval policy the shell harness
+// rejects, so relaunch_profile refuses first.
 func TestClone_RefusalsSpawnNothing(t *testing.T) {
 	const src = "pin-aaaa-bbbb-cccc-0001"
 	for _, tc := range []struct {

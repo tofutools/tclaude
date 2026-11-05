@@ -1848,8 +1848,10 @@ type cloneOrchestration struct {
 // close runs the registered cleanups, last registered first, as the
 // handler's defers did.
 func (co *cloneOrchestration) close() {
-	for i := len(co.cleanups) - 1; i >= 0; i-- {
-		co.cleanups[i]()
+	// Deferred one by one, so a cleanup that panics still lets the earlier
+	// ones run, exactly as separate defers would.
+	for _, cleanup := range co.cleanups {
+		defer cleanup()
 	}
 }
 
