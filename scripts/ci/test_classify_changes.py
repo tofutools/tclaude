@@ -513,6 +513,24 @@ class GitPlumbing(unittest.TestCase):
         self.commit_message("edit\n\nCI-macOS: false")
         self.assert_macos(self.outputs(self.base, "--pr-head", self.rev(), no_go=True), False)
 
+    def test_self_hosted_macos_only_with_the_flag(self):
+        # The flag picks the runner; it never opts in by itself.
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit_message("edit\n\nCI-macOS: true")
+        head = self.rev()
+        hosted = self.outputs(self.base, "--pr-head", head, no_go=True)
+        self.assert_macos(hosted, True)
+        self.assertEqual(json.loads(hosted["macos_runner"]), MACOS)
+        own = self.outputs(self.base, "--pr-head", head, "--self-hosted-macos", no_go=True)
+        self.assertEqual(json.loads(own["macos_runner"]), cc.MACOS_SELF_HOSTED)
+        mac = [e for e in own["matrix"] if e["os"] != LINUX]
+        self.assertEqual(mac, [{"os": cc.MACOS_SELF_HOSTED, "shard": s} for s in cc.MACOS_SHARDS])
+        self.assertEqual(own["run_sandbox_v2_seatbelt_smoke"], "true")
+        self.commit_message("follow-up without the trailer")
+        off = self.outputs(self.base, "--pr-head", self.rev(), "--self-hosted-macos", no_go=True)
+        self.assertEqual([e for e in off["matrix"] if e["os"] != LINUX], [])
+        self.assertEqual(off["run_sandbox_v2_seatbelt_smoke"], "false")
+
     def test_missing_pr_head_fails(self):
         res = self.run_script(self.base, "--pr-head", "0" * 40)
         self.assertNotEqual(res.returncode, 0)
@@ -572,12 +590,37 @@ class WorkflowConsistency(unittest.TestCase):
             self.assertRegex(self.action, rf"\n\s+{re.escape(shard)}\)", shard)
 
     def test_macos_only_behind_the_opt_in(self):
-        # The one literal macOS runner is the opt-in-gated Seatbelt smoke; the
-        # test job's macOS entries come only from the classifier's matrix.
-        self.assertEqual(len(re.findall(r"(?m)^\s*runs-on:.*mac", self.ci)), 1)
-        self.assertRegex(self.job_block("sandbox-v2-seatbelt-smoke"),
-                         r"\n    runs-on: macos-latest\n")
+        # The one macOS runner outside the matrix is the opt-in-gated Seatbelt
+        # smoke, which takes it from the classifier like the test job's macOS
+        # entries do. No job names a macOS or self-hosted runner literally.
+        self.assertEqual(re.findall(r"(?m)^\s*runs-on:\s*\[?\s*(?:macos|self-hosted)", self.ci), [])
+        self.assertIn("    runs-on: ${{ fromJSON(needs.changes.outputs.macos_runner) }}\n",
+                      self.job_block("sandbox-v2-seatbelt-smoke"))
+        self.assertIn("      macos_runner: ${{ steps.diff.outputs.macos_runner }}\n",
+                      self.job_block("changes"))
         self.assertIn("    runs-on: ${{ matrix.os }}\n", self.job_block("test"))
+
+    def test_fork_prs_never_reach_the_self_hosted_runner(self):
+        # The opt-in trailer is fork-controlled, so the self-hosted route is
+        # granted by the head repository alone, in the workflow, not by
+        # anything the PR's commits say.
+        block = self.job_block("changes")
+        self.assertIn("HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}", block)
+        guard = ('if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then\n'
+                 '            runner_args=(--self-hosted-macos)\n'
+                 '          fi\n')
+        self.assertIn(guard, block)
+        self.assertEqual(self.ci.count("--self-hosted-macos"), 1)
+        self.assertIn('"${runner_args[@]}"', block)
+        # Hosted macOS is the default: without the flag the classifier never
+        # names the self-hosted runner.
+        self.assertEqual(cc.macos_runner(False), "macos-latest")
+        self.assertEqual(cc.macos_runner(True), ["self-hosted", "macOS", "ARM64"])
+        # main keeps the hosted runner.
+        for name in ("release.yml", "manual-release.yml"):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            self.assertEqual(re.findall(r"(?m)^\s*runs-on:.*self-hosted", text), [], name)
+            self.assertRegex(text, r"\n    runs-on: macos-latest\n", name)
 
     def test_gate_exempts_only_the_opt_in_jobs(self):
         m = re.search(r"opt_in = \{(.*)\}", self.job_block("ci-complete"))

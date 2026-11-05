@@ -129,8 +129,7 @@ darwin and that Linux CI cannot exercise: `_darwin.go` / `_unix.go` files or
 launcher, macOS paths (`/var/folders` vs `/private/var/folders`, `~/Library`),
 and the `scripts/seatbelt-smoke` driver. Everything else gets darwin coverage
 on main after the merge. Fork PRs can use the trailer too (a label needs
-triage rights). That is fine on hosted runners, but not once self-hosted
-runners are attached; see below.
+triage rights), but their macOS jobs run on hosted runners; see below.
 
 #### Running macOS on every PR again
 
@@ -163,20 +162,27 @@ save a build cache (the `agentd` and `sandbox` shards on each OS).
 
 #### Self-hosted macOS runners
 
-- **Labels.** Give the runners a single custom label (for example
-  `tclaude-macos`) and use it wherever `macos-latest` appears: the classifier's
-  `MACOS`, the `macos` jobs, and the Seatbelt smoke job. A single label keeps
-  `matrix.os` a plain string. To target the default label set instead, use
-  `runs-on: [self-hosted, macOS, ARM64]` in jobs that do not take it from the
-  matrix.
+PR CI's opted-in macOS jobs run on the repository's self-hosted macOS runner
+when the PR's head branch is in this repository, and on hosted `macos-latest`
+when it comes from a fork. Main keeps hosted macOS: `release.yml` and
+`manual-release.yml` are unchanged.
+
+- **Routing.** The `Changes` job passes `--self-hosted-macos` to the
+  classifier only when `github.event.pull_request.head.repo.full_name` equals
+  `github.repository`. The classifier then gives the macOS test entries and the
+  Seatbelt smoke (through its `macos_runner` output) the runner's default
+  labels, `[self-hosted, macOS, ARM64]`, instead of `macos-latest`.
+  `test_classify_changes.py` pins this.
 - **Security.** This repository is public. A fork's pull request can run
   arbitrary code on any runner it reaches, so never let fork PRs reach
-  self-hosted runners. The `CI-macOS: true` trailer is fork-controlled, so
-  once macOS jobs run on self-hosted runners, gate them on
-  `github.event.pull_request.head.repo.full_name == github.repository` as
-  well as on the opt-in.
-  Require approval for outside contributors' workflow runs. Put the runners in
-  a runner group restricted to this repository.
+  self-hosted runners. The `CI-macOS: true` trailer is fork-controlled, which
+  is why the head repository decides the route. That check stops accidental
+  routing only: a fork PR's workflow is read from its own merge commit, so a
+  fork can edit `ci.yml` itself. The real safeguard is in the repository
+  settings: require approval for all outside contributors' workflow runs
+  (Settings › Actions › General), read a fork's changes to `.github/` and
+  `scripts/ci/` before approving, and keep the runner in a group restricted
+  to this repository.
 - **Ephemeral runners.** Prefer ephemeral runners (`config.sh --ephemeral`,
   one job per machine). The sandbox tests change their environment, and the
   Seatbelt smoke runs `npm install --global`, so a persistent runner carries
