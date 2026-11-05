@@ -509,9 +509,12 @@ You toggle the lock here; an agent can only when you grant it
 `groups.resources.lock`, which also lets it change the locked resource. The
 same chip is on the resource's own header: the process editor, the board and
 the page. In the Collab view, a locked resource also wears a small 🔒 on its
-tab name and on its row in the side panel; its tooltip says what the lock
-means. A board tab's right-click menu has **Lock for agents** / **Unlock for
-agents**. See
+tab name; its tooltip says what the lock means. Its row in the side panel has
+a lock toggle at its right end: an amber closed lock, always shown, while the
+resource is locked, and a dim open lock on hover or keyboard focus while it
+is unlocked. Click it to lock or unlock. A board tab's right-click menu has
+**Lock for agents** / **Unlock for agents**. All of these show the same
+state, so a toggle in one shows in the others at once. See
 [Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
 
 A peer's group in the fused view lists its resources too, read from that

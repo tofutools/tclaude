@@ -756,6 +756,16 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .collab-rail .cr-tool { background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 0 3px; font-size: 12px; }
 .collab-rail .cr-tool:hover { color: var(--ui-strong-text); }
 .collab-rail .cr-quiet { margin: 4px 6px; }
+/* A resource row's lock toggle (resource-lock.js RailLock): amber and always
+   shown while locked, a dim open lock on row hover or focus while unlocked. */
+.collab-rail .cr-lock { flex: none; display: none; align-items: center; justify-content: center; width: 20px; height: 20px;
+  padding: 0; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--ui-muted-text); opacity: .7; cursor: pointer; }
+.collab-rail .cr-lock.is-locked { display: inline-flex; color: #d29922; opacity: 1; }
+.collab-rail .cr-item:hover .cr-lock, .collab-rail .cr-item:focus-within .cr-lock { display: inline-flex; }
+.collab-rail .cr-lock:hover, .collab-rail .cr-lock:focus-visible { opacity: 1; background: rgba(56, 139, 253, .15); border-color: rgba(56, 139, 253, .5); }
+.collab-rail .cr-lock:not(.is-locked):hover, .collab-rail .cr-lock:not(.is-locked):focus-visible { color: #79c0ff; }
+.collab-rail .cr-lock.is-denied { cursor: not-allowed; }
+.collab-rail .cr-lock.is-denied:hover { background: none; border-color: transparent; }
 
 /* An agent's light, in the tab strip's colours. */
 .collab-rail .cr-status-working .cr-glyph { color: #3fb950; }
