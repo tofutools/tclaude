@@ -1,10 +1,13 @@
 package agentd
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -107,6 +110,7 @@ func requirePython(t *testing.T) {
 func TestStopOpenCodeProcess_ADirectServerIsStoppedAndDeregistered(t *testing.T) {
 	requirePython(t)
 	runtime, authority := openCodeProcessPin(t, healthyOpenCodeScript)
+	diagnoseOpenCodeStartup(t, runtime) // TEMPORARY: macOS CI diagnosis
 	process, err := startOpenCodeProcessWithAuthority(&runtime, nil, authority)
 	require.NoError(t, err)
 	killOnCleanup(t, runtime.PID)
@@ -178,4 +182,42 @@ func TestStopOpenCodeProcess_AVerifiedRecoveredPIDIsKilled(t *testing.T) {
 			assert.Nil(t, registeredOpenCodeProcess(runtime.SessionID))
 		})
 	}
+}
+
+// diagnoseOpenCodeStartup is TEMPORARY: it logs, three seconds into the start,
+// what the ownership proof and a raw request see, to find why this pin's start
+// times out on macOS CI while the identical start pin passes.
+func diagnoseOpenCodeStartup(t *testing.T, runtime db.OpenCodeRuntime) {
+	t.Helper()
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	port := strings.TrimPrefix(runtime.ServerURL, "http://127.0.0.1:")
+	go func() {
+		defer close(done)
+		time.Sleep(3 * time.Second)
+		run := func(name string, args ...string) {
+			out, err := exec.Command(name, args...).CombinedOutput()
+			t.Logf("DIAG %s %v: err=%v\n%s", name, args, err, out)
+		}
+		python, lookErr := exec.LookPath("python3")
+		t.Logf("DIAG python3=%s (%v) PATH=%s HOME=%s TMPDIR=%s", python, lookErr, os.Getenv("PATH"), os.Getenv("HOME"), os.Getenv("TMPDIR"))
+		run("lsof", "-nP", "-iTCP@127.0.0.1:"+port, "-sTCP:LISTEN", "-Fp")
+		run("lsof", "-nP", "-iTCP:"+port)
+		run("sh", "-c", "ps -axo pid,ppid,pgid,stat,command | grep -E 'python|opencode|"+port+"' | grep -v grep")
+		openCodeProcesses.Lock()
+		registered := openCodeProcesses.bySession[runtime.SessionID]
+		openCodeProcesses.Unlock()
+		if registered != nil {
+			t.Logf("DIAG registered root pid %d", registered.rootPID())
+			t.Logf("DIAG owns endpoint: %v", openCodeProcessOwnsEndpoint(registered.rootPID(), runtime.ServerURL))
+		}
+		response, err := http.Get(runtime.ServerURL + "/global/health")
+		if err != nil {
+			t.Logf("DIAG raw GET: %v", err)
+			return
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		t.Logf("DIAG raw GET: %d %s", response.StatusCode, body)
+	}()
 }
