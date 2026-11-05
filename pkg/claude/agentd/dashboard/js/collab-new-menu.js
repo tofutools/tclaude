@@ -22,7 +22,7 @@ import { openBoardPane } from './board-overlay-state.js';
 import { openProcessTab } from './process-editor-place.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { addGroupBoard, addGroupPage, addGroupShell } from './groups-resources.js';
-import { processRunApi, processContext } from './process-context.js';
+import { groupContextEntry, processRunApi, processContext } from './process-context.js';
 import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -58,7 +58,13 @@ export const defaultNewContext = () => ({
   spawn: openAgentSpawnModal,
   shell: addGroupShell,
   board: (group) => addGroupBoard(group, { api: processRunApi, notify: shellToast, source: processContext }),
-  page: (group, pages) => addGroupPage(group, pages, { api: processRunApi, notify: shellToast, source: processContext }),
+  // The page name must be free in the group: the process context lists its
+  // pages, and only the Groups tab keeps it fresh, so read it first.
+  page: async (group, pages) => {
+    await Promise.resolve(processContext.refresh()).catch(() => {});
+    const fresh = groupContextEntry(processContext.context.value, group)?.pages || pages;
+    return addGroupPage(group, fresh, { api: processRunApi, notify: shellToast, source: processContext });
+  },
   boardIds: () => processRunApi.boardIds(),
   openBoard: openBoardPane,
   openProcess: openProcessTab,
@@ -84,6 +90,9 @@ export function NewMenu({ group = null, groups = [], pagesOf = () => [], process
     if (!next) setView('root');
     (held ? onOpen : setOwnOpen)(next);
   };
+  // However it closed (its own pick, Escape, or another ＋ opening), it opens
+  // next on its kinds.
+  useEffect(() => { if (!open) setView('root'); }, [open]);
   useEffect(() => {
     if (!request?.n) return;
     setView(request.view === 'processes' && processes ? 'processes' : 'boards');

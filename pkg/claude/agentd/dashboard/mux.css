@@ -691,7 +691,7 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
    pointer has left the row for it. */
 .collab-rail .cr-tools:has([aria-expanded="true"]) { display: inline-flex; }
 .collab-rail .cr-menu, .collab-rail .cr-new-slot { position: relative; display: inline-flex; flex: none; }
-.collab-rail .cr-row-menu { position: absolute; right: 0; top: calc(100% + 2px); z-index: var(--z-popover); min-width: 180px; }
+.collab-rail .cr-row-menu { position: absolute; right: 0; top: calc(100% + 2px); z-index: var(--z-popover); min-width: min(180px, calc(var(--dock-w, 264px) - 24px)); }
 .collab-rail .cr-stale .cr-state { color: #d29922; }
 /* ＋ New (collab-new-menu.js) in the header, and a group header's ＋. */
 .collab-rail .cr-new { flex: none; font-size: 12px; padding: 3px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap;
@@ -700,8 +700,11 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .collab-rail .cr-section-row { display: flex; align-items: center; gap: 2px; }
 .collab-rail .cr-section-row .cr-section-head { flex: 1 1 auto; min-width: 0; }
 .collab-rail .cr-section-add { color: #58a6ff; font-size: 13px; }
-.collab-rail .cr-new-menu, .collab-rail .cr-new-list { position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: var(--z-popover); min-width: 240px; }
-.collab-rail .cr-new-list { max-width: min(360px, calc(100vw - 24px)); }
+.collab-rail .cr-new-menu, .collab-rail .cr-new-list { position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: var(--z-popover);
+  box-sizing: border-box; width: calc(var(--dock-w, 264px) - 16px); }
+/* The panel scrolls, so what overflows its left edge is lost: the board and
+   process lists fit its width. */
+.collab-rail .cr-new-list .board-list.compact { width: auto; max-width: 100%; }
 .collab-rail .cr-new-back { display: block; margin: 6px 8px 0; padding: 0; background: none; border: 0; color: #58a6ff; font-size: 12px; cursor: pointer; }
 /* The Filter button's background count (the strip's old counter) and the
    Attach all set apart at the bottom of its menu. */

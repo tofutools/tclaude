@@ -22,7 +22,7 @@ import { offerSidePanel, registerSidePanel, setSidePanelOpen } from './side-pane
 import { collabItems, openRailItem, overlayOf, pressable, startRailDrag } from './collab-rail-actions.js';
 import { RailLock } from './resource-lock.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
-import { RailRowMenu, defaultRowContext, tmuxAttachHint, useRowMenu } from './collab-rail-menu.js';
+import { RailRowMenu, defaultRowContext, hasRowActions, tmuxAttachHint, useRowMenu } from './collab-rail-menu.js';
 import { NewMenu } from './collab-new-menu.js';
 import { groupContextEntry, processContext } from './process-context.js';
 import { processesAvailable } from './feature-availability.js';
@@ -151,10 +151,10 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext }) {
     : `${item.title} · ${item.row.superseded ? 'previous generation' : item.row.attachLock || 'not a tclaude terminal'}. ${tmuxAttachHint(item.row)}`;
   const ctx = { open: (it) => openRailItem(it, { actions, snapshot, notify }), ...(rowContext || defaultRowContext()), notify };
   return html`<div class=${`cr-item cr-${item.bucket} ${statusClass(item)}${idle?.stale ? ' cr-stale' : ''}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
-    draggable=${attachable ? 'true' : 'false'} onContextMenu=${menu.onContextMenu}
+    draggable=${attachable ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
     onDragStart=${(event) => { if (attachable) startRailDrag(event, item, { actions, snapshot, notify, floatsOf }); else event.preventDefault(); }}>
     <span role="button" tabIndex="0" class="cr-name" title=${title}
-      ...${pressable(() => { if (attachable) void openRailItem(item, { actions, snapshot, notify }); else menu.setOpen(true); })}>
+      ...${pressable(() => { if (attachable) void openRailItem(item, { actions, snapshot, notify }); else if (hasRowActions(item)) menu.setOpen(true); })}>
       <span class="cr-glyph" aria-hidden="true">${glyph}</span>
       <span class="cr-title">${item.title}</span>
     </span>

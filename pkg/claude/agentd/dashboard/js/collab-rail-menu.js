@@ -58,7 +58,7 @@ export function railRowActions(item) {
 function confirmEntry(row, { id, label, title, body, okLabel, busyLabel, done, failed }) {
   return { id, label, danger: true, run: (ctx) => ctx.confirm({
     title, body, okLabel, busyLabel,
-    action: async () => { const failure = await ctx.kill(row); if (failure) throw new Error(failure); },
+    action: async () => { const failure = await ctx.kill(row); if (failure) throw new Error(failure); return true; },
   }).then((ok) => { if (ok) ctx.notify(done); }, (err) => ctx.notify(`${failed}: ${err?.message || err}`, true)) };
 }
 
@@ -67,6 +67,12 @@ function killEntry(item, row, title) {
     id: 'kill', label: 'Kill session…', title, body: `Ends tmux session ${row.tmux_session} and whatever runs in it.`,
     okLabel: 'Kill', busyLabel: 'Killing…', done: `Killed ${item.title}`, failed: `Could not kill ${item.title}`,
   });
+}
+
+// hasRowActions is whether item's menu has anything to offer.
+export function hasRowActions(item) {
+  const { open, end } = railRowActions(item);
+  return open.length + end.length > 0;
 }
 
 export const defaultRowContext = () => ({
@@ -96,7 +102,8 @@ export function RailRowMenu({ item, open, onOpen, ctx }) {
 // useRowMenu is a row's menu state and its right-click handler.
 export function useRowMenu() {
   const [open, setOpen] = useState(false);
-  const onContextMenu = (event) => {
+  const onContextMenu = (event, item) => {
+    if (item && !hasRowActions(item)) return;
     event.preventDefault();
     setOpen(true);
   };

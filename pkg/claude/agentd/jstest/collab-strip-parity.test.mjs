@@ -36,7 +36,8 @@ function fakeContext() {
     calls,
     open: record('open'), kill: record('kill'), exportBoard: record('exportBoard'), askDeleteBoard: record('askDeleteBoard'),
     notify: record('notify'), fetchImpl: record('fetch'),
-    confirm: async (options) => { calls.push(['confirm', options.title]); await options.action(); return true; },
+    // As shellConfirm: it resolves to what the action returns.
+    confirm: async (options) => { calls.push(['confirm', options.title]); return options.action(); },
     spawn: record('spawn'), shell: record('shell'), board: record('board'), page: record('page'),
     openBoard: record('openBoard'), openProcess: record('openProcess'), boardIds: async () => [],
   };
@@ -46,8 +47,8 @@ const ids = ({ open, end }) => [...open, ...end].map((action) => action.id);
 
 test('a row menu offers what the counter did: attach, attach (locked), kill, and end a board\'s sessions', async (t) => {
   const harness = await createPreactHarness(t);
-  const { railItems } = await harness.importDashboardModule('js/collab-rail-model.js');
-  const { railRowActions } = await harness.importDashboardModule('js/collab-rail-menu.js');
+  const { railItems, filterRail } = await harness.importDashboardModule('js/collab-rail-model.js');
+  const { railRowActions, hasRowActions } = await harness.importDashboardModule('js/collab-rail-menu.js');
   const agent = { kind: 'agent', key: 'window:agt_a', tmux_session: 'tc-a', label: 'worker', killable: true };
   const locked = { kind: 'shell', tmux_session: 'tc-l', label: 'old shell', killable: true, attachLock: 'This shell predates group shells' };
   const boardRow = { kind: 'board', key: 'board:plan', board: 'plan', label: 'Plan', killable: true };
@@ -72,6 +73,9 @@ test('a row menu offers what the counter did: attach, attach (locked), kill, and
 
   const board = items.get('board:plan');
   assert.equal(board.sessions, boardRow, "a board's sessions ride on the board's own item");
+  assert.equal(board.bucket, 'background', 'the snapshot calls the board closed, but its sessions put it in the background');
+  const listed = filterRail({ sections }).sections.flatMap((section) => section.items.map((item) => item.key));
+  assert.ok(listed.includes('board:plan'), 'so the default filter lists it, and its End is reachable');
   assert.deepEqual(ids(railRowActions(board)), ['open', 'download', 'end-sessions', 'delete-board']);
   for (const action of [...railRowActions(board).open, ...railRowActions(board).end]) await action.run(ctx);
   assert.deepEqual(ctx.calls.splice(0), [
@@ -86,6 +90,10 @@ test('a row menu offers what the counter did: attach, attach (locked), kill, and
   assert.deepEqual(ids(railRowActions(shell)), ['open', 'kill']);
   await railRowActions(shell).end[0].run(ctx);
   assert.deepEqual(ctx.calls.splice(0), [['confirm', 'Kill this shell?'], ['kill', shellRow], ['notify', 'Killed tclaude shell']]);
+
+  const quiet = { kind: 'agent', tmux_session: 'old', label: 'old gen', superseded: true };
+  const [quietItem] = railItems({ background: [quiet], titleOf: (row) => row.label }).sections[0].items;
+  assert.equal(hasRowActions(quietItem), false, 'a session with nothing to offer has no menu to open');
 
   const unlisted = railItems({ background: [{ kind: 'group_shell', key: 'groupterm:gone', tmux_session: 'g', group: 'gone', killable: true }], titleOf: (row) => row.group });
   assert.deepEqual(unlisted.sections.map((section) => [section.name, section.items.map((item) => item.key)]), [['Not in a group', ['bg::g']]],
@@ -194,4 +202,16 @@ test('the Filter counts the background and attaches all of it; the folded panel\
   await harness.act(async () => { bg.backgroundTerminals.value = []; await wait(); });
   assert.equal(button.querySelector('[data-collab-bg-count]'), null);
   assert.equal(handle.querySelector('[data-dock-bg-count]'), null, 'no badge with nothing in the background');
+});
+
+test('＋ New opens on its kinds again after another ＋ took over mid-step', async (t) => {
+  const { harness, host } = await mountRail(t);
+  await harness.act(() => host.querySelector('.cr-head .cr-new').click());
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-new-kind="shell"]'), 'click'));
+  assert.ok(host.querySelector('[data-new-group]'), 'on the which-group step');
+  await harness.act(() => host.querySelector('[data-new-menu="tclaude"]').click());
+  assert.equal(host.querySelector('.cr-new-menu').getAttribute('aria-label'), 'New in tclaude', 'the group ＋ replaces it');
+  await harness.act(() => host.querySelector('[data-new-menu="tclaude"]').click());
+  await harness.act(() => host.querySelector('.cr-head .cr-new').click());
+  assert.ok(host.querySelector('[data-new-kind="agent"]'), 'the header ＋ New opens on its kinds, not the old step');
 });

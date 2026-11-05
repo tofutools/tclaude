@@ -245,9 +245,12 @@ export function railItems({
   for (const items of byGroup.values()) {
     for (const [index, item] of items.entries()) {
       const sessions = item.kind === 'board' && boardSessions.get(item.key);
+      // The snapshot calls a board closed whatever runs on it: one with
+      // sessions is in the background, where the Background box lists it.
       if (sessions) {
         boardSessions.delete(item.key);
-        if (sessions.killable) items[index] = { ...item, sessions };
+        const live = item.bucket === 'closed' ? { view: 'background', bucket: 'background' } : {};
+        items[index] = { ...item, ...live, ...(sessions.killable ? { sessions } : {}) };
       }
       const shell = item.kind === 'shell' && shellSessions.get(item.paneKey);
       if (shell) {
