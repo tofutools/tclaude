@@ -21,11 +21,10 @@ type resumeDirsInput struct {
 }
 
 // resumeDirs is the resume's directory plan: the read and write lists the
-// harness is told about, the grants they render to, and the Git and workspace
-// write grants handed to tclaude's sandbox contract.
+// harness is told about, and the Git and workspace write grants handed to
+// tclaude's sandbox contract.
 type resumeDirs struct {
 	read, write               []string
-	rendered                  []sandboxpolicy.FilesystemGrant
 	tclaudeLayerContractWrite []string
 }
 
@@ -96,7 +95,7 @@ func planResumeDirs(in resumeDirsInput) (resumeDirs, error) {
 		return resumeDirs{}, err
 	}
 	return resumeDirs{
-		read: readDirs, write: writeDirs, rendered: renderedGrants,
+		read: readDirs, write: writeDirs,
 		tclaudeLayerContractWrite: tclaudeLayerContractWriteDirs,
 	}, nil
 }
