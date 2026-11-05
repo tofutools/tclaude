@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -661,85 +660,20 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
-	var routeHelper *TclaudeLayerRouteHelper
 	// networkFiltered: the launch runs under a filtered network, so a harness
 	// that can start traffic of its own outside the model route is told not
 	// to (harness.SpawnSpec.NetworkFiltered).
 	networkFiltered := false
-	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
-		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("linux group-route helper requires a pane-authoritative launch with tclaude’s sandbox")
-		}
-		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
-			return fmt.Errorf("darwin route proxy authority requires macOS")
-		}
-		if !params.RouteHelperProxyOnly && runtime.GOOS != "linux" {
-			return fmt.Errorf("linux group-route helper requires Linux")
-		}
-		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
-			return fmt.Errorf("linux group-route helper launch identity is incomplete")
-		}
-		socketFloor := sandboxpolicy.AgentdSocketFloor()
-		if len(socketFloor) == 0 || strings.TrimSpace(socketFloor[0]) == "" {
-			return fmt.Errorf("linux group-route helper agentd socket is unavailable")
-		}
-		helperBinary, helperBinaryErr := os.Executable()
-		if helperBinaryErr != nil || strings.TrimSpace(helperBinary) == "" {
-			if helperBinaryErr == nil {
-				helperBinaryErr = errors.New("executable path is empty")
-			}
-			return fmt.Errorf("linux group-route helper executable is unavailable: %w", helperBinaryErr)
-		}
-		routeHelper = &TclaudeLayerRouteHelper{
-			BinaryPath:        filepath.Clean(helperBinary),
-			SocketPath:        socketFloor[0],
-			AgentID:           strings.TrimSpace(params.RouteHelperAgentID),
-			ConvID:            strings.TrimSpace(params.RouteHelperConvID),
-			LaunchGeneration:  strings.TrimSpace(params.RouteHelperLaunchGeneration),
-			HandoffSocketPath: strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath),
-			GroupIDs:          append([]int64(nil), params.RouteHelperGroupIDs...),
-			ProxyOnly:         params.RouteHelperProxyOnly,
-		}
+	routeHelper, err := resolveLaunchRouteHelper(params, h.Name, outerLayer)
+	if err != nil {
+		return err
+	}
+	if routeHelper != nil {
 		exitGeneration = routeHelper.LaunchGeneration
 	}
-	additionalEnv := map[string]string{
-		"TCLAUDE_SESSION_ID":      sessionID,
-		"TCLAUDE_EXIT_GENERATION": exitGeneration,
-	}
-	applyManagedAgentHint(params.ManagedLaunch, additionalEnv)
-	if effectiveSandbox != nil {
-		for _, entry := range sandboxpolicy.EnvironmentForLaunch(effectiveSandbox) {
-			additionalEnv[entry.Name] = entry.Value
-		}
-	}
-	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
-		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
-		// read-only). Route them through agentd instead, which applies
-		// them host-side on the caller's behalf (TCL-754). Apply after the
-		// profile environment so policy cannot unset the marker for an
-		// outer-layer launch and silently send the pane's telemetry into the
-		// throwaway database behind the wall.
-		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
-	}
-	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
-		// Gemini's Seatbelt profile hides its OAuth credentials and every
-		// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
-		// auth type that cannot work in there, and carry the host's trust
-		// decision in as the environment Gemini honours ahead of the file.
-		seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
-		getenv := func(name string) string { return seatbeltEnv[name] }
-		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
-			return err
-		}
-		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, params.TrustDir)
-		if err != nil {
-			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
-				"cwd", cwd, "err", err)
-		}
-		for name, value := range trustEnv {
-			additionalEnv[name] = value
-		}
+	additionalEnv, err := baseLaunchEnv(params, h, harnessBuiltinMode, effectiveSandbox, outerLayer, sessionID, exitGeneration, cwd)
+	if err != nil {
+		return err
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
@@ -861,52 +795,11 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
-	openCodeServerURL := ""
-	openCodeTransport := ""
-	openCodeControlSocketPath := ""
-	var openCodeControlSocketDevice, openCodeControlSocketInode int64
-	var openCodeServerPID int
+	var openCodeServer openCodeLaunchServer
 	if h.UsesAuthoritativeServer() {
-		openCodeServerURL = strings.TrimSpace(os.Getenv("TCLAUDE_OPENCODE_SERVER_URL"))
-		if openCodeServerURL == "" || os.Getenv("OPENCODE_SERVER_PASSWORD") == "" {
-			return fmt.Errorf("OpenCode requires an authenticated agentd-managed server; launch it through `tclaude agent spawn`")
-		}
-		parsed, parseErr := url.Parse(openCodeServerURL)
-		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
-			return fmt.Errorf("invalid internal OpenCode server URL")
-		}
-		openCodeTransport = strings.TrimSpace(os.Getenv(clcommon.OpenCodeTransportEnv))
-		if openCodeTransport == "" {
-			openCodeTransport = db.OpenCodeTransportLoopbackTCP
-		}
-		if openCodeTransport == db.OpenCodeTransportUnixRelay {
-			openCodeControlSocketPath = strings.TrimSpace(
-				os.Getenv(clcommon.OpenCodeControlSocketPathEnv))
-			openCodeControlSocketDevice, parseErr = strconv.ParseInt(
-				os.Getenv(clcommon.OpenCodeControlSocketDeviceEnv), 10, 64)
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode control socket device")
-			}
-			openCodeControlSocketInode, parseErr = strconv.ParseInt(
-				os.Getenv(clcommon.OpenCodeControlSocketInodeEnv), 10, 64)
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode control socket inode")
-			}
-			openCodeServerPID, parseErr = strconv.Atoi(
-				os.Getenv(clcommon.OpenCodeServerPIDEnv))
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode server pid")
-			}
-			if err := db.ValidateOpenCodeRuntimeTransport(db.OpenCodeRuntime{
-				Transport:           openCodeTransport,
-				ControlSocketPath:   openCodeControlSocketPath,
-				ControlSocketDevice: openCodeControlSocketDevice,
-				ControlSocketInode:  openCodeControlSocketInode,
-			}); err != nil || openCodeServerPID <= 1 {
-				return fmt.Errorf("invalid internal OpenCode Unix-relay authority")
-			}
-		} else if openCodeTransport != db.OpenCodeTransportLoopbackTCP {
-			return fmt.Errorf("invalid internal OpenCode transport")
+		openCodeServer, err = resolveOpenCodeLaunchServer()
+		if err != nil {
+			return err
 		}
 		applyOpenCodeAttachEnvironment(
 			additionalEnv,
@@ -1684,12 +1577,12 @@ func runNew(params *NewParams) error {
 		CodexAppServerLogFile:          params.CodexAppServerLogFile,
 		CodexAppServerProfileOverrides: codexAppServerProfileOverrides,
 		Cwd:                            cwd,
-		ServerURL:                      openCodeServerURL,
-		OpenCodeTransport:              openCodeTransport,
-		OpenCodeControlSocketPath:      openCodeControlSocketPath,
-		OpenCodeControlSocketDevice:    openCodeControlSocketDevice,
-		OpenCodeControlSocketInode:     openCodeControlSocketInode,
-		OpenCodeServerPID:              openCodeServerPID,
+		ServerURL:                      openCodeServer.url,
+		OpenCodeTransport:              openCodeServer.transport,
+		OpenCodeControlSocketPath:      openCodeServer.controlSocketPath,
+		OpenCodeControlSocketDevice:    openCodeServer.controlSocketDevice,
+		OpenCodeControlSocketInode:     openCodeServer.controlSocketInode,
+		OpenCodeServerPID:              openCodeServer.pid,
 		EnvExports:                     envExports,
 		PreLaunchScript:                preLaunchScript,
 		ShellEnvironment:               shellEnvironment,
