@@ -79,6 +79,27 @@ func TestSpawn_RequestRefusalsKeepTheirWireResponse(t *testing.T) {
 			message: "shell spawn requires non_interactive when initial_message is set",
 		},
 		{
+			name: "unknown tool governance",
+			body: map[string]any{"name": "w", "tools": "bogus"},
+			code: "invalid_tools",
+		},
+		{
+			name: "unknown auto-compact window",
+			body: map[string]any{"name": "w", "auto_compact_window": "bogus"},
+			code: "invalid_auto_compact_window",
+		},
+		{
+			name:    "missing sandbox profile",
+			body:    map[string]any{"name": "w", "sandbox_profile": "nope"},
+			code:    "invalid_sandbox_profile",
+			message: `sandbox profile "nope" does not exist`,
+		},
+		{
+			name: "task link that is not http(s)",
+			body: map[string]any{"name": "w", "task_ref_url": "javascript:alert(1)"},
+			code: "invalid_task_url",
+		},
+		{
 			name:       "unresolvable reply_to",
 			body:       map[string]any{"name": "w", "reply_to": "agt_nosuchagent"},
 			code:       "invalid_reply_to",

@@ -1,17 +1,22 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/launchspec"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // spawnRequest is one POST /v1/groups/{name}/spawn on its way to
@@ -124,6 +129,34 @@ type spawnRequest struct {
 
 	// Set by buildLaunchEcho.
 	resolvedLaunch *agent.ResolvedLaunch
+
+	// Set by resolveHarnessModes.
+	effort             string
+	model              string
+	harnessBuiltinMode string
+	approvalPolicy     string
+	toolGovernance     string
+	autoReview         bool
+
+	// Set by resolveSandboxPolicy.
+	effectiveSandbox    sandboxpolicy.Snapshot
+	sshWorkaroundIntent bool
+
+	// Set by proveLaunchDirs.
+	proofDirs                []string
+	proofToken               string
+	codexGitCommonDir        string
+	codexGitCommonDirPinned  bool
+	gitWorktreeWriteDirs     []string
+	autoTrustSiblingWorktree bool
+
+	// Set by resolveHarnessOptions.
+	askTimeout        string
+	autoCompactWindow string
+	trustDir          bool
+
+	// Set by resolveRemoteControl.
+	remoteControl bool
 }
 
 // errSpawnResponseWritten is the failure a step returns when a shared helper
@@ -1144,4 +1177,546 @@ func (req *spawnRequest) buildLaunchEcho() {
 		}
 	}
 	req.resolvedLaunch = resolvedLaunch
+}
+
+// resolveHarnessModes resolves the harness-native modes on the resolved fields:
+// sandbox mode, approval policy, tool governance and auto-review, warns about an
+// autonomous-but-unconfined launch, and refuses a Codex cwd that would expose
+// tclaude's own state.
+func (req *spawnRequest) resolveHarnessModes() *spawnFailure {
+	var fieldFail *spawnFailure
+	body := &req.body
+	cwd := req.cwd
+	h := req.h
+	resolvedLaunch := req.resolvedLaunch
+	spawnerConvID := req.spawnerConvID
+	// resolveStringLaunchField already validated and normalized both values.
+	effort, model := body.Effort, body.Model
+
+	// Resolve the sandbox mode for the chosen harness: a Codex agent gets its
+	// secure default (the managed tclaude-agent profile) when unset, a Claude
+	// agent gets its inherit default (normalized to "" — no `--settings`
+	// override), and an explicit mode is validated per-harness. Then the
+	// cwd-safety guard: a writable Codex sandbox confines writes to the cwd
+	// subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
+	// ~/.claude — refuse here with a clean 400 rather than after the forked
+	// session times out. (Claude's `on` block protects those dirs via settings,
+	// so this Codex-specific guard doesn't apply to it.)
+	harnessBuiltinMode, sbErr := harness.ResolveHarnessBuiltinMode(h, body.HarnessBuiltinMode)
+	if sbErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", sbErr.Error()}
+	}
+	harnessBuiltinMode, fieldFail = resolveSandboxImplementationMode(
+		h, harnessBuiltinMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		return fieldFail
+	}
+	if h.UsesAuthoritativeServer() &&
+		body.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			clcommon.OpenCodeStatePrivateNote)
+	}
+	// body.ApprovalPolicy is already profile-merged above (resolveStringLaunchField
+	// overlays the profile tiers without defaulting), so an empty value here means
+	// NOTHING chose a posture — neither an explicit flag nor a spawn profile. Only
+	// then may the harness default be narrowed to what this caller can mint; an
+	// explicit or profile-set posture must fail loudly in the guard below.
+	approvalUnset := strings.TrimSpace(body.ApprovalPolicy) == ""
+	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
+	if apErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_approval", apErr.Error()}
+	}
+	if approvalUnset {
+		defaultApprovalPolicy := approvalPolicy
+		approvalPolicy = narrowDefaultApprovalToCaller(spawnerConvID, h.Name, approvalPolicy)
+		if approvalPolicy != defaultApprovalPolicy {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+				callerNarrowedApprovalNote(approvalPolicy, defaultApprovalPolicy))
+		}
+	}
+	toolGovernance, tgErr := harness.ResolveToolGovernance(h, body.ToolGovernance)
+	if tgErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_tools", tgErr.Error()}
+	}
+	// Both axes are final here (profile overlay, harness default, caller
+	// narrowing), which is the only point where "autonomous but unconfined" is
+	// a true statement about the launch that is about to happen. Warn, don't
+	// refuse: forcing sandbox `on` would override the operator's settings.json
+	// on the one axis tclaude deliberately leaves to them (TCL-586). The same
+	// call also surfaces OpenCode's toothless access-control "sandbox".
+	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
+		harness.SpawnSandboxWarnings(h, approvalPolicy, harnessBuiltinMode, cwd,
+			spawnUsesTclaudeLayer(body.SandboxImplementation))...)
+	resolvedLaunch.Info = append(resolvedLaunch.Info,
+		harness.SpawnSandboxInfo(h, harnessBuiltinMode)...)
+	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
+	if arErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_auto_review", arErr.Error()}
+	}
+	if body.NonInteractive {
+		autoReview = false
+	}
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(harnessBuiltinMode, cwd, home) {
+		return &spawnFailure{http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
+			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
+				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes; spawn in a "+
+				"project subdirectory or set sandbox %q to opt out",
+			h.Name, cwd, harnessBuiltinMode, harness.SandboxDangerFull)}
+	}
+	req.effort = effort
+	req.model = model
+	req.harnessBuiltinMode = harnessBuiltinMode
+	req.approvalPolicy = approvalPolicy
+	req.toolGovernance = toolGovernance
+	req.autoReview = autoReview
+	return nil
+}
+
+// checkSandboxLineage refuses a child looser than its caller (sandbox mode and
+// approval lineage), a sandbox-profile selection the launch mode would drop or
+// not enforce, and an external steward's worker that could act unasked.
+func (req *spawnRequest) checkSandboxLineage() *spawnFailure {
+	body := &req.body
+	approvalPolicy := req.approvalPolicy
+	autoReview := req.autoReview
+	externalSpawn := req.externalSpawn
+	h := req.h
+	harnessBuiltinMode := req.harnessBuiltinMode
+	sandboxProfileForScope := req.sandboxProfileForScope
+	sandboxScopePinned := req.sandboxScopePinned
+	spawnerConvID := req.spawnerConvID
+	// Sandbox lineage — the child may not launch with a looser sandbox MODE
+	// than the caller currently has (spawn_sandbox_guard.go). Checked HERE,
+	// before claimSpawnRateSlot below, so a refused escalation costs the
+	// caller no rate slot. executeSpawn re-runs the same (idempotent) check
+	// for the other spawn callers (templates/waves/process adapters) that
+	// don't pass through this HTTP boundary.
+	//
+	// It judges the LAUNCH mode, not the harness-native one every gate above
+	// judges: a tclaude-layer child records the single-wall posture, and the
+	// guard has to reason about the posture that will actually be persisted and
+	// later read back when this child spawns children of its own (TCL-989).
+	childLaunchSandbox, fieldFail := resolveLaunchHarnessBuiltinMode(
+		h, harnessBuiltinMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		return fieldFail
+	}
+	if fail := spawnSandboxLineageFailure(
+		spawnerConvID, h.Name, childLaunchSandbox, body.SandboxImplementation); fail != nil {
+		return fail
+	}
+	if fail := spawnApprovalLineageFailure(spawnerConvID, h.Name, approvalPolicy, autoReview); fail != nil {
+		return fail
+	}
+
+	// danger-full-access is Codex's explicit raw no-sandbox launch. It cannot
+	// carry the managed permission profile that represents tclaude filesystem
+	// policy, so omit every sandbox-profile tier (global, group, and explicit)
+	// instead of resolving a policy that must fail capability validation later.
+	// The dashboard mirrors this by forcing its selector to the visible "none"
+	// state; this server-side rule also covers CLI callers and older tabs.
+	if spawnerConvID != "" && body.SandboxProfile != "" &&
+		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection"}
+	}
+	// A grant scoped to a sandbox profile authorized this spawn on the promise
+	// that the child runs under that profile, so the profile has to actually
+	// bind it. That is the ENFORCEMENT question, not the composition one: an
+	// implementation that stands the OS boundary down still composes and
+	// records the whole chain while enforcing none of its access rules, which
+	// would satisfy the scope on paper and confine nothing.
+	//
+	// Only the scope-pinned caller is bound. An unscoped grant, an
+	// ownership-derived one, or a scope over `group` alone never traded on the
+	// profile, and an ambient assignment existing somewhere in the deployment
+	// is not by itself a reason to refuse them.
+	if sandboxScopePinned &&
+		sandboxProfileTierInert(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			fmt.Sprintf("this spawn is authorized by a grant scoped to sandbox profile %q, "+
+				"and the resolved launch mode would not enforce it", sandboxProfileForScope)}
+	}
+	if externalSpawn && !externalStewardApprovalHolds(h.Name, childLaunchSandbox) {
+		return &spawnFailure{http.StatusForbidden, externalStewardCeilingCode,
+			"this launch can run commands without asking a human: Claude's own sandbox does, and so does OpenCode's bash; an external steward's worker can't use either"}
+	}
+
+	return nil
+}
+
+// resolveSandboxPolicy resolves the effective sandbox snapshot: the profile
+// chain, harness config, containment in the caller's own sandbox, the launch
+// environment, capability and access checks, and the SSH workaround.
+func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
+	g := req.g
+	body := &req.body
+	copilotAPI := req.copilotAPI
+	cwd := req.cwd
+	externalSpawn := req.externalSpawn
+	h := req.h
+	harnessBuiltinMode := req.harnessBuiltinMode
+	profileTiers := req.profileTiers
+	resolvedLaunch := req.resolvedLaunch
+	spawnerConvID := req.spawnerConvID
+	sshWorkaround := req.sshWorkaround
+	// An omission the caller asked for is kept by every relaunch; one the
+	// launch mode forces is re-judged when the mode changes (derived).
+	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
+	if !body.OmitSandboxProfiles {
+		effectiveSandbox = sandboxpolicy.DerivedOmittedProfilesSnapshot()
+	}
+	var policyErr error
+	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
+		!body.OmitSandboxProfiles {
+		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
+	}
+	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
+			fmt.Sprintf("sandbox profile %q does not exist", body.SandboxProfile)}
+	}
+	if policyErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error()}
+	}
+	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
+		return fail
+	} else {
+		effectiveSandbox = applied
+	}
+	// A principal has no sandbox to contain the child. Its pinned profile is the
+	// bound, and sandboxScopePinned above refused a launch that wouldn't enforce it.
+	if spawnerConvID != "" && !externalSpawn {
+		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)
+		if err != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
+		}
+		if parentSnapshot == nil {
+			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
+				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child"}
+			}
+		} else {
+			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
+			if err != nil {
+				return &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+			}
+			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
+				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+			}
+		}
+	}
+	launchEnvironment, launchEnvironmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, profileTiers, body.Environment)
+	if envErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()}
+	}
+	if _, envErr := sandboxpolicy.MergeEnvironment(effectiveSandbox.Effective.Environment, launchEnvironment); envErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()}
+	}
+	effectiveSandbox.LaunchEnvironment = launchEnvironment
+	effectiveSandbox.RefreshGroupEnvironment = true
+	effectiveSandbox.LaunchEnvironmentOverrides = launchEnvironmentOverrides
+	effectiveSandbox.ResolutionGroupID = g.ID
+	if fail := sandboxProfileCapabilityFailure(
+		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
+		return fail
+	}
+	if fail := copilotAPILoopbackFailure(
+		copilotAPI, &effectiveSandbox, body.SandboxImplementation); fail != nil {
+		return fail
+	}
+	if _, fail := planSandboxProfileAccessForLaunch(
+		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation,
+		session.ModelTransportLaunchContext{
+			Model:      body.Model,
+			ModelProxy: body.ModelProxy,
+			Cwd:        cwd,
+		},
+		body.AllowUnenforcedSandbox,
+	); fail != nil {
+		return fail
+	}
+	sshWorkaroundIntent := sshWorkaround
+	if sshWorkaround && !codexSSHWorkaroundApplies(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation, &effectiveSandbox) {
+		sshWorkaround = false
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's sandbox")
+	}
+	// Persist the resolved posture in the audit request as an explicit boolean,
+	// including the default-on case and an operator's opt-out.
+	body.SSHWorkaround = &sshWorkaround
+	for _, notice := range effectiveSandbox.Effective.AccessNotices {
+		resolvedLaunch.Warnings = append(resolvedLaunch.Warnings, notice.Detail)
+	}
+	if effectiveSandbox.ProfilesOmitted && sshWorkaround {
+		sshWorkaround = false
+		body.SSHWorkaround = &sshWorkaround
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			"SSH workaround disabled because sandbox profiles were explicitly omitted")
+	}
+	resolvedLaunch.SandboxPolicy = agent.SummarizeSandboxPolicy(effectiveSandbox)
+	req.effectiveSandbox = effectiveSandbox
+	req.sshWorkaroundIntent = sshWorkaroundIntent
+	return nil
+}
+
+// proveLaunchDirs makes an agent caller prove it can write every directory the
+// child would get write access to, and pins those directories to the paths the
+// proof was verified in.
+func (req *spawnRequest) proveLaunchDirs(w http.ResponseWriter, r *http.Request) *spawnFailure {
+	body := &req.body
+	cwd := req.cwd
+	externalSpawn := req.externalSpawn
+	h := req.h
+	harnessBuiltinMode := req.harnessBuiltinMode
+	spawnerConvID := req.spawnerConvID
+	worktreePath := req.worktreePath
+	// Dir write-proof — the launch-directory half of the spawn sandbox guard
+	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
+	// MODE; this caps its anchor: an agent caller must prove its own sandbox
+	// can write in every caller-selected directory the child would get write
+	// access to (the launch cwd, plus the designated worktree when one is
+	// passed), otherwise spawning a child there would be a write-permission escape.
+	// Sandbox-profile roots are authorized by the lineage containment check
+	// above. They are deliberately not write-proved: a grant permits writes to
+	// existing descendants, but does not imply permission to create directory
+	// entries in the grant root itself (for example /dev/dri).
+	// The gate
+	// challenges (403 write_proof_required) or verifies; on success it pins
+	// cwd/worktree to the symlink-resolved paths the proof was verified in, so
+	// a link swapped after verification cannot retarget the grant. Humans,
+	// fully-open callers, and no-cwd-write children (Codex read-only) pass
+	// untouched — requireDirWriteProof/childSandboxGrantsDirWrite decide.
+	var proofDirs []string
+	var proofToken string
+	var codexGitCommonDir string
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation)
+	var gitWorktreeWriteDirs []string
+	if codexGitCommonDirPinned {
+		var gerr error
+		codexGitCommonDir, gerr = spawnGitCommonDir(
+			h.Name, harnessBuiltinMode, body.SandboxImplementation, cwd)
+		if gerr != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", gerr.Error()}
+		}
+		if home, herr := os.UserHomeDir(); herr == nil {
+			gitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
+		}
+	}
+	autoTrustSiblingWorktree, trustLayoutErr := defaultSiblingWorktreeTrust(h.Name, cwd, codexGitCommonDir)
+	if trustLayoutErr != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", trustLayoutErr.Error()}
+	}
+	// A child with no cwd write (Codex read-only) normally needs no proof — it
+	// receives no write access to anchor. But the caller-owned trust exemption
+	// (spawn_dir_trust.go) justifies itself with a write capability: pre-trust
+	// is safe there BECAUSE the caller could already write the harness config
+	// that dir carries. So whenever that exemption is what would permit the
+	// request, demand the proof regardless of the child's own sandbox — else a
+	// read-only caller, which by construction can write nothing, would seed the
+	// human's trust store off an unproven claim. The sibling-worktree exemption
+	// is excluded: it is forced on precisely so a detached child cannot stall on
+	// the trust dialog, and it carries its own proof pairing when the child
+	// takes repository grants.
+	if spawnerConvID != "" && !externalSpawn && (childSandboxGrantsDirWrite(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation) ||
+		(body.TrustDir && !autoTrustSiblingWorktree)) {
+		dirs := []string{cwd}
+		dirs = appendUniqueDirs(dirs, worktreePath)
+		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
+		var resolved map[string]string
+		var ok bool
+		token := strings.TrimSpace(body.WriteProofToken)
+		if queued := spawnQueueReplayFrom(r); queued != nil && len(queued.ProofDirs) > 0 {
+			// Proved when the spawn was queued; the launch carries a fresh
+			// daemon-minted proof over exactly those canonical directories.
+			resolved, token, ok = queueDirWriteProof(w, queued, dirs)
+		} else {
+			resolved, ok = requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
+		}
+		if !ok {
+			return errSpawnResponseWritten
+		}
+		if resolved != nil {
+			proofToken = token
+			if v := resolved[cwd]; v != "" {
+				cwd = v
+			}
+			if worktreePath != "" {
+				if v := resolved[worktreePath]; v != "" {
+					worktreePath = v
+				}
+			}
+			if codexGitCommonDir != "" {
+				if v := resolved[codexGitCommonDir]; v != "" {
+					codexGitCommonDir = v
+				}
+			}
+			for i, dir := range gitWorktreeWriteDirs {
+				if v := resolved[dir]; v != "" {
+					gitWorktreeWriteDirs[i] = v
+				}
+			}
+			// Carry the verified, symlink-resolved dirs to executeSpawn, which
+			// re-asserts they are still canonical immediately before the fork —
+			// closing the window between verification here and the child's
+			// launch (a swap after verification is caught, not launched into).
+			proofDirs = make([]string, 0, len(dirs))
+			for _, raw := range dirs {
+				resolvedDir := raw
+				if v := resolved[raw]; v != "" {
+					resolvedDir = v
+				}
+				proofDirs = appendUniqueDirs(proofDirs, resolvedDir)
+			}
+		}
+	}
+	req.proofDirs = proofDirs
+	req.proofToken = proofToken
+	req.codexGitCommonDir = codexGitCommonDir
+	req.codexGitCommonDirPinned = codexGitCommonDirPinned
+	req.gitWorktreeWriteDirs = gitWorktreeWriteDirs
+	req.autoTrustSiblingWorktree = autoTrustSiblingWorktree
+	req.cwd = cwd
+	req.worktreePath = worktreePath
+	return nil
+}
+
+// resolveHarnessOptions resolves the AskUserQuestion timeout, the
+// auto-compaction window and directory trust for the harness, and refuses a
+// trust request the caller has not earned.
+func (req *spawnRequest) resolveHarnessOptions() *spawnFailure {
+	body := &req.body
+	autoTrustSiblingWorktree := req.autoTrustSiblingWorktree
+	cwd := req.cwd
+	h := req.h
+	proofDirs := req.proofDirs
+	proofToken := req.proofToken
+	spawnerConvID := req.spawnerConvID
+	// Resolve the AskUserQuestion idle-timeout for the chosen harness: a
+	// Claude-Code-only settings.json override (never|60s|5m|10m) delivered via
+	// `--settings`, so an explicit value for a harness with no AskUserQuestion
+	// dialog (Codex) is a 400 here rather than a flag silently dropped. There is
+	// no forced default (inherit/blank → "" = no override) — enabling
+	// auto-continue for an unattended agent is an explicit per-agent / profile
+	// opt-in, already overlaid from the group default profile above.
+	askTimeout, atErr := harness.ResolveAskTimeoutMode(h, body.AskUserQuestionTimeout)
+	if atErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", atErr.Error()}
+	}
+
+	// Same gate for the auto-compaction window, already normalized and overlaid
+	// from the profile tiers above. Re-resolving here keeps this boundary
+	// self-sufficient rather than trusting the earlier pass, exactly as the
+	// ask-timeout re-resolve does.
+	autoCompactWindow, acwErr := harness.ResolveAutoCompactWindow(h, body.AutoCompactWindow)
+	if acwErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_auto_compact_window", acwErr.Error()}
+	}
+
+	// Gate the opt-in dir-trust request: it means something only for a harness
+	// with a trust dialog tclaude can pre-seed (Claude Code, Codex) and, unlike
+	// sandbox/approval, edits a config tclaude does not own — so requesting it
+	// for a harness with no trust dialog is a 400 here rather than a flag
+	// silently dropped. Off by default except for a verified tclaude-style
+	// sibling worktree, which must be trusted before a detached child starts.
+	// See JOH-205 inc4 / JOH-369.
+	trustDir, tdErr := harness.ResolveTrustDir(h, body.TrustDir)
+	if tdErr != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", tdErr.Error()}
+	}
+	if autoTrustSiblingWorktree {
+		trustDir = true
+	}
+	if spawnerConvID != "" && trustDir && !autoTrustSiblingWorktree {
+		callerOwned, ownErr := callerOwnedDirTrustProved(spawnerConvID, cwd, proofToken, proofDirs)
+		if ownErr != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", ownErr.Error()}
+		}
+		if !callerOwned {
+			return &spawnFailure{http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage}
+		}
+	}
+	req.askTimeout = askTimeout
+	req.autoCompactWindow = autoCompactWindow
+	req.trustDir = trustDir
+	return nil
+}
+
+// resolveRemoteControl resolves remote control through the request, the group
+// policy and the profile tiers, and records the toggles in the launch echo.
+func (req *spawnRequest) resolveRemoteControl() *spawnFailure {
+	g := req.g
+	body := &req.body
+	autoMemory := req.autoMemory
+	h := req.h
+	launchBools := req.launchBools
+	peerMessaging := req.peerMessaging
+	profileTiers := req.profileTiers
+	resolvedLaunch := req.resolvedLaunch
+	// Gate the explicit "start with remote control" opt-in: it is a Claude Code
+	// feature (the --remote-control launch flag), so an EXPLICIT request for a
+	// harness with no built-in Remote Access (Codex) is a 400 here rather than a
+	// flag silently dropped. body.RemoteControl is tri-state (*bool): only a
+	// non-nil request is validated here (the dashboard form always sends one for a
+	// Remote-Access-capable harness; the CLI sets &true on opt-in). nil = caller
+	// said nothing → the policy stack below fills it. See JOH-258. The
+	// validation runs first inside resolveRemoteControlLaunch.
+	// Layer the spawn-time policy stack (JOH-262, revised): an explicit per-spawn
+	// value (the dashboard form / CLI flag) is AUTHORITATIVE — it overrides BOTH
+	// the group's remote-control policy AND the group default profile's default,
+	// so whatever the spawn form shows decides the spawn state. With it
+	// unspecified (nil), the group policy wins, then the profile default, then off.
+	// A policy-DERIVED force-on is then clamped to off for a harness with no Remote
+	// Access — a group/profile default must not fail a Codex spawn (an EXPLICIT
+	// opt-in for Codex already 400'd above). See resolveRemoteControlIntent.
+	// Profile bools participate only when their profile harness matches the
+	// resolved harness. This gate applies even to false: unlike string catalogs,
+	// false validates everywhere and would otherwise shadow a matching lower
+	// tier's true.
+	//
+	// Every tier participates, the NAMED profile included. The CLI still does not
+	// fold remote_control in client-side — it cannot see the group's
+	// remote-control policy, which must win — but the daemon can and does, so a
+	// caller that merely names a profile gets its default under that policy
+	// rather than losing it. That is what makes the toggle real for the agentd
+	// TUI, which names a profile and sends no flag of its own. The same
+	// resolver serves every other spawn path (TCL-1107).
+	remoteControl, remoteControlSource, remoteControlNote, rcFail := resolveRemoteControlLaunchSource(h, profileTiers, g.RemoteControl, body.RemoteControl)
+	if remoteControlNote != "" {
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes, remoteControlNote)
+	}
+	if rcFail != nil {
+		return rcFail
+	}
+	if body.NonInteractive {
+		remoteControl, remoteControlSource = false, provRemoteControlNonInteractive
+	}
+	resolvedLaunch.RemoteControl = resolvedToggle(remoteControl, remoteControlSource)
+	resolvedLaunch.AutoMemory = resolvedToggle(autoMemory, launchBools.Source[launchBoolAutoMemory])
+	resolvedLaunch.PeerMessaging = resolvedToggle(peerMessaging, launchBools.Source[launchBoolPeerMessaging])
+	req.remoteControl = remoteControl
+	return nil
+}
+
+// validateTaskRef refuses a malformed task-reference link or label.
+func (req *spawnRequest) validateTaskRef() *spawnFailure {
+	body := &req.body
+	// Validate an explicit task-reference link at the spawn boundary so a
+	// bad URL fails the request with a clear 400, rather than being
+	// silently dropped when enrollSpawnedConv tries to persist it. Empty
+	// means "no link". The scheme check is the same http(s) guard the
+	// standalone task endpoints apply — keeps `javascript:`/`data:` URLs
+	// out of the dashboard's Task-column href.
+	if u := strings.TrimSpace(body.TaskURL); u != "" {
+		if err := validateTaskRefURL(u); err != nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_task_url", err.Error()}
+		}
+		if err := validateTaskRefLabel(strings.TrimSpace(body.TaskLabel)); err != nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_task_label", err.Error()}
+		}
+	}
+
+	return nil
 }
