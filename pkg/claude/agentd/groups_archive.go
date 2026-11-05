@@ -68,11 +68,11 @@ var errGroupArchived = errors.New("group is archived; unarchive it first or pick
 // (groups.members.add, owners.*, message, etc.) — a sealed group should
 // reject all writes.
 func requireGroupActive(w http.ResponseWriter, g *db.AgentGroup) bool {
-	if g == nil || !g.IsArchived() {
-		return true
+	if fail := groupActiveFailure(g); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return false
 	}
-	writeError(w, http.StatusConflict, "archived", errGroupArchived.Error())
-	return false
+	return true
 }
 
 // isTruthy maps the common HTTP query-string conventions for "yes"

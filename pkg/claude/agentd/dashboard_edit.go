@@ -1081,37 +1081,15 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // present (non-nil) in the request body are touched, matching the
 // /v1 contract — pass `null` (or omit) to leave a field unchanged.
 func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		var convID string
+		if convID, fail = updateGroupMember(r, g, convSelector); fail == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
+			return
+		}
 	}
-	var body struct {
-		Role  *string `json:"role,omitempty"`
-		Descr *string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if body.Role == nil && body.Descr == nil {
-		http.Error(w, "at least one of role/descr is required", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Role, body.Descr)
-	if err != nil {
-		http.Error(w, "update member: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		http.Error(w, "no such member in group", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"conv_id": res.ConvID})
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 // dashboardStopAgent is the cookie-auth twin of POST
@@ -1742,38 +1720,19 @@ var errNotifConfigMalformed = errors.New("notifications config.json is malformed
 // `conv` accepts a title / prefix / full conv-id selector and is
 // resolved through agent.ResolveSelector — same rules as the CLI.
 func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if fail := groupActiveFailure(g); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	var body struct {
-		Conv  string `json:"conv"`
-		Role  string `json:"role,omitempty"`
-		Descr string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+	convID, fail := addGroupMember(r, g)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
 	}
-	body.Conv = strings.TrimSpace(body.Conv)
-	if body.Conv == "" {
-		http.Error(w, "missing conv", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID,
-		ConvID:  res.ConvID,
-		Role:    body.Role,
-		Descr:   body.Descr,
-	}); err != nil {
-		http.Error(w, "add member: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
 }
 
 // dashboardSpawnInGroup is the cookie-auth twin of POST
@@ -1787,68 +1746,41 @@ func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
+	if fail := groupActiveFailure(g); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
-	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.RemoveAgentGroupMember(g.ID, res.ConvID); err != nil {
-		http.Error(w, "remove member: "+err.Error(), http.StatusInternalServerError)
+	if fail := removeGroupMember(g, convSelector); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func dashboardAddOwner(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	var body struct {
-		Conv string `json:"conv"`
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		var convID string
+		if convID, fail = addGroupOwner(r, g, dashboardGranter); fail == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
+			return
+		}
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	body.Conv = strings.TrimSpace(body.Conv)
-	if body.Conv == "" {
-		http.Error(w, "missing conv", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, dashboardGranter); err != nil {
-		http.Error(w, "add owner: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		if fail = removeGroupOwner(g, convSelector); fail == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	n, err := db.RemoveAgentGroupOwner(g.ID, res.ConvID)
-	if err != nil {
-		http.Error(w, "remove owner: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		http.Error(w, "not an owner of this group", http.StatusNotFound)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 // handleDashboardSudoAPI is the cookie-auth twin of the daemon's
