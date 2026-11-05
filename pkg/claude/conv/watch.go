@@ -2336,6 +2336,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	// exclusions from an earlier launch. Deny-row clamping remains an agentd
 	// lifecycle responsibility.
 	var launchGrants []sandboxpolicy.FilesystemGrant
+	var tmpfsDirs []string
 	var agentDirPaths []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
@@ -2455,6 +2456,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if sandboxpolicy.SupportsTmpfsMounts(implementation, runtime.GOOS) {
 			for _, mount := range validated.Effective.Tmpfs {
 				writeDirs = append(writeDirs, mount.Path)
+				tmpfsDirs = append(tmpfsDirs, mount.Path)
 			}
 		}
 	}
@@ -2704,7 +2706,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	// Launch contract: pair explicit read reopens for everything tclaude
 	// requires the resumed agent to reach when a deny covers it. Mirrors the
 	// spawn path — see session.sandboxLaunchContractReadDirs.
-	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, resumeContractReadCandidates(resumeCwd, writeDirs, launchGrants))...)
+	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, resumeContractReadCandidates(resumeCwd, writeDirs, launchGrants, tmpfsDirs))...)
 	// Re-gate on the rules that will actually be emitted: the launch contract
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
@@ -2976,21 +2978,25 @@ func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) b
 
 // resumeContractReadCandidates is the host-path candidate list for
 // resumeLaunchContractReadDirs: the workspace plus the write dirs, minus the
-// sandbox-side path of every remapped write grant. Each candidate is resolved
-// against the HOST, so a guest spelling would mint a read reopen for whatever
-// sits at that spelling on the host; and a remapped grant needs no reopen,
-// because its mount is applied after the deny that would have masked it. Same
-// rule as session.sandboxLaunchContractReadDirs.
-func resumeContractReadCandidates(cwd string, writeDirs []string, grants []sandboxpolicy.FilesystemGrant) []string {
-	remappedGuests := make(map[string]bool)
+// sandbox-side path of every remapped write grant and every tmpfs mount. Each
+// candidate is resolved against the HOST, so a sandbox-side spelling would
+// mint a read reopen for whatever sits at that spelling on the host; and
+// neither needs a reopen, because its mount is applied after the deny that
+// would have masked it. Same candidates as session.sandboxLaunchContractReadDirs,
+// which never sees tmpfs mounts or remapped guests.
+func resumeContractReadCandidates(cwd string, writeDirs []string, grants []sandboxpolicy.FilesystemGrant, tmpfsDirs []string) []string {
+	mounted := make(map[string]bool, len(tmpfsDirs))
+	for _, dir := range tmpfsDirs {
+		mounted[dir] = true
+	}
 	for _, grant := range grants {
 		if grant.Access == sandboxpolicy.AccessWrite && grant.IsRemapped() {
-			remappedGuests[grant.GuestPath()] = true
+			mounted[grant.GuestPath()] = true
 		}
 	}
 	candidates := []string{cwd}
 	for _, dir := range writeDirs {
-		if !remappedGuests[dir] {
+		if !mounted[dir] {
 			candidates = append(candidates, dir)
 		}
 	}
