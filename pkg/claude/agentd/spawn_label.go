@@ -30,9 +30,11 @@ import (
 // session_cost_daily, codex_telemetry_checkpoint, opencode_runtimes,
 // notify_state — so reusing a dead namesake's id would silently conflate two
 // different agents' costs and telemetry under one key. Any existing session
-// row therefore counts as taken, live or not. Exited rows are never
-// reaped, so the "-N" ladder climbs as namesakes accumulate, and once it is
-// exhausted the random tier below takes over.
+// row therefore counts as taken, live or not. Nothing reaps exited rows on
+// a schedule — only `session prune`, the watch picker's quit-time prune and
+// an explicit kill or agent delete remove them — so the "-N" ladder can
+// climb as namesakes accumulate, and once it is exhausted the random tier
+// below takes over.
 
 const (
 	// spawnLabelMaxNumericSuffix bounds the "-N" ladder before the sequence
