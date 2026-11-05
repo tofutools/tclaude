@@ -659,73 +659,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		undo.commit()
 		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
-	groupRoutesEnabled := routeEnabled
-	hostRoutesEnabled := false
-	// A grouped late-enrolled launch cannot resolve its effective grants yet.
-	// Stage host discovery speculatively; all publication remains permission-gated.
-	// Group membership supplies the durable identity reservation before launch.
-	if (preConvID != "" && hostPublishAllowed(preConvID)) ||
-		(runtime.GOOS == "linux" && preConvID == "" && g != nil) {
-		reason := hostRouteHelperIneligibleReason(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
-		if reason == "" && !layeredLaunch {
-			reason = "the agent is not launched in tclaude’s pane sandbox"
-		}
-		if reason == "" && !launchEnroll && runtime.GOOS != "linux" {
-			reason = "the launch has no pre-enrolled conversation identity"
-		}
-		hostRoutesEnabled = reason == ""
-		if !hostRoutesEnabled && preConvID != "" {
-			warnHostRouteHelperSkipped(preConvID, "spawn", reason)
-		}
+	routeGeneration, fail := stageRouteHelper(g, &p, &spawnArgs, spawnHarness, label, preConvID,
+		routeEnabled, layeredLaunch, launchEnroll)
+	if fail != nil {
+		return nil, fail
 	}
-	if hostRoutesEnabled {
-		routeEnabled = true
-		if runtime.GOOS == "darwin" {
-			spawnArgs.DarwinRouteCapable = true
-		}
-	}
-	if routeEnabled {
-		var agentID string
-		var agentErr error
-		if preConvID != "" {
-			agentID, agentErr = db.AgentIDForConv(preConvID)
-		} else {
-			if p.AgentID == "" {
-				p.AgentID = db.NewAgentID()
-			}
-			agentID = p.AgentID
-		}
-		if agentErr != nil || strings.TrimSpace(agentID) == "" {
-			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity"}
-		}
-		var routeCredential, routeGeneration string
-		var credentialErr error
-		if preConvID == "" {
-			routeCredential, routeGeneration, credentialErr = stageRouteHelperCredential(agentID, label)
-		} else {
-			routeCredential, routeGeneration, credentialErr = mintRouteHelperCredential(agentID, preConvID)
-		}
-		if credentialErr != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not mint route helper credential: " + credentialErr.Error()}
-		}
-		spawnArgs.RouteHelperAgentID = agentID
-		spawnArgs.RouteHelperConvID = preConvID
-		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
-		spawnArgs.RouteHelperCredential = routeCredential
-		if g != nil && groupRoutesEnabled {
-			spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
-		}
-		if hostRoutesEnabled {
-			spawnArgs.RouteHelperGroupIDs = append(spawnArgs.RouteHelperGroupIDs, 0)
-		}
-		if spawnArgs.DarwinRouteCapable {
-			spawnArgs.DarwinRouteAgentID = agentID
-		}
-		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
-		routeHelperConvID = preConvID
-		routeHelperGeneration = routeGeneration
-		p.routeHelperLaunchGeneration = routeGeneration
-	}
+	routeHelperConvID, routeHelperGeneration = preConvID, routeGeneration
 
 	// Final dir write-proof re-assertion, as late as possible before the fork:
 	// confirm every proof-verified dir is still exactly the canonical path it
@@ -1308,6 +1247,84 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// stageRouteHelper decides whether the launch carries a route helper and, when
+// it does, mints its credential. Group routes come in already resolved
+// (routeEnabled); host routes are staged here when the harness and sandbox
+// allow them. The helper's identity, credential, generation, group set and
+// proxy mode land in spawnArgs. It returns the credential's generation (empty
+// when no helper rides the launch) for executeSpawn's revoke-on-failure defer.
+func stageRouteHelper(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.SpawnArgs,
+	spawnHarness *harness.Harness, label, preConvID string,
+	routeEnabled, layeredLaunch, launchEnroll bool) (generation string, fail *spawnFailure) {
+	groupRoutesEnabled := routeEnabled
+	hostRoutesEnabled := false
+	// A grouped late-enrolled launch cannot resolve its effective grants yet.
+	// Stage host discovery speculatively; all publication remains permission-gated.
+	// Group membership supplies the durable identity reservation before launch.
+	if (preConvID != "" && hostPublishAllowed(preConvID)) ||
+		(runtime.GOOS == "linux" && preConvID == "" && g != nil) {
+		reason := hostRouteHelperIneligibleReason(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
+		if reason == "" && !layeredLaunch {
+			reason = "the agent is not launched in tclaude’s pane sandbox"
+		}
+		if reason == "" && !launchEnroll && runtime.GOOS != "linux" {
+			reason = "the launch has no pre-enrolled conversation identity"
+		}
+		hostRoutesEnabled = reason == ""
+		if !hostRoutesEnabled && preConvID != "" {
+			warnHostRouteHelperSkipped(preConvID, "spawn", reason)
+		}
+	}
+	if hostRoutesEnabled {
+		routeEnabled = true
+		if runtime.GOOS == "darwin" {
+			spawnArgs.DarwinRouteCapable = true
+		}
+	}
+	if routeEnabled {
+		var agentID string
+		var agentErr error
+		if preConvID != "" {
+			agentID, agentErr = db.AgentIDForConv(preConvID)
+		} else {
+			if p.AgentID == "" {
+				p.AgentID = db.NewAgentID()
+			}
+			agentID = p.AgentID
+		}
+		if agentErr != nil || strings.TrimSpace(agentID) == "" {
+			return "", &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity"}
+		}
+		var routeCredential, routeGeneration string
+		var credentialErr error
+		if preConvID == "" {
+			routeCredential, routeGeneration, credentialErr = stageRouteHelperCredential(agentID, label)
+		} else {
+			routeCredential, routeGeneration, credentialErr = mintRouteHelperCredential(agentID, preConvID)
+		}
+		if credentialErr != nil {
+			return "", &spawnFailure{http.StatusInternalServerError, "route_authority", "could not mint route helper credential: " + credentialErr.Error()}
+		}
+		spawnArgs.RouteHelperAgentID = agentID
+		spawnArgs.RouteHelperConvID = preConvID
+		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
+		spawnArgs.RouteHelperCredential = routeCredential
+		if g != nil && groupRoutesEnabled {
+			spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		}
+		if hostRoutesEnabled {
+			spawnArgs.RouteHelperGroupIDs = append(spawnArgs.RouteHelperGroupIDs, 0)
+		}
+		if spawnArgs.DarwinRouteCapable {
+			spawnArgs.DarwinRouteAgentID = agentID
+		}
+		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
+		p.routeHelperLaunchGeneration = routeGeneration
+		generation = routeGeneration
+	}
+	return generation, nil
 }
 
 // enrollBeforeLaunch enrolls a launch-enrollment spawn before its fork: it
