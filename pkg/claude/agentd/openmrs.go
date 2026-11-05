@@ -392,9 +392,11 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			// user here; a failure keeps the last good project lists.
 			all, retry, err := readEveryoneOpenMRs(ctx, base, token, agentProjects,
 				everyoneFallbackKnown(policy, base, answer.items), refused, time.Now())
+			// A good read may still carry a wait: a re-probe that hit a 429
+			// before the per-project read answered.
+			wait = max(wait, retry)
 			if err != nil {
 				inst.EveryoneError = err.Error()
-				wait = max(wait, retry)
 			} else {
 				everyone[base] = all
 				inst.EveryoneByProject = all.byProject

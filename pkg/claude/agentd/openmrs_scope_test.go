@@ -84,6 +84,9 @@ func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glA
 		if g.listStatus == http.StatusOK {
 			return glAPIResult{Status: http.StatusOK, Body: []byte(`[{"web_url":"` + testMRBase + `/acme/listed/-/merge_requests/1"}]`), Header: http.Header{}}, nil
 		}
+		if g.listStatus == http.StatusTooManyRequests {
+			return glAPIResult{Status: g.listStatus, Header: http.Header{"Retry-After": {"120"}}}, nil
+		}
 		return glAPIResult{Status: g.listStatus, Body: []byte(glRefusedBody), Header: http.Header{}}, nil
 	}
 	body, _ := json.Marshal(req.Body)
@@ -319,4 +322,29 @@ func TestPollAuthoredOpenMRs_AnAgentsProjectIsReadFirstInTheFallback(t *testing.
 	require.NotEmpty(t, view.Projects)
 	assert.Equal(t, "Acme/Allowed", view.Projects[0].Project)
 	assert.True(t, view.Projects[0].Agents)
+}
+
+// A re-probe that hits a 429 falls back to the projects, and the poll still
+// waits what GitLab asked for.
+func TestPollAuthoredOpenMRs_ARateLimitedReprobeStillWaits(t *testing.T) {
+	gl := scopedWorld(t)
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	authoredOpenMRState.Lock()
+	refusal := authoredOpenMRState.refused[testMRBase]
+	refusal.at = refusal.at.Add(-everyoneOpenMRReprobe)
+	authoredOpenMRState.refused[testMRBase] = refusal
+	authoredOpenMRState.Unlock()
+	gl.mu.Lock()
+	gl.listStatus = http.StatusTooManyRequests
+	gl.mu.Unlock()
+
+	wait, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, gl.listCalls, "re-probed")
+	assert.Equal(t, 2*time.Minute, wait, "the re-probe's 429 wait is honoured")
+	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
+	require.NotNil(t, view)
+	assert.Empty(t, view.Instances[0].EveryoneError, "the projects were still read")
+	assert.Equal(t, 1, view.Instances[0].EveryoneByProject)
 }
