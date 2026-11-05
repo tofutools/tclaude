@@ -4815,30 +4815,15 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	if !requireGroupActive(w, g) {
 		return
 	}
-	var body struct {
-		Conv string `json:"conv"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
-	}
-	if body.Conv == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "conv is required")
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
-		return
-	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwnersManage)); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
+	convID, fail := addGroupOwner(r, g, auditedCaller(grantedBy, PermGroupsOwnersManage))
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group":    g.Name,
-		"agent_id": peerAgentID(res.ConvID),
-		"conv_id":  res.ConvID,
+		"agent_id": peerAgentID(convID),
+		"conv_id":  convID,
 	})
 }
 
@@ -4852,19 +4837,8 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 	if !requireGroupActive(w, g) {
 		return
 	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
-		return
-	}
-	n, err := db.RemoveAgentGroupOwner(g.ID, res.ConvID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "not_found",
-			fmt.Sprintf("conv %s is not an owner of %q", res.ConvID, g.Name))
+	if fail := removeGroupOwner(g, convSelector); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -4880,34 +4854,12 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	var body struct {
-		Conv  string `json:"conv"`
-		Role  string `json:"role,omitempty"`
-		Descr string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+	convID, fail := addGroupMember(r, g)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if body.Conv == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "conv is required")
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
-		return
-	}
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID,
-		ConvID:  res.ConvID,
-		Role:    body.Role,
-		Descr:   body.Descr,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
 }
 
 // handleGroupMembersUpdate patches role/descr on an existing member.
@@ -4920,33 +4872,12 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 	if !requireGroupActive(w, g) {
 		return
 	}
-	var body struct {
-		Role  *string `json:"role,omitempty"`
-		Descr *string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+	convID, fail := updateGroupMember(r, g, convSelector)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if body.Role == nil && body.Descr == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "at least one of role/descr is required")
-		return
-	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
-		return
-	}
-	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Role, body.Descr)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "not_found", "no such member in group")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
 }
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
@@ -4959,13 +4890,8 @@ func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.Agen
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
-		return
-	}
-	if err := db.RemoveAgentGroupMember(g.ID, res.ConvID); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
+	if fail := removeGroupMember(g, convSelector); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
