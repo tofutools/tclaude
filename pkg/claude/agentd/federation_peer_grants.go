@@ -373,7 +373,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
-	if (in.Slug == PermAgentsReceive || in.Slug == PermAgentsTeleportReceive || in.Slug == PermAgentsReceivePermissions) && scope == "" {
+	if fedPeerSlugRequiresGroup(in.Slug) && scope == "" {
 		writeError(w, 400, "invalid_arg", in.Slug+" requires scope group=<local group>")
 		return
 	}

@@ -26,7 +26,10 @@ var pinnedPeerActionGates = map[string][]string{
 	PermGroupsMembersRetire: {"agent.retire@group", "agent.retire@self", "agent.retire@target"},
 	PermGroupsMembersClone:  {"agent.clone@group", "agent.clone@self", "agent.clone@target", "groups.members.add@group"},
 	PermAgentMove:           {"agent.bundle.export@group", "agent.bundle.export@self", "agent.bundle.export@target", "agent.move@group", "agent.move@self", "agent.move@target", "agent.share@group", "agent.share@self", "agent.share@target", "self.teleport@group", "self.teleport@self", "self.teleport@target"},
-	PermGroupsMembersManage: {"agent.rename@group", "agent.rename@self", "agent.rename@target", "agent.task@group", "agent.task@self", "agent.task@target"},
+	// Derived from the reach (tcl-7a6axl), groups.members.manage also
+	// answers agent.tags and its own name, as it covers the tags route; no
+	// handler a peer reaches gates either, so nothing it can do changed.
+	PermGroupsMembersManage: {"agent.rename@group", "agent.rename@self", "agent.rename@target", "agent.tags@group", "agent.tags@self", "agent.tags@target", "agent.task@group", "agent.task@self", "agent.task@target", "groups.members.manage@group", "groups.members.manage@self", "groups.members.manage@target"},
 }
 
 // pinnedPeerMoveWithRetireGates: a move also passes the source's retire
@@ -38,6 +41,10 @@ var pinnedPeerMoveWithRetireGates = []string{"agent.bundle.export", "agent.move"
 var pinnedPeerGroupGates = map[string][]string{
 	PermGroupsSettings:            {"groups.attachment", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.remote-control-policy"},
 	PermGroupsSettingsEnvironment: {"groups.settings.environment"},
+	// Derived from the reach (tcl-7a6axl): the member settings
+	// groups.members.manage covers. The member PATCH route a peer reaches
+	// gates none of them, so nothing it can do changed.
+	PermGroupsMembersManage: {"groups.members.rename", "groups.members.tags", "groups.members.task", "groups.members.update"},
 }
 
 // pinnedPeerSettingsWithCwdGates: the default directory also needs the

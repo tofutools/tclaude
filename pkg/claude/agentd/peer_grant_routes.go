@@ -23,7 +23,7 @@ import (
 //   - before the handler runs, the peer must hold the rule's grant for the
 //     target group (so a handler without gates of its own is still covered);
 //   - inside it, every requirePermission gate passes only for the local slugs
-//     the peer's grants cover for that one group (peerGrantFamilies), so a
+//     the peer's grants cover for that one group (peerGrantGates), so a
 //     PATCH that also touches member permissions is refused field by field,
 //     exactly like an agent caller's.
 //
@@ -39,26 +39,11 @@ const (
 	PermGroupsSettings = "groups.settings"
 )
 
-// peerGrantFamilies maps each peer grant to the local gate slugs it
-// satisfies within its group. A grant names what an operator decides as one
-// unit, so a peer is not handed one slug per control. The environment stays
-// its own grant: its values reach every spawned agent's process. Settings
-// that every spawn into the group inherits need the peer's say over that
-// part of a spawn as well (peerGrantGates, handleGroupUpdate).
-var peerGrantFamilies = map[string][]string{
-	PermGroupsSettings: {
-		PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir, PermGroupsSettingsDefaultContext,
-		PermGroupsSettingsDefaultProfile, PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications,
-		PermGroupsSettingsRemoteControlPolicy, PermGroupsAttachment, PermGroupsRename, PermGroupsNest,
-	},
-	PermGroupsSettingsEnvironment: {PermGroupsSettingsEnvironment},
-}
-
 // peerInvokeSpec marks a dashboard route a peer's operator may call.
 type peerInvokeSpec struct {
 	// param is the path wildcard naming the target group.
 	param string
-	// extra adds gate slugs this route needs beyond the families, once the
+	// extra adds gate slugs this route needs beyond what the grants answer, once the
 	// peer holds what it takes (nil: none).
 	extra func(peer string, g *db.AgentGroup) []string
 }
@@ -81,8 +66,13 @@ func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
 
 // peerGrantGates lists the local gate slugs peer's grants cover in group.
 func peerGrantGates(peer string, groupID int64) map[string]bool {
+	// A grant answers the group-local gates whose federation reach goes via
+	// it (peerGroupGateGrants): groups.settings the ordinary settings, the
+	// environment grant its own gate. Settings that every spawn into the
+	// group inherits need the peer's say over that part of a spawn as well
+	// (handleGroupUpdate).
 	gates := map[string]bool{}
-	for grant, slugs := range peerGrantFamilies {
+	for grant, slugs := range peerGroupGateGrants {
 		if !fedPeerAllows(peer, groupID, grant) {
 			continue
 		}
