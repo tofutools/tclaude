@@ -174,23 +174,20 @@ func assembleLaunchPaneCommand(in launchPaneCommandInput) (string, []byte, error
 		return "", nil, err
 	}
 	in.timing("codex_version_checked")
-	gatewayCLIPath := clcommon.SelfTclaudePath()
+	paneCommand := HarnessPaneCommandInput{
+		SessionID: in.sessionID, Harness: in.h, Spec: spawnSpec,
+	}
 	if in.outerLayer && tclaudeLayerWrapsPane(in.h.Name) {
-		gatewayCLIPath, err = HTTPProxyCLIForLayerSpec(in.layerSpec)
-		if err != nil {
-			return "", nil, fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
-		}
+		paneCommand.LayerBinary = in.bwrapBinary
+		paneCommand.LayerSpec = in.layerSpec
+		paneCommand.LoopbackBindPort = codexAppServerLoopbackPort(in.params)
+	}
+	harnessCmd, err := HarnessPaneCommand(paneCommand)
+	if err != nil {
+		return "", nil, err
 	}
 	if err := db.RecordSessionModelProxy(in.sessionID, in.params.ModelProxy); err != nil {
 		return "", nil, fmt.Errorf("record model gateway launch choice: %w", err)
-	}
-	harnessCmd := HTTPProxySpawnCommand(in.sessionID, in.h, spawnSpec, gatewayCLIPath)
-	if in.outerLayer && tclaudeLayerWrapsPane(in.h.Name) {
-		harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBind(
-			in.bwrapBinary, *in.layerSpec, codexAppServerLoopbackPort(in.params), harnessCmd)
-		if err != nil {
-			return "", nil, fmt.Errorf("wrap harness with tclaude’s sandbox: %w", err)
-		}
 	}
 	boundaryInput := ExecutionBoundaryInput{
 		LaunchGeneration:      in.exitGeneration,
@@ -232,4 +229,44 @@ func assembleLaunchPaneCommand(in launchPaneCommandInput) (string, []byte, error
 		}
 	}
 	return harnessCmd, executionBoundaryJSON, nil
+}
+
+// HarnessPaneCommandInput is what HarnessPaneCommand turns into the pane's
+// shell command.
+type HarnessPaneCommandInput struct {
+	SessionID string
+	Harness   *harness.Harness
+	// Spec is the spawn spec with its host-control sandbox already prepared.
+	Spec harness.SpawnSpec
+	// LayerSpec, when set, wraps the command in tclaude's sandbox, started by
+	// LayerBinary. LoopbackBindPort is the one loopback port the wrapped
+	// harness may listen on (a Codex app-server's), 0 for none.
+	LayerBinary      string
+	LayerSpec        *TclaudeLayerLaunchSpec
+	LoopbackBindPort int
+}
+
+// HarnessPaneCommand is the pane-command step `session new` and the conv
+// resume share. It renders the harness's model-gateway spawn command, through
+// the tclaude CLI that tclaude's sandbox can reach when the pane is wrapped,
+// and wraps it in that sandbox.
+func HarnessPaneCommand(in HarnessPaneCommandInput) (string, error) {
+	gatewayCLIPath := clcommon.SelfTclaudePath()
+	if in.LayerSpec != nil {
+		var err error
+		gatewayCLIPath, err = HTTPProxyCLIForLayerSpec(in.LayerSpec)
+		if err != nil {
+			return "", fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
+		}
+	}
+	cmd := HTTPProxySpawnCommand(in.SessionID, in.Harness, in.Spec, gatewayCLIPath)
+	if in.LayerSpec == nil {
+		return cmd, nil
+	}
+	cmd, err := WrapTclaudeLayerSpecWithLoopbackBind(
+		in.LayerBinary, *in.LayerSpec, in.LoopbackBindPort, cmd)
+	if err != nil {
+		return "", fmt.Errorf("wrap harness with tclaude’s sandbox: %w", err)
+	}
+	return cmd, nil
 }

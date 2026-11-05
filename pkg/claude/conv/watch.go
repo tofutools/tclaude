@@ -2718,22 +2718,21 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
-	gatewayCLIPath := clcommon.SelfTclaudePath()
+	// The step `session new` takes, with no loopback bind port: this resume
+	// renders no Codex app-server (resumeLaunchPosture records CodexAppServer as nil).
+	paneCommand := session.HarnessPaneCommandInput{SessionID: sessionID, Harness: h, Spec: spec}
 	if outerLayer {
-		gatewayCLIPath, err = session.HTTPProxyCLIForLayerSpec(&layerSpec)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve HTTP proxy resume CLI: %w", err)
-		}
+		paneCommand.LayerBinary = binary
+		paneCommand.LayerSpec = &layerSpec
 	}
-	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec, gatewayCLIPath)
+	cmd, err := session.HarnessPaneCommand(paneCommand)
+	if err != nil {
+		return "", "", nil, err
+	}
+	// Only a managed Codex profile outside tclaude's sandbox has a file to
+	// remove, so the cleanup never lands inside the sandbox's wrap.
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
-	}
-	if outerLayer {
-		cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude’s sandbox: %w", err)
-		}
 	}
 	if effectiveSandboxOut != nil {
 		*effectiveSandboxOut = effectiveSandbox
