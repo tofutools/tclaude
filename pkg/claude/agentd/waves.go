@@ -153,7 +153,6 @@ func waveDeployFromChoreography(c *db.WaveChoreography) waveDeploy {
 // members).
 //
 // d carries what every wave of one deployment shares; see waveDeploy.
-// d carries what every wave of one deployment shares; see waveDeploy.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, existing map[string]string, d waveDeploy) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},

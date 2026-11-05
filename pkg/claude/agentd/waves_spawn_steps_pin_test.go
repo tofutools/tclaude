@@ -139,6 +139,7 @@ func TestSpawnWaveAgents_RoleAndPromptRefusalsKeepTheirKind(t *testing.T) {
 	assert.Equal(t, "invalid_profile", unroled.ErrorKind, unroled.Error)
 	assert.Contains(t, unroled.Error, `"vanished"`)
 	assert.Empty(t, unroled.WorktreePath, "a refused member names no worktree")
+	assert.Nil(t, unroled.Resolved, "a roles refusal carries no launch echo")
 
 	prompted := wr.Results[2]
 	assert.Equal(t, "invalid_prompt", prompted.ErrorKind, prompted.Error)
@@ -166,10 +167,36 @@ func TestSpawnWaveAgents_CwdWriteProofFailureIsCountedWithoutPaths(t *testing.T)
 	assert.Equal(t, 1, wr.Failed)
 	assert.Zero(t, wr.Spawned)
 
-	// No write-proof marker is left behind in the worktree that was cut.
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(repo), "*", dirWriteProofFilePrefix+"tok"))
+}
+
+// A member whose own worktree is its cwd gets a write-proof marker planted
+// there before its saved prompts are composed. When composing them fails, the
+// member is refused and the marker must not be left behind.
+func TestSpawnWaveAgents_PromptRefusalRemovesThePlantedCwdMarker(t *testing.T) {
+	g := waveStepsPinGroup(t)
+	repo := waveStepsPinRepo(t)
+	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "prompted", PromptRefs: []string{"no-such-prompt"},
+	})
 	require.NoError(t, err)
-	assert.Empty(t, matches)
-	_, statErr := os.Stat(filepath.Join(repo, dirWriteProofFilePrefix+"tok"))
-	assert.True(t, os.IsNotExist(statErr))
+
+	wr := spawnWaveAgents(g, []db.GroupTemplateAgent{
+		{Name: "worker", SpawnProfile: "prompted", SpawnProfileID: profileID},
+	}, nil, waveDeploy{
+		cwd:               repo,
+		perAgentWorktrees: &db.WavePerAgentWorktrees{Repo: repo, BranchPrefix: "pin/", WorktreeAsCwd: true},
+		proofToken:        "tok",
+		proofDirs:         []string{filepath.Dir(repo)}, // the worktrees' parent is proofed
+	})
+
+	require.Len(t, wr.Results, 1)
+	res := wr.Results[0]
+	require.Equal(t, "invalid_prompt", res.ErrorKind, res.Error)
+	assert.Equal(t, 1, wr.Failed)
+	worktrees, err := filepath.Glob(filepath.Join(filepath.Dir(repo), "*"))
+	require.NoError(t, err)
+	require.Greater(t, len(worktrees), 1, "the member's worktree was cut beside the repo: %v", worktrees)
+	markers, err := filepath.Glob(filepath.Join(filepath.Dir(repo), "*", dirWriteProofFilePrefix+"tok"))
+	require.NoError(t, err)
+	assert.Empty(t, markers, "the refused member's cwd marker is removed")
 }
