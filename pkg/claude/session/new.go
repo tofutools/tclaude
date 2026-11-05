@@ -1312,14 +1312,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
-	// The shape gate runs on the RENDERED rules, not the authored profile: the
-	// launch contract above adds reopens of its own, so `deny ~` on its own
-	// still emits a split policy and must still be refused where Codex cannot
-	// enforce it. The conv resume runs the same gate in planResumeDirs.
-	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
-		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
-		return "", "", nil, err
-	}
 	return EnsureCodexManagedLaunchProfile(CodexManagedProfileRules{
 		ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs,
 	}, effectiveSandbox, launchID)
@@ -1332,14 +1324,21 @@ type CodexManagedProfileRules struct {
 }
 
 // EnsureCodexManagedLaunchProfile is the managed-Codex profile step that
-// `session new` and the conv resume share. When the rules reopen a path
-// beneath a denied ancestor, it verifies Codex's split-policy backend, the one
-// that can honor that shape, and adds the Codex executable to the reads when
-// the backend needs it. It then writes the launch-unique profile with the
-// snapshot's network posture and Unix-socket allowlist.
+// `session new` and the conv resume share. It first runs the reopen-under-deny
+// gate on the rules: a reopen beneath a deny is refused where Codex cannot
+// enforce it. The gate runs on the RENDERED rules, not the authored profile:
+// the launch contract adds reopens of its own, so `deny ~` on its own still
+// emits a split policy. It runs here, whatever the sandbox implementation,
+// because the profile is written whatever the implementation; an unconfined
+// resume skips the gate in planResumeDirs (awb tcl-jyd8zy).
 //
-// The caller runs harness.ValidateSandboxReopenUnderDeny on the same rules
-// first, removes path after the pane exits, and revalidates a non-nil
+// When the rules reopen a path beneath a denied ancestor, it then verifies
+// Codex's split-policy backend, the one that can honor that shape, and adds
+// the Codex executable to the reads when the backend needs it. It writes the
+// launch-unique profile with the snapshot's network posture and Unix-socket
+// allowlist.
+//
+// The caller removes path after the pane exits, and revalidates a non-nil
 // capability immediately before the exec boundary, pinning its
 // ExecutablePath.
 func EnsureCodexManagedLaunchProfile(
@@ -1347,6 +1346,10 @@ func EnsureCodexManagedLaunchProfile(
 	effectiveSandbox *sandboxpolicy.Snapshot,
 	launchID string,
 ) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+		sandboxpolicy.GrantsFromDirs(rules.ReadDirs, rules.WriteDirs, rules.DenyDirs)); err != nil {
+		return "", "", nil, err
+	}
 	readDirs := append([]string(nil), rules.ReadDirs...)
 	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
 		sandboxpolicy.GrantsFromDirs(readDirs, rules.WriteDirs, rules.DenyDirs))
