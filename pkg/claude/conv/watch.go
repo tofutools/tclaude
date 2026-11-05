@@ -2555,10 +2555,18 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	// exactly the postures a spawn does. An implementation that stood every
 	// access boundary down on purpose is not asked, which is what keeps a
 	// resource-only conversation resumable.
+	//
+	// Over the launch view of the snapshot, as `session new` gates it: a rule
+	// whose path does not exist yet is filtered out there and must not refuse
+	// the resume here.
+	gateSandbox, err := session.SandboxSnapshotForLaunch(effectiveSandbox)
+	if err != nil {
+		return "", "", nil, err
+	}
 	if err := session.ValidateHarnessSandboxRepresentation(
 		h, harnessBuiltinMode,
 		h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile,
-		effectiveSandbox, outerLayer, unconfined,
+		gateSandbox, outerLayer, unconfined,
 	); err != nil {
 		return "", "", nil, err
 	}
