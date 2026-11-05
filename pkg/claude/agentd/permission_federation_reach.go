@@ -47,10 +47,11 @@ type FedReach struct {
 	Cap string
 	// Via names the peer grants a FedPeerAlias or FedSender slug goes through.
 	Via []string
-	// Pending marks a peer grant no peer route serves yet: today only
-	// unrestricted trust reaches the operation, if anything does, and
-	// `federation grant` refuses the slug. It is left out of the derived
-	// peer slug tables until a route is opened for it.
+	// Pending marks a peer grant no peer route serves yet: `federation grant`
+	// refuses the slug, and it is left out of the derived peer slug tables
+	// until a route is opened for it. Unrestricted trust may reach the
+	// operation, and a restricted peer may still pass its gate inside
+	// another granted operation (see peerActionPassThroughs).
 	Pending bool
 	// Sensitive marks a peer grant that lets the peer act on this node, not
 	// only read. The dashboard's grant picker shows it (PEER_SLUGS in
@@ -279,6 +280,19 @@ var slugFederationReach = map[string]FedReach{
 	PermAWBRead:                           {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermAWBWrite:                          {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermConfigOffer:                       {Kind: FedPeerInstance},
+}
+
+// peerActionPassThroughs record the gates a restricted peer passes inside
+// another granted operation (peerActionAuthority.allows) beyond the Via of
+// their reach: a move or teleport pulls the agent through its export and
+// retire, and a clone landing in another group joins it. The registry-driven
+// peer gate that replaces that switch must keep them.
+var peerActionPassThroughs = map[string][]string{
+	PermAgentRetire:       {PermAgentMove},
+	PermAgentShare:        {PermAgentMove},
+	PermSelfTeleport:      {PermAgentMove},
+	PermAgentBundleExport: {PermAgentMove},
+	PermGroupsMembersAdd:  {PermGroupsMembersClone},
 }
 
 // fedPeerSlugsOfKind lists the grantable peer slugs of kind.

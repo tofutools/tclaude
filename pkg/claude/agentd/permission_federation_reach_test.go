@@ -233,7 +233,9 @@ func TestDashboardPeerSlugsMatchFederationReach(t *testing.T) {
 	require.NotNil(t, block, "PEER_SLUGS not found")
 	row := regexp.MustCompile(`(?m)^\s*\{ slug: '([^']+)', kind: '([a-z]+)'(.*)$`)
 	listed := map[string]bool{}
-	for _, m := range row.FindAllStringSubmatch(string(block[1]), -1) {
+	rows := row.FindAllStringSubmatch(string(block[1]), -1)
+	require.Len(t, rows, strings.Count(string(block[1]), "slug: "), "every PEER_SLUGS row is one line in the { slug, kind, ... } form")
+	for _, m := range rows {
 		slug, kind, rest := m[1], m[2], m[3]
 		listed[slug] = true
 		reach := slugFederationReach[slug]
@@ -250,6 +252,18 @@ func TestDashboardPeerSlugsMatchFederationReach(t *testing.T) {
 	for _, kind := range []FedReachKind{FedPeerGroup, FedPeerInstance, FedPeerProxy} {
 		for _, slug := range fedPeerSlugsOfKind(kind) {
 			assert.Equal(t, !slices.Contains(peerSlugsMissingFromGrantPicker, slug), listed[slug], "%s: listed in PEER_SLUGS unless a known exception", slug)
+		}
+	}
+}
+
+// The peer action pass-throughs name grantable peer slugs, and gates that
+// would not reach a peer otherwise.
+func TestPeerActionPassThroughsArePeerGrants(t *testing.T) {
+	for gate, grants := range peerActionPassThroughs {
+		_, ok := slugFederationReach[gate]
+		assert.True(t, ok, "%s is a registered slug", gate)
+		for _, grant := range grants {
+			assert.True(t, slugFederationReach[grant].peerGrantable(), "%s passes through %s, a grantable peer slug", gate, grant)
 		}
 	}
 }
