@@ -35,23 +35,34 @@ wait
 `, shellSingleQuote(child))
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o700))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	// The deadline fires only once the descendant is up and holding the
+	// pipe: a fixed short timeout could kill the group before the child had
+	// even recorded its pid, which proves nothing and fails the read below
+	// on a loaded runner.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	started := time.Now()
+	var descendantPID int
+	cancelled := make(chan time.Time, 1)
+	go func() {
+		defer func() { cancelled <- time.Now(); cancel() }()
+		limit := time.Now().Add(10 * time.Second)
+		for time.Now().Before(limit) {
+			if raw, readErr := os.ReadFile(pidFile); readErr == nil {
+				if pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw))); convErr == nil && pid > 0 {
+					descendantPID = pid
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 	_, err := fetchCopilotEnrichedModels(ctx, script, "test-token")
 	require.Error(t, err)
-	assert.Less(t, time.Since(started), 3*time.Second,
+	cancelledAt := <-cancelled
+	require.Positive(t, descendantPID, "the inherited-pipe descendant never started")
+	assert.Less(t, time.Since(cancelledAt), 3*time.Second,
 		"a descendant holding stdout must not defeat the catalog deadline")
 
-	var descendantPID int
-	require.Eventually(t, func() bool {
-		raw, readErr := os.ReadFile(pidFile)
-		if readErr != nil {
-			return false
-		}
-		descendantPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
-		return readErr == nil && descendantPID > 0
-	}, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		err := syscall.Kill(descendantPID, 0)
 		return errors.Is(err, syscall.ESRCH)
