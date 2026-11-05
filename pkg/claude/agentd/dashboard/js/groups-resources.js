@@ -302,6 +302,14 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   const open = held ? !!heldOpen : ownOpen;
   const setOpen = held ? onOpen : setOwnOpen;
   const ref = useRef(null);
+  const trigger = useRef(null);
+  // Mounted already open is the move from the folded line: the pressed
+  // button is gone, so focus follows to this one (keyboard users keep their
+  // place), unless the operator has focused something else meanwhile.
+  useEffect(() => {
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (open && (!active || active === document.body)) trigger.current?.focus();
+  }, []);
   // The shared popover rule: a press outside, or Escape, closes the menu (a
   // click menu, so moving the pointer away does not).
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
@@ -341,7 +349,7 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
     disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   const process = (scope) => () => { setOpen(false); onAddProcess(scope); };
   return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" domRef=${trigger} data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}: a process, board, live page or shell`}
       aria-label=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋ New ▾<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu">

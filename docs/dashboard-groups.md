@@ -464,8 +464,9 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
   ones saved with the group.
 - **Shell:** the group's terminal, in its default directory.
 
-A kind with nothing in it is hidden; the section's count is the number of
-rows it lists, and a section with nothing at all says *No resources yet*.
+A kind with nothing in it is hidden. The section's count is its saved
+processes, boards, pages and shell (runs are not counted), and a section with
+nothing at all says *No resources yet*.
 **＋ New** starts a process for the group or for one agent, adds a new board
 linked to the group or a blank live page, or opens the group's shell (once the
 group has a directory). Draw on the blank page to show what to build, and a

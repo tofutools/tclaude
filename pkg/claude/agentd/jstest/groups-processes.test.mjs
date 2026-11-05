@@ -534,6 +534,7 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.ok(section(infra, 'processes').classList.contains('open'), '＋ New on the folded line unfolds Resources');
   // The menu survives the move to the title row.
   assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ New menu stays open on the title row');
+  assert.equal(document.activeElement, section(infra, 'processes').querySelector('.gf-title-row [data-resource-add]'), 'focus follows the button to the title row');
   await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-add-process-agent]'), 'click'));
   await settle(harness);
   assert.ok(section(infra, 'processes').querySelector('form.gp-start-form[data-start-scope="agent"]'), 'Process for one agent opens the agent-scoped start form');
