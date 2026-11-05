@@ -115,12 +115,12 @@ func TestSandboxSnapshotDirsOmitsMissingRuleUntilLaterLaunch(t *testing.T) {
 		}}},
 	}
 
-	launch, err := sandboxSnapshotForLaunch(snapshot)
+	launch, err := SandboxSnapshotForLaunch(snapshot)
 	require.NoError(t, err)
 	assert.Empty(t, sandboxSnapshotDirs(launch, sandboxpolicy.AccessWrite),
 		"a missing rule must not reach the harness on this launch")
 	require.NoError(t, os.MkdirAll(missing, 0o755))
-	launch, err = sandboxSnapshotForLaunch(snapshot)
+	launch, err = SandboxSnapshotForLaunch(snapshot)
 	require.NoError(t, err)
 	assert.Equal(t, []string{missing}, sandboxSnapshotDirs(launch, sandboxpolicy.AccessWrite),
 		"the same frozen rule becomes active on a later launch")

@@ -265,29 +265,6 @@ func resolveNewLaunch(params *NewParams, launchSandbox *sandboxpolicy.Snapshot) 
 			return nil, err
 		}
 	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
-		return nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
-		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
-		return nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.GeminiName {
-		return nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
-		return nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
-	}
-	// Capability gates. Both refuse loudly rather than launching with a weaker
-	// policy than the operator asked for: a reopen beneath a deny that the
-	// harness silently discards, or an acknowledged protected grant it quietly
-	// dropped, would both be worse than an error, because the operator would
-	// trust isolation that is not there. This is the EARLY gate over the
-	// authored profile; the rendered rules are gated again once the launch
-	// contract has added its own reopens.
 	codexManagedProfile := h.Name == harness.CodexName && params.PermissionProfile == harness.CodexAgentProfile
 	effectiveHarnessBuiltinMode := harnessBuiltinMode
 	if codexManagedProfile {
@@ -295,34 +272,16 @@ func resolveNewLaunch(params *NewParams, launchSandbox *sandboxpolicy.Snapshot) 
 		// harnessBuiltinMode was cleared above; restore the logical mode for the gates.
 		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
 	}
-	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
-			return nil, err
-		}
+	if err := ValidateHarnessSandboxRepresentation(
+		h, harnessBuiltinMode, codexManagedProfile, launchSandbox, outerLayer, unconfined,
+	); err != nil {
+		return nil, err
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	hasNewAccessAxes := launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil ||
 			launchSandbox.Effective.UnixSockets != nil ||
 			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
-		switch h.Name {
-		case harness.CodexName:
-			if params.PermissionProfile != harness.CodexAgentProfile {
-				return nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
-			}
-			if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-				return nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
-			}
-		case harness.OpenCodeName:
-			if harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
-				return nil, fmt.Errorf("unsupported_sandbox_profile_network: OpenCode web-tool network rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
-		}
-	}
 	if outerLayer && !hasNewAccessAxes {
 		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: networkAccess}
 		if launchSandbox != nil {
@@ -583,4 +542,81 @@ func resolveNewLaunch(params *NewParams, launchSandbox *sandboxpolicy.Snapshot) 
 		contextFeatures:             contextFeatures,
 		autoCompactWindow:           autoCompactWindow,
 	}, nil
+}
+
+// ValidateHarnessSandboxRepresentation refuses a launch whose sandbox profile
+// carries a rule the harness's OWN sandbox cannot represent: filesystem rules
+// per harness and mode, a reopen beneath a deny the harness would discard, and
+// legacy network_access rules outside the Codex managed sandbox or OpenCode's
+// web-tool access control. It asks nothing of a launch behind tclaude's sandbox
+// or one that confines nothing. `session new` and the conv resume paths both
+// call it, so a resume admits exactly the postures a spawn does.
+//
+// codexManagedProfile is whether a Codex launch runs under the managed
+// tclaude-agent permission profile, selected via -p in place of --sandbox.
+func ValidateHarnessSandboxRepresentation(
+	h *harness.Harness,
+	harnessBuiltinMode string,
+	codexManagedProfile bool,
+	launchSandbox *sandboxpolicy.Snapshot,
+	outerLayer, unconfined bool,
+) error {
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.CodexName && !codexManagedProfile {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
+	}
+	if !outerLayer && !unconfined && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
+	}
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.GeminiName {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
+	}
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
+	}
+	// Capability gates. Both refuse loudly rather than launching with a weaker
+	// policy than the operator asked for: a reopen beneath a deny that the
+	// harness silently discards, or an acknowledged protected grant it quietly
+	// dropped, would both be worse than an error, because the operator would
+	// trust isolation that is not there. This is the EARLY gate over the
+	// authored profile; the rendered rules are gated again once the launch
+	// contract has added its own reopens.
+	effectiveHarnessBuiltinMode := harnessBuiltinMode
+	if codexManagedProfile {
+		// The managed profile is selected via -p rather than --sandbox, so
+		// harnessBuiltinMode was cleared above; restore the logical mode for the gates.
+		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
+	}
+	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
+	if !outerLayer && !unconfined {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
+			return err
+		}
+	}
+	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
+	hasNewAccessAxes := launchSandbox != nil &&
+		(launchSandbox.Effective.Network != nil ||
+			launchSandbox.Effective.UnixSockets != nil ||
+			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate)
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
+		switch h.Name {
+		case harness.CodexName:
+			if !codexManagedProfile {
+				return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
+			}
+			if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
+				return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+			}
+		case harness.OpenCodeName:
+			if harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
+				return fmt.Errorf("unsupported_sandbox_profile_network: OpenCode web-tool network rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
+			}
+		default:
+			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
+		}
+	}
+	return nil
 }

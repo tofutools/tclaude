@@ -2550,32 +2550,25 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		return "", "", nil, err
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
-	// The resume-side twins of the session-new capability gates, and they need
-	// the same answer: each asks whether the harness's own sandbox can REPRESENT
-	// a rule, which is not the question for an implementation that stood every
-	// access boundary down on purpose. Leaving them un-gated is what made a
-	// resource-only conversation spawnable but not resumable.
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, launchGrants); err != nil {
-			return "", "", nil, err
-		}
+	// The session-new capability gates, shared rather than twinned: each asks
+	// whether the harness's own sandbox can REPRESENT a rule, so a resume admits
+	// exactly the postures a spawn does. An implementation that stood every
+	// access boundary down on purpose is not asked, which is what keeps a
+	// resource-only conversation resumable.
+	//
+	// Over the launch view of the snapshot, as `session new` gates it: a rule
+	// whose path does not exist yet is filtered out there and must not refuse
+	// the resume here.
+	gateSandbox, err := session.SandboxSnapshotForLaunch(effectiveSandbox)
+	if err != nil {
+		return "", "", nil, err
 	}
-	if !outerLayer && !unconfined && h.Name == harness.GeminiName && len(denyDirs)+len(readDirs)+len(writeDirs) > 0 {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
-	}
-	if !outerLayer && !unconfined && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit {
-		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
-		}
+	if err := session.ValidateHarnessSandboxRepresentation(
+		h, harnessBuiltinMode,
+		h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile,
+		gateSandbox, outerLayer, unconfined,
+	); err != nil {
+		return "", "", nil, err
 	}
 	harnessBuiltinMode, err = resumeHarnessBuiltinModeForImplementation(
 		h, harnessBuiltinMode, implementation,
