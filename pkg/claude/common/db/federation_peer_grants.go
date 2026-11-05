@@ -216,20 +216,7 @@ func ListFederationAutoWorkers(peer string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT agent_id FROM federation_auto_workers WHERE peer=?`, peer)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanString, `SELECT agent_id FROM federation_auto_workers WHERE peer=?`, peer)
 }
 
 // BeginFederationSpawnRequest reserves a stable identity before any process
@@ -318,20 +305,13 @@ func ListFederationSpawnWork() ([]*FederationSpawnRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT `+fedSpawnColumns+` FROM federation_spawn_requests WHERE status=? OR (status=? AND (result_sent=0 OR (automatic=1 AND notice_sent=0))) OR (status=? AND reason!='' AND notice_sent=0) ORDER BY id`, FedSpawnLaunching, FedSpawnApproved, FedSpawnPending)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*FederationSpawnRequest
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*FederationSpawnRequest, error) {
 		r, err := scanFedSpawn(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	}, `SELECT `+fedSpawnColumns+` FROM federation_spawn_requests WHERE status=? OR (status=? AND (result_sent=0 OR (automatic=1 AND notice_sent=0))) OR (status=? AND reason!='' AND notice_sent=0) ORDER BY id`, FedSpawnLaunching, FedSpawnApproved, FedSpawnPending)
 }
 
 func MarkFederationSpawnNoticeSent(id int64) error {

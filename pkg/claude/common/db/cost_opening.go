@@ -353,7 +353,7 @@ func loadCostOpeningState(tx *sql.Tx) (costOpeningState, error) {
 	return state, rows.Err()
 }
 
-func scanCostOpeningBlobs[T any](q costRowQuerier, query string, args []any, out map[string]T) error {
+func scanCostOpeningBlobs[T any](q rowQuerier, query string, args []any, out map[string]T) error {
 	rows, err := q.Query(query, args...)
 	if err != nil {
 		return err
@@ -374,7 +374,7 @@ func scanCostOpeningBlobs[T any](q costRowQuerier, query string, args []any, out
 }
 
 // loadCostOpeningsFor reads the stored openings of the named keys, in chunks.
-func loadCostOpeningsFor[T any](q costRowQuerier, query string, keys []string, out map[string]T) error {
+func loadCostOpeningsFor[T any](q rowQuerier, query string, keys []string, out map[string]T) error {
 	for _, chunk := range chunkStrings(keys, batchChunkSize) {
 		clause, args := inClause(chunk)
 		if err := scanCostOpeningBlobs(q, query+clause, args, out); err != nil {

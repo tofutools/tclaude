@@ -405,21 +405,8 @@ func ConvsForAgent(agentID string) ([]string, error) {
 	// they happen, while the v72 backfill deliberately gives all migrated rows
 	// the same linked_at, so the unique insertion key also keeps those ties
 	// deterministic. See GenerationsForAgent + generations_test.go.
-	rows, err := d.Query(`SELECT conv_id FROM agent_conversations
+	return queryRows(d, scanString, `SELECT conv_id FROM agent_conversations
 		WHERE agent_id = ? ORDER BY rowid`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 // GenerationsForAgent returns every conversation generation linked to agentID
@@ -439,26 +426,19 @@ func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
 		return nil, err
 	}
 	// Oldest link first by the rowid link-insertion order. See ConvsForAgent.
-	rows, err := d.Query(`SELECT conv_id, role, reason, linked_at
-		FROM agent_conversations WHERE agent_id = ? ORDER BY rowid`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []AgentConversation
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (AgentConversation, error) {
 		var (
 			c        AgentConversation
 			linkedAt dbTimestamp
 		)
 		c.AgentID = agentID
 		if err := rows.Scan(&c.ConvID, &c.Role, &c.Reason, &linkedAt); err != nil {
-			return nil, err
+			return AgentConversation{}, err
 		}
 		c.LinkedAt = linkedAt.Time()
-		out = append(out, c)
-	}
-	return out, rows.Err()
+		return c, nil
+	}, `SELECT conv_id, role, reason, linked_at
+		FROM agent_conversations WHERE agent_id = ? ORDER BY rowid`, agentID)
 }
 
 // SetAgentCurrentConv advances an actor's live conversation pointer as a
@@ -842,20 +822,7 @@ func ListRetiredConvIDs() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(retiredConvsSQL)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanString, retiredConvsSQL)
 }
 
 // ListAgentRosterState returns the active actors' current conversation ids and
