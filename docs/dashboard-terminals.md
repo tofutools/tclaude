@@ -44,6 +44,10 @@ handle on the right edge. Each tab remembers its own panel's state.
   tab.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
+- A board, page or process row has a lock at its right end: an amber closed
+  lock, always shown, while agents can only read it, and a dim open lock on
+  hover or keyboard focus while they can edit it. Click it to lock or unlock;
+  see [Groups › Resources](dashboard-groups.md#resources). Agent rows have none.
 
 ## Opening a terminal
 

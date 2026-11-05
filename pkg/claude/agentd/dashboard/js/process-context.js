@@ -17,7 +17,7 @@
 import { signal } from '@preact/signals';
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { randomUUID } from './insecure-origin.js';
-import { rememberLock } from './resource-lock.js';
+import { lockChanged } from './resource-lock.js';
 
 export const PROCESS_CONTEXT_PATH = '/v1/process/context';
 
@@ -331,7 +331,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       const body = await processRequest('/api/resource-locks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
       }, fetchImpl);
-      rememberLock(kind, id, locked);
+      void lockChanged(kind, id, locked);
       return body;
     },
     // createGroupPage creates a blank page the group owns (POST /api/pages).

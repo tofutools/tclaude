@@ -429,3 +429,37 @@ test('a pop-out whose board could not be saved stays open', async (t) => {
     page.dispose();
   }
 });
+
+test('a lock toggled in the Collab panel shows on the board tab name and in its menu', async (t) => {
+  const requests = fakeDaemon(t);
+  const snap = (locked) => ({
+    ...COLLAB_ON, groups: [{ id: 1, name: 'tclaude' }],
+    group_resources: [{ kind: 'board', id: 'plan', group_id: 1, title: 'Release plan', state: 'closed', locked }],
+  });
+  const env = await mountShell(t, snap(false));
+  const cleanup = await start(env);
+  const { harness, host, openBoardPane, setSnapshot } = env;
+  const lock = await harness.importDashboardModule('js/resource-lock.js');
+  // The re-read after a toggle brings the daemon's new row, as refresh.js would.
+  lock.lockRefresh.run = async () => setSnapshot(snap(true));
+  await harness.act(async () => { await openBoardPane('plan', 'Release plan'); await wait(); });
+  await harness.act(() => wait());
+  const tab = () => host.querySelector('.mux-tab');
+  assertAbsent(tab().querySelector('[data-lock-badge]'), 'an unlocked board tab wears no lock');
+  const menuItems = async () => {
+    await harness.act(() => harness.fireEvent(tab(), 'contextmenu', { clientX: 8, clientY: 8 }));
+    const labels = [...harness.document.querySelectorAll('.mux-tab-menu-item')].map((el) => el.textContent);
+    await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+    return labels;
+  };
+  assert.ok((await menuItems()).includes('Lock for agents'));
+
+  const railLock = host.querySelector('[data-rail-item="board:plan"] [data-rail-lock="board:plan"]');
+  assert.ok(railLock, 'the panel row has the lock toggle');
+  await harness.act(async () => { harness.fireEvent(railLock, 'click'); await wait(); await wait(); });
+  assert.ok(requests.includes('POST /api/resource-locks'));
+  assert.ok(host.querySelector('[data-rail-lock="board:plan"]').classList.contains('is-locked'), 'the panel row follows');
+  assert.ok(tab().querySelector('[data-lock-badge="board"]'), 'the tab name wears the lock');
+  assert.ok((await menuItems()).includes('Unlock for agents'), 'the tab menu offers the unlock');
+  cleanup();
+});
