@@ -106,11 +106,15 @@ options open** in the group's ⚙ menu.
 | 🔗 | Links, when the group has any | Open them |
 
 Inside the group are folding sections: **Subgroups**, **Agents** and
-**Processes**. Each remembers whether you folded it, per group. **Agents** has
-three buttons: spawn into this group, 🟢 power on everyone offline, and 🛑 shut
-down everyone running. **Processes** has Agent process, Group process, resume
-all and pause all. These buttons sit on the section line while it is folded, and
-at the top of its table while it is open.
+**Resources**. Each remembers whether you folded it, per group. **Subgroups**
+has one button: create a subgroup. **Agents** has three: spawn into this
+group, 🟢 power on everyone offline, and 🛑 shut down everyone running.
+**Resources** has **＋ New ▾**, resume all and pause all; resume and pause act
+on the group's live runs and stay greyed until there is one. Every section
+places its buttons the same way: on the section line while it is folded, and
+on the first row under the line (the member table's header, for Agents) while
+it is open. A click on a button on a folded line opens the section too, so
+what you create shows up.
 
 Below the sections is the group's list of links, with **+ link**.
 
@@ -446,8 +450,10 @@ address.
   pause or resume. An open run has its own address,
   `/groups/runs/<group>/<run-id>`, so Back closes it.
 
-To start a run, use the **Agent process** or **Group process** button on the
-group's Resources section.
+To start a run, open **＋ New ▾** on the group's Resources section and pick
+**Process for the group** or **Process for one agent**. Either opens the start
+form, which runs a saved process or, with *or build a new one ▸*, opens
+*Get started*.
 
 ### Resources
 
@@ -458,8 +464,10 @@ group's Resources section.
   ones saved with the group.
 - **Shell:** the group's terminal, in its default directory.
 
-A kind with nothing in it is hidden. **＋ New** adds a process, a new board
-linked to the group, a blank live page, or opens the group's shell (once the
+A kind with nothing in it is hidden; the section's count is the number of
+rows it lists, and a section with nothing at all says *No resources yet*.
+**＋ New** starts a process for the group or for one agent, adds a new board
+linked to the group or a blank live page, or opens the group's shell (once the
 group has a directory). Draw on the blank page to show what to build, and a
 member takes it over with its own source (see
 [Live page › A page the operator creates in a group](live-page.md#a-page-the-operator-creates-in-a-group)).

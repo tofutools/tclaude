@@ -15,7 +15,7 @@ import { openBoardPane } from './board-overlay-state.js';
 import { freeBoardId } from './board-manage.js';
 import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
-import { Button, Menu, MenuItem } from './ui-components.js';
+import { Button, Menu, MenuItem, MenuSep } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
 import { nodeFetch } from './node-api.js';
 import { shellConfirm } from './shell-state.js';
@@ -288,11 +288,19 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
-// AddResource is the section's one ＋ New: a process (the Get started
-// panel), a board linked to the group, a blank live page, or the group's
-// shell, each with what it is in one line.
-export function AddResource({ group, pages = [], api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
-  const [open, setOpen] = useState(false);
+// AddResource is the section's one ＋ New button: a process for the whole
+// group or for one agent (the start form, which also builds a new one), a
+// board linked to the group, a blank live page, or the group's shell, each
+// with what it is in one line. `processesOnly` keeps just the two process
+// scopes, for the Processes perspective, which lists no boards, pages or
+// shells. `open`/`onOpen` let the caller hold the menu's state, so it stays
+// open when a click on a folded section line moves the button to the open
+// section's title row (a new instance).
+export function AddResource({ group, pages = [], api, source, wizard = false, notify = defaultNotify, onAddProcess, processesOnly = false, open: heldOpen, onOpen }) {
+  const [ownOpen, setOwnOpen] = useState(false);
+  const held = typeof onOpen === 'function';
+  const open = held ? !!heldOpen : ownOpen;
+  const setOpen = held ? onOpen : setOwnOpen;
   const ref = useRef(null);
   // The shared popover rule: a press outside, or Escape, closes the menu (a
   // click menu, so moving the pointer away does not).
@@ -331,14 +339,18 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   };
   const item = (attr, onClick, name, line, disabled = false) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item" onClick=${onClick}
     disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
+  const process = (scope) => () => { setOpen(false); onAddProcess(scope); };
   return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant="link" class="gq-link" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${`Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋ New ▾<//>
+    <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      title=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}: a process, board, live page or shell`}
+      aria-label=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋ New ▾<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu">
-      ${item('data-resource-add-process', () => { setOpen(false); onAddProcess(); }, wizard ? 'Rite' : 'Process', 'From a template, or start blank in the editor')}
+      ${item('data-resource-add-process', process('group'), wizard ? 'Rite for the party' : 'Process for the group', wizard ? 'Begin a written rite, or shape a new one' : 'Run a saved process, or build a new one')}
+      ${item('data-resource-add-process-agent', process('agent'), wizard ? 'Rite for one hero' : 'Process for one agent', wizard ? 'Pick a hero; its steps are that hero\'s labour' : 'Pick a member; its steps run as that agent')}
+      ${!processesOnly && html`<${MenuSep} />
       ${item('data-resource-add-board', addBoard, 'Board', "A drawing board shared with the group's agents")}
       ${item('data-resource-add-page', addPage, 'Live page', 'A blank page you draw on; a member takes it over with its own source')}
-      ${item('data-resource-add-shell', addShell, 'Shell', cwd ? `A terminal in ${cwd}` : 'Set the group\'s directory first', !cwd)}
+      ${item('data-resource-add-shell', addShell, 'Shell', cwd ? `A terminal in ${cwd}` : 'Set the group\'s directory first', !cwd)}`}
     <//>`}
   </span>`;
 }
