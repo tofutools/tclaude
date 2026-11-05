@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,11 +18,14 @@ import (
 )
 
 // These pin what reincarnation leaves behind, at each point it can fail and
-// when it succeeds, as read from the database and the response. A failure
-// before the identity rotation leaves no successor at all: no actor, handoff
-// message or session row, and no launch claim. A refused rotation leaves the
-// successor running as an orphan, by design. Either way the source stays the
-// agent's live, unarchived head, with its sandbox snapshot restored.
+// when it succeeds, as read from the database, the tmux sim and the response.
+// A failure before the identity rotation leaves no actor or handoff message for
+// the successor, and no launch claim. (The failing launches here never create
+// a session row, so the unchanged session count only pins that the unwind adds
+// none of its own.) A refused rotation leaves the successor running as an
+// orphan, by design. Either way the source stays the agent's live, unarchived
+// head: its pane is alive and was neither archive-renamed nor told to exit, and
+// its sandbox snapshot is restored.
 
 // reincarnateSpawner records each fresh launch and lets the scenario decide
 // what it does.
@@ -42,7 +46,7 @@ func (s *reincarnateSpawner) SpawnResume(a clcommon.SpawnArgs) error { return s.
 // sandbox profile, then edits that profile. The reincarnation's refreshed
 // sandbox snapshot then differs from the one stored at the source's launch,
 // so a failure that does not restore the stored snapshot shows.
-func spawnSourceThenEditItsSandbox(t *testing.T, f *testharness.Flow) string {
+func spawnSourceThenEditItsSandbox(t *testing.T, f *testharness.Flow) testharness.SpawnResp {
 	t.Helper()
 	f.HaveGroup("crew")
 	id, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "worker-policy",
@@ -54,7 +58,8 @@ func spawnSourceThenEditItsSandbox(t *testing.T, f *testharness.Flow) string {
 	require.NoError(t, err)
 	profile.Environment = []db.SandboxEnvironmentEntry{{Name: "KEEP", Value: "1"}, {Name: "ADDED", Value: "x"}}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
-	return spawn.ConvID
+	require.NotEmpty(t, spawn.TmuxSession)
+	return spawn
 }
 
 // reincarnateBefore is what the failure pins compare against.
@@ -83,9 +88,18 @@ func sandboxSnapshotOf(t *testing.T, conv string) string {
 
 // assertSourceStillTheHead checks the source after a failed reincarnation: the
 // agent's live conversation is still the source, which is not archived, and
-// its sandbox snapshot is what it was.
-func assertSourceStillTheHead(t *testing.T, src string, before reincarnateBefore) {
+// its sandbox snapshot is what it was, and its pane is alive and was sent no
+// archive rename or soft exit.
+func assertSourceStillTheHead(t *testing.T, f *testharness.Flow, source testharness.SpawnResp, before reincarnateBefore) {
 	t.Helper()
+	src := source.ConvID
+	assert.True(t, f.World.Tmux.IsAlive(source.TmuxSession), "the source's pane is still alive")
+	for _, k := range f.World.Tmux.Sent() {
+		if strings.HasPrefix(k.Target, source.TmuxSession) {
+			assert.NotContains(t, k.Text, "/exit", "the source is not soft-stopped")
+			assert.NotContains(t, k.Text, "/rename", "the source is not archive-renamed")
+		}
+	}
 	actor, err := db.GetAgentByConv(src)
 	require.NoError(t, err)
 	require.NotNil(t, actor, "the source keeps its actor")
@@ -133,7 +147,8 @@ func TestReincarnateUnwind_AFailedLaunchLeavesNoSuccessor(t *testing.T) {
 			// The successor's online wait is a deadline poll; keep it short.
 			t.Cleanup(agentd.SetReincarnateSpawnTimeoutForTest(500 * time.Millisecond))
 			f := newFlow(t)
-			src := spawnSourceThenEditItsSandbox(t, f)
+			source := spawnSourceThenEditItsSandbox(t, f)
+			src := source.ConvID
 			before := snapshotBeforeReincarnate(t, src)
 			sp := &reincarnateSpawner{inner: agentd.Spawn, newFn: tc.newFn}
 			prev := agentd.Spawn
@@ -163,9 +178,9 @@ func TestReincarnateUnwind_AFailedLaunchLeavesNoSuccessor(t *testing.T) {
 			assert.Len(t, agents, before.agents, "no active actor is added")
 			sessions, err := db.ListSessions()
 			require.NoError(t, err)
-			assert.Len(t, sessions, before.sessions, "no session row is left")
+			assert.Len(t, sessions, before.sessions, "the unwind adds no session row")
 			assert.Zero(t, agentd.AgentLaunchClaimsForTest(), "the launch claim is released")
-			assertSourceStillTheHead(t, src, before)
+			assertSourceStillTheHead(t, f, source, before)
 		})
 	}
 }
@@ -178,7 +193,8 @@ func TestReincarnateUnwind_AFailedLaunchLeavesNoSuccessor(t *testing.T) {
 func TestReincarnateUnwind_ARefusedRotationKeepsTheSourceAsHead(t *testing.T) {
 	t.Cleanup(agentd.SetReincarnateSpawnTimeoutForTest(500 * time.Millisecond))
 	f := newFlow(t)
-	src := spawnSourceThenEditItsSandbox(t, f)
+	source := spawnSourceThenEditItsSandbox(t, f)
+	src := source.ConvID
 	before := snapshotBeforeReincarnate(t, src)
 	var rival string
 	sp := &reincarnateSpawner{inner: agentd.Spawn}
@@ -211,15 +227,17 @@ func TestReincarnateUnwind_ARefusedRotationKeepsTheSourceAsHead(t *testing.T) {
 	sessions, err := db.ListSessions()
 	require.NoError(t, err)
 	assert.Len(t, sessions, before.sessions+1, "the orphan successor's session is left for manual cleanup")
+	assert.True(t, f.World.Tmux.IsAlive(sp.news[0].Label), "the orphan successor's pane is left running")
 	assert.Zero(t, agentd.AgentLaunchClaimsForTest(), "the launch claim is released")
-	assertSourceStillTheHead(t, src, before)
+	assertSourceStillTheHead(t, f, source, before)
 }
 
 // A successful reincarnation rotates the agent onto the successor, archives
 // the source, keeps the base name on the successor, and reports it all.
 func TestReincarnateUnwind_ASuccessRotatesAndArchives(t *testing.T) {
 	f := newFlow(t)
-	src := spawnSourceThenEditItsSandbox(t, f)
+	source := spawnSourceThenEditItsSandbox(t, f)
+	src := source.ConvID
 	sandboxBefore := sandboxSnapshotOf(t, src)
 	agentBefore, err := db.AgentIDForConv(src)
 	require.NoError(t, err)
@@ -249,6 +267,11 @@ func TestReincarnateUnwind_ASuccessRotatesAndArchives(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, idx)
 	assert.True(t, idx.IsArchived(), "the source is archived")
+	// The failure pins' "no /exit, no /rename" checks match on this target.
+	assert.True(t, f.World.Tmux.WaitForSendKeys(source.TmuxSession+":0.0", "/rename worker-x", 10*time.Second),
+		"the source is archive-renamed; sent=%+v", f.World.Tmux.Sent())
+	assert.True(t, f.World.Tmux.WaitForSendKeys(source.TmuxSession+":0.0", "/exit", 10*time.Second),
+		"the source is soft-stopped; sent=%+v", f.World.Tmux.Sent())
 	msgs, err := db.ListAgentMessagesForConv(succ, 50)
 	require.NoError(t, err)
 	assert.NotEmpty(t, msgs, "the follow-up is delivered to the successor")
