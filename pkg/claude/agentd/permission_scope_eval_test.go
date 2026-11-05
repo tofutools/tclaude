@@ -434,6 +434,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsPagesRead:                   "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
 	PermGroupsResourcesRead:               "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
 	PermGroupsResourcesWrite:              "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
+	PermGroupsResourcesLock:               "handleAgentResourceLock / agentHoldsResourceLock (group_resource_access.go) — ActionContext{Group} for each group the resource belongs to",
 	PermGroupsPagesPatch:                  "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
 	PermGroupsPagesManage:                 "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
 	PermGroupsTriggersManage:              "triggerOwnerConv — evaluates ActionContext{Group} again at fire time",

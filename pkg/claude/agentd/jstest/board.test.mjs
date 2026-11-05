@@ -1309,3 +1309,30 @@ test('a change summary does not quote agent text the operator only moved', async
   map.set('t', { ...moved, text: 'my words' });
   assert.match(m.describeChanges(map, ['t'], new Map([['t', moved]])), /text “my words”/);
 });
+
+test('each board in the list wears its lock as a one-click toggle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
+  let locked = true;
+  const posted = [];
+  harness.window.fetch = globalThis.fetch = async (url, init = {}) => {
+    if (String(url) === '/api/resource-locks') {
+      const body = JSON.parse(init.body);
+      posted.push(body);
+      locked = body.locked;
+      return ok(body);
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const fetchImpl = async () => ok({ boards: [{ id: 'plan', title: 'Plan', group: 'design', agents_locked: locked }] });
+  const view = await harness.mount(harness.html`<${BoardList} compact fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} />`);
+  await harness.act(() => wait());
+  const toggle = () => view.container.querySelector('[data-resource-lock="board:plan"]');
+  assert.equal(toggle().textContent, 'Locked');
+  assert.match(toggle().title, /^Locked: members can read Plan but not edit it\. Click to unlock/);
+  assert.ok(toggle().classList.contains('ui-btn'), 'a bordered button, not a chip');
+  await harness.act(async () => { harness.fireEvent(toggle(), 'click'); await wait(); });
+  assert.deepEqual(posted, [{ kind: 'board', id: 'plan', locked: false }]);
+  await harness.act(() => wait());
+  assert.equal(toggle().textContent, 'Unlocked', 'the list reloads with the new state');
+});

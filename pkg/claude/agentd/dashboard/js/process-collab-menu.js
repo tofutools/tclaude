@@ -9,6 +9,7 @@ import htm from 'htm';
 import { Button, Input } from './ui-components.js';
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { randomUUID } from './insecure-origin.js';
+import { LockChip } from './resource-lock.js';
 
 const html = htm.bind(h);
 
@@ -116,6 +117,7 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
                 <span class="board-row-title">${label}</span>
                 <span class="board-row-age">v${template.versionCount || 0}</span>
               </button>
+              <${LockChip} kind="process" id=${template.id} name=${label} locked=${!!template.agentsLocked} notify=${notify} onChanged=${() => void load()} />
             </li>`;
           })}
         </ul>

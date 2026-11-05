@@ -35,7 +35,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { onPeerPage } from './node-api.js';
-import { LockChip } from './resource-lock.js';
+import { LockChip, rememberLock } from './resource-lock.js';
 
 const html = htm.bind(h);
 
@@ -340,6 +340,7 @@ export function BoardEditor({
           group: board.group || '', groupMembers: Array.isArray(board.group_members) ? board.group_members : [],
           agentsLocked: !!board.agents_locked,
         });
+        rememberLock('board', boardId, board.agents_locked);
         if (board.title) onTitleRef.current?.(board.title);
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
         presenceShown = !!board.presence?.agents?.length;
@@ -1894,7 +1895,7 @@ export function BoardEditor({
 // -- the board list ---------------------------------------------------------------
 
 // BoardRow is one board on one line; its export and delete show on hover.
-function BoardRow({ board, onOpen, onExport, onDelete }) {
+function BoardRow({ board, onOpen, onExport, onDelete, onLockChanged, notify }) {
   const label = board.title || board.id;
   const agents = board.agents ?? board.participants?.length ?? 0;
   const elements = `${board.element_count ?? 0} element${board.element_count === 1 ? '' : 's'}`;
@@ -1906,6 +1907,7 @@ function BoardRow({ board, onOpen, onExport, onDelete }) {
       ${agents > 0 && html`<span class="board-row-agents">${agents} agent${agents === 1 ? '' : 's'}</span>`}
       <span class="board-row-age">${boardAge(board.updated_at)}</span>
     </button>
+    <${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agents_locked} notify=${notify} onChanged=${onLockChanged} />
     <${Button} size="sm" icon=${true} class="board-row-action" title="Download as .excalidraw" aria-label=${`Export ${label}`} onClick=${() => onExport(board)}>⤓<//>
     <${Button} size="sm" icon=${true} variant="ghost danger" class="board-row-action" title="Delete this board" aria-label=${`Delete ${label}`} onClick=${() => onDelete(board)}>🗑<//>
   </li>`;
@@ -1993,6 +1995,7 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
         ${(name || groups.length > 1) && html`<h3 class="board-section-name"><span>${name || 'No group'}</span><span class="board-section-count">${rows.length}</span></h3>`}
         <ul class="board-rows">
           ${rows.map((board) => html`<${BoardRow} key=${board.id} board=${board} onOpen=${onOpen} onExport=${exportRow}
+            notify=${notify} onLockChanged=${() => void load()}
             onDelete=${() => askDeleteBoard({ id: board.id, title: board.title, onDeleted: load })} />`)}
         </ul>
       </div>`)}

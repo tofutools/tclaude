@@ -1,8 +1,9 @@
-// resource-lock.js -- the operator's agent lock on a group resource
-// (tcl-dwzsq0) as a chip that is also its toggle: '🔒 agents: read-only' or
-// '✎ agents can edit'. It sits on each row of a group's Resources section
-// and on the resource's own header (process editor, board, page). Only the
-// operator's dashboard can toggle it (POST /api/resource-locks).
+// resource-lock.js -- the agent lock on a group resource (tcl-dwzsq0) as a
+// one-click toggle button: a lock icon and 'Locked' or 'Unlocked'. It sits on
+// each row of a group's Resources section, in the Collab ＋ list, and on the
+// resource's own header (process editor, board, page). The operator's
+// dashboard toggles it (POST /api/resource-locks); an agent does through its
+// own route under groups.resources.lock.
 
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
@@ -13,12 +14,34 @@ const html = htm.bind(h);
 
 // lockLabel is the chip's text for a lock state.
 export function lockLabel(locked) {
-  return locked ? '🔒 agents: read-only' : '✎ agents can edit';
+  return locked ? 'Locked' : 'Unlocked';
 }
 
-const lockTitle = (locked, name) => (locked
-  ? `No agent can change ${name}, whatever it is granted; members still use it. Click to let agents edit it.`
-  : `Agents edit ${name} under their usual permissions. Click to make it read-only for every agent.`);
+// lockTitle is the button's tooltip: the state, what it means, the action.
+export const lockTitle = (locked, name) => (locked
+  ? `Locked: members can read ${name} but not edit it. Click to unlock`
+  : `Unlocked: members can read and edit ${name}. Click to lock`);
+
+// LockIcon is a closed or open padlock drawn in the current text colour.
+export function LockIcon({ locked }) {
+  return html`<svg class="gr-lock-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d=${locked ? 'M8 11V7a4 4 0 0 1 8 0v4' : 'M8 11V7a4 4 0 0 1 7.5-2'} /></svg>`;
+}
+
+// knownLocks remembers the last lock state a surface read, by "kind:id", so a
+// surface with no fetch of its own (a board tab's menu) can name the state.
+const knownLocks = new Map();
+
+export function rememberLock(kind, id, locked) {
+  knownLocks.set(`${kind}:${id}`, !!locked);
+}
+
+// knownLock is the remembered state, or undefined when none was read.
+export function knownLock(kind, id) {
+  return knownLocks.get(`${kind}:${id}`);
+}
 
 // setResourceLock is the lock toggle for a surface without the process api.
 export async function setResourceLock(kind, id, locked, fetchImpl = (...args) => globalThis.fetch(...args)) {
@@ -28,6 +51,7 @@ export async function setResourceLock(kind, id, locked, fetchImpl = (...args) =>
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status}`);
+  rememberLock(kind, id, locked);
   return body;
 }
 
@@ -61,8 +85,9 @@ export function LockChip({ kind, id, name, locked, api = null, source = null, on
   const title = denied
     ? `${lockLabel(locked)}. ${peer.node || 'This node'} does not grant you groups.resources.lock here, so you cannot change it.`
     : lockTitle(locked, name);
-  // A chip that is also the toggle: a .ui-tag pill, warn-coloured while locked.
-  return html`<button data-ui-exempt type="button" class=${`gr-lock ui-tag${locked ? ' ui-tag-warn' : ''}`} data-resource-lock=${`${kind}:${id}`}
-    aria-pressed=${locked ? 'true' : 'false'} aria-disabled=${denied ? 'true' : undefined} disabled=${busy || denied} title=${title} onClick=${toggle}>${lockLabel(locked)}</button>`;
+  // A bordered toggle button, amber while locked.
+  return html`<button type="button" class=${`ui-btn ui-sm gr-lock${locked ? ' gr-locked' : ''}`} data-resource-lock=${`${kind}:${id}`}
+    aria-pressed=${locked ? 'true' : 'false'} aria-label=${title} aria-disabled=${denied ? 'true' : undefined} aria-busy=${busy ? 'true' : undefined}
+    disabled=${busy || denied} title=${title} onClick=${toggle}><${LockIcon} locked=${locked} /><span>${lockLabel(locked)}</span></button>`;
 }
 

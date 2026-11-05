@@ -36,6 +36,7 @@ import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
+import { knownLock, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
@@ -1169,6 +1170,14 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
+        ...(menu.board && knownLock('board', menu.boardId) !== undefined ? [(() => {
+          const locked = knownLock('board', menu.boardId);
+          return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
+            setResourceLock('board', menu.boardId, !locked).then(
+              () => shellToast(locked ? `Agents can edit ${menu.label} again` : `${menu.label} is read-only for agents`),
+              (cause) => shellToast(`Could not change the lock on ${menu.label}: ${cause.message}`, true));
+          });
+        })()] : []),
         ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),

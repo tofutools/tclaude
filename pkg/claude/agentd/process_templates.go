@@ -47,6 +47,9 @@ type processTemplateListView struct {
 	// PinnedGroups names the groups the template is pinned to. Only the human
 	// sees it: group names are not every agent's to read.
 	PinnedGroups []string `json:"pinnedGroups,omitempty"`
+	// AgentsLocked is the lock on the template against agent changes
+	// (group_resource_locks.go).
+	AgentsLocked bool `json:"agentsLocked,omitempty"`
 }
 
 // processTemplateSummaryView counts a template's top-level steps: steps is
@@ -183,6 +186,10 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUnlisted := r.URL.Query().Get("all") == "1"
+	locked, err := db.GroupResourceLocks(db.GroupResourceProcess)
+	if err != nil {
+		locked = map[string]bool{}
+	}
 	var pinned map[string][]string
 	if classify(peerFromContext(r.Context())) == classHuman {
 		if pinned, err = db.ProcessTemplatePinnedGroups(); err != nil {
@@ -254,6 +261,7 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		view.Description = latest.Description
 		view.Summary = processTemplateSummary(latest)
 		view.PinnedGroups = pinned[id]
+		view.AgentsLocked = locked[id]
 		views = append(views, view)
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"templates": views})

@@ -623,8 +623,8 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   const board = feRes.querySelector('[data-resource-board="sprint"]');
   assert.match(board.textContent, /Sprint board/);
   assert.match(board.textContent, /2 editing/);
-  assert.equal(board.querySelector('[data-resource-lock="board:sprint"]').textContent, '✎ agents can edit');
-  assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  assert.equal(board.querySelector('[data-resource-lock="board:sprint"]').textContent, 'Unlocked');
+  assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, 'Locked');
   // One style per kind: a heading, then rows ending in the lock chip; the
   // runs stay with the processes, above the other kinds.
   const shipRow = feSection.querySelector('[data-saved-process="ship"]');
@@ -707,7 +707,7 @@ test('a peer group lists its resources by its own name and toggles a lock under 
   assert.deepEqual([...root.querySelectorAll('[data-resource-kind]')].map((k) => k.dataset.resourceKind), ['processes', 'boards'], 'an empty kind is hidden');
   const board = root.querySelector('[data-resource-lock="board:plan"]');
   assert.equal(board.disabled, false);
-  assert.equal(root.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  assert.equal(root.querySelector('[data-resource-lock="process:ship"]').textContent, 'Locked');
   assert.equal(root.querySelector('[data-peer-resource="board:plan"] button.gr-name'), null, 'a peer board is named, not opened here');
   await harness.act(() => harness.fireEvent(board, 'click'));
   await settle(harness);
