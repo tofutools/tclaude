@@ -38,7 +38,7 @@ func sessionsCmd() *cobra.Command {
 	return boa.CmdT[sessionsParams]{Use: "sessions", Short: "List shared remote agent sessions and waiting states", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sessionsParams, cmd *cobra.Command, _ []string) {
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		defer stop()
-		os.Exit(runSessions(ctx, p, os.Stdout, os.Stderr))
+		os.Exit(runSessions(ctx, p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 

@@ -478,15 +478,15 @@ func captureHookStdout(t *testing.T, sessionID string, payload map[string]any) s
 
 	outR, outW, err := os.Pipe()
 	require.NoError(t, err)
-	origStdout := os.Stdout
-	os.Stdout = outW
-	t.Cleanup(func() { os.Stdout = origStdout })
+	origStdout, origCLI := os.Stdout, cliStdout
+	os.Stdout, cliStdout = outW, outW
+	t.Cleanup(func() { os.Stdout, cliStdout = origStdout, origCLI })
 
 	t.Setenv("TCLAUDE_SESSION_ID", sessionID)
 	require.NoError(t, runHookCallback())
 
 	require.NoError(t, outW.Close())
-	os.Stdout = origStdout
+	os.Stdout, cliStdout = origStdout, origCLI
 	buf, err := io.ReadAll(outR)
 	require.NoError(t, err)
 	return string(buf)

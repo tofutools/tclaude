@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // ReadPeerView uses the local operator API and its existing pinned transport.

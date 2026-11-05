@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,7 +413,7 @@ func atomicWriteClaudeSettings(path string, data []byte) error {
 // EnsureHooksInstalled checks and optionally installs hooks, returning true if ready.
 // Stale hooks (wrong/duplicate binary) are always auto-repaired since the user already
 // opted into hook management. The autoInstall flag only controls first-time installation.
-func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
+func EnsureHooksInstalled(autoInstall bool, stdout, stderr io.Writer) bool {
 	installed, missing, needsRepair := CheckHooksInstalled()
 	if installed && !needsRepair {
 		return true

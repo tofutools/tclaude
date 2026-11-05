@@ -35,7 +35,7 @@ func ListCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *ListParams, cmd *cobra.Command, args []string) {
 			if err := runList(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -63,7 +63,7 @@ func WatchCmd() *cobra.Command {
 			showFilter := normalizeStatusFilter(params.Show)
 			hideFilter := normalizeStatusFilter(params.Hide)
 			if err := RunWatchMode(params.All, sortState, showFilter, hideFilter); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -89,8 +89,8 @@ func runList(params *ListParams) error {
 	}
 
 	if len(states) == 0 {
-		fmt.Println("No sessions found")
-		fmt.Println("\nStart a new session with: tclaude session new")
+		fmt.Fprintln(cliStdout, "No sessions found")
+		fmt.Fprintln(cliStdout, "\nStart a new session with: tclaude session new")
 		return nil
 	}
 
@@ -116,8 +116,8 @@ func runList(params *ListParams) error {
 	}
 
 	if len(filtered) == 0 {
-		fmt.Println("No active sessions found")
-		fmt.Println("\nStart a new session with: tclaude session new")
+		fmt.Fprintln(cliStdout, "No active sessions found")
+		fmt.Fprintln(cliStdout, "\nStart a new session with: tclaude session new")
 		return nil
 	}
 
@@ -129,13 +129,13 @@ func runList(params *ListParams) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(data))
+		fmt.Fprintln(cliStdout, string(data))
 		return nil
 	}
 
 	// Render table
 	t := table.NewWriter()
-	t.SetOutputMirror(os.Stdout)
+	t.SetOutputMirror(cliStdout)
 	t.SetStyle(table.StyleLight)
 	t.SetAllowedRowLength(getTermWidth())
 
@@ -172,7 +172,7 @@ func runList(params *ListParams) error {
 	t.Render()
 
 	// Show hint for attaching
-	fmt.Printf("\nAttach with: tclaude session attach <id>\n")
+	fmt.Fprintf(cliStdout, "\nAttach with: tclaude session attach <id>\n")
 
 	return nil
 }

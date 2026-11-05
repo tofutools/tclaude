@@ -20,7 +20,7 @@ func teleportControlCmd() *cobra.Command {
 		"off":    "Freeze teleports on this instance",
 	} {
 		children = append(children, boa.CmdT[struct{}]{Use: mode, Short: short, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTeleportControl(mode, os.Stdout, os.Stderr))
+			os.Exit(runTeleportControl(mode, cliStdout, cliStderr))
 		}}.ToCobra())
 	}
 	return boa.CmdT[struct{}]{Use: "teleport", Short: "Enable or freeze teleports on this instance (operator only)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: children}.ToCobra()

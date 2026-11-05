@@ -27,7 +27,7 @@ func codexProfileCleanupCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *codexProfileCleanupParams, _ *cobra.Command, _ []string) {
 			if err := cleanupCodexLaunchProfile(p.Path); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

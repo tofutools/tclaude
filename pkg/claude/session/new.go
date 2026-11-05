@@ -398,7 +398,7 @@ func NewCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *NewParams, cmd *cobra.Command, args []string) {
 			if err := RunNewFromCommand(params, cmd); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -518,7 +518,7 @@ func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
-		harness.PrintContextFeatureCatalog(os.Stdout)
+		harness.PrintContextFeatureCatalog(cliStdout)
 		return nil
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
@@ -771,7 +771,7 @@ func runNew(params *NewParams) error {
 	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
-			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 
@@ -922,7 +922,7 @@ func runNew(params *NewParams) error {
 		InitialPrompt:                  params.InitialPrompt,
 	}
 	extensionReadPaths, err := FinishHarnessSpawnSpec(
-		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, os.Stderr)
+		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, cliStderr)
 	if err != nil {
 		return err
 	}
@@ -1967,7 +1967,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// this process's terminal. `new-session -d` prints nothing on success (bar the -P id), and
 	// on failure ("bad session name", "can't create socket") the message is the
 	// whole explanation — attaching it to the error keeps it with the caller
-	// that can render it. Writing it to os.Stderr instead would land it
+	// that can render it. Writing it to cliStderr instead would land it
 	// wherever this process's stderr happens to point, which since
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
@@ -2125,15 +2125,15 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 // the harness-specific "Created …" headline (a coding session vs a shell
 // session). Shared launch tail of runNew and runNewShell.
 func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
-	fmt.Println(createdLine)
-	fmt.Printf("  Directory: %s\n", cwd)
+	fmt.Fprintln(cliStdout, createdLine)
+	fmt.Fprintf(cliStdout, "  Directory: %s\n", cwd)
 
 	if detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
+		fmt.Fprintf(cliStdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 

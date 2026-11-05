@@ -37,7 +37,7 @@ type remoteNode struct {
 }
 
 func nodesCmd() *cobra.Command {
-	return boa.CmdT[nodesParams]{Use: "nodes", Short: "List shared peer node capabilities and resource summaries", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{NodeGroupsCmd(), nodeHealthCmd()}, RunFunc: func(p *nodesParams, _ *cobra.Command, _ []string) { os.Exit(runNodes(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[nodesParams]{Use: "nodes", Short: "List shared peer node capabilities and resource summaries", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{NodeGroupsCmd(), nodeHealthCmd()}, RunFunc: func(p *nodesParams, _ *cobra.Command, _ []string) { os.Exit(runNodes(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runNodes(p *nodesParams, stdout, stderr io.Writer) int {
 	if p.Summary || p.Node != "" {
@@ -117,7 +117,7 @@ type nodeLabelsParams struct {
 
 func nodeLabelsCmd() *cobra.Command {
 	return boa.CmdT[nodeLabelsParams]{Use: "node-labels", Short: "Read or update this node's labels (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeLabelsParams, _ *cobra.Command, _ []string) {
-		os.Exit(runNodeLabels(p, os.Stdout, os.Stderr))
+		os.Exit(runNodeLabels(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runNodeLabels(p *nodeLabelsParams, stdout, stderr io.Writer) int {
@@ -202,41 +202,41 @@ type nodeHealthParams struct {
 
 func nodeHealthCmd() *cobra.Command {
 	return boa.CmdT[nodeHealthParams]{Use: "health", Short: "Read or replace fleet notification policy", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeHealthParams, _ *cobra.Command, _ []string) {
-		if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+		if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 			os.Exit(rc)
 		}
 		path := "/v1/federation/nodes/health?peer=" + url.QueryEscape(p.Peer)
 		var result any
 		if p.PartTime || p.AlwaysOn {
 			if p.Peer == "" || p.Set != "" || p.Silence || p.PartTime && p.AlwaysOn {
-				os.Exit(fail(os.Stderr, fmt.Errorf("--part-time / --always-on require --peer and take no other action flag")))
+				os.Exit(fail(cliStderr, fmt.Errorf("--part-time / --always-on require --peer and take no other action flag")))
 			}
 			if err := agent.DaemonPost("/v1/federation/nodes/health/presence?peer="+url.QueryEscape(p.Peer), map[string]any{"presence": p.AlwaysOn}, &result); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 		} else if p.Silence {
 			if p.Peer == "" || p.Set != "" {
-				os.Exit(fail(os.Stderr, fmt.Errorf("--silence requires --peer and cannot be combined with --set")))
+				os.Exit(fail(cliStderr, fmt.Errorf("--silence requires --peer and cannot be combined with --set")))
 			}
 			if err := agent.DaemonPost("/v1/federation/nodes/health/silence?peer="+url.QueryEscape(p.Peer), map[string]any{}, &result); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 		} else if p.Set != "" {
 			var policy map[string]any
 			if err := json.Unmarshal([]byte(p.Set), &policy); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 			if policy == nil {
-				os.Exit(fail(os.Stderr, fmt.Errorf("--set requires a JSON object")))
+				os.Exit(fail(cliStderr, fmt.Errorf("--set requires a JSON object")))
 			}
 			if err := agent.DaemonPost(path, policy, &result); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 		} else {
 			if err := agent.DaemonGet(path, &result); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 		}
-		os.Exit(printJSON(os.Stdout, result))
+		os.Exit(printJSON(cliStdout, result))
 	}}.ToCobra()
 }

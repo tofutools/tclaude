@@ -29,7 +29,7 @@ type accessParams struct {
 }
 
 func accessCmd() *cobra.Command {
-	return boa.CmdT[accessParams]{Use: "access", Short: "Request or decide operator-to-operator peer access (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *accessParams, _ *cobra.Command, _ []string) { os.Exit(runAccess(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[accessParams]{Use: "access", Short: "Request or decide operator-to-operator peer access (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *accessParams, _ *cobra.Command, _ []string) { os.Exit(runAccess(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runAccess(p *accessParams, stdout, stderr io.Writer) int {
 	method := "GET"

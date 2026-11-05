@@ -30,7 +30,7 @@ func GotoCmd() *cobra.Command {
 		},
 		RunFunc: func(params *GotoParams, cmd *cobra.Command, args []string) {
 			if err := runGoto(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

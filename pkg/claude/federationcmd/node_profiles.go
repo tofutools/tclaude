@@ -34,17 +34,17 @@ type nodeProfileOfferParams struct {
 }
 
 func nodeProfileWrite(method string, p *nodeProfileFileParams) {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		os.Exit(rc)
 	}
 	var body db.FederationNodeProfile
 	if p.File != "" {
 		raw, e := os.ReadFile(p.File)
 		if e != nil {
-			os.Exit(fail(os.Stderr, e))
+			os.Exit(fail(cliStderr, e))
 		}
 		if e = json.Unmarshal(raw, &body); e != nil {
-			os.Exit(fail(os.Stderr, e))
+			os.Exit(fail(cliStderr, e))
 		}
 	}
 	body.Name = p.Name
@@ -54,16 +54,16 @@ func nodeProfileWrite(method string, p *nodeProfileFileParams) {
 	}
 	var out any
 	if e := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{}); e != nil {
-		os.Exit(fail(os.Stderr, e))
+		os.Exit(fail(cliStderr, e))
 	}
-	os.Exit(printJSON(os.Stdout, out))
+	os.Exit(printJSON(cliStdout, out))
 }
 func confirmNodeProfileUnrestricted(fingerprint string, yes bool) error {
-	fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Intended for your own machines.\n", fingerprint)
+	fmt.Fprintf(cliStderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Intended for your own machines.\n", fingerprint)
 	if yes {
 		return nil
 	}
-	fmt.Fprint(os.Stderr, "Type yes to confirm: ")
+	fmt.Fprint(cliStderr, "Type yes to confirm: ")
 	var answer string
 	if _, e := fmt.Fscanln(os.Stdin, &answer); e != nil || answer != "yes" {
 		return fmt.Errorf("not confirmed")
@@ -75,7 +75,7 @@ func nodeProfilesCmd() *cobra.Command {
 		boa.CmdT[nodeProfileFileParams]{Use: "create", Short: "Create a node profile", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeProfileFileParams, _ *cobra.Command, _ []string) { nodeProfileWrite(http.MethodPost, p) }}.ToCobra(),
 		boa.CmdT[nodeProfileFileParams]{Use: "update", Short: "Save an edited profile with its current revision", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeProfileFileParams, _ *cobra.Command, _ []string) { nodeProfileWrite(http.MethodPut, p) }}.ToCobra(),
 		boa.CmdT[nodeProfileNameParams]{Use: "show", Short: "Show profile JSON and assigned peers", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeProfileNameParams, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var out struct {
@@ -83,22 +83,22 @@ func nodeProfilesCmd() *cobra.Command {
 				Warnings []string                 `json:"warnings"`
 			}
 			if e := agent.DaemonGet("/v1/federation/profiles/"+url.PathEscape(p.Name), &out); e != nil {
-				os.Exit(fail(os.Stderr, e))
+				os.Exit(fail(cliStderr, e))
 			}
 			for _, w := range out.Warnings {
-				fmt.Fprintln(os.Stderr, "warning: "+w)
+				fmt.Fprintln(cliStderr, "warning: "+w)
 			}
-			os.Exit(printJSON(os.Stdout, out.Profile))
+			os.Exit(printJSON(cliStdout, out.Profile))
 		}}.ToCobra(),
 		boa.CmdT[struct{}]{Use: "ls", Short: "List profiles and the trust-time default", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var out any
 			if e := agent.DaemonGet("/v1/federation/profiles", &out); e != nil {
-				os.Exit(fail(os.Stderr, e))
+				os.Exit(fail(cliStderr, e))
 			}
-			os.Exit(printJSON(os.Stdout, out))
+			os.Exit(printJSON(cliStdout, out))
 		}}.ToCobra(),
 		boa.CmdT[nodeProfileNameParams]{Use: "rm", Short: "Delete an unused profile", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeProfileNameParams, _ *cobra.Command, _ []string) {
 			nodeGroupMutation(http.MethodDelete, "/v1/federation/profiles/"+url.PathEscape(p.Name), nil)
@@ -117,11 +117,11 @@ func nodeProfilesCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runNodeProfileApply(p *nodeProfileApplyParams) int {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		return rc
 	}
 	if p.All == (p.Peer != "") {
-		return fail(os.Stderr, fmt.Errorf("specify a peer or --all"))
+		return fail(cliStderr, fmt.Errorf("specify a peer or --all"))
 	}
 	peers := []string{p.Peer}
 	if p.All {
@@ -129,7 +129,7 @@ func runNodeProfileApply(p *nodeProfileApplyParams) int {
 			Peers []string `json:"applied_peers"`
 		}
 		if e := agent.DaemonGet("/v1/federation/profiles/"+url.PathEscape(p.Name), &out); e != nil {
-			return fail(os.Stderr, e)
+			return fail(cliStderr, e)
 		}
 		peers = out.Peers
 	}
@@ -138,19 +138,19 @@ func runNodeProfileApply(p *nodeProfileApplyParams) int {
 		in := map[string]any{"peer": peer}
 		var plan db.FederationNodeProfilePlan
 		if e := agent.DaemonRequest(http.MethodPost, path, in, &plan, agent.DaemonOpts{}); e != nil {
-			return fail(os.Stderr, e)
+			return fail(cliStderr, e)
 		}
-		if rc := printJSON(os.Stdout, plan); rc != 0 {
+		if rc := printJSON(cliStdout, plan); rc != 0 {
 			return rc
 		}
 		if !p.Apply {
 			continue
 		}
 		if len(plan.Conflicts) > 0 {
-			return fail(os.Stderr, fmt.Errorf("manual-edit conflicts; resolve them before applying"))
+			return fail(cliStderr, fmt.Errorf("manual-edit conflicts; resolve them before applying"))
 		}
 		if plan.Profile.Definition.TrustLevel == db.FederationTrustUnrestricted {
-			st, rc := loadStatus(os.Stderr)
+			st, rc := loadStatus(cliStderr)
 			if rc != 0 {
 				return rc
 			}
@@ -161,10 +161,10 @@ func runNodeProfileApply(p *nodeProfileApplyParams) int {
 				}
 			}
 			if fingerprint == "" {
-				return fail(os.Stderr, fmt.Errorf("peer fingerprint unavailable"))
+				return fail(cliStderr, fmt.Errorf("peer fingerprint unavailable"))
 			}
 			if e := confirmNodeProfileUnrestricted(fingerprint, p.Yes); e != nil {
-				return fail(os.Stderr, e)
+				return fail(cliStderr, e)
 			}
 			in["confirm_fingerprint"] = fingerprint
 		}
@@ -172,9 +172,9 @@ func runNodeProfileApply(p *nodeProfileApplyParams) int {
 		in["preview_token"] = plan.Token
 		var applied any
 		if e := agent.DaemonRequest(http.MethodPost, path, in, &applied, agent.DaemonOpts{}); e != nil {
-			return fail(os.Stderr, e)
+			return fail(cliStderr, e)
 		}
-		if rc := printJSON(os.Stdout, applied); rc != 0 {
+		if rc := printJSON(cliStdout, applied); rc != 0 {
 			return rc
 		}
 	}

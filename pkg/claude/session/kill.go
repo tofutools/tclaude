@@ -31,7 +31,7 @@ func KillCmd() *cobra.Command {
 		},
 		RunFunc: func(params *KillParams, cmd *cobra.Command, args []string) {
 			if err := runKill(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -68,7 +68,7 @@ func killMultiple(params *KillParams) error {
 	}
 
 	if len(states) == 0 {
-		fmt.Println("No sessions to kill")
+		fmt.Fprintln(cliStdout, "No sessions to kill")
 		return nil
 	}
 
@@ -93,23 +93,23 @@ func killMultiple(params *KillParams) error {
 
 	if len(targets) == 0 {
 		if params.Idle {
-			fmt.Println("No idle sessions to kill")
+			fmt.Fprintln(cliStdout, "No idle sessions to kill")
 		} else {
-			fmt.Println("No sessions to kill")
+			fmt.Fprintln(cliStdout, "No sessions to kill")
 		}
 		return nil
 	}
 
 	if !params.Force {
-		fmt.Printf("This will kill %d session(s):\n", len(targets))
+		fmt.Fprintf(cliStdout, "This will kill %d session(s):\n", len(targets))
 		for _, state := range targets {
-			fmt.Printf("  %s [%s] (%s)\n", sessionHandle(state), state.Status, state.Cwd)
+			fmt.Fprintf(cliStdout, "  %s [%s] (%s)\n", sessionHandle(state), state.Status, state.Cwd)
 		}
-		fmt.Print("\nContinue? [y/N]: ")
+		fmt.Fprint(cliStdout, "\nContinue? [y/N]: ")
 		var response string
 		_, _ = fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
-			fmt.Println("Aborted")
+			fmt.Fprintln(cliStdout, "Aborted")
 			return nil
 		}
 	}
@@ -117,13 +117,13 @@ func killMultiple(params *KillParams) error {
 	killed := 0
 	for _, state := range targets {
 		if err := killSession(state); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to kill %s: %v\n", sessionHandle(state), err)
+			fmt.Fprintf(cliStderr, "Failed to kill %s: %v\n", sessionHandle(state), err)
 			continue
 		}
 		killed++
 	}
 
-	fmt.Printf("Killed %d session(s)\n", killed)
+	fmt.Fprintf(cliStdout, "Killed %d session(s)\n", killed)
 	return nil
 }
 
@@ -142,7 +142,7 @@ func killSession(state *SessionState) error {
 	}
 
 	if state.ID != "" {
-		fmt.Printf("Killed session %s\n", sessionHandle(state))
+		fmt.Fprintf(cliStdout, "Killed session %s\n", sessionHandle(state))
 	}
 	return nil
 }

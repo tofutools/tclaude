@@ -3,6 +3,7 @@ package conv
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func MvCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveDefault
 		},
 		RunFunc: func(params *MvParams, cmd *cobra.Command, args []string) {
-			exitCode := RunMv(params, os.Stdout, os.Stderr, os.Stdin)
+			exitCode := RunMv(params, cliStdout, cliStderr, os.Stdin)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -42,7 +43,7 @@ func MvCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
+func RunMv(params *MvParams, stdout, stderr io.Writer, stdin *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
