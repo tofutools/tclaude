@@ -345,3 +345,37 @@ func TestSubagentLedger_KnownSubagentStopStillSettles(t *testing.T) {
 	assert.Equal(t, StatusIdle, got.Status, "a real sub-agent finishing still settles the parent")
 	assert.Equal(t, 0, got.SubagentCount)
 }
+
+// subagent_count is a derived cache of the ledger, and every hook sweeps
+// expired ledger entries first. A hook arm that saves and returns early
+// must still store the swept count, or the fleet, agent status and
+// federation status surfaces (which read the stored count) report a
+// sub-agent that the ledger has already dropped.
+func TestSubagentLedger_EarlySavesStoreTheSweptCount(t *testing.T) {
+	expired := func() db.SubagentSet {
+		return db.SubagentSet{"ag-old": {Type: "Explore", Seen: time.Now().Add(-2 * db.SubagentTTL)}}
+	}
+
+	t.Run("a best-effort SessionEnd", func(t *testing.T) {
+		apply := ledgerWorld(t, "end-sess", "conv-end", &SessionState{
+			Status: StatusWorking, Harness: "copilot", Subagents: expired(), SubagentCount: 1,
+		})
+		apply(HookCallbackInput{HookEventName: "SessionEnd", Reason: "logout"})
+
+		got := loadState(t, "end-sess")
+		assert.Empty(t, got.Subagents, "the sweep dropped the expired sub-agent")
+		assert.Equal(t, 0, got.SubagentCount, "the stored count follows the ledger")
+	})
+
+	t.Run("a manual PostCompact", func(t *testing.T) {
+		apply := ledgerWorld(t, "compact-sess", "conv-compact", &SessionState{
+			Status: StatusWorking, StatusDetail: "compacting", Subagents: expired(), SubagentCount: 1,
+		})
+		apply(HookCallbackInput{HookEventName: "PostCompact", Trigger: "manual"})
+
+		got := loadState(t, "compact-sess")
+		require.Equal(t, StatusIdle, got.Status, "a manual compaction returns to idle")
+		assert.Empty(t, got.Subagents, "the sweep dropped the expired sub-agent")
+		assert.Equal(t, 0, got.SubagentCount, "the stored count follows the ledger")
+	})
+}
