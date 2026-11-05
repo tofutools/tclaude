@@ -1026,7 +1026,13 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		if cerr == nil {
 			return
 		}
-		historyCleanup()
+		// A failure after the launch started, and not rolled back as a launch
+		// that never happened (rollbackHandoff clears managedCloneStarted), may
+		// leave the clone coming up: its conversation stays, as its managed
+		// resources do.
+		if !managedCloneStarted {
+			historyCleanup()
+		}
 		if reservedAgentID != "" {
 			if _, err := db.RetireAgentByID(reservedAgentID, "system:clone", "clone launch failed"); err != nil {
 				slog.Warn("clone: retiring reserved actor failed", "agent", reservedAgentID, "error", err)

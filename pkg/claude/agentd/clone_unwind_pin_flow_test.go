@@ -31,6 +31,10 @@ type cloneFailSpawner struct {
 	resumeFn func(clcommon.SpawnArgs) error
 	news     []clcommon.SpawnArgs
 	resumes  []clcommon.SpawnArgs
+	// copyAtLaunch is where the copied transcript was when the copy branch
+	// launched, so a "no copy left" check cannot pass because none was made.
+	copyAtLaunch []string
+	filesNamed   func(string) []string
 }
 
 func (s *cloneFailSpawner) SpawnNew(a clcommon.SpawnArgs) error {
@@ -40,6 +44,7 @@ func (s *cloneFailSpawner) SpawnNew(a clcommon.SpawnArgs) error {
 
 func (s *cloneFailSpawner) SpawnResume(a clcommon.SpawnArgs) error {
 	s.resumes = append(s.resumes, a)
+	s.copyAtLaunch = s.filesNamed(a.ConvID + ".jsonl")
 	return s.resumeFn(a)
 }
 
@@ -91,11 +96,13 @@ func TestCloneUnwind_AFailedCloneLeavesNothingBehind(t *testing.T) {
 			f.HaveGroup("crew")
 			spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker"})
 			require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+			giveSideFile(t, spawn.ConvID)
 			source := snapshotConversation(t, spawn.ConvID)
 			agentsBefore, err := db.ListActiveAgents()
 			require.NoError(t, err)
 			sessionsBefore, err := db.ListSessions()
 			require.NoError(t, err)
+			tc.spawner.filesNamed = func(name string) []string { return filesNamed(t, name) }
 			prev := agentd.Spawn
 			agentd.Spawn = tc.spawner
 			t.Cleanup(func() { agentd.Spawn = prev })
@@ -132,7 +139,17 @@ func TestCloneUnwind_AFailedCloneLeavesNothingBehind(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, sessionsAfter, len(sessionsBefore), "no session row is left")
 			assert.Zero(t, agentd.AgentLaunchClaimsForTest(), "the launch claim is released")
+			if len(tc.spawner.resumes) > 0 {
+				require.NotEmpty(t, tc.spawner.copyAtLaunch, "the copy existed when the clone launched")
+				for _, path := range tc.spawner.copyAtLaunch {
+					_, statErr := os.Stat(filepath.Join(filepath.Dir(path), conv))
+					assert.True(t, os.IsNotExist(statErr), "the copy's side directory is removed")
+				}
+			}
 			assert.Empty(t, filesNamed(t, conv+".jsonl"), "no copied conversation is left on disk")
+			row, err := db.GetConvIndex(conv)
+			require.NoError(t, err)
+			assert.Nil(t, row, "the copy is not indexed")
 			assertSourceUntouched(t, source, spawn.ConvID)
 		})
 	}
@@ -145,6 +162,7 @@ func TestCloneUnwind_ASuccessfulCopyCloneKeepsItsCopy(t *testing.T) {
 	f.HaveGroup("crew")
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker"})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	giveSideFile(t, spawn.ConvID)
 	source := snapshotConversation(t, spawn.ConvID)
 
 	clone := f.AsHuman().CloneWith(spawn.ConvID, map[string]any{})
@@ -179,6 +197,17 @@ func assertSourceUntouched(t *testing.T, before conversationSnapshot, convID str
 	assert.True(t, after.Indexed, "the source is still indexed")
 }
 
+// giveSideFile writes a subagent transcript into the conversation's side
+// directory, as Claude Code does, so the source has side files to protect.
+func giveSideFile(t *testing.T, convID string) {
+	t.Helper()
+	transcripts := filesNamed(t, convID+".jsonl")
+	require.NotEmpty(t, transcripts, "conversation %s has a transcript on disk", convID)
+	side := filepath.Join(filepath.Dir(transcripts[0]), convID, "subagents")
+	require.NoError(t, os.MkdirAll(side, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(side, "agent-pin.jsonl"), []byte("{}\n"), 0o600))
+}
+
 func snapshotConversation(t *testing.T, convID string) conversationSnapshot {
 	t.Helper()
 	snap := conversationSnapshot{Transcripts: map[string]string{}}
@@ -195,6 +224,7 @@ func snapshotConversation(t *testing.T, convID string) conversationSnapshot {
 		})
 	}
 	require.NotEmpty(t, snap.Transcripts, "conversation %s has a transcript on disk", convID)
+	require.NotEmpty(t, snap.SideFiles, "conversation %s has side files", convID)
 	row, err := db.GetConvIndex(convID)
 	require.NoError(t, err)
 	snap.Indexed = row != nil
