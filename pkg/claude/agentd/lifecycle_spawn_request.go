@@ -71,50 +71,23 @@ type spawnRequest struct {
 	h              *harness.Harness
 
 	// Set by resolveLaunchValues.
-	modelProxyNote         string
-	modelSource            string
-	modelNote              string
-	effortSource           string
-	effortNote             string
-	sandboxSource          string
-	sandboxNote            string
-	approvalNote           string
-	toolsNote              string
-	askTimeoutNote         string
-	autoCompactWindowNote  string
-	contextWindowMaxSource string
-	contextWindowMaxNote   string
-	fastMode               bool
-	fastModeSet            bool
-	fastModeNote           string
-	fastModeSource         string
+	fastMode       bool
+	fastModeSet    bool
+	fastModeNote   string
+	fastModeSource string
+
+	// launchValues is resolveLaunchValues' whole resolution: each value
+	// field's tier source and skip note, read by the echo and the spawn params.
+	launchValues launchValueResolution
 
 	// Set by resolveSandboxImplementation.
 	sandboxImplNote   string
 	sandboxImplSource string
 
 	// Set by resolveLaunchBools.
-	autoMemoryNote          string
-	peerMessagingNote       string
 	launchBools             launchBoolResolution
-	autoReviewSet           bool
-	autoReviewNote          string
 	sshWorkaround           bool
-	sshWorkaroundSource     string
-	sshWorkaroundNote       string
-	trustDirSet             bool
-	trustDirNote            string
-	autoMemory              bool
-	peerMessaging           bool
-	copilotAPI              bool
-	copilotAPISet           bool
-	copilotAPISource        string
-	copilotAPINote          string
 	piDrive                 bool
-	codexAppServer          bool
-	codexAppServerSet       bool
-	codexAppServerSource    string
-	codexAppServerNote      string
 	includeGroupContext     bool
 	includeGroupContextNote string
 
@@ -704,19 +677,6 @@ func (req *spawnRequest) resolveLaunchValues(r *http.Request) *spawnFailure {
 	body.HarnessBuiltinMode, body.ApprovalPolicy, body.ToolGovernance = resolvedValues.Sandbox, resolvedValues.Approval, resolvedValues.Tools
 	body.AskUserQuestionTimeout, body.AutoCompactWindow = resolvedValues.AskUserQuestionTimeout, resolvedValues.AutoCompactWindow
 	body.ContextWindowMax = resolvedValues.ContextWindowMax
-	modelProxyNote := launchValues.Note[launchValueModelProxy]
-	modelSource, modelNote := launchValues.Source[launchValueModel], launchValues.Note[launchValueModel]
-	effortSource, effortNote := launchValues.Source[launchValueEffort], launchValues.Note[launchValueEffort]
-	// The tier that chose the sandbox is kept, not discarded: it is the only
-	// party that can say a global/group default profile forced the containment,
-	// and the badge would otherwise credit "this launch" — i.e. the operator.
-	sandboxSource, sandboxNote := launchValues.Source[launchValueSandbox], launchValues.Note[launchValueSandbox]
-	approvalNote := launchValues.Note[launchValueApproval]
-	toolsNote := launchValues.Note[launchValueTools]
-	askTimeoutNote := launchValues.Note[launchValueAskUserQuestionTimeout]
-	autoCompactWindowNote := launchValues.Note[launchValueAutoCompactWindow]
-	contextWindowMaxSource := launchValues.Source[launchValueContextWindowMax]
-	contextWindowMaxNote := launchValues.Note[launchValueContextWindowMax]
 	// Fast mode is a bool-family field, resolved after the value fields.
 	var fieldFail *spawnFailure
 	var fastMode, fastModeSet bool
@@ -745,23 +705,14 @@ func (req *spawnRequest) resolveLaunchValues(r *http.Request) *spawnFailure {
 	if fieldFail != nil {
 		return fieldFail
 	}
-	req.modelProxyNote = modelProxyNote
-	req.modelSource = modelSource
-	req.modelNote = modelNote
-	req.effortSource = effortSource
-	req.effortNote = effortNote
-	req.sandboxSource = sandboxSource
-	req.sandboxNote = sandboxNote
-	req.approvalNote = approvalNote
-	req.toolsNote = toolsNote
-	req.askTimeoutNote = askTimeoutNote
-	req.autoCompactWindowNote = autoCompactWindowNote
-	req.contextWindowMaxSource = contextWindowMaxSource
-	req.contextWindowMaxNote = contextWindowMaxNote
 	req.fastMode = fastMode
 	req.fastModeSet = fastModeSet
 	req.fastModeNote = fastModeNote
 	req.fastModeSource = fastModeSource
+	// The tier that chose each value is kept, not discarded. For the sandbox it
+	// is the only party that can say a global/group default profile forced the
+	// containment; the badge would otherwise credit "this launch", i.e. the operator.
+	req.launchValues = launchValues
 	return nil
 }
 
@@ -814,7 +765,6 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 	body := &req.body
 	profileTiers := req.profileTiers
 	h := req.h
-	var autoMemoryNote, peerMessagingNote string
 	// The shared bool fields ride launchBoolFieldSpecs, in this boundary's
 	// own order (fast mode was resolved above, with its explicit flag parsed).
 	var launchBools launchBoolResolution
@@ -828,16 +778,11 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 		return fail
 	}
 	body.AutoReview = launchBools.Value[launchBoolAutoReview]
-	autoReviewSet := launchBools.Set[launchBoolAutoReview]
-	autoReviewNote := launchBools.Note[launchBoolAutoReview]
 	sshWorkaround, sshWorkaroundSet := launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround]
-	sshWorkaroundSource, sshWorkaroundNote := launchBools.Source[launchBoolSSHWorkaround], launchBools.Note[launchBoolSSHWorkaround]
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 	}
 	body.TrustDir = launchBools.Value[launchBoolTrustDir]
-	trustDirSet := launchBools.Set[launchBoolTrustDir]
-	trustDirNote := launchBools.Note[launchBoolTrustDir]
 	// auto_memory and peer_messaging ride the shared table (TCL-1107). Unset
 	// everywhere resolves to FALSE — see launchBoolFieldSpecs for why the
 	// load-bearing default is off for both.
@@ -846,8 +791,6 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolAutoMemory, launchBoolPeerMessaging); fail != nil {
 		return fail
 	}
-	autoMemory, autoMemoryNote := launchBools.Value[launchBoolAutoMemory], launchBools.Note[launchBoolAutoMemory]
-	peerMessaging, peerMessagingNote := launchBools.Value[launchBoolPeerMessaging], launchBools.Note[launchBoolPeerMessaging]
 	// The Copilot drive rides the same tier stack, with the same fallback the
 	// send-keys path has always had: unset everywhere is FALSE. Only an explicit
 	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
@@ -856,8 +799,6 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCopilotAPI); fail != nil {
 		return fail
 	}
-	copilotAPI, copilotAPISet := launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI]
-	copilotAPISource, copilotAPINote := launchBools.Source[launchBoolCopilotAPI], launchBools.Note[launchBoolCopilotAPI]
 	// The pi extension drive is an explicit per-launch opt-in, never a profile
 	// default: it changes how every delivery reaches the agent, so only the
 	// spawn that asks for it gets it.
@@ -869,8 +810,6 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCodexAppServer); fail != nil {
 		return fail
 	}
-	codexAppServer, codexAppServerSet := launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer]
-	codexAppServerSource, codexAppServerNote := launchBools.Source[launchBoolCodexAppServer], launchBools.Note[launchBoolCodexAppServer]
 	// Group-context inclusion rides the same tier stack, minus the harness gate:
 	// it decides what the new agent is TOLD, not how its harness runs, so a
 	// profile authored for another vendor still speaks (harnessAgnosticLaunchField).
@@ -903,27 +842,9 @@ func (req *spawnRequest) resolveLaunchBools() *spawnFailure {
 		includeGroupContextNote = fmt.Sprintf("%s include_group_context = %v",
 			includeGroupContextSource, includeGroupContext)
 	}
-	req.autoMemoryNote = autoMemoryNote
-	req.peerMessagingNote = peerMessagingNote
 	req.launchBools = launchBools
-	req.autoReviewSet = autoReviewSet
-	req.autoReviewNote = autoReviewNote
 	req.sshWorkaround = sshWorkaround
-	req.sshWorkaroundSource = sshWorkaroundSource
-	req.sshWorkaroundNote = sshWorkaroundNote
-	req.trustDirSet = trustDirSet
-	req.trustDirNote = trustDirNote
-	req.autoMemory = autoMemory
-	req.peerMessaging = peerMessaging
-	req.copilotAPI = copilotAPI
-	req.copilotAPISet = copilotAPISet
-	req.copilotAPISource = copilotAPISource
-	req.copilotAPINote = copilotAPINote
 	req.piDrive = piDrive
-	req.codexAppServer = codexAppServer
-	req.codexAppServerSet = codexAppServerSet
-	req.codexAppServerSource = codexAppServerSource
-	req.codexAppServerNote = codexAppServerNote
 	req.includeGroupContext = includeGroupContext
 	req.includeGroupContextNote = includeGroupContextNote
 	return nil
@@ -1090,36 +1011,36 @@ func (req *spawnRequest) buildLaunchEcho() {
 	relaunchExplicit := req.relaunchExplicit
 	harnessSource := req.harnessSource
 	h := req.h
-	modelProxyNote := req.modelProxyNote
-	modelSource := req.modelSource
-	modelNote := req.modelNote
-	effortSource := req.effortSource
-	effortNote := req.effortNote
-	sandboxNote := req.sandboxNote
-	approvalNote := req.approvalNote
-	toolsNote := req.toolsNote
-	askTimeoutNote := req.askTimeoutNote
-	autoCompactWindowNote := req.autoCompactWindowNote
-	contextWindowMaxSource := req.contextWindowMaxSource
-	contextWindowMaxNote := req.contextWindowMaxNote
+	modelProxyNote := req.launchValues.Note[launchValueModelProxy]
+	modelSource := req.launchValues.Source[launchValueModel]
+	modelNote := req.launchValues.Note[launchValueModel]
+	effortSource := req.launchValues.Source[launchValueEffort]
+	effortNote := req.launchValues.Note[launchValueEffort]
+	sandboxNote := req.launchValues.Note[launchValueSandbox]
+	approvalNote := req.launchValues.Note[launchValueApproval]
+	toolsNote := req.launchValues.Note[launchValueTools]
+	askTimeoutNote := req.launchValues.Note[launchValueAskUserQuestionTimeout]
+	autoCompactWindowNote := req.launchValues.Note[launchValueAutoCompactWindow]
+	contextWindowMaxSource := req.launchValues.Source[launchValueContextWindowMax]
+	contextWindowMaxNote := req.launchValues.Note[launchValueContextWindowMax]
 	fastMode := req.fastMode
 	fastModeSet := req.fastModeSet
 	fastModeNote := req.fastModeNote
 	fastModeSource := req.fastModeSource
 	sandboxImplNote := req.sandboxImplNote
 	sandboxImplSource := req.sandboxImplSource
-	autoMemoryNote := req.autoMemoryNote
-	peerMessagingNote := req.peerMessagingNote
+	autoMemoryNote := req.launchBools.Note[launchBoolAutoMemory]
+	peerMessagingNote := req.launchBools.Note[launchBoolPeerMessaging]
 	contextFeaturesNote := req.contextFeaturesNote
-	autoReviewNote := req.autoReviewNote
-	sshWorkaroundNote := req.sshWorkaroundNote
-	trustDirNote := req.trustDirNote
-	copilotAPI := req.copilotAPI
-	copilotAPISource := req.copilotAPISource
-	copilotAPINote := req.copilotAPINote
-	codexAppServer := req.codexAppServer
-	codexAppServerSource := req.codexAppServerSource
-	codexAppServerNote := req.codexAppServerNote
+	autoReviewNote := req.launchBools.Note[launchBoolAutoReview]
+	sshWorkaroundNote := req.launchBools.Note[launchBoolSSHWorkaround]
+	trustDirNote := req.launchBools.Note[launchBoolTrustDir]
+	copilotAPI := req.launchBools.Value[launchBoolCopilotAPI]
+	copilotAPISource := req.launchBools.Source[launchBoolCopilotAPI]
+	copilotAPINote := req.launchBools.Note[launchBoolCopilotAPI]
+	codexAppServer := req.launchBools.Value[launchBoolCodexAppServer]
+	codexAppServerSource := req.launchBools.Source[launchBoolCodexAppServer]
+	codexAppServerNote := req.launchBools.Note[launchBoolCodexAppServer]
 	includeGroupContextNote := req.includeGroupContextNote
 	identityNotes := req.identityNotes
 	profileContextNote := req.profileContextNote
@@ -1352,7 +1273,7 @@ func (req *spawnRequest) checkSandboxLineage() *spawnFailure {
 func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
 	g := req.g
 	body := &req.body
-	copilotAPI := req.copilotAPI
+	copilotAPI := req.launchBools.Value[launchBoolCopilotAPI]
 	cwd := req.cwd
 	externalSpawn := req.externalSpawn
 	h := req.h
@@ -1650,10 +1571,10 @@ func (req *spawnRequest) resolveHarnessOptions() *spawnFailure {
 func (req *spawnRequest) resolveRemoteControl() *spawnFailure {
 	g := req.g
 	body := &req.body
-	autoMemory := req.autoMemory
+	autoMemory := req.launchBools.Value[launchBoolAutoMemory]
 	h := req.h
 	launchBools := req.launchBools
-	peerMessaging := req.peerMessaging
+	peerMessaging := req.launchBools.Value[launchBoolPeerMessaging]
 	profileTiers := req.profileTiers
 	resolvedLaunch := req.resolvedLaunch
 	// Gate the explicit "start with remote control" opt-in: it is a Claude Code
@@ -1775,23 +1696,23 @@ func (req *spawnRequest) buildSpawnParams(r *http.Request) (*spawnParams, *spawn
 	askTimeout := req.askTimeout
 	attachments := req.attachments
 	autoCompactWindow := req.autoCompactWindow
-	autoMemory := req.autoMemory
+	autoMemory := req.launchBools.Value[launchBoolAutoMemory]
 	autoReview := req.autoReview
-	autoReviewSet := req.autoReviewSet
-	codexAppServer := req.codexAppServer
-	codexAppServerSet := req.codexAppServerSet
-	codexAppServerSource := req.codexAppServerSource
+	autoReviewSet := req.launchBools.Set[launchBoolAutoReview]
+	codexAppServer := req.launchBools.Value[launchBoolCodexAppServer]
+	codexAppServerSet := req.launchBools.Set[launchBoolCodexAppServer]
+	codexAppServerSource := req.launchBools.Source[launchBoolCodexAppServer]
 	codexGitCommonDir := req.codexGitCommonDir
 	codexGitCommonDirPinned := req.codexGitCommonDirPinned
 	contextFeatures := req.contextFeatures
-	contextWindowMaxSource := req.contextWindowMaxSource
-	copilotAPI := req.copilotAPI
-	copilotAPISet := req.copilotAPISet
-	copilotAPISource := req.copilotAPISource
+	contextWindowMaxSource := req.launchValues.Source[launchValueContextWindowMax]
+	copilotAPI := req.launchBools.Value[launchBoolCopilotAPI]
+	copilotAPISet := req.launchBools.Set[launchBoolCopilotAPI]
+	copilotAPISource := req.launchBools.Source[launchBoolCopilotAPI]
 	cwd := req.cwd
 	effectiveSandbox := req.effectiveSandbox
 	effort := req.effort
-	effortSource := req.effortSource
+	effortSource := req.launchValues.Source[launchValueEffort]
 	externalSpawn := req.externalSpawn
 	fastMode := req.fastMode
 	fastModeSet := req.fastModeSet
@@ -1805,10 +1726,10 @@ func (req *spawnRequest) buildSpawnParams(r *http.Request) (*spawnParams, *spawn
 	identity := req.identity
 	includeGroupContext := req.includeGroupContext
 	model := req.model
-	modelSource := req.modelSource
+	modelSource := req.launchValues.Source[launchValueModel]
 	namedProfile := req.namedProfile
 	namedProfileHandle := req.namedProfileHandle
-	peerMessaging := req.peerMessaging
+	peerMessaging := req.launchBools.Value[launchBoolPeerMessaging]
 	piDrive := req.piDrive
 	profileContext := req.profileContext
 	proofDirs := req.proofDirs
@@ -1818,15 +1739,15 @@ func (req *spawnRequest) buildSpawnParams(r *http.Request) (*spawnParams, *spawn
 	requestedSpawnConfigJSON := req.requestedSpawnConfigJSON
 	resolvedLaunch := req.resolvedLaunch
 	sandboxImplSource := req.sandboxImplSource
-	sandboxSource := req.sandboxSource
+	sandboxSource := req.launchValues.Source[launchValueSandbox]
 	spawnerConvID := req.spawnerConvID
 	sshWorkaroundIntent := req.sshWorkaroundIntent
-	sshWorkaroundSource := req.sshWorkaroundSource
+	sshWorkaroundSource := req.launchBools.Source[launchBoolSSHWorkaround]
 	teleportAuthority := req.teleportAuthority
 	timeout := req.timeout
 	toolGovernance := req.toolGovernance
 	trustDir := req.trustDir
-	trustDirSet := req.trustDirSet
+	trustDirSet := req.launchBools.Set[launchBoolTrustDir]
 	worktreeBranch := req.worktreeBranch
 	worktreePath := req.worktreePath
 	// Hand the validated request to the shared spawn core. executeSpawn
