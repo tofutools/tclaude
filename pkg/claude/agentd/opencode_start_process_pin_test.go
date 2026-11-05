@@ -48,10 +48,14 @@ func registeredOpenCodeProcess(sessionID string) *openCodeProcess {
 }
 
 // healthyOpenCodeScript serves OpenCode's health endpoint on the --port it is
-// given, from the launched PID itself, so the ownership proof holds.
+// given, from the launched PID itself, so the ownership proof holds. It serves
+// from socketserver.TCPServer, not http.server.HTTPServer: HTTPServer looks up
+// its own fully qualified name between bind and listen, and on a macOS runner
+// that lookup can outlast the startup deadline, leaving a bound socket that
+// never listens (tcl-tsa6ou).
 const healthyOpenCodeScript = `#!/bin/sh
 exec python3 -c '
-import http.server, sys
+import http.server, socketserver, sys
 port = int(sys.argv[sys.argv.index("--port") + 1])
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -63,7 +67,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
     def log_message(self, *a):
         pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+socketserver.TCPServer(("127.0.0.1", port), H).serve_forever()
 ' "$@"
 `
 
