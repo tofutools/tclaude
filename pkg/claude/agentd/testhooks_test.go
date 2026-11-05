@@ -1790,6 +1790,21 @@ func ResetBrokerLimiterForTest() func() {
 	}
 }
 
+// FreezeBrokerLimiterClockForTest stops the broker rate limiter's clock, so
+// every request a test makes falls in the same one-second window and a
+// ceiling is reached by count, not by how fast the test runs.
+func FreezeBrokerLimiterClockForTest() func() {
+	frozen := time.Now()
+	defaultBrokerLimiter.mu.Lock()
+	defaultBrokerLimiter.now = func() time.Time { return frozen }
+	defaultBrokerLimiter.mu.Unlock()
+	return func() {
+		defaultBrokerLimiter.mu.Lock()
+		defaultBrokerLimiter.now = nil
+		defaultBrokerLimiter.mu.Unlock()
+	}
+}
+
 // ResetBrokerRefusalsForTest clears the process-wide brokered-refusal
 // recorder. It is daemon-wide state (one daemon, one view of the
 // condition), so a test that drives a refusal must start clean or it
