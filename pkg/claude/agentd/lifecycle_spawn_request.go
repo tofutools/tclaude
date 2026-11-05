@@ -2046,7 +2046,6 @@ func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p 
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
-	return
 }
 
 // finishSpawnParams adds what only the interactive launch carries: the usage
