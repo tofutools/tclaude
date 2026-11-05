@@ -3613,7 +3613,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		})
 		members := membersByGroup[g.ID]
 		// Pre-load the owner set so we can tag members who are also
-		// owners. Mirrors handleGroupMembersList in handlers.go.
+		// owners. Mirrors handleGroupMembersList in group_member_handlers.go.
 		ownerSet := map[string]bool{}
 		for _, o := range ownersByGroup[g.ID] {
 			ownerSet[o.ConvID] = true
