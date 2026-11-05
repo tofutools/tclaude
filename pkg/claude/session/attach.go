@@ -84,15 +84,6 @@ func runAttach(params *AttachParams) error {
 	return AttachToSession(state.ID, state.TmuxSession, params.Force)
 }
 
-// AttachToTmuxSession attaches to a tmux session, replacing the current process
-// Returns exit code (0 = success) for use by other packages
-func AttachToTmuxSession(tmuxSession string) int {
-	if err := attachToSession(tmuxSession); err != nil {
-		return 1
-	}
-	return 0
-}
-
 // AttachToSession attaches to a tmux session.
 // Sets terminal title for window focus, then replaces process with tmux attach.
 // If forceAttach is true, detaches other clients before attaching (-d flag).

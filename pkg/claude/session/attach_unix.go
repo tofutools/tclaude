@@ -21,11 +21,6 @@ func attachClientFeatureArgs() []string {
 	return clcommon.NativeTmuxClientFeatureArgs(os.Getenv("TERM"))
 }
 
-// attachToSession attaches to a tmux session as a subprocess.
-func attachToSession(tmuxSession string) error {
-	return attachToSessionWithFlags(tmuxSession, false)
-}
-
 // attachToSessionWithFlags attaches to a tmux session with optional force flag.
 // If force is true, uses -d to detach other clients.
 // Runs tmux as a subprocess so we return when the user detaches.
