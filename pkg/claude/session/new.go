@@ -189,7 +189,7 @@ type NewParams struct {
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
 	// resolve blank to allow and pass the concrete value through this flag.
-	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/skill: allow | ask | deny; OpenCode sub-agents (task) are always off under tclaude. Unset = no override for a direct launch. Not applicable to claude/codex"`
+	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance: allow | ask | deny for bash/glob/grep/lsp/skill, with other tools and sub-agents (task) off; or all, which allows every OpenCode tool, sub-agents included, with optional per-tool entries all,question=deny,plan=deny,env=allow (.env reads are denied under all unless env=allow). all needs sandbox-impl tclaude-layer or off and approval deny or allow-tools. Unset = no override for a direct launch. Not applicable to claude/codex"`
 
 	// AutoReview opts into the harness's guardian subagent (Codex's `-c
 	// approvals_reviewer=auto_review`), which auto-decides approval prompts in

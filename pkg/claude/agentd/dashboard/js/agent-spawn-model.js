@@ -1,6 +1,7 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { shareOptions, shareSpawnFields } from './usage-share-model.js';
+import { openCodeToolsBase } from './opencode-tools-model.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -848,7 +849,9 @@ export function applySpawnProfile(
     next.approval = compatibleValue(profile.approval, view.approval.modes, next.approval);
   }
   if (profile.tools) {
-    next.tools = compatibleValue(profile.tools, view.tools.modes, next.tools);
+    // A profile's OpenCode value can carry per-tool entries after its base
+    // (all,question=deny), so the base is what must be a known mode.
+    next.tools = view.tools.modes.includes(openCodeToolsBase(profile.tools)) ? profile.tools : next.tools;
   }
   if (view.showApprovalReviewer) {
     // A sparse profile means "inherit", not "keep the last selected profile's

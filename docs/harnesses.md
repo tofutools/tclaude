@@ -462,19 +462,39 @@ them without prompting; `ask` prompts (and can stall a detached agent);
 `deny` blocks them. It is independent of the approval selector below and is
 preserved across clone, resume, and reincarnate.
 
-**Sub-agents are off.** OpenCode's task tool, which hands work to a
-sub-agent such as `explore` or `general`, is always denied under tclaude, in
-every sandbox mode and whatever the tool-governance setting. OpenCode then
-hides the tool, so the main agent reads and searches files itself, and every
-OpenCode agent spawn says so in its launch notes. The reason: tclaude's permission
-policy is a per-session rule list that starts by denying everything and then
-allows what the launch may do. When OpenCode (1.18.6) creates a sub-agent
-session, it copies only the parent's deny rules into it, so the sub-agent got
-the deny-all and none of the allows, and could not read a single file. The
-alternatives either widen the policy (moving it into OpenCode config, where a
-project or remote config can override it) or race OpenCode's own startup of
-the sub-agent, so tclaude turns sub-agents off until OpenCode can give a
-sub-agent its parent's full rules.
+**Sub-agents are off, unless you pick `all`.** Under `allow`, `ask` and
+`deny`, OpenCode's task tool, which hands work to a sub-agent such as
+`explore` or `general`, is always denied, and OpenCode hides it, so the main
+agent reads and searches files itself. The reason: those policies are a
+per-session rule list that starts by denying everything and then allows what
+the launch may do. When OpenCode (1.18.6) creates a sub-agent session it copies
+only the parent's deny rules into it, so a sub-agent would get the deny-all and
+none of the allows and could not read a single file.
+
+**`--tools all`** allows every OpenCode tool, the ones tclaude has never
+audited included: MCP and plugin tools, tools a later OpenCode adds, the
+question tool, plan mode, and sub-agents. There is no deny-all baseline, so a
+sub-agent works and has what the agent has. What tclaude still applies is only
+what you chose, and each is an allow or a deny, which OpenCode does pass on to
+sub-agents:
+
+- the approval setting for edits and for leaving the worktree;
+- a closed network for the web tools (they are allowed otherwise);
+- the per-tool entries, written after `all`:
+
+| Entry | Default | Effect |
+| --- | --- | --- |
+| `question=deny` | allowed | OpenCode's question tool waits for your answer; a detached agent that asks shows as needing you. |
+| `plan=deny` | allowed | plan mode (`plan_enter`, `plan_exit`). |
+| `env=allow` | denied | reading `.env` files. Denied by default because the usual "ask" cannot reach a sub-agent, and OpenCode's explore sub-agent would otherwise read them without asking. |
+
+For example `--tools all,question=deny,plan=deny`. The spawn dialog and the
+spawn-profile editor show these as checkboxes under Tool governance when it
+is `all`, and profiles store the same value, so it echoes and relaunches like
+the others. `all` is refused with approval `ask` (a sub-agent cannot inherit an
+ask, so it would act without your OK) and with the `access-control` sandbox mode
+(its path rules depend on the deny-all baseline); use `--sandbox-impl
+tclaude-layer` or `off`, and approval `deny` or `allow-tools`.
 
 **Sandbox — read this caveat.** OpenCode's `access-control` mode (the
 `--sandbox` default) compiles tclaude's path and permission rules into

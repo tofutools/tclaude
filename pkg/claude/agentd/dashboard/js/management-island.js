@@ -42,6 +42,8 @@ import { LibraryBundleImportDialog, LibraryNameDialog } from './library-dialogs.
 import { SnapshotsDialog } from './snapshots-dialog.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
+import { OpenCodeToolEntries } from './opencode-tools.js';
+import { openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools-model.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   sandboxPreLaunchEditorRows,
@@ -1161,7 +1163,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     draft.sandbox_implementation || '',
     draft.harness,
   );
-  const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';
+  const toolsHelp = hEntry?.tools_mode_help?.[openCodeToolsBase(draft.tools)] || '';
   const askTimeoutHelp = hEntry?.ask_timeout_mode_help?.[draft.ask_user_question_timeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(
     { autoCompactWindow: draft.auto_compact_window },
@@ -1288,12 +1290,14 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       })}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval || !showApprovalControls} />
-    <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, and skill tools. OpenCode sub-agents (task) are always off under tclaude."
-      value=${draft.tools}
+    <${HelpField} id=${toolsID} label="Tool governance" title="Action for OpenCode's bash, glob, grep, lsp, and skill tools; all allows every OpenCode tool, sub-agents included."
+      value=${openCodeToolsBase(draft.tools)}
       options=${(hEntry?.tools_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_tools ? ' (recommended)' : '') }))}
-      onChange=${(event) => change(setDraft, 'tools', event.currentTarget.value)}
+      onChange=${(event) => change(setDraft, 'tools', withOpenCodeToolsBase(draft.tools, event.currentTarget.value))}
       help=${toolsHelp} open=${helpOpen === toolsID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_tools} />
+    ${hEntry?.can_tools && html`<${OpenCodeToolEntries} id=${`${toolsID}-entries`} value=${draft.tools}
+      onChange=${(next) => change(setDraft, 'tools', next)} />`}
     <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
       id=${`${profile ? 'profile' : 'role'}-editor-sandbox-info`}>
       <span class="cron-create-label"></span>

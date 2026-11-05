@@ -76,6 +76,8 @@ import {
 import { shellToast } from './shell-state.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
+import { OpenCodeToolEntries } from './opencode-tools.js';
+import { openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools-model.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import { isWizardActive } from './slop.js';
 import { shareHint, shareKey, shareOptions } from './usage-share-model.js';
@@ -1326,7 +1328,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   );
   const approvalHelp = view.approval.help[draft.approval] || '';
   const reviewerHelp = approvalReviewerHelp(draft.approvalReviewer, draft.approval);
-  const toolsHelp = view.tools.help[draft.tools] || '';
+  const toolsHelp = view.tools.help[openCodeToolsBase(draft.tools)] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
   const contextWindowMaxHint = contextWindowMaxHintFor(draft, view);
@@ -1797,11 +1799,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
       disabled=${!view.showApprovalReviewer || !showApprovalControls} busy=${busy} />
     <${HelpField} id="agent-spawn-tools" label="Tool governance"
-      title="Uniform action for OpenCode's bash, glob, grep, lsp, and skill tools. OpenCode sub-agents (task) are always off under tclaude."
-      value=${draft.tools} options=${SettingOptions({ setting: view.tools })}
-      onChange=${(event) => update('tools', event.currentTarget.value)}
+      title="Action for OpenCode's bash, glob, grep, lsp, and skill tools; all allows every OpenCode tool, sub-agents included."
+      value=${openCodeToolsBase(draft.tools)} options=${SettingOptions({ setting: view.tools })}
+      onChange=${(event) => update('tools', withOpenCodeToolsBase(draft.tools, event.currentTarget.value))}
       help=${toolsHelp} open=${helpOpen === 'agent-spawn-tools'} setOpen=${setHelpOpen}
       disabled=${!view.tools.visible} busy=${busy} />
+    ${view.tools.visible && html`<${OpenCodeToolEntries} id="agent-spawn-tools-entries" value=${draft.tools}
+      onChange=${(next) => update('tools', next)} disabled=${busy} />`}
     <${HelpField} id="agent-spawn-ask-timeout" label="Question timeout"
       title="AskUserQuestion idle-timeout for the new agent."
       value=${draft.askTimeout} options=${SettingOptions({ setting: view.askTimeout })}
