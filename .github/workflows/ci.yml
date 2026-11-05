@@ -170,8 +170,12 @@ jobs:
           python3 scripts/ci/seatbelt-profile-replay.py "$dump" 10 | tee -a "$GITHUB_STEP_SUMMARY"
           for sb in "$dump"/*.sb; do [ -e "$sb" ] || continue; echo "== $sb"; cat "$sb"; done
           echo "== kernel Sandbox denials (network), last 4 minutes"
-          log show --last 4m --style compact --predicate 'sender == "Sandbox"' 2>&1 |
-            grep -iE 'deny.*network|network.*deny' | tail -60 || true
+          log show --last 6m --style compact --predicate 'sender == "Sandbox"' > "$RUNNER_TEMP/sandbox-log.txt" 2>&1 || true
+          echo "-- denials by process and operation:"
+          grep -oE 'Sandbox: [^(]+\([0-9]+\) deny\([0-9]+\) [a-z-]+ [^ ]*' "$RUNNER_TEMP/sandbox-log.txt" |
+            sed -E 's/\([0-9]+\)//' | sort | uniq -c | sort -rn | head -40 || true
+          echo "-- non-nc network denials:"
+          grep 'network' "$RUNNER_TEMP/sandbox-log.txt" | grep -v ' nc(' | tail -20 || true
 
   test:
     needs: changes
