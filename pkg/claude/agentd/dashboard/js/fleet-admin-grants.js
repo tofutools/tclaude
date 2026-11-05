@@ -21,6 +21,7 @@ export function grantTargets(view, pools) {
 
 function where(row) {
   if (row.deletedGroup) return html`<span class="muted">deleted group${row.groupID != null ? ` #${row.groupID}` : ''}</span>`;
+  if (row.inert) return html`<span class="fa-warn" title=${`Authorizes nothing: ${row.inert}`}>inert: needs a group</span>`;
   if (row.gateway) return html`gateway <b>${row.gateway}</b>`;
   if (row.group) return html`group <b>${row.group}</b>`;
   if (row.allGroups) return html`<span class="fa-warn" title="Covers every current group and every group created later">all groups, incl. future</span>`;
@@ -28,7 +29,7 @@ function where(row) {
 }
 
 function whereText(row) {
-  return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
+  return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.inert ? 'with no group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
 }
 
 export { ALL_TARGETS };

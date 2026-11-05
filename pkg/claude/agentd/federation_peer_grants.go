@@ -167,6 +167,12 @@ func fedExplicitGroupGrant(grants []db.FederationPeerGrant, groupID int64, slug 
 		if slug != "" && grant.Slug != slug {
 			continue
 		}
+		// A grant that must name a local group authorizes nothing unscoped,
+		// whichever path stored it (a node profile saved before its
+		// validation refused one): it would otherwise cover every group.
+		if grant.Scope == "" && fedPeerSlugRequiresGroup(grant.Slug) {
+			continue
+		}
 		// A spawn's launch-setting grant only extends a spawn grant; on its
 		// own it shows the peer nothing.
 		if slug == "" && strings.HasPrefix(grant.Slug, PermGroupsMembersSpawn+".") {
@@ -274,10 +280,20 @@ type fedPeerGrantView struct {
 	GroupID      int64  `json:"group_id,omitempty"`
 	GroupName    string `json:"group_name,omitempty"`
 	GroupDeleted bool   `json:"group_deleted,omitempty"`
+	// Inert says why a stored grant authorizes nothing.
+	Inert string `json:"inert,omitempty"`
+}
+
+// fedPeerGrantInert says why a stored grant authorizes nothing, or "".
+func fedPeerGrantInert(g db.FederationPeerGrant) string {
+	if g.Scope == "" && fedPeerSlugRequiresGroup(g.Slug) {
+		return "needs a group scope: grant it per group"
+	}
+	return ""
 }
 
 func fedViewPeerGrant(g db.FederationPeerGrant) fedPeerGrantView {
-	out := fedPeerGrantView{FederationPeerGrant: g}
+	out := fedPeerGrantView{FederationPeerGrant: g, Inert: fedPeerGrantInert(g)}
 	if strings.HasPrefix(g.Scope, "group=") {
 		id, err := strconv.ParseInt(strings.TrimPrefix(g.Scope, "group="), 10, 64)
 		if err == nil && id > 0 {

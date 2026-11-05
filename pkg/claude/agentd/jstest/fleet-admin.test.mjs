@@ -625,6 +625,20 @@ test('grants scoped by stable group ID label by group_name and keep deleted-grou
   assert.deepEqual(s.log.find((l) => l[0] === 'revoke')[1], { peer: 'inst_forge', slug: 'sessions.watch', scope: 'group_id=12' }, 'the scope goes back unchanged');
 });
 
+test('an unscoped grant the daemon marks inert shows as inert, not all groups', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  const [row] = m.grantRows([{ slug: 'agents.receive', scope: '', inert: 'needs a group scope: grant it per group' }]);
+  assert.equal(row.inert, 'needs a group scope: grant it per group');
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'agents.receive', scope: '', inert: 'needs a group scope: grant it per group' }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  assert.match(s.q('#fleet-grants').textContent, /inert: needs a group/);
+  assert.doesNotMatch(s.q('#fleet-grants').textContent, /all groups, incl\. future/);
+  await s.click(s.q('#fleet-grants [data-fa="revoke"]'));
+  assert.match(s.confirms.at(-1).body, /with no group \(it applies nowhere\)/);
+});
+
 test('an all-groups grant is new even when the peer holds the same permission on a deleted group', async (t) => {
   const s = await setup(t);
   s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'message.direct', scope: 'group_id=12', group_id: 12, group_deleted: true }];

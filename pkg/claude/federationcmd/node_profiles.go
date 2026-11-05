@@ -79,10 +79,14 @@ func nodeProfilesCmd() *cobra.Command {
 				os.Exit(rc)
 			}
 			var out struct {
-				Profile db.FederationNodeProfile `json:"profile"`
+				Profile  db.FederationNodeProfile `json:"profile"`
+				Warnings []string                 `json:"warnings"`
 			}
 			if e := agent.DaemonGet("/v1/federation/profiles/"+url.PathEscape(p.Name), &out); e != nil {
 				os.Exit(fail(os.Stderr, e))
+			}
+			for _, w := range out.Warnings {
+				fmt.Fprintln(os.Stderr, "warning: "+w)
 			}
 			os.Exit(printJSON(os.Stdout, out.Profile))
 		}}.ToCobra(),

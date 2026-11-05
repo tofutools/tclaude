@@ -464,6 +464,7 @@ type peerGrant struct {
 	Scope        string     `json:"scope"`
 	GroupName    string     `json:"group_name,omitempty"`
 	GroupDeleted bool       `json:"group_deleted,omitempty"`
+	Inert        string     `json:"inert,omitempty"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 	SpawnPolicy  struct {
 		PermissionSlugs []string `json:"permission_slugs,omitempty"`
@@ -659,6 +660,9 @@ func grantsCmd() *cobra.Command {
 				fmt.Print(" [group deleted]")
 			} else if g.GroupName != "" {
 				fmt.Printf(" [group %s]", g.GroupName)
+			}
+			if g.Inert != "" {
+				fmt.Printf(" [inert: %s]", g.Inert)
 			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
 				fmt.Printf(" [inherited from group:%s]", g.PoolName)
