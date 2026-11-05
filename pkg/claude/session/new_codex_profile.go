@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -52,10 +51,6 @@ func prepareCodexAgentProfile(
 	if params.SessionID != "" && ownerConvID == "" {
 		ownerConvID = params.SessionID
 	}
-	ownerAgentID, ownerErr := db.AgentIDForConv(ownerConvID)
-	if ownerErr != nil {
-		return codexAgentProfile{}, fmt.Errorf("resolve generated Codex profile owner: %w", ownerErr)
-	}
 	mandatoryNative := params.CodexAppServerSocket != "" && !outerLayer
 	if mandatoryNative {
 		if err := RegisterCodexNativePermissionProfile(
@@ -64,16 +59,11 @@ func prepareCodexAgentProfile(
 			return codexAgentProfile{}, fmt.Errorf("register managed Codex app-server profile: %w", err)
 		}
 	} else {
-		generation := "launch:" + exitGeneration
-		registered, registerErr := RegisterCodexNativePermissionProfileIfInstalled(
-			db.CodexNativePermissionProfile{
-				Generation: generation, ProfileName: profileName,
-				OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: sessionID,
-			}, profilePath)
-		if registerErr != nil {
-			return codexAgentProfile{}, fmt.Errorf("join installed Codex permission registry: %w", registerErr)
+		generation, err := RegisterCodexLaunchNativeProfile(exitGeneration, profileName, profilePath, ownerConvID, sessionID)
+		if err != nil {
+			return codexAgentProfile{}, err
 		}
-		if registered {
+		if generation != "" {
 			undo.Add(func() { _ = UnregisterCodexNativePermissionProfile(generation) })
 			profile.nativeGeneration = generation
 		}

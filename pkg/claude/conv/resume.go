@@ -366,6 +366,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
 		return 1
 	}
+	relaunch.activateNativeProfile()
 	// Carry the posture onto the row this resume just created. Out-of-band,
 	// like the spawn path: SaveSession's UPSERT does not own these columns.
 	// Best-effort — the pane is already running with the right env, and a lost
