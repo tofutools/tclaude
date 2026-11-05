@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 type snapshotResource struct {
@@ -61,4 +62,22 @@ func TestSnapshotGroupResourcesOneModel(t *testing.T) {
 	require.Len(t, got, 2)
 	assert.Equal(t, "closed", got[1].State)
 	assert.Equal(t, "closed by the operator", got[1].Detail)
+}
+
+// A group's shell lists only while it runs. It has no saved state, so a
+// closed row would stay forever with nothing to remove it by; once the shell
+// exits (or before it ever started) the group lists no shell, and the ＋ menu
+// starts one.
+func TestSnapshotGroupShellListsOnlyWhileRunning(t *testing.T) {
+	e := newPageEnv(t)
+	for _, name := range []string{"live", "idle"} {
+		e.f.HaveGroup(name)
+		_, err := db.SetAgentGroupDefaultCwd(name, e.f.TestCwd(name))
+		require.NoError(t, err)
+	}
+	e.f.World.Tmux.Register(docGroupShellSession("live"), e.f.TestCwd("live"), docShellPane{})
+
+	got := e.snapshotResources(t)
+	require.Len(t, got, 1, "only the running shell lists, the idle group's is not kept as closed: %+v", got)
+	assert.Equal(t, snapshotResource{Kind: "shell", ID: "live", GroupID: got[0].GroupID, Title: "Group shell", State: "running", Detail: e.f.TestCwd("live")}, got[0])
 }

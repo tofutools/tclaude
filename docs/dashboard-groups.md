@@ -462,7 +462,9 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
 - **Boards:** the collab boards linked to the group.
 - **Pages:** the live pages its members showed into it, including closed
   ones saved with the group.
-- **Shell:** the group's terminal, in its default directory.
+- **Shell:** the group's terminal, in its default directory. It lists only
+  while it runs: once it exits (or is killed) the row goes away, and the
+  **＋** menu starts a new one.
 
 A kind with nothing in it is hidden. The section's count is its saved
 processes, boards, pages and shell (runs are not counted), and a section with

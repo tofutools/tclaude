@@ -52,17 +52,16 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
 	out = append(out, groupProcessResources(active)...)
-	// A group's shell: running while its tmux session is up, closed (opening
-	// starts it) while the group has a directory to start it in.
+	// A group's shell lists only while its tmux session is up. It has no
+	// saved state, so once it exits there is nothing left to show: a closed
+	// row would stay forever with no way to remove it. The ＋ menu starts a
+	// new one.
 	for _, g := range active {
 		session := groupTermSessionName(g.Name)
-		r := groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateClosed, Detail: g.DefaultCwd}
-		if _, ok := alive[session]; ok {
-			r.State, r.Session = resourceStateRunning, session
-		} else if strings.TrimSpace(g.DefaultCwd) == "" {
+		if _, ok := alive[session]; !ok {
 			continue
 		}
-		out = append(out, r)
+		out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateRunning, Session: session, Detail: g.DefaultCwd})
 	}
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))
