@@ -3,7 +3,8 @@
 // terminals, by group, each in one of four buckets. Active (open here, on the
 // dock, or running out of sight) is what shows by default; closed items show
 // under the Closed chip and in a search. A group shell that is not running is
-// not listed at all: the Groups tab keeps it, where New → Shell starts it.
+// not listed at all (the server lists it only while it runs); the Groups
+// tab's ＋ → Shell starts one.
 // Pure: the panel (collab-rail.js) and the home (collab-home.js, for the agents
 // that need the operator) feed it the snapshot, this browser's places, its open panes, overlay tabs and
 // background sessions, and when each item was last used here.
@@ -163,7 +164,7 @@ export function railItems({
     if (!r || !names.has(r.group_id)) continue;
     const view = resourceState(r, places);
     const bucket = bucketOf(view);
-    // A group shell nobody started is the Groups tab's, not the rail's.
+    // A group shell that is not running is not the rail's to list.
     if (r.kind === 'shell' && bucket === 'closed') continue;
     // A group's shell is named for its group: "Group shell" twice says nothing.
     const title = r.kind === 'shell' ? `${names.get(r.group_id)} shell` : r.title || r.id;
