@@ -25,24 +25,37 @@ export const lockTitle = (locked, name) => (locked
   : `Unlocked: members can read and edit ${name}. Click to lock`);
 
 // knownLocks remembers the last lock state a surface read or set, by
-// "kind:id", so a surface with no fetch of its own (a board tab's menu) can
-// name the state. It is the one lock state the tab name, the tab menu and the
-// Collab panel row read, so a toggle in any of them shows in all three at
-// once. A toggle's entry is pending until the snapshot that follows it lands:
-// until then it wins over the (older) snapshot row. lockVersion makes a
-// component that reads it re-render when it changes.
+// "kind:id", so a surface with no fetch of its own can name the state. With
+// the snapshot's rows (resourceLockState) it is the one lock state the tab
+// name, the tab menu and the Collab panel row read, so a toggle in any of them
+// shows in all three at once. A toggle's entry is pending: it wins over the
+// snapshot row until a snapshot row agrees with it, or PENDING_MS passes (a
+// re-read that failed or was superseded publishes nothing). lockVersion makes
+// a component that reads it re-render when it changes.
 const knownLocks = new Map();
 const lockVersion = signal(0);
+export const PENDING_MS = 15000;
+const lockKey = (kind, id) => `${kind}:${id}`;
 
-export function rememberLock(kind, id, locked, { pending = false } = {}) {
-  knownLocks.set(`${kind}:${id}`, { locked: !!locked, pending });
+// pendingEntry is the entry while its toggle still waits for the snapshot.
+function pendingEntry(entry, now = Date.now()) {
+  return entry?.pendingUntil && now < entry.pendingUntil ? entry : null;
+}
+
+// rememberLock records what a surface read (a board's load). A read does not
+// undo a toggle still waiting for its snapshot, unless it agrees with it.
+export function rememberLock(kind, id, locked) {
+  const key = lockKey(kind, id);
+  const pending = pendingEntry(knownLocks.get(key));
+  if (pending && pending.locked !== !!locked) return;
+  knownLocks.set(key, { locked: !!locked, pendingUntil: 0 });
   lockVersion.value += 1;
 }
 
 // knownLock is the remembered state, or undefined when none was read.
 export function knownLock(kind, id) {
   void lockVersion.value;
-  return knownLocks.get(`${kind}:${id}`)?.locked;
+  return knownLocks.get(lockKey(kind, id))?.locked;
 }
 
 // lockRefresh re-reads the dashboard snapshot after a lock change; a test
@@ -53,13 +66,10 @@ export const lockRefresh = {
 
 // lockChanged records a lock change this dashboard made: every surface shows
 // it at once, and the snapshot is re-read so its rows catch up.
-export function lockChanged(kind, id, locked) {
-  rememberLock(kind, id, locked, { pending: true });
-  const settle = () => {
-    const entry = knownLocks.get(`${kind}:${id}`);
-    if (entry?.pending && entry.locked === !!locked) rememberLock(kind, id, locked);
-  };
-  return Promise.resolve().then(() => lockRefresh.run()).then(settle, settle);
+export function lockChanged(kind, id, locked, { now = Date.now() } = {}) {
+  knownLocks.set(lockKey(kind, id), { locked: !!locked, pendingUntil: now + PENDING_MS });
+  lockVersion.value += 1;
+  return Promise.resolve().then(() => lockRefresh.run()).catch(() => {});
 }
 
 const kindNoun = { board: 'board', page: 'page', process: 'process' };
@@ -79,9 +89,14 @@ export function resourceLocked(snapshotValue, kind, id) {
 export function resourceLockState(snapshotValue, kind, id) {
   if (!kind || !id) return undefined;
   void lockVersion.value;
-  const entry = knownLocks.get(`${kind}:${id}`);
-  if (entry?.pending) return entry.locked;
+  const entry = knownLocks.get(lockKey(kind, id));
   const row = (snapshotValue?.group_resources || []).find((r) => r.kind === kind && r.id === id);
+  if (pendingEntry(entry)) {
+    if (!row || !!row.locked !== entry.locked) return entry.locked;
+    // The snapshot caught up: from now on its row is the truth again. (No
+    // signal bump: the state read here does not change.)
+    entry.pendingUntil = 0;
+  }
   if (row) return !!row.locked;
   return entry?.locked;
 }

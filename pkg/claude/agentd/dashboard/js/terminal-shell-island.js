@@ -36,7 +36,7 @@ import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
-import { LockBadge, knownLock, resourceLocked, setResourceLock } from './resource-lock.js';
+import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
@@ -1192,7 +1192,7 @@ function StripGap({ active, armed, grow = false, onDragOver, onDragLeave, onDrop
 }
 
 function PaneContextMenu({
-  menu, actions, groups, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
+  menu, actions, groups, snapshot = null, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
 }) {
   return html`<${TabContextMenu} menu=${menu} closeMenu=${closeMenu} focusAfterAction=${focusAfterAction} focusAfterDismiss=${focusAfterDismiss}
     items=${({ item, separator }) => {
@@ -1219,8 +1219,8 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        ...(menu.board && knownLock('board', menu.boardId) !== undefined ? [(() => {
-          const locked = knownLock('board', menu.boardId);
+        ...(menu.board && resourceLockState(snapshot?.value, 'board', menu.boardId) !== undefined ? [(() => {
+          const locked = resourceLockState(snapshot?.value, 'board', menu.boardId);
           return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
             setResourceLock('board', menu.boardId, !locked).then(
               () => shellToast(locked ? `Agents can edit ${menu.label} again` : `${menu.label} is read-only for agents`),
@@ -1967,7 +1967,7 @@ function TerminalTabs({
         ${detachArmed && !joining ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${snapshot ? html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
-      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
+      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups} snapshot=${snapshot}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
       ${!solo && !hasPanes ? html`<${HomeOrHint} rail=${rail} panes=${current.panes} actions=${actions} snapshot=${snapshot}

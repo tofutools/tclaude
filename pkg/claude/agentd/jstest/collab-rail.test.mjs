@@ -363,14 +363,30 @@ test('rail lock: a click toggles through the lock route, the row follows, and th
   assert.deepEqual(posts.at(-1), { kind: 'process', id: 'pr-review', locked: false });
 });
 
-test('rail lock: a pending toggle wins over the stale snapshot only until the re-read lands', async (t) => {
-  let land;
-  const { harness, lock, root } = await railWithLocks(t, { refresh: () => new Promise((resolve) => { land = resolve; }) });
-  await harness.act(async () => { harness.fireEvent(root.querySelector('[data-rail-lock="process:pr-review"]'), 'click'); await wait(); await wait(); });
-  assert.equal(lock.resourceLocked(SNAPSHOT, 'process', 'pr-review'), false, 'pending: the toggle wins over the older snapshot row');
-  await harness.act(async () => { land(); await wait(); await wait(); });
-  assert.equal(lock.resourceLocked(SNAPSHOT, 'process', 'pr-review'), true, 'settled: the snapshot row is the truth again');
-  assert.equal(lock.resourceLocked({ group_resources: [] }, 'process', 'pr-review'), false, 'with no row, the last state set here');
+test('rail lock: a toggle wins over the stale snapshot until a snapshot row agrees, and a passive read cannot undo it', async (t) => {
+  // The re-read resolves but publishes nothing (superseded by a poll, or failed).
+  const { harness, lock, snapshot, root } = await railWithLocks(t, { refresh: async () => {} });
+  const button = () => root.querySelector('[data-rail-lock="process:pr-review"]');
+  await harness.act(async () => { harness.fireEvent(button(), 'click'); await wait(); await wait(); });
+  assert.equal(lock.resourceLocked(snapshot.value, 'process', 'pr-review'), false, 'pending: the toggle wins over the older snapshot row');
+  assert.ok(!button().classList.contains('is-locked'), 'a re-read that published nothing does not flip the icon back');
+  lock.rememberLock('process', 'pr-review', true);
+  assert.equal(lock.knownLock('process', 'pr-review'), false, 'an older read (a board load) does not undo the pending toggle');
+  const agreeing = { group_resources: [{ kind: 'process', id: 'pr-review', locked: false }] };
+  assert.equal(lock.resourceLocked(agreeing, 'process', 'pr-review'), false, 'the snapshot caught up');
+  const flipped = { group_resources: [{ kind: 'process', id: 'pr-review', locked: true }] };
+  assert.equal(lock.resourceLocked(flipped, 'process', 'pr-review'), true, 'after that, a lock changed elsewhere shows');
+});
+
+test('rail lock: a pending toggle no snapshot confirms gives way after PENDING_MS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const lock = await harness.importDashboardModule('js/resource-lock.js');
+  lock.lockRefresh.run = async () => {};
+  const value = { group_resources: [{ kind: 'board', id: 'old', locked: false }] };
+  await lock.lockChanged('board', 'old', true, { now: Date.now() - lock.PENDING_MS - 1 });
+  assert.equal(lock.resourceLocked(value, 'board', 'old'), false, 'an expired toggle no longer overrides the snapshot');
+  await lock.lockChanged('board', 'old', true);
+  assert.equal(lock.resourceLocked(value, 'board', 'old'), true);
 });
 
 test('rail lock: where this node cannot change the lock it shows the state and says the slug is needed', async (t) => {
