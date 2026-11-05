@@ -2274,6 +2274,11 @@ func resumeLaunchCmd(
 		harnessName, sessionID, convID, extraArgs, nil, nil)
 }
 
+// resolveResumeTclaudeLayer is the bubblewrap capability probe and binary
+// resolution for a resume behind tclaude's sandbox. A variable so tests on
+// hosts without unprivileged user namespaces can pin the command it builds.
+var resolveResumeTclaudeLayer = session.ResolveTclaudeLayerForEngineWithIdentity
+
 // resumeLaunchCmdWithEffectiveSandbox is resumeLaunchCmd that also hands back
 // the effective sandbox snapshot the launch was rendered from, so a caller can
 // disclose its access notices, and launches with what agentd prepared for the
@@ -2855,35 +2860,25 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			return "", "", nil, engineErr
 		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayerForEngineWithIdentity(
+		binary, _, resolveErr = resolveResumeTclaudeLayer(
 			posture, root, engine,
 			posture == sandboxpolicy.NetworkFiltered &&
 				engine == sandboxpolicy.NetworkEnginePacket)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
-		var harnessReadPaths []string
-		if h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			// The same resolution `session new` performs: a constructed root
-			// cannot see a Gemini or Node installed under the home directory.
-			resolved, resolveErr := harness.ResolveGeminiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		// The same pinning `session new` performs, so a resumed pane starts the
+		// binary a new one would: a constructed root cannot see a harness
+		// installed under the home directory.
+		pinned, pinnedExecutable, pinErr := session.ResolveTclaudeLayerExecutable(h.Name, root)
+		if pinErr != nil {
+			return "", "", nil, pinErr
 		}
-		if h.Name == harness.PiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			resolved, resolveErr := harness.ResolvePiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		var harnessReadPaths []string
+		if pinnedExecutable {
+			spec.ExecutablePath = pinned.Path
+			spec.ExecutableInterpreter = pinned.Interpreter
+			harnessReadPaths = pinned.ReadPaths
 		}
 		if statusExtensionDir != "" {
 			// As in `session new`: mounted read-only, and reaching tclaude
