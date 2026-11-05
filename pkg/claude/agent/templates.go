@@ -162,9 +162,14 @@ type templateJSON struct {
 	Rhythms []rhythmJSON `json:"rhythms,omitempty"`
 	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
 	// prior wave to go idle before the next spawns anyway (JOH-244). 0 = default.
-	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	WaveMaxWait int `json:"wave_max_wait,omitempty"`
+	// OwnerScopes narrows what ownership of a group deployed from the template
+	// confers (TCL-1071). It is carried as raw JSON, read and sent back as the
+	// daemon wrote it: `edit` is a full replace, so a field dropped here would
+	// be deleted from the template.
+	OwnerScopes json.RawMessage `json:"owner_scopes,omitempty"`
+	CreatedAt   string          `json:"created_at,omitempty"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents — effective
@@ -237,6 +242,12 @@ func templatesShowCmd() *cobra.Command {
 			os.Exit(runTemplatesShow(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesShow is `tclaude agent templates show <name> [--json]`, as the
+// command runs it, for callers that drive the CLI against a daemon in-process.
+func RunTemplatesShow(name string, jsonOut bool, stdout, stderr io.Writer) int {
+	return runTemplatesShow(&templatesShowParams{Name: name, JSON: jsonOut}, stdout, stderr)
 }
 
 func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
@@ -526,6 +537,13 @@ func templatesEditCmd() *cobra.Command {
 			os.Exit(runTemplatesEdit(p, os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesEdit is `tclaude agent templates edit <name> --file <file>`, as
+// the command runs it, for callers that drive the CLI against a daemon
+// in-process.
+func RunTemplatesEdit(name, file string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runTemplatesEdit(&templatesEditParams{Name: name, File: file}, stdin, stdout, stderr)
 }
 
 func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io.Writer) int {
