@@ -746,7 +746,10 @@ var permissionRegistry = []PermSlug{
 		Slug: PermGroupsResourcesWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
 		Description: "Change the resources linked to a group (draw on its boards, open a board session there, create a board in it) as a member of that group; implies groups.resources.read. Conferred by active membership, live; an explicit deny stops it. An operator lock on a resource still refuses the change. The global boards.write still covers every board.",
 	},
-	{Slug: PermGroupsResourcesLock, Description: "Federation peer grant (group-scoped): lock and unlock the group's resources (its saved processes, boards and live pages) against agent changes from the peer's dashboard, as this node's operator does. A process template pinned to several groups needs it in each. Never reaches an agent: locks are the operator's. Unrestricted trust holds it."},
+	{
+		Slug: PermGroupsResourcesLock, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Lock and unlock the resources linked to a group (its boards, the process templates pinned to it, its live pages) against agent changes, and still change them while they are locked (tclaude agent resources lock/unlock). A resource in several groups needs it in each; one in no group needs an unscoped grant. Never default-granted, never conferred by group ownership or membership, and not covered by groups.admin: the operator grants it. Also a federation peer grant (group-scoped): lock and unlock them from the peer's dashboard, as this node's operator does. Unrestricted trust holds it.",
+	},
 	{Slug: PermGroupsSettings, Description: "Federation peer grant (group-scoped): change the group's ordinary settings from the peer's dashboard — description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting (under a group this node shows the peer). What every spawn into the group inherits also needs the matching spawn grant: its default directory groups.members.spawn.cwd, its default saved prompts groups.members.spawn.prompts, its sandbox profile groups.members.spawn.sandbox, and a default profile must be one the peer may pick for a spawn there. Its environment needs groups.settings.environment. Unrestricted trust holds it."},
 	{Slug: PermNodeSpawnRead, Description: "Read the spawn dialog's catalogs on this node, so a peer's remote spawn dialog shows what this node would apply and offers its profiles and prompts: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model. Read-only; spawn and sandbox profiles carry their environment values (often tokens) and paths. Default off; instance-wide peer grant."},
 	{Slug: PermNodeSpawnDefaultsManage, Description: "Set or clear this node's global default spawn profile and global sandbox profile from a peer's dashboard, choosing among this node's existing profiles (listing them takes node.spawn.read); an operator-only profile takes unrestricted trust. Applies to every spawn here without its own profile. Default off; instance-wide peer grant."},
@@ -981,9 +984,10 @@ func IsKnownPermSlug(slug string) bool {
 // slug. The registry deliberately reserves the groups.* namespace for group
 // administration, so newly registered operations join
 // the umbrella automatically instead of requiring a second hand-maintained
-// list. The umbrella never implies itself.
+// list. The umbrella never implies itself, nor groups.resources.lock: a lock
+// holds against groups.admin, and only the lock slug itself passes it.
 func IsGroupsAdminImpliedSlug(slug string) bool {
-	return slug != PermGroupsAdmin && strings.HasPrefix(slug, "groups.")
+	return slug != PermGroupsAdmin && slug != PermGroupsResourcesLock && strings.HasPrefix(slug, "groups.")
 }
 
 // IsOwnerImpliedSlug reports whether group ownership structurally confers

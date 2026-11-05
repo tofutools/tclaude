@@ -14,7 +14,7 @@ const SNAPSHOT = {
   group_resources: [
     { kind: 'board', id: 'launch', group_id: 1, title: 'Launch-resolution map', state: 'closed' },
     { kind: 'page', id: 'pg_dash', group_id: 1, title: 'Dashboard preview', state: 'running' },
-    { kind: 'process', id: 'pr-review', group_id: 1, title: 'pr-review', state: 'running' },
+    { kind: 'process', id: 'pr-review', group_id: 1, title: 'pr-review', state: 'running', locked: true },
     { kind: 'shell', id: 'tclaude', group_id: 1, title: 'Group shell', state: 'running', session: 's' },
     { kind: 'board', id: 'release', group_id: 1, title: 'Release planning', state: 'closed' },
     { kind: 'board', id: 'net', group_id: 2, title: 'Network diagram', state: 'closed' },
@@ -177,6 +177,8 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'the default filter shows no count');
   assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
   assert.equal(root.querySelector('[data-rail-item="board:launch"] .cr-state'), null, 'an item open here needs no words');
+  assert.ok(root.querySelector('[data-rail-item="process:pr-review"] [data-lock-badge="process"]'), 'a locked process wears the lock icon');
+  assert.equal(root.querySelector('[data-rail-item="board:launch"] [data-lock-badge]'), null, 'an unlocked one does not');
 
   // A strip tab comes forward on click, and offers pop out and close.
   const launch = root.querySelector('[data-rail-item="board:launch"]');

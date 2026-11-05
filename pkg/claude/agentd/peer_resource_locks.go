@@ -24,7 +24,9 @@ import (
 //
 // Only the peer's operator reaches the peer view (its own dashboard, behind
 // its dashboard login); no agent on either node has a route to it, so a
-// federated agent never toggles a lock, whatever it is granted.
+// federated agent never toggles a lock this way. A local agent locks through
+// its own route, POST /v1/resource-locks, under its own groups.resources.lock
+// grant (group_resource_access.go).
 
 // PermGroupsResourcesLock is the federation peer grant (group-scoped) to lock
 // and unlock the group's resources against agent changes from the peer's
@@ -66,8 +68,16 @@ func resourceLockGroups(kind, id string) ([]*db.AgentGroup, bool) {
 			owner, groupID = p.owner, p.groupID
 		}
 		livePages.mu.Unlock()
-		if p == nil || !pageOwnerInGroup(owner, groupID) {
-			return nil, p != nil
+		if p == nil {
+			// A page saved with its group, closed now, keeps its lock.
+			row, err := db.GetGroupPage(id)
+			if err != nil || row == nil {
+				return nil, false
+			}
+			return byID(row.GroupID), true
+		}
+		if !pageOwnerInGroup(owner, groupID) {
+			return nil, true
 		}
 		return byID(groupID), true
 	case resourceKindProcess:

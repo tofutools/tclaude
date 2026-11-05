@@ -93,6 +93,7 @@ type boardSummary struct {
 	ElementCount int       `json:"element_count"`
 	Participants []string  `json:"participants"`
 	Group        string    `json:"group,omitempty"`
+	AgentsLocked bool      `json:"agents_locked,omitempty"`
 }
 
 type boardDoc struct {
@@ -107,6 +108,7 @@ type boardDoc struct {
 	Presence        *boardPresence    `json:"presence,omitempty"`
 	Group           string            `json:"group,omitempty"`
 	GroupMembers    []string          `json:"group_members,omitempty"`
+	AgentsLocked    bool              `json:"agents_locked,omitempty"`
 }
 
 // boardPresence is who is on the board right now (tcl-rawj2c).
@@ -249,14 +251,18 @@ func runBoardLs(p *boardLsParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tVERSION\tELEMENTS\tPARTICIPANTS\tGROUP\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTITLE\tVERSION\tELEMENTS\tPARTICIPANTS\tGROUP\tLOCKED\tUPDATED")
 	for _, b := range resp.Boards {
 		group := b.Group
 		if group == "" {
 			group = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", b.ID, b.Title, b.Version, b.ElementCount,
-			len(b.Participants), group, b.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		locked := "-"
+		if b.AgentsLocked {
+			locked = "locked"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n", b.ID, b.Title, b.Version, b.ElementCount,
+			len(b.Participants), group, locked, b.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	_ = tw.Flush()
 	return rcOK
@@ -327,6 +333,9 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, ", last changed by %s", doc.UpdatedBy)
 	}
 	fmt.Fprintln(stdout)
+	if doc.AgentsLocked {
+		fmt.Fprintln(stdout, "Locked: agents can read it but not change it until it is unlocked.")
+	}
 	if len(doc.Participants) > 0 {
 		fmt.Fprintf(stdout, "Participants: %s\n", strings.Join(doc.Participants, ", "))
 	}

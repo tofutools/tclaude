@@ -1309,3 +1309,19 @@ test('a change summary does not quote agent text the operator only moved', async
   map.set('t', { ...moved, text: 'my words' });
   assert.match(m.describeChanges(map, ['t'], new Map([['t', moved]])), /text “my words”/);
 });
+
+test('a locked resource wears a small lock icon that explains itself', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { LockBadge, resourceLocked, rememberLock } = await harness.importDashboardModule('js/resource-lock.js');
+  const snap = { group_resources: [{ kind: 'board', id: 'plan', locked: true }, { kind: 'process', id: 'ship' }] };
+  assert.equal(resourceLocked(snap, 'board', 'plan'), true);
+  assert.equal(resourceLocked(snap, 'process', 'ship'), false);
+  assert.equal(resourceLocked(snap, 'board', 'loose'), false, 'nothing known is unlocked');
+  rememberLock('board', 'loose', true);
+  assert.equal(resourceLocked(snap, 'board', 'loose'), true, 'a board in no group: what the editor last read');
+  const view = await harness.mount(harness.html`<div><${LockBadge} kind="board" locked=${true} /><${LockBadge} kind="page" locked=${false} /></div>`);
+  const badges = view.container.querySelectorAll('[data-lock-badge]');
+  assert.equal(badges.length, 1, 'only a locked resource shows the icon');
+  assert.equal(badges[0].textContent, '🔒');
+  assert.match(badges[0].title, /^Locked: members can read this board but not edit it\./);
+});

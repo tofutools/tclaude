@@ -499,14 +499,19 @@ the row's **⋯** holds:
   only while closed.
 - **Delete…**, behind a confirm.
 
-Each resource has a lock chip. Click it to switch between two states:
-- **✎ agents can edit** (the default): agents edit the resource under their
-  usual permissions.
-- **🔒 agents: read-only:** members still use the resource, but no agent can
-  change it, whatever it is granted.
+Each resource has a lock chip. It shows the state and is also the toggle:
+click it (or focus it and press Enter) to switch between:
+- **✎ agents can edit** (the default): members read and edit the resource.
+- **🔒 agents: read-only:** members still read the resource, but no agent can
+  change it, except one holding `groups.resources.lock` for it.
 
-Only you can toggle the lock. The same chip is on the resource's own header
-too: the process editor, the board and the page. See
+You toggle the lock here; an agent can only when you grant it
+`groups.resources.lock`, which also lets it change the locked resource. The
+same chip is on the resource's own header: the process editor, the board and
+the page. In the Collab view, a locked resource also wears a small 🔒 on its
+tab name and on its row in the side panel; its tooltip says what the lock
+means. A board tab's right-click menu has **Lock for agents** / **Unlock for
+agents**. See
 [Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
 
 A peer's group in the fused view lists its resources too, read from that

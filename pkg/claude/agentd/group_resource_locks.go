@@ -9,20 +9,23 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-// The operator's lock on a group resource (tcl-dwzsq0).
+// The lock on a group resource (tcl-dwzsq0).
 //
-// A process template, a collab board or a live page can be locked by the
-// operator against every agent change. While locked, an agent's change is
-// refused with resource_locked (403) whatever the agent's grants: no slug,
-// sudo grant, group ownership or template carries past it. Reads stay open.
+// A process template, a collab board or a live page can be locked against
+// agent changes. While locked, an agent's change is refused with
+// resource_locked (403) whatever else it holds (a slug, a sudo grant, group
+// ownership, a template), unless it holds groups.resources.lock in every group
+// the resource belongs to (an unscoped grant for a resource in no group).
+// Reads stay open.
 //
-// Only the operator sets or clears a lock, through the dashboard API below
-// (POST /api/resource-locks), which no agent reaches: it sits behind
-// checkDashboardAuth, and the agent socket has no route to it. A trusted
-// peer's operator reaches it through the peer view, only under its
-// groups.resources.lock grants (peer_resource_locks.go). Process and
-// board locks are stored (group_resource_locks); a page's lock lives with the
-// page (livePage.agentsLocked), and ends when it is closed.
+// The operator sets or clears a lock through the dashboard API below (POST
+// /api/resource-locks). An agent does it through POST /v1/resource-locks
+// under the same groups.resources.lock, which is never default-granted and
+// never conferred by ownership or membership: the operator grants it. A
+// trusted peer's operator reaches the dashboard route through the peer view,
+// only under its groups.resources.lock peer grants (peer_resource_locks.go).
+// Process and board locks are stored (group_resource_locks); a page's lock
+// lives with the page (livePage.agentsLocked), and ends when it is closed.
 //
 // What a lock refuses an agent:
 //   - process: saving or deleting the template, changing its library listing,
@@ -42,14 +45,15 @@ const (
 
 func writeResourceLocked(w http.ResponseWriter, what string) {
 	writeError(w, http.StatusForbidden, "resource_locked",
-		what+" is locked by the operator: no agent may change it until the operator unlocks it in the dashboard")
+		what+" is locked: you can still read it, but it cannot be changed until it is unlocked "+
+			"(the operator unlocks it in the dashboard, or an agent holding "+PermGroupsResourcesLock+" for it)")
 }
 
 // resourceLockedError is a planned change refused by a lock, for a caller
 // that answers with writeResourceLocked later.
 type resourceLockedError struct{ what string }
 
-func (e *resourceLockedError) Error() string { return e.what + " is locked by the operator" }
+func (e *resourceLockedError) Error() string { return e.what + " is locked" }
 
 // callerIsHuman reports whether the request comes from the operator (the
 // dashboard, or a CLI call with no agent behind it).
@@ -60,7 +64,7 @@ func callerIsHuman(r *http.Request) bool {
 // refuseLockedForAgent refuses an agent's change to a locked stored resource,
 // and reports whether it did. The operator is never refused.
 func refuseLockedForAgent(w http.ResponseWriter, r *http.Request, kind, id, what string) bool {
-	if callerIsHuman(r) || !db.GroupResourceLocked(kind, id) {
+	if callerIsHuman(r) || !db.GroupResourceLocked(kind, id) || agentHoldsResourceLock(r, kind, id) {
 		return false
 	}
 	writeResourceLocked(w, what)
@@ -68,15 +72,16 @@ func refuseLockedForAgent(w http.ResponseWriter, r *http.Request, kind, id, what
 }
 
 // pageLockAllows is the page gate's lock check (pageForAs): on a locked page
-// only reads pass. Every page caller is an agent.
-func pageLockAllows(w http.ResponseWriter, p *livePage, perm string) bool {
+// only reads pass, unless the caller holds the lock slug for the page. Every
+// page caller is an agent.
+func pageLockAllows(w http.ResponseWriter, r *http.Request, p *livePage, perm string) bool {
 	if perm == PermGroupsPagesRead {
 		return true
 	}
 	livePages.mu.Lock()
-	locked := p.agentsLocked
+	locked, id := p.agentsLocked, p.id
 	livePages.mu.Unlock()
-	if locked {
+	if locked && !agentHoldsResourceLock(r, resourceKindPage, id) {
 		writeResourceLocked(w, "page "+p.owner+"/"+p.name)
 		return false
 	}

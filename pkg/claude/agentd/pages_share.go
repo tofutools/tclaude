@@ -209,7 +209,7 @@ func pageForAs(w http.ResponseWriter, r *http.Request, perm string) (p *livePage
 			writeError(w, http.StatusNotFound, "not_found", "you have no page named "+name)
 			return nil, nil, "", false
 		}
-		if !pageLockAllows(w, p, perm) {
+		if !pageLockAllows(w, r, p, perm) {
 			return nil, nil, "", false
 		}
 		return p, nil, agentID, true
@@ -231,7 +231,7 @@ func pageForAs(w http.ResponseWriter, r *http.Request, perm string) (p *livePage
 	if _, ok := requirePermission(w, r, perm, ActionContext{Group: g.Name}); !ok {
 		return nil, nil, "", false
 	}
-	if !pageLockAllows(w, p, perm) {
+	if !pageLockAllows(w, r, p, perm) {
 		return nil, nil, "", false
 	}
 	setAuditTargetLabel(r, "page "+owner+"/"+name)
