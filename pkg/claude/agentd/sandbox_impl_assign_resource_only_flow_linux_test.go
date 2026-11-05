@@ -46,7 +46,11 @@ func TestSandboxImplAssign_ResourceOnlyReachesAPreexistingAgentsRelaunch(t *test
 		"sandbox": harness.ClaudeSandboxOn,
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	// The spawn's post-init runs in the background; let it finish before the
+	// agent is stopped, so it cannot land on the stopped or relaunched agent.
+	agentd.WaitForBackgroundForTest()
 	f.AsHuman().Stop(spawn.ConvID, false)
+	agentd.WaitForBackgroundForTest()
 
 	wire, code, body := assignSandboxImpl(t, f, spawn.ConvID,
 		map[string]any{"implementation": string(sandboxpolicy.ImplementationResourceOnly)})
@@ -59,7 +63,11 @@ func TestSandboxImplAssign_ResourceOnlyReachesAPreexistingAgentsRelaunch(t *test
 		"resource-only stands the harness's own wall down, so the recorded mode "+
 			"must move with it rather than keep claiming `on`")
 
-	f.AsHuman().Resume(spawn.ConvID)
+	// The relaunch is what this test is about, so a resume that did not
+	// relaunch (skipped, refused) must fail here, naming why, rather than as
+	// the stale implementation the first spawn recorded.
+	resumed := f.AsHuman().Resume(spawn.ConvID)
+	require.Equalf(t, "resumed", resumed.Action, "resume body=%s", resumed.Raw)
 	relaunched, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
 	require.True(t, ok)
 	assert.Equal(t, string(sandboxpolicy.ImplementationResourceOnly), relaunched)

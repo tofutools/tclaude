@@ -9,9 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -399,6 +397,36 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	req.resolveTimeout()
 	req.applyDefaultCwd()
 
+	if fail := req.resolveProfiles(w, r); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveLaunchTarget(r); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveLaunchValues(r); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveSandboxImplementation(); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveLaunchBools(); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveIdentity(r); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	if fail := req.resolveContextFeatures(); fail != nil {
+		writeSpawnFailure(w, fail)
+		return
+	}
+	req.buildLaunchEcho()
+
 	// The steps below have not moved onto spawnRequest yet; they read the
 	// request through these locals.
 	body := &req.body
@@ -407,524 +435,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	spawnerConvID, spawnSudoGrant := req.spawnerConvID, req.spawnSudoGrant
 	teleportAuthority, sandboxScopePinned := req.teleportAuthority, req.sandboxScopePinned
 	spawnUsageProfiles, oneShotName, attachments := req.spawnUsageProfiles, req.oneShotName, req.attachments
-	permOverrides, replyToConv, timeout := req.permOverrides, req.replyToConv, req.timeout
-
-	// Resolve the harness independently through the complete chain. Other launch
-	// fields never pin it: explicit request > named CLI profile > group default
-	// profile > global default profile > Claude. Field candidates are validated
-	// against this resolved harness below.
-	var namedProfile *db.SpawnProfile
-	namedProfileHandle := ""
-	if name := strings.TrimSpace(body.Profile); name != "" {
-		var profileErr error
-		namedProfileHandle = name
-		namedProfile, profileErr = db.ResolveSpawnProfile(name)
-		if profileErr != nil || namedProfile == nil {
-			writeError(w, http.StatusBadRequest, "invalid_profile", fmt.Sprintf("spawn profile %q does not exist", name))
-			return
-		}
-		if fail := profileSpawnFailure(namedProfile, spawnerConvID); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
-		}
-	}
-	// The spawn pipeline's default-tier loader, which the dashboard's live
-	// relaunch read (spawnRelaunchPreview) shares.
-	groupProfile, globalProfile := launchDefaultProfiles(g, &spawnParams{})
-	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
-		if fail := profileSpawnFailure(prof, spawnerConvID); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
-		}
-	}
-	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
-	if namedProfile != nil && namedProfileHandle != namedProfile.Name {
-		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`, namedProfile.Name, namedProfileHandle)
-	}
-	relaunchTiers := []*db.SpawnProfile{namedProfile, groupProfile, globalProfile}
-	relaunchExplicit, relaunchOK := gateSpawnRelaunchOverrides(w, r, body.RelaunchPolicy, relaunchTiers)
-	if !relaunchOK {
-		return
-	}
-	profileTiers := []launchProfileTier{
-		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
-			defaultTier: true},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
-			defaultTier: true},
-	}
-	harnessSource := agent.ProvExplicit
-	if strings.TrimSpace(body.Harness) == "" {
-		harnessSource = agent.ProvHarnessDefault
-		for _, tier := range profileTiers {
-			if tier.profile != nil {
-				body.Harness = harnessOrDefault(tier.profile.Harness)
-				harnessSource = tier.source
-				break
-			}
-		}
-	}
-	if strings.TrimSpace(body.Harness) == "" {
-		body.Harness = harness.DefaultName
-	}
-
-	// Validate the requested cwd before doing any work. Expands "~",
-	// makes the path absolute, and confirms it exists as a directory.
-	// Catching a bad cwd here turns what used to be a silent 30s
-	// conv-id-poll timeout into an immediate, actionable error.
-	cwd, cwdErr := resolveSpawnCwd(body.Cwd)
-	if cwdErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
-		return
-	}
-
-	// Validate the optional worktree dir the same way — it must exist
-	// (the dashboard creates it just before spawning). Caught here so
-	// a stale path becomes an immediate 400 rather than a welcome
-	// message pointing the agent at a directory that isn't there.
-	var worktreePath string
-	if strings.TrimSpace(body.WorktreePath) != "" {
-		wt, wtErr := resolveSpawnCwd(body.WorktreePath)
-		if wtErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid_worktree", wtErr.Error())
-			return
-		}
-		worktreePath = wt
-	}
-	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
-
-	// Resolve the requested harness (default Claude Code). An unknown
-	// name is a 400 here rather than a silent failure once the forked
-	// session exits. The chosen harness's ModelCatalog then validates
-	// effort/model below, so a Codex spawn is checked against Codex's
-	// rules (rejects Claude Code slugs, accepts effort levels) instead of
-	// Claude Code's.
-	h, harnessErr := resolveSpawnHarness(body.Harness)
-	if harnessErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
-		return
-	}
-	if constraints, ok := r.Context().Value(federationPlacementConstraintsKey{}).(string); ok {
-		if err := validateLocalPlacementRequirements(constraints, h.Name); err != nil {
-			writeError(w, 409, "node_incompatible", err.Error())
-			return
-		}
-	}
-	if body.NonInteractive && h.Name == harness.ShellName && body.IncludeGroupContext != nil && *body.IncludeGroupContext {
-		writeError(w, http.StatusBadRequest, "invalid_group_context",
-			"--group-context is not meaningful for a shell command")
-		return
-	}
-	// Cross-harness spawn policy is evaluated only after the complete profile
-	// stack has resolved the target vendor. That closes the indirect path where
-	// an agent omits --harness but a group/global default profile flips it.
-	if fail := spawnHarnessPolicyFailure(g, spawnerConvID, h.Name); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	// The string/int launch value fields ride one table
-	// (launch_value_fields.go). The model proxy is resolved on its own first so
-	// its permission gate still refuses before any other field is judged.
-	launchValues := launchValueResolution{Values: launchValueFields{
-		ModelProxy: body.ModelProxy, Model: body.Model, Effort: body.Effort,
-		Sandbox: body.HarnessBuiltinMode, Approval: body.ApprovalPolicy, Tools: body.ToolGovernance,
-		AskUserQuestionTimeout: body.AskUserQuestionTimeout, AutoCompactWindow: body.AutoCompactWindow,
-		ContextWindowMax: body.ContextWindowMax,
-	}}
-	if fail := resolveLaunchValueFields(h, profileTiers, &launchValues, launchValueOptions{}, launchValueModelProxy); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	body.ModelProxy = launchValues.Values.ModelProxy
-	if body.ModelProxy != "" && body.ModelProxy != "off" && spawnerConvID != "" {
-		peer, name, err := resolveModelProxyReference(body.ModelProxy)
-		if err != nil {
-			writeError(w, 400, "invalid_model_proxy", err.Error())
-			return
-		}
-		allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
-		if err != nil || !allowed {
-			writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
-			return
-		}
-	}
-	validateModel := func(raw string) (string, error) {
-		value, err := h.Models.ValidateModel(raw)
-		if err == nil {
-			return value, nil
-		}
-		other := "codex"
-		if h.Name == "codex" {
-			other = harness.DefaultName
-		}
-		return "", fmt.Errorf("model %q is not valid for %s; pass --harness %s or a matching --model: %w",
-			strings.TrimSpace(raw), h.Name, other, err)
-	}
-	if fail := resolveLaunchValueFields(h, profileTiers, &launchValues, launchValueOptions{validateModel: validateModel},
-		allLaunchValueFields[launchValueModel:]...); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	resolvedValues := launchValues.Values
-	body.Model, body.Effort = resolvedValues.Model, resolvedValues.Effort
-	body.HarnessBuiltinMode, body.ApprovalPolicy, body.ToolGovernance = resolvedValues.Sandbox, resolvedValues.Approval, resolvedValues.Tools
-	body.AskUserQuestionTimeout, body.AutoCompactWindow = resolvedValues.AskUserQuestionTimeout, resolvedValues.AutoCompactWindow
-	body.ContextWindowMax = resolvedValues.ContextWindowMax
-	modelProxyNote := launchValues.Note[launchValueModelProxy]
-	modelSource, modelNote := launchValues.Source[launchValueModel], launchValues.Note[launchValueModel]
-	effortSource, effortNote := launchValues.Source[launchValueEffort], launchValues.Note[launchValueEffort]
-	// The tier that chose the sandbox is kept, not discarded: it is the only
-	// party that can say a global/group default profile forced the containment,
-	// and the badge would otherwise credit "this launch" — i.e. the operator.
-	sandboxSource, sandboxNote := launchValues.Source[launchValueSandbox], launchValues.Note[launchValueSandbox]
-	approvalNote := launchValues.Note[launchValueApproval]
-	toolsNote := launchValues.Note[launchValueTools]
-	askTimeoutNote := launchValues.Note[launchValueAskUserQuestionTimeout]
-	autoCompactWindowNote := launchValues.Note[launchValueAutoCompactWindow]
-	contextWindowMaxSource := launchValues.Source[launchValueContextWindowMax]
-	contextWindowMaxNote := launchValues.Note[launchValueContextWindowMax]
-	// Fast mode is a bool-family field, resolved after the value fields.
+	replyToConv, timeout := req.replyToConv, req.timeout
+	namedProfile, namedProfileHandle, groupProfile := req.namedProfile, req.namedProfileHandle, req.groupProfile
+	globalProfile, relaunchTiers, relaunchExplicit := req.globalProfile, req.relaunchTiers, req.relaunchExplicit
+	profileTiers, harnessSource, cwd := req.profileTiers, req.harnessSource, req.cwd
+	worktreePath, worktreeBranch, h := req.worktreePath, req.worktreeBranch, req.h
+	modelSource, effortSource, sandboxSource := req.modelSource, req.effortSource, req.sandboxSource
+	contextWindowMaxSource, fastMode, fastModeSet := req.contextWindowMaxSource, req.fastMode, req.fastModeSet
+	fastModeSource, sandboxImplSource, launchBools := req.fastModeSource, req.sandboxImplSource, req.launchBools
+	autoReviewSet, sshWorkaround, sshWorkaroundSource := req.autoReviewSet, req.sshWorkaround, req.sshWorkaroundSource
+	trustDirSet, autoMemory, peerMessaging := req.trustDirSet, req.autoMemory, req.peerMessaging
+	copilotAPI, copilotAPISet, copilotAPISource := req.copilotAPI, req.copilotAPISet, req.copilotAPISource
+	piDrive, codexAppServer, codexAppServerSet := req.piDrive, req.codexAppServer, req.codexAppServerSet
+	codexAppServerSource, includeGroupContext, identity := req.codexAppServerSource, req.includeGroupContext, req.identity
+	contextFeatures, profileContext, resolvedLaunch := req.contextFeatures, req.profileContext, req.resolvedLaunch
 	var fieldFail *spawnFailure
-	var fastMode, fastModeSet bool
-	var fastModeNote, fastModeSource string
-	requestedFastMode := strings.TrimSpace(body.FastMode)
-	if requestedFastMode != "" {
-		normalizedFastMode, fastErr := harness.ResolveFastModeFlag(h, requestedFastMode)
-		if fastErr != nil {
-			fieldFail = &spawnFailure{Status: http.StatusBadRequest, Kind: "invalid_request", Msg: fastErr.Error()}
-		} else {
-			requestedFastMode = normalizedFastMode
-			fastModeSource = "explicit"
-			switch requestedFastMode {
-			case harness.FastModeOn:
-				fastMode, fastModeSet = true, true
-			case harness.FastModeOff:
-				fastModeSet = true
-			}
-		}
-	} else {
-		var fastModeBools launchBoolResolution
-		_, fieldFail = resolveLaunchBoolFields(h, profileTiers, &fastModeBools, launchBoolFastMode)
-		fastMode, fastModeSet = fastModeBools.Value[launchBoolFastMode], fastModeBools.Set[launchBoolFastMode]
-		fastModeSource, fastModeNote = fastModeBools.Source[launchBoolFastMode], fastModeBools.Note[launchBoolFastMode]
-	}
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	// The sandbox IMPLEMENTATION rides the same tier stack, but only its HARNESS
-	// applicability is validated inside the validator. That placement is the
-	// whole design: a lower-tier profile pinned to a different harness is
-	// ambient configuration, so it is skipped, disclosed, and falls through —
-	// while an explicit request, or a profile that claims this harness, fails
-	// loudly. Whether the HOST can run the layer is a separate gate below,
-	// because tier fallthrough would turn "no bwrap on this box" into a silent
-	// downgrade to harness-builtin. See sandbox_implementation.go.
-	var sandboxImplNote string
-	var sandboxImplSource string
-	body.SandboxImplementation, sandboxImplSource, sandboxImplNote, fieldFail = resolveSandboxImplementationLaunchField(
-		h, body.SandboxImplementation, profileTiers)
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
-	// falls through; refuses naming the missing capability. Probed live, so an
-	// operator who just installed bwrap is not refused by a stale answer.
-	if fail := withInstallDefaultRemedy(
-		sandboxImplementationHostFailure(h.Name, body.SandboxImplementation), sandboxImplSource); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	// Posture gate, beside the host gate and on the same terms: a harness whose
-	// own OS sandbox tclaude cannot switch off has to have its configuration
-	// verified at every launch, or the recorded single-boundary claim outlives
-	// the configuration it was made about.
-	if fail := withInstallDefaultRemedy(
-		sandboxImplementationPostureFailure(h.Name, body.SandboxImplementation), sandboxImplSource); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	var autoMemoryNote, peerMessagingNote, contextFeaturesNote string
-	// The shared bool fields ride launchBoolFieldSpecs, in this boundary's
-	// own order (fast mode was resolved above, with its explicit flag parsed).
-	var launchBools launchBoolResolution
-	launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview] = body.AutoReview, body.AutoReviewSpecified()
-	launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround] = body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil
-	launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir] = body.TrustDir, body.TrustDirSpecified()
-	launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI] = body.CopilotAPI != nil && *body.CopilotAPI, body.CopilotAPI != nil
-	launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer] = body.CodexAppServer != nil && *body.CodexAppServer, body.CodexAppServer != nil
-	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools,
-		launchBoolAutoReview, launchBoolSSHWorkaround, launchBoolTrustDir); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	body.AutoReview = launchBools.Value[launchBoolAutoReview]
-	autoReviewSet := launchBools.Set[launchBoolAutoReview]
-	autoReviewNote := launchBools.Note[launchBoolAutoReview]
-	sshWorkaround, sshWorkaroundSet := launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround]
-	sshWorkaroundSource, sshWorkaroundNote := launchBools.Source[launchBoolSSHWorkaround], launchBools.Note[launchBoolSSHWorkaround]
-	if !sshWorkaroundSet {
-		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
-	}
-	body.TrustDir = launchBools.Value[launchBoolTrustDir]
-	trustDirSet := launchBools.Set[launchBoolTrustDir]
-	trustDirNote := launchBools.Note[launchBoolTrustDir]
-	// auto_memory and peer_messaging ride the shared table (TCL-1107). Unset
-	// everywhere resolves to FALSE — see launchBoolFieldSpecs for why the
-	// load-bearing default is off for both.
-	launchBools.Value[launchBoolAutoMemory], launchBools.Set[launchBoolAutoMemory] = body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil
-	launchBools.Value[launchBoolPeerMessaging], launchBools.Set[launchBoolPeerMessaging] = body.PeerMessaging != nil && *body.PeerMessaging, body.PeerMessaging != nil
-	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolAutoMemory, launchBoolPeerMessaging); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	autoMemory, autoMemoryNote := launchBools.Value[launchBoolAutoMemory], launchBools.Note[launchBoolAutoMemory]
-	peerMessaging, peerMessagingNote := launchBools.Value[launchBoolPeerMessaging], launchBools.Note[launchBoolPeerMessaging]
-	// The Copilot drive rides the same tier stack, with the same fallback the
-	// send-keys path has always had: unset everywhere is FALSE. Only an explicit
-	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
-	// a launch nobody steered is byte-for-byte the launch it was before this
-	// field existed. See TCL-1053.
-	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCopilotAPI); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	copilotAPI, copilotAPISet := launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI]
-	copilotAPISource, copilotAPINote := launchBools.Source[launchBoolCopilotAPI], launchBools.Note[launchBoolCopilotAPI]
-	// The pi extension drive is an explicit per-launch opt-in, never a profile
-	// default: it changes how every delivery reaches the agent, so only the
-	// spawn that asks for it gets it.
-	piDrive := body.PiDrive != nil && *body.PiDrive
-	if piDrive && h.Name != harness.PiName {
-		writeError(w, http.StatusBadRequest, "invalid_request",
-			fmt.Sprintf("pi_drive is a pi-only drive; harness %q has none", h.Name))
-		return
-	}
-	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCodexAppServer); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	codexAppServer, codexAppServerSet := launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer]
-	codexAppServerSource, codexAppServerNote := launchBools.Source[launchBoolCodexAppServer], launchBools.Note[launchBoolCodexAppServer]
-	// Group-context inclusion rides the same tier stack, minus the harness gate:
-	// it decides what the new agent is TOLD, not how its harness runs, so a
-	// profile authored for another vendor still speaks (harnessAgnosticLaunchField).
-	// Resolving it here rather than only client-side is what lets a caller that
-	// merely NAMES a profile honour its toggle — the agentd TUI does exactly that,
-	// while `tclaude agent spawn` and the dashboard both send an explicit flag.
-	// Unset at every tier keeps the long-standing default: include.
-	launchBools.Value[launchBoolIncludeGroupContext] = body.IncludeGroupContext != nil && *body.IncludeGroupContext
-	launchBools.Set[launchBoolIncludeGroupContext] = body.IncludeGroupContext != nil
-	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolIncludeGroupContext); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	includeGroupContext := launchBools.Value[launchBoolIncludeGroupContext]
-	includeGroupContextSet := launchBools.Set[launchBoolIncludeGroupContext]
-	includeGroupContextSource := launchBools.Source[launchBoolIncludeGroupContext]
-	if !includeGroupContextSet {
-		includeGroupContext = true
-	}
-	if body.NonInteractive {
-		includeGroupContext = body.IncludeGroupContext != nil && *body.IncludeGroupContext
-	}
-	// Disclose a tier nobody typed at this launch. A DEFAULT profile silently
-	// withholding the group's shared guidance is exactly the action-at-a-distance
-	// the launch echo exists to surface: the operator sees WHICH tier decided,
-	// not just an agent that mysteriously arrived unbriefed. The resolver's own
-	// note channel stays silent for this field — it only speaks on the harness
-	// mismatch this field skips — so the disclosure is built here.
-	includeGroupContextNote := ""
-	if includeGroupContextSet && includeGroupContextSource != agent.ProvExplicit {
-		includeGroupContextNote = fmt.Sprintf("%s include_group_context = %v",
-			includeGroupContextSource, includeGroupContext)
-	}
-	// Identity, the auto-focus toggle and the birth-time access controls ride
-	// the same tier stack, and for the same reason group-context inclusion does:
-	// a caller that merely NAMES a profile must get what that profile says. The
-	// agentd TUI's spawn form is exactly such a caller — it has boxes for the
-	// name and the brief only, so role, descr, auto-focus, the owner flag and
-	// the permission overrides reached the daemon unspoken and were dropped.
-	//
-	// PRESENCE on the wire, not a non-empty value, is what counts as the caller
-	// speaking (see resolveIdentityLaunchField). That is what keeps a dashboard
-	// operator who clears a profile-prefilled Role from having it restored.
-	var identityNotes []string
-	var profileNameNote string
-	body.Name, _, profileNameNote = resolveIdentityLaunchField(
-		nameField, body.Name, body.NameSpecified(), profileTiers,
-		func(p *db.SpawnProfile) string { return p.AgentName },
-		func(raw string) (string, bool) {
-			// A profile's agent_name is held to looser rules than a spawn name
-			// (it may carry spaces and punctuation), so put it through the same
-			// normalize-then-validate an explicit name took at the boundary. One
-			// that still cannot be a spawn name is skipped and disclosed rather
-			// than failing a launch nobody typed it into.
-			if !isValidSpawnName(raw) {
-				if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
-					raw = agent.NormalizeSpawnName(raw)
-				}
-			}
-			return raw, raw != "" && isValidSpawnName(raw)
-		})
-	if profileNameNote != "" {
-		identityNotes = append(identityNotes, profileNameNote)
-	}
-	// Receiver-owned worker defaults override role and launch-profile grants.
-	// This server-side snapshot cannot be supplied by a remote requester.
-	federationJob := r.Context().Value(federationJobContextKey{}) != nil
-	var workerDefaults map[string]db.PermissionOverride
-	if reservedID, ok := r.Context().Value(reservedAgentIDContextKey{}).(string); ok {
-		defaults, err := db.GetFederationWorkerDefaults(reservedID)
-		if err != nil {
-			writeError(w, 500, "worker_defaults", err.Error())
-			return
-		}
-		if defaults != nil && len(defaults.Permissions) > 0 {
-			if body.NonInteractive && !federationJob {
-				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
-				return
-			}
-			workerDefaults = defaults.Permissions
-		}
-	}
-	// Roles, role label, description, saved prompts, startup context and the
-	// birth-time access controls, with their access gate: the same resolution
-	// a trigger, schedule or process worker gets (resolveLaunchIdentity).
-	identity, identityFail := resolveLaunchIdentity(launchIdentityRequest{
-		body: *body, overrides: permOverrides, group: g, harness: h.Name, tiers: profileTiers,
-		spawner: spawnerConvID, request: r, oneShot: body.NonInteractive && !federationJob,
-		nonInteractive: body.NonInteractive, workerDefaults: workerDefaults})
-	if identityFail != nil {
-		writeError(w, identityFail.Status, identityFail.Kind, identityFail.Msg)
-		return
-	}
-	identityNotes = append(identityNotes, identity.notes...)
-	body.RoleRefs = identity.roleRefs
-	if body.RoleRefs == nil {
-		body.RoleRefs = []string{}
-	}
-	body.RoleRef = ""
-	if len(body.RoleRefs) > 0 {
-		body.RoleRef = body.RoleRefs[0]
-	}
-	body.Role, body.Descr = identity.role, identity.descr
-	// A profile's initial_message is a replaceable task default: it fills the
-	// brief only when the caller sent none. Durable per-profile guidance is
-	// startup_context, resolved separately above and never overridden by a task.
-	body.InitialMessage, _, _ = resolveIdentityLaunchField(
-		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
-		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
-	promptRefs := identity.promptRefs
-	if len(promptRefs) > 0 {
-		composed, fail := composeSavedPrompts(promptRefs, body.InitialMessage)
-		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
-		}
-		body.InitialMessage = composed
-	}
-	body.PromptRefs = promptRefs
-	if h.Name == harness.ShellName && !body.NonInteractive && body.InitialMessage != "" {
-		writeError(w, http.StatusBadRequest, "invalid_initial_message",
-			"shell spawn requires non_interactive when initial_message is set")
-		return
-	}
-	// Name an otherwise unnamed group spawn before building spawnParams and its
-	// durable/audit snapshots. executeSpawn retains the same fallback for
-	// non-HTTP adapters, but the shared HTTP path must record the name it
-	// actually launches rather than an empty pre-derivation value.
-	if strings.TrimSpace(body.Name) == "" {
-		body.Name = derivedGroupSpawnName(g.Name, time.Now(), randomLabelToken())
-	}
-	// No disclosure note for auto_focus: the resolver's note channel only speaks
-	// on the harness mismatch this field skips, and a terminal window opening is
-	// its own announcement.
-	body.AutoFocus, _, _, _, fieldFail = resolveBoolLaunchField(
-		autoFocusField, body.AutoFocus, body.AutoFocusSpecified(), h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.AutoFocus },
-		func(v bool) (bool, error) { return v, nil })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	// Fold the access decisions back onto the working body for subsequent
-	// resolution. The original request was captured before this mutation;
-	// resolved launch state is persisted separately.
-	body.IsOwner, body.PermissionOverrides = identity.isOwner, identity.overrides
-	// Startup-context trims ride the tier stack whole rather than merging — see
-	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
-	// so an agent's startup context only shrinks when someone asked for it.
-	requestedFeatures := map[string]string{}
-	if body.ContextFeatures != nil {
-		requestedFeatures = *body.ContextFeatures
-	}
-	contextFeatures, cfNote, cfFail := resolveContextFeaturesLaunchField(
-		requestedFeatures, body.ContextFeatures != nil, h, profileTiers)
-	if cfFail != nil {
-		writeError(w, cfFail.Status, cfFail.Kind, cfFail.Msg)
-		return
-	}
-	contextFeaturesNote = cfNote
-	// Profile guidance resolves as one whole text block from the highest
-	// compatible tier. It has no per-spawn override: unlike initial_message this
-	// is policy attached to the selected model/profile, not a task default.
-	profileContext, profileContextNote := identity.startupContext, identity.startupContextNote
-	contextWindowMaxValue := ""
-	if body.ContextWindowMax > 0 {
-		contextWindowMaxValue = strconv.FormatInt(body.ContextWindowMax, 10)
-	}
-	copilotAPIValue := ""
-	if copilotAPI {
-		copilotAPIValue = "api"
-	}
-	codexAppServerValue := ""
-	if h.Name == harness.CodexName {
-		codexAppServerValue = "send-keys"
-		if codexAppServer {
-			codexAppServerValue = "app-server"
-		}
-	}
-	fastModeValue := ""
-	if fastModeSet {
-		fastModeValue = harness.FastModeOff
-		if fastMode {
-			fastModeValue = harness.FastModeOn
-		}
-	}
-	resolvedLaunch := &agent.ResolvedLaunch{
-		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
-		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
-		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
-		ContextWindowMax: agent.ResolvedField{
-			Value: contextWindowMaxValue, Source: contextWindowMaxSource,
-		},
-		// Named for what it selects, not for the flag that selects it: "api" reads
-		// correctly whether or not send-keys is still the other option.
-		CopilotAPI:     agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
-		CodexAppServer: agent.ResolvedField{Value: codexAppServerValue, Source: codexAppServerSource},
-		FastMode:       agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
-	}
-	// A one-shot is never resumed and records no rows, so it shows none.
-	if !body.NonInteractive {
-		resolvedLaunch.RelaunchPolicy = resolveSpawnRelaunchRows(relaunchExplicit, relaunchTiers)
-	}
-	resolvedLaunch.SandboxImpl = agent.ResolvedField{
-		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
-	// The note rides the echoed field, like Harness/Model/Effort. It ALSO enters
-	// Notes only when the value is blank, because the echo suppresses the
-	// "Sandbox impl:" line for a default-off launch — and a disclosure with no
-	// line to sit on would otherwise vanish. Adding it unconditionally would
-	// print it twice whenever a later tier did supply a value.
-	if body.SandboxImplementation == "" && sandboxImplNote != "" {
-		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
-	}
-	for _, note := range append([]string{modelProxyNote, sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
-		if note != "" {
-			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
-		}
-	}
 
 	// resolveStringLaunchField already validated and normalized both values.
 	effort, model := body.Effort, body.Model
