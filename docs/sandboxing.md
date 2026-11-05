@@ -1143,6 +1143,18 @@ The isolated posture has an explicit platform delta:
 | Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
 | Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
 
+tclaude writes the macOS profile in a fixed rule order: `(allow default)`
+first, then every deny, and every other allow (`darwin_allow_mach_register`,
+Local access ports) last. Seatbelt is usually described as last-match-wins,
+where the order of unrelated rules would not matter. It does not behave that
+way: a later deny on a Unix-socket path intermittently overrides an earlier
+TCP localhost allow, even though that deny cannot match the TCP connect.
+Measured on macOS 26.7.2 and 27.2, the earlier allow lost about 1 connect in
+10 and 8 in 10. With every allow last, it won every time. The isolated posture
+has no separate allows. Its exceptions sit inside the deny itself
+(`require-not`), and that form holds. The macOS assumption suite checks both
+orders on every macOS CI run.
+
 The stricter Darwin localhost behavior is deliberate. If a real harness later
 requires an internal localhost server, the remedy is a harness-descriptor
 capability plus launch-time refusal for Darwin isolated mode. It must not gain a
