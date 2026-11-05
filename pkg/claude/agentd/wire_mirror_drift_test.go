@@ -36,9 +36,11 @@ var wireMirrors = []wireMirror{
 	{daemon: "rhythmJSON", cli: "rhythmJSON"},
 	{daemon: "workPatternEntryJSON", cli: "workPatternEntryJSON"},
 	{daemon: "processPhaseJSON", cli: "processPhaseJSON"},
+	// `roles edit --file` sends the CLI copy back as a full replace too.
+	{daemon: "roleJSON", cli: "roleJSON"},
 	{daemon: "jobJSON", cli: "cronJobJSON", cliOmits: map[string]string{
-		"operator_authored": "the CLI only lists and shows jobs, and never sends a job back; " +
-			"whether a job is operator-authored is the daemon's trust decision, not something to display",
+		"operator_authored": "the CLI only reads jobs and never sends one back, so nothing is lost; " +
+			"the daemon's trust bit is deliberately left out of the CLI's job output, `cron ls` and `task-force status --json` included",
 	}},
 }
 
