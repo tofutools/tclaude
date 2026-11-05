@@ -121,6 +121,9 @@ func openCodeAllToolsRules(
 		}
 	}
 	if policy.AllowEnv {
+		// Allows are not inherited, so a sub-agent's .env read falls to its
+		// own OpenCode default: explore reads, general asks. Never wider than
+		// the agent, which is what the operator chose here.
 		return append(rules,
 			OpenCodePermissionRule{Permission: "read", Pattern: "*.env", Action: openCodeActionAllow},
 			OpenCodePermissionRule{Permission: "read", Pattern: "*.env.*", Action: openCodeActionAllow},
