@@ -6,24 +6,15 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
 
-// shortSocketDir is a temp dir short enough for a unix socket path. (The
-// agentipctest helper imports this package, so it cannot be used here.)
-func shortSocketDir(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "tclbp")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
-}
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
+)
 
 func serveBroker(t *testing.T, sock string, status int, reply string) {
 	t.Helper()
@@ -41,7 +32,7 @@ func serveBroker(t *testing.T, sock string, status int, reply string) {
 // A dial candidate nothing listens on is passed over for the next one, which
 // is how a current client still reaches an older daemon on a legacy path.
 func TestPostToBroker_DialsTheFirstSocketThatAnswers(t *testing.T) {
-	dir := shortSocketDir(t)
+	dir := agentipctest.ShortSocketDir(t)
 	live := filepath.Join(dir, "live.sock")
 	serveBroker(t, live, http.StatusOK, `{"ok":true}`)
 
@@ -53,7 +44,7 @@ func TestPostToBroker_DialsTheFirstSocketThatAnswers(t *testing.T) {
 }
 
 func TestPostToBroker_AnotherStatusIsABrokerStatusError(t *testing.T) {
-	sock := filepath.Join(shortSocketDir(t), "a.sock")
+	sock := filepath.Join(agentipctest.ShortSocketDir(t), "a.sock")
 	serveBroker(t, sock, http.StatusTooManyRequests, "  slow down\n")
 
 	err := postToBrokerAt([]string{sock}, "/v1/whoami/statusline", []byte(`{}`), time.Second, &struct{}{})
