@@ -261,9 +261,14 @@ func TestTheCarryoverNotesAnInferredDrive(t *testing.T) {
 // correct-looking, and silently re-introduces a non-daemon launch authoring
 // `false` over a conversation's recorded drive.
 func TestThePostureWriteRoutesTheDriveThroughItsOwnDecision(t *testing.T) {
-	file := guardParse(t, "new.go", "")
-	viaHelper, direct := launchPostureCopilotAPIValues(file)
-	require.Positive(t, viaHelper, "new.go must still build a LaunchPosture literal")
+	// runNew's posture write lives in a launch step beside new.go; every
+	// literal in either file is held to the rule.
+	var viaHelper, direct int
+	for _, name := range []string{"new.go", "new_launched_pane.go"} {
+		v, d := launchPostureCopilotAPIValues(guardParse(t, name, ""))
+		viaHelper, direct = viaHelper+v, direct+d
+	}
+	require.Positive(t, viaHelper, "runNew must still build a LaunchPosture literal")
 	assert.Zero(t, direct,
 		"EVERY LaunchPosture.CopilotAPI must be copilotAPIPostureToRecord(params): taking "+
 			"&params.CopilotAPI directly lets a launch that could not honour a carried "+
