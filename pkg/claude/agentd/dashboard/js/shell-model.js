@@ -471,6 +471,9 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
       url: MR_LIST_URL_RE.test(entry?.url || '') ? entry.url : '',
       error: entry?.error ? String(entry.error).slice(0, 300) : '',
       everyoneError: entry?.everyone_error ? String(entry.everyone_error).slice(0, 300) : '',
+      // Projects read one by one because the token may not list the whole
+      // instance (a project-limited token); 0 when the instance listed them.
+      everyoneByProject: Math.max(0, Math.floor(Number(entry?.everyone_by_project) || 0)),
     }))
     .filter((entry) => entry.host);
   const projects = (Array.isArray(source?.projects) ? source.projects : [])
