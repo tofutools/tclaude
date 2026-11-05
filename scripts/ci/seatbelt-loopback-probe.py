@@ -17,7 +17,7 @@ import socket
 import subprocess
 import sys
 
-RUNS = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+RUNS = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 10
 
 CONNECT = (
     "import socket,sys\n"
@@ -49,10 +49,28 @@ def profile(form, port):
     raise ValueError(form)
 
 
-UNIX_DENY_CASES = ("unix-literal", "unix-path-literal", "unix-literal-param", "unix-path-literal-param")
+UNIX_DENY_CASES = ("unix-literal", "fix-allow-last", "fix-require-any", "fix-ip-allow")
 
 
 def unix_profile(case, port, sock_path):
+    """Candidate fixes for the minimal pair, else the pair itself."""
+    deny_ip = '(deny network-outbound (remote ip "*:*"))\n'
+    allow_tcp = f'(allow network-outbound (remote tcp "localhost:{port}"))\n'
+    unix_deny = f'(deny network-outbound\n  (remote unix-socket (literal "{sock_path}")))\n'
+    head = "(version 1)\n(allow default)\n"
+    if case == "fix-allow-last":
+        return head + deny_ip + unix_deny + allow_tcp
+    if case == "fix-require-any":
+        return head + deny_ip + allow_tcp + (
+            "(deny network-outbound\n  (require-any\n"
+            f'    (remote unix-socket (literal "{sock_path}"))\n'
+            f'    (remote unix-socket (literal "{sock_path}.2"))))\n')
+    if case == "fix-ip-allow":
+        return head + deny_ip + f'(allow network-outbound (remote ip "localhost:{port}"))\n' + unix_deny
+    return pair_profile(case, port, sock_path)
+
+
+def pair_profile(case, port, sock_path):
     """The passing allow-after-deny pair, then one unix-socket outbound deny
     naming sock_path, inline or through a -D param, as literal or
     path-literal."""
@@ -141,12 +159,18 @@ def one(form, same_port):
 
 
 def main():
-    for case in UNIX_DENY_CASES:
-        for present in (False, True):
-            results = [unix_case(case, present) for _ in range(RUNS)]
-            ok = sum(r == "ok" for r in results)
-            others = sorted({r for r in results if r != "ok"})
-            print(f"{case:24} socket_present={str(present):5} ok={ok}/{RUNS} {others}")
+    import platform
+    print(f"macOS {platform.mac_ver()[0]} ({platform.machine()})")
+    # The minimal pair, then the candidate fixes; (a) needs >= 30 runs to
+    # count as fixed for an intermittent failure.
+    for case, runs in (("unix-literal", 30), ("fix-allow-last", 30),
+                       ("fix-require-any", 30), ("fix-ip-allow", 30)):
+        results = [unix_case(case, False) for _ in range(runs)]
+        ok = sum(r == "ok" for r in results)
+        others = sorted({r for r in results if r != "ok"})
+        print(f"{case:24} ok={ok}/{runs} {others}")
+    if "--pair-only" in sys.argv:
+        return
     for form in ("allow-after-deny", "allow-ip-form", "inside-deny"):
         for same_port in (False, True):
             results = [one(form, same_port) for _ in range(RUNS)]
