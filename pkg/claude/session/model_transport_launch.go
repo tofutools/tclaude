@@ -94,7 +94,9 @@ func ResolveTclaudeLayerModelTransport(
 	if h.Name == harness.OpenCodeName {
 		resolved, err := resolveOpenCodeModelTransport(h, context, environment)
 		if err != nil {
-			return harness.ResolvedModelTransport{Model: context.Model}, nil
+			return harness.ResolvedModelTransport{
+				Model: context.Model, UnresolvedReason: err.Error(),
+			}, nil
 		}
 		return resolved, nil
 	}

@@ -512,6 +512,32 @@ permission policy: `deny` *(default — edits and web tools denied)*, `ask`
 (a present human approves representable edits), `allow-tools`
 (auto-accepts scoped edits and explicitly enabled web tools).
 
+### OpenCode under a filtered network
+
+OpenCode reads its provider from its own config, and tclaude cannot read
+OpenCode's effective config for every provider. So, under a filtered network
+(an allow list, or default-allow with deny rules):
+
+- **tclaude checks the model endpoint only for one config shape**: a
+  `provider/model` launch model and a profile environment entry
+  `OPENCODE_CONFIG_CONTENT` that defines exactly that one
+  `@ai-sdk/openai-compatible` provider with a concrete `options.baseURL`,
+  `enabled_providers` set to it, and the model whitelisted. The endpoint must
+  then be covered by the network rules, or the launch is refused naming it.
+- **Any other provider launches unchecked.** That includes OpenCode's built-in
+  providers, a provider set in your own OpenCode config, and no launch model.
+  tclaude adds no model access. The launch notes say the endpoint was not
+  checked, and why resolution stopped. If OpenCode then cannot reach its model
+  (requests hang or fail inside OpenCode, not at launch), the network policy
+  is blocking it.
+- **The fix is in the network policy**: allow the provider's API host on port
+  443 in every tier that has an allow list (they intersect), remove the deny
+  rule that matches it, or use network open. Find the host in your OpenCode
+  provider config, or in OpenCode's documentation for a built-in provider.
+
+`tclaude agent sandbox-profiles plan -g <group> -f tclaude-layer/opencode`
+shows the composed network rules a launch in that group would get.
+
 **Other gaps, stated plainly:** no séance replay for `ask` threads, no
 directory-trust dialog (so nothing to pre-trust), no status line
 installation, and no remote control.
