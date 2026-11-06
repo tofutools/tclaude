@@ -683,6 +683,11 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A caller holding the lock slug for a locked page may still replace or
+	// adopt it. Checking that reads the page registry, so it is settled here,
+	// before reg.mu: a page that changes in between is judged locked.
+	held := pageLocksHeld(r, lockedPagesFor(agentID, name, adopt, savedID, savedLocked)...)
+
 	now := time.Now().UTC()
 	reg := livePages
 	pageSaveMu.Lock()
@@ -691,7 +696,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	existing := reg.byOwner[agentID][name]
 	if adopt != nil {
 		var refused func()
-		existing, refused = adoptGroupPageLocked(w, reg, adopt, agentID, name, existing)
+		existing, refused = adoptGroupPageLocked(w, reg, adopt, agentID, name, existing, held)
 		if refused != nil {
 			reg.mu.Unlock()
 			closeStageUpstream(up)
@@ -699,7 +704,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if existing != nil && existing.agentsLocked {
+	if existing != nil && existing.agentsLocked && !held[existing.id] {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)
@@ -707,7 +712,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	}
 	// The operator's lock on the saved page refuses any show that would
 	// replace it: one from another group, a takeover, or a fresh show.
-	if savedLocked && (existing == nil || existing.id != savedID) {
+	if savedLocked && !held[savedID] && (existing == nil || existing.id != savedID) {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)

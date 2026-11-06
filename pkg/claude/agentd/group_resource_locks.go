@@ -88,6 +88,40 @@ func pageLockAllows(w http.ResponseWriter, r *http.Request, p *livePage, perm st
 	return true
 }
 
+// lockedPagesFor is the locked pages a show of name by agentID would replace
+// or adopt: its own live page by that name, the group page it adopts, and the
+// saved page the show reopens or would shadow.
+func lockedPagesFor(agentID, name string, adopt *db.AgentGroup, savedID string, savedLocked bool) []string {
+	var ids []string
+	livePages.mu.Lock()
+	if p := livePages.byOwner[agentID][name]; p != nil && p.agentsLocked {
+		ids = append(ids, p.id)
+	}
+	if adopt != nil {
+		if gp := livePages.byOwner[groupPageOwner(adopt.ID)][name]; gp != nil && gp.agentsLocked {
+			ids = append(ids, gp.id)
+		}
+	}
+	livePages.mu.Unlock()
+	if savedLocked && savedID != "" {
+		ids = append(ids, savedID)
+	}
+	return ids
+}
+
+// pageLocksHeld reports which of the pages ids the caller holds
+// groups.resources.lock for. It takes livePages.mu itself
+// (resourceLockGroups), so it is never called with it held.
+func pageLocksHeld(r *http.Request, ids ...string) map[string]bool {
+	held := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !held[id] && agentHoldsResourceLock(r, resourceKindPage, id) {
+			held[id] = true
+		}
+	}
+	return held
+}
+
 // POST /api/resource-locks {kind, id, locked} — the operator locks or
 // unlocks a resource. kind is process (a template id), board (a board id) or
 // page (a page's public id). A trusted peer's operator reaches the same

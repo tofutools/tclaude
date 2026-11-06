@@ -243,11 +243,11 @@ The operator sets or clears a lock from the dashboard
 when it holds `groups.resources.lock` in every group the resource belongs to
 (each group a process template is pinned to); a resource in no group needs an
 unscoped grant. The same grant lets the agent change the resource while it
-is locked, with three exceptions that stay refused until it is unlocked: a
-re-show that replaces a locked page, adopting a locked group page, and a
-config-bundle import over a locked template. The slug is never default-granted, never conferred by ownership or
-membership and not covered by `groups.admin`: the operator grants it, for
-example scoped to one group:
+is locked, as the operator can, including a re-show that replaces a locked
+page, adopting a locked group page and a config-bundle import over a locked
+template. The resource stays locked to everyone else. The slug is never
+default-granted, never conferred by ownership or membership and not covered
+by `groups.admin`: the operator grants it, for example scoped to one group:
 
 ```bash
 tclaude agent permissions grant <agent> groups.resources.lock --scope group=design
