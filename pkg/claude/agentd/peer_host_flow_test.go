@@ -27,6 +27,8 @@ func TestPeerHostStatusWithoutPaths(t *testing.T) {
 	require.Equal(t, 200, code, body)
 	require.NotContains(t, body, work, "no host path")
 	require.NotContains(t, body, "secret-work-dir")
+	require.NotContains(t, body, config.DataDir(), "nor the data dir")
+	require.NotContains(t, body, h.f.World.HomeDir, "nor the home dir")
 	var got struct {
 		Status string `json:"status"`
 		CPU    struct {

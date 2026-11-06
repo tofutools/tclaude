@@ -216,7 +216,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'node.messages.read', kind: 'node', what: 'private human notifications and agent mailbox history across this node', warning: 'Exposes private message bodies across this node, including human notifications and agent-to-agent mail. Default off. Does not allow replies or approval decisions.' },
   { slug: 'node.messages.manage', kind: 'node', sensitive: true, what: 'explicitly mark agent mailbox messages read or unread across this node; no delete, reply or approval authority' },
   { slug: 'node.messages.mark-read', kind: 'node', what: 'mark your human notifications read or unread from its dashboard (opening one there marks it read, as it does here); no reply, delete or approval authority' },
-  { slug: 'host.read', kind: 'node', sensitive: true, what: 'your host status: CPU load, memory, disk capacity per kind (data, work) and the warnings your thresholds raise, never a host path', warning: 'Reveals how loaded your machine is and how much disk it has left.' },
+  { slug: 'host.read', kind: 'node', sensitive: true, what: 'your host status: CPU load, memory, live agent and session counts, disk capacity per kind (data, work) and the warnings your thresholds raise, never a host path', warning: 'Reveals how loaded your machine is and how much disk it has left.' },
   { slug: 'node.harnesses.read', kind: 'node', what: 'harness availability and versions' },
   { slug: 'costs.read', kind: 'node', what: 'the complete node-wide cost collection' },
   { slug: 'usage.read', kind: 'node', what: 'your usage totals (today, this week, this month), limit readings and budget counts, so its fleet usage limits can count this node' },
