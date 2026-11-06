@@ -2336,7 +2336,7 @@ test('Preact agent-spawn offers a usage profile before any exists', async (t) =>
     assert.ok(select, 'the Usage profile field shows with no usage profiles yet');
     const values = [...select.querySelectorAll('option')].map((o) => o.value);
     assert.deepEqual(values, ['', '/new-usage-profile']);
-    assert.equal(select.closest('.cron-create-row').previousElementSibling.id, 'agent-spawn-allow-unenforced-sandbox-row',
+    assert.equal(select.closest('.cron-create-row').previousElementSibling.id, 'agent-spawn-sandbox-deny-row',
       'it follows the sandbox rows rather than splitting them');
 
     // A profile made meanwhile ("new usage profile…") is pickable at once.

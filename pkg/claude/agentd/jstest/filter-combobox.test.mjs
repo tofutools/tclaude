@@ -120,6 +120,8 @@ test('single-select and the opt-in free-text commit', async (t) => {
   await harness.act(() => harness.fireEvent(opened.input, 'keydown', { key: 'Enter' }));
   assert.deepEqual(opened.changes.at(-1), ['alpha', 'gamma']);
   await harness.input(opened.input, 'zeta');
+  assert.doesNotMatch(opened.host.querySelector('.filter-combobox-empty').textContent, /adds/,
+    'a value the hook refuses is not promised');
   await harness.act(() => harness.fireEvent(opened.input, 'keydown', { key: 'Enter' }));
   assert.equal(opened.changes.length, 1, 'the free-text hook may refuse a value');
 });

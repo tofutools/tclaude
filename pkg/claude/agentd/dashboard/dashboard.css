@@ -18613,3 +18613,12 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }
 .gr-row .gr-rename { min-width: 12em; font: inherit; font-weight: 600; padding: 1px 6px; }
 .gr-add-menu.gr-new-menu { left: 0; right: auto; top: calc(100% + 2px); min-width: 260px; }
+
+/* Spawn dialog "Deny paths" (spawn-deny-paths.js): perm-scope chips in red,
+   since each is a denial, in the monospace a path reads best in. */
+.spawn-deny-paths { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.spawn-deny-paths .spawn-deny-chip {
+  background: #2d1416; border-color: #7a2a2a; color: #ffb3b1;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
+}
+.spawn-deny-paths .spawn-deny-chip.covers-cwd { border-style: dashed; color: #e3b341; border-color: #4d3a17; }
