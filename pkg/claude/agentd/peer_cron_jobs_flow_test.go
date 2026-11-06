@@ -97,7 +97,11 @@ func TestPeerOwnedCronJobs(t *testing.T) {
 	require.True(t, strings.HasPrefix(msgs[0].Body, "[remote message from operator@bob"), msgs[0].Body)
 	require.Contains(t, msgs[0].Body, "post your status")
 	require.Contains(t, msgs[0].Subject, "[cron:nudge] standup")
-	// Like local cron, a run replaces the job's still-pending earlier one.
+	// Like local cron, a run replaces the job's still-pending earlier one,
+	// also once the offline member's flush has discarded its nudge (a peer's
+	// tick is a regular send); here the flush is forced, not raced.
+	_, err := db.SuppressOfflineRegularNudgesForAgent(h.member, time.Now())
+	require.NoError(t, err)
 	code, body = h.call("POST", path+"/run-now", map[string]any{})
 	require.Equal(t, 200, code, body)
 	require.Len(t, peerCronMessages(t, "proc-crew-member"), 1, "the pending tick is coalesced")

@@ -413,12 +413,15 @@ func insertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	}
 	m.RegularSend = true
 	if cronJobID > 0 {
+		// A peer's tick is a regular send, so an offline member's flush
+		// discards its nudge (stamping delivered_at) while it stays unread in
+		// the inbox: that one is still pending and is replaced too.
 		if _, err := tx.Exec(`DELETE FROM agent_messages
 			WHERE id IN (
 				SELECT am.id FROM agent_messages am
 				JOIN agent_cron_messages cm ON cm.message_id = am.id
 				WHERE cm.cron_job_id = ? AND am.to_conv = ?
-				  AND am.delivered_at IS NULL AND am.read_at IS NULL
+				  AND (am.delivered_at IS NULL OR am.nudge_discarded_at IS NOT NULL) AND am.read_at IS NULL
 				  AND am.nudge_claimed_at IS NULL AND am.nudge_cancelled_at IS NULL
 			)`, cronJobID, m.ToConv); err != nil {
 			return 0, err
