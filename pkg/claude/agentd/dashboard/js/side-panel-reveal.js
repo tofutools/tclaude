@@ -61,6 +61,14 @@
 //    edge zone. Where the strip slides in under a pointer already at the
 //    edge, the next real move onto it opens the panel. A slow approach opens
 //    nothing.
+//  - A modal freezes it (tcl-xxci6h), as leaving the window does: while any
+//    modal or dialog is open above the page (an action of the revealed
+//    panel's asking to confirm, say), nothing opens, closes or retracts by
+//    itself, since the pointer is on the modal, not on the panel. Tracking
+//    resumes with the first move after the last one closes, under the normal
+//    rules: back on the panel it stays; on the page its hover-out delay
+//    starts then. Escape goes to the modal; the Hide button, unfolding and a
+//    tab switch still work.
 //  - On the handle (folded, or the revealed panel's), nothing opens or closes
 //    by itself (tcl-bg5qm1): no snap and no reveal from a peek, and
 //    a revealed panel does not go. A pointer there means to pin or unpin the
@@ -157,6 +165,24 @@ function openMenu(dock, doc) {
     || [...doc.querySelectorAll('[role="menu"]')].some(shownMenu);
 }
 
+// MODAL is what counts as a modal or dialog open above the page: a <dialog>
+// open, the dashboard's overlays showing, and anything marked aria-modal.
+// The dashboard keeps some closed ones mounted (the confirm dialog, hidden by
+// its overlay's CSS), so an aria-modal one counts only while it lays out.
+const OPEN_MODAL = 'dialog[open], .modal-overlay.show, .manage-overlay.show';
+const MODAL = `${OPEN_MODAL}, [aria-modal="true"]`;
+
+// modalOpen is whether a modal or dialog is open above the page.
+export function modalOpen(doc) {
+  // It runs on every move: the cheap open signals first.
+  const open = doc.querySelector(OPEN_MODAL);
+  if (open && !open.hidden && !open.closest?.('[hidden]')) return true;
+  return [...doc.querySelectorAll('[aria-modal="true"]')].some((el) => {
+    if (el.hidden || el.closest?.('[hidden]')) return false;
+    return el.matches(OPEN_MODAL) || (el.getClientRects?.().length || 0) > 0;
+  });
+}
+
 // typing is a text-entry control: focus there (the Find box) holds the panel,
 // focus a click left on a button does not.
 function typing(el) {
@@ -195,6 +221,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let peekStartX = 0; // where the pointer was when the peek started
   let peekW = 0; // the peek's width now
   let stop = null; // a peek's stop timer
+  let underModal = false; // a move came while a modal was open, and none since
   const C = () => (constants ? { ...tuning, ...constants } : tuning);
   const debugOn = debug ?? predictDebugOn(win);
   if (debugOn) mountPredictDebug(doc);
@@ -236,6 +263,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
     cancelRetract();
     retract = timers.setTimeout(() => {
       retract = null;
+      // Frozen under a modal: the next move after it closes decides.
+      if (modalOpen(doc)) return;
       unpeek();
     }, C().PEEK_RETRACT_MS);
   };
@@ -253,13 +282,13 @@ export function bindEdgeReveal(doc = globalThis.document, {
   const held = () => {
     const panel = dock();
     const focused = doc.activeElement;
-    return dragFromPanel || pressFromPanel || (!!panel?.contains(focused) && typing(focused)) || openMenu(panel, doc);
+    return dragFromPanel || pressFromPanel || (!!panel?.contains(focused) && typing(focused)) || openMenu(panel, doc) || modalOpen(doc);
   };
   // scheduleHide sends a floating panel away after the hover-out delay, unless
   // it is held then; whatever ends the hold (the pointer moving on, focus
   // leaving, the drag ending) asks again.
   const scheduleHide = () => {
-    if (!isSidePanelRevealed() || hide) return;
+    if (!isSidePanelRevealed() || hide || modalOpen(doc)) return;
     hide = timers.setTimeout(() => {
       hide = null;
       if (!overPanel && !held()) concealSidePanel(doc);
@@ -306,6 +335,27 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // A move with no button held ends a press, even one whose pointerup the
     // page never saw (a scrollbar drag released elsewhere).
     if (!event.buttons) { pressFromPanel = false; pressOnHandle = false; }
+    // Under a modal the reveal is frozen (as outside the window): nothing
+    // pending acts, and no motion is measured. The first move after the last
+    // modal closes resumes tracking from where the pointer is.
+    // The move Chrome sends at the same spot as a modal goes is no move: the
+    // next real one decides.
+    if (underModal && last && last.x === event.clientX && last.y === event.clientY) return;
+    if (modalOpen(doc)) {
+      underModal = true;
+      cancelHide();
+      cancelRetract();
+      cancelStop();
+      samples = [];
+      motion = null;
+      last = { x: event.clientX, y: event.clientY };
+      lastT = now();
+      return;
+    }
+    if (underModal) {
+      underModal = false;
+      motion = null;
+    }
     // Chrome sends a move at the same position when the layout changes under
     // a still pointer (the strip sliding in): that is not the pointer going
     // anywhere.
@@ -463,7 +513,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     if (!steady) return;
     stop = timers.setTimeout(() => {
       stop = null;
-      if (!isSidePanelPeeking() || !last) return;
+      if (!isSidePanelPeeking() || !last || modalOpen(doc)) return;
       const stillInBand = !band || (last.y >= band.top && last.y <= band.bottom);
       if (stillInBand && stopReveals(last.x, fullLeft, right - peekW, c)) revealFromPeek();
     }, c.STOP_MS);
@@ -529,7 +579,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
-    if (motion && last && inBand && !onHandle && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
+    if (motion && last && inBand && !onHandle && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && !modalOpen(doc) && finePointer() && canRevealSidePanel(doc)) {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
@@ -563,9 +613,12 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // Back in from outside straight over a frame, the page sees no move, only
   // the frame's over: the pointer is back, and away from the panel.
   doc.addEventListener('pointerover', (event) => {
-    if (!outside || !isFrame(event.target)) return;
+    // Or back from under a modal that closed while the pointer was on a frame.
+    if (!(outside || (underModal && !modalOpen(doc))) || !isFrame(event.target)) return;
     if (event.pointerType && event.pointerType !== 'mouse') return;
     outside = false;
+    underModal = false;
+    motion = null;
     if (isSidePanelRevealed()) {
       overPanel = false;
       scheduleHide();
@@ -593,6 +646,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
     if (dock()?.contains(event.target) && !overPanel) scheduleHide();
   });
   doc.addEventListener('keydown', (event) => {
+    // Escape under a modal is the modal's.
+    if (event.key === 'Escape' && modalOpen(doc)) return;
     if (event.key === 'Escape' && !event.defaultPrevented && isSidePanelPeeking()) {
       endPeek();
       return;
