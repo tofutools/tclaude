@@ -698,6 +698,14 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .collab-rail .cr-tools:has([aria-expanded="true"]) { display: inline-flex; }
 .collab-rail .cr-menu, .collab-rail .cr-new-slot { position: relative; display: inline-flex; flex: none; }
 .collab-rail .cr-row-menu { position: absolute; right: 0; top: calc(100% + 2px); z-index: var(--z-popover); min-width: min(180px, calc(var(--dock-w, 264px) - 24px)); }
+/* A row's ⚙ (collab-rail-gear.js) is the Groups tab's own menu: an agent's
+   row-actions menu, a resource's Rename/Move/Delete. The panel sits at the
+   page's right edge, so both open leftward from the button. */
+.collab-rail .cr-gear { position: relative; display: inline-flex; flex: none; }
+.collab-rail .cr-gear .action-menu, .collab-rail .cr-gear .gr-add-menu { left: auto; right: 0; }
+/* The agent's menu is long; in the panel it scrolls rather than runs off the page. */
+.collab-rail .cr-gear .action-menu { max-height: min(70vh, 560px); overflow-y: auto; }
+.collab-rail .cr-gear .cog-btn { padding: 0 2px; }
 .collab-rail .cr-stale .cr-state { color: #d29922; }
 /* ＋ New (collab-new-menu.js) in the header, and a group header's ＋. */
 .collab-rail .cr-new { flex: none; font-size: 12px; padding: 3px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap;

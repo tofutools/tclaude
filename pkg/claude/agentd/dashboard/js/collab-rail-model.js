@@ -166,6 +166,13 @@ export function railItems({
   const stamp = (item) => ({ ...item, usedAt: used.get(item.key) || 0 });
 
   for (const r of resources) {
+    // A board in no group (group_id 0) is listed under Not in a group, where
+    // its ⚙ or a drag moves it into one.
+    if (r && !r.group_id && r.kind === 'board') {
+      const view = resourceState(r, places);
+      add(UNGROUPED.id, stamp({ key: resourceKey(r), kind: r.kind, title: r.title || r.id, view, bucket: bucketOf(view), resource: r, group: '', paneKey: resourcePaneKey(r) }));
+      continue;
+    }
     if (!r || !names.has(r.group_id)) continue;
     const view = resourceState(r, places);
     const bucket = bucketOf(view);

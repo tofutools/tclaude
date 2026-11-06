@@ -24,9 +24,13 @@ import { RailLock } from './resource-lock.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { RailRowMenu, defaultRowContext, hasRowActions, tmuxAttachHint, useRowMenu } from './collab-rail-menu.js';
 import { NewMenu } from './collab-new-menu.js';
-import { groupContextEntry, processContext } from './process-context.js';
+import { groupContextEntry, processContext, processRunApi } from './process-context.js';
 import { processesAvailable } from './feature-availability.js';
 import { onPeerPage } from './node-api.js';
+import { RailGear } from './collab-rail-gear.js';
+import { RenameField, renameResource } from './groups-resources.js';
+import { GroupsInteractionProvider } from './groups-interactions.js';
+import { railResource } from './collab-rail-actions.js';
 import { isWizardActive } from './slop.js';
 import { attachAllBackgroundTerminals, backgroundTerminals, idleText, visibleBackgroundTerminals } from './background-terminals.js';
 
@@ -138,9 +142,11 @@ const statusClass = (item) => (isAgentItem(item) ? `cr-agent cr-status-${item.st
 // The resource kinds that carry a lock against agents (group_resource_locks.go).
 const LOCKABLE = new Set(['board', 'process', 'page']);
 
-function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext }) {
+function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, editable = false }) {
   const tools = hoverActions(item, actions, floatsOf);
   const menu = useRowMenu();
+  // ⚙ → Rename… names a board or page in place, as its Groups row does.
+  const [renaming, setRenaming] = useState(false);
   // A background session says how long it has been idle, as the strip's old
   // counter did; one that cannot be attached says how to reach it by hand.
   const idle = item.row ? idleText(item.row.last_activity) : null;
@@ -153,13 +159,16 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext }) {
   return html`<div class=${`cr-item cr-${item.bucket} ${statusClass(item)}${idle?.stale ? ' cr-stale' : ''}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
     draggable=${attachable ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
     onDragStart=${(event) => { if (attachable) startRailDrag(event, item, { actions, snapshot, notify, floatsOf }); else event.preventDefault(); }}>
-    <span role="button" tabIndex="0" class="cr-name" title=${title}
+    ${renaming ? html`<span class="cr-name"><span class="cr-glyph" aria-hidden="true">${glyph}</span><${RenameField} value=${item.title} label=${item.title}
+      onSave=${renameResource(railResource(item), { api: processRunApi, source: processContext, notify: notify || defaultRowContext().notify })} onDone=${() => setRenaming(false)} /></span>`
+    : html`<span role="button" tabIndex="0" class="cr-name" title=${title}
       ...${pressable(() => { if (attachable) void openRailItem(item, { actions, snapshot, notify }); else if (hasRowActions(item)) menu.setOpen(true); })}>
       <span class="cr-glyph" aria-hidden="true">${glyph}</span>
       <span class="cr-title">${item.title}</span>
-    </span>
+    </span>`}
     <span class="cr-tools">${tools.map(([g, title, run]) => html`<button data-ui-exempt type="button" key=${g}
       class="cr-tool" title=${title} aria-label=${`${title}: ${item.title}`} onClick=${(event) => { event.stopPropagation(); void run(); }}>${g}</button>`)}
+      ${editable && html`<${RailGear} item=${item} snapshot=${snapshot} notify=${notify} onRename=${() => setRenaming(true)} />`}
       <${RailRowMenu} item=${item} open=${menu.open} onOpen=${menu.setOpen} ctx=${ctx} /></span>
     ${state && html`<span class="cr-state">${state}</span>`}
     ${LOCKABLE.has(item.kind) && html`<${RailLock} kind=${item.kind} id=${item.resource?.id || item.key.slice(item.kind.length + 1)}
@@ -190,9 +199,10 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
   const n = menuRequest?.value || 0;
   const request = n ? { n, view: menuSection?.peek() || '' } : null;
   useEffect(() => { if (n) setSidePanelOpen(true, 'collab'); }, [n]);
-  const item = (it) => html`<${RailItem} key=${it.key} item=${it} actions=${actions} snapshot=${snapshot} notify=${notify} floatsOf=${floatsOf} rowContext=${rowContext} />`;
+  const item = (it) => html`<${RailItem} key=${it.key} item=${it} actions=${actions} snapshot=${snapshot} notify=${notify} floatsOf=${floatsOf} rowContext=${rowContext} editable=${making} />`;
   const empty = searching ? 'Nothing matches.' : hidden ? 'Nothing matches the filter.' : 'Nothing running.';
-  return html`<div class="collab-rail" data-collab-rail="" aria-label="Agents and resources">
+  // The agents' ⚙ is the Groups row menu (groups-interactions.js holds which is open).
+  return html`<${GroupsInteractionProvider}><div class="collab-rail" data-collab-rail="" aria-label="Agents and resources">
     <div class="cr-head">
       <input class="cr-search" type="search" placeholder="Find…" aria-label="Find an agent or resource"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
@@ -218,7 +228,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
       })}
       ${!sections.length && html`<p class="ui-empty cr-quiet">${empty}</p>`}
     </div>
-  </div>`;
+  </div><//>`;
 }
 
 // useDockToggleCount puts the background count on the folded panel's show

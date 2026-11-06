@@ -77,6 +77,11 @@ this does anything on touch screens.
   agent is in.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
+- **⚙** on an agent, board or page row opens the same edit menu its Groups-tab
+  row has. An agent's menu starts with **move to** each other group (or Not in a
+  group), then has its Groups ⚙ items for the group it is listed under. A board's
+  or page's menu has **Rename…**, **Move to group** and **Delete…**. A board in
+  no group is listed under **Not in a group**.
 - **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
   **Kill session…** for a background session or a group's shell, and on a
   board **Download .excalidraw**, **End agents' sessions…** and **Delete

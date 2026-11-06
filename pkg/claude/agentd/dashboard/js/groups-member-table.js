@@ -973,13 +973,13 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this hero to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The hero must be channeling to inscribe an export. Unavailable while it slumbers.')} />
     <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this hero\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
     <${MenuSeparator} />
-    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
+    ${!ungrouped && actions.openMemberEditor ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);
       actions.openMemberEditor(member, group, 'title');
-    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this hero — title, class, description, party ownership, and grimoire')} />
-      <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
+    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this hero — title, class, description, party ownership, and grimoire')} />` : null}
+    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
     <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this hero's grimoire of permanent boons and bindings")} />
     ${runsHere && html`<${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />`}
     ${runsHere && html`<${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />`}
@@ -1025,11 +1025,16 @@ function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey })
 // (no group, as for an ungrouped agent). One on another node, which this
 // node's roster does not carry, gets what a fused Groups view offers its
 // rows: moving it here. It needs a GroupsInteractionProvider above it.
-export function AgentGearMenu({ member, node = null, snapshot, menuKey }) {
+//
+// group, when given (the Collab panel, tcl-usrm7h), is the group the agent is
+// listed under there: the menu then has that group's items (owner, remove),
+// as its Groups row would, but not the row's inline editor. extra are items
+// the caller puts first (the panel's Move to group).
+export function AgentGearMenu({ member, node = null, snapshot, menuKey, group = null, extra = null }) {
   if (node && !node.local) {
     return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${SendElsewhereItems} member=${member} group=${{ fleet_node: node }} snapshot=${snapshot} /><//>`;
   }
-  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${null} snapshot=${snapshot} actions=${{}} ungrouped=${true} /><//>`;
+  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu">${extra}<${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${{}} ungrouped=${!group} /><//>`;
 }
 
 function SudoBadge({ grants, conv }) {
