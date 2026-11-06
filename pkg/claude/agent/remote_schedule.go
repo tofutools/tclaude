@@ -1,0 +1,61 @@
+package agent
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"strings"
+
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+)
+
+// --remote <peer> on `cron ls|logs|disable` and `triggers ls|show` reads or
+// pauses a trusted peer's cron jobs and trigger rules through its peer view
+// (S7a): the peer's grants decide (groups.messages.schedule,
+// groups.members.schedule, groups.triggers.read), and what it answers is
+// untrusted remote content.
+
+// remotePath is path (a /v1/... path) on the peer remote names, or path
+// itself when remote is empty.
+func remotePath(remote, path string) string {
+	if remote = strings.TrimSpace(remote); remote == "" {
+		return path
+	}
+	return "/v1/federation/peer/" + url.PathEscape(remote) + path
+}
+
+// remoteRequest is DaemonRequest for path on this node or, with remote, on
+// that peer. A peer's answer has its control characters stripped, keys and
+// values, before it is decoded into out; its errors too.
+func remoteRequest(remote, method, path string, body, out any) error {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return DaemonRequest(method, path, body, out, DaemonOpts{})
+	}
+	var raw any
+	if err := DaemonRequest(method, remotePath(remote, path), body, &raw, DaemonOpts{}); err != nil {
+		if clean := proto.StripControls(err.Error()); clean != err.Error() {
+			return fmt.Errorf("%s", clean)
+		}
+		return err
+	}
+	if out == nil || raw == nil {
+		return nil
+	}
+	clean, err := json.Marshal(stripControlsDeep(raw))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(clean, out); err != nil {
+		return fmt.Errorf("the peer returned an invalid answer: %v", err)
+	}
+	return nil
+}
+
+// printRemoteScheduleBanner marks what follows as the peer's answer.
+func printRemoteScheduleBanner(w io.Writer, remote, what string) {
+	if remote = strings.TrimSpace(remote); remote != "" {
+		fmt.Fprintf(w, "Remote %s of %s, as that node reports it (untrusted content)\n\n", what, proto.SafeName(remote, false))
+	}
+}
