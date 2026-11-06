@@ -41,7 +41,6 @@ var forbiddenGenericCodeSites = map[string]int{
 	"managed_instructions.go":       2,
 	"launch_identity.go":            3,
 	"lifecycle_spawn_request.go":    1,
-	"managed_launch.go":             2,
 	"spawn_relaunch_overrides.go":   1,
 }
 

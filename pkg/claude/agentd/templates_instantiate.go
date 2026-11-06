@@ -850,41 +850,17 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
 		return
 	}
+	// The instantiating agent caps every member, through the same rule a
+	// child it spawns is capped by.
 	if spec.caller != "" {
-		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spec.caller)
-		if err != nil {
-			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-			writeError(w, http.StatusInternalServerError, "io", "load parent sandbox snapshot: "+err.Error())
-			return
+		parent, fail := loadChildSandboxParent(spec.caller)
+		if fail == nil {
+			effectiveSandbox, fail = parent.contain(effectiveSandbox, nil, "instantiate the template")
 		}
-		if parentSnapshot == nil {
-			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
-				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-				writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to instantiate the template")
-				return
-			}
-		} else {
-			validatedParent, fail := parentSandboxBound(spec.caller, parentSnapshot)
-			if fail != nil {
-				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-				writeSpawnFailure(w, fail)
-				return
-			}
-			// The instantiating agent's deny overlay is inherited by every
-			// member, as a spawned child's is.
-			overlaid, err := sandboxpolicy.ApplyDenyOverlay(effectiveSandbox, validatedParent.DenyOverlay)
-			if err != nil {
-				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
-				return
-			}
-			effectiveSandbox = overlaid
-			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
-				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
-				return
-			}
+		if fail != nil {
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+			writeSpawnFailure(w, fail)
+			return
 		}
 	}
 
