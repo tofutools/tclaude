@@ -1243,6 +1243,11 @@ func OneShotLaunchPosture(
 	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	if effectiveSandbox != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(effectiveSandbox.DenyOverlay, []string{cwd}, launchReadDirs, launchWriteDirs); err != nil {
+			return harness.SpawnSpec{}, err
+		}
+	}
 	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode,
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 		return harness.SpawnSpec{}, err

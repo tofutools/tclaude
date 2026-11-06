@@ -2545,6 +2545,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		outerLayer: outerLayer, unconfined: unconfined,
 		launchGrants: launchGrants, agentDirPaths: agentDirPaths, tmpfsDirs: tmpfsDirs,
 		readDirs: readDirs, writeDirs: writeDirs, denyDirs: denyDirs, resumeEnv: resumeEnv,
+		denyOverlay: resumeDenyOverlay(effectiveSandbox),
 	})
 	if err != nil {
 		return "", "", nil, err

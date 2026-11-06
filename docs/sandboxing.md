@@ -861,6 +861,49 @@ checked with the profiles. A parent's own explicit posture is not inherited.
 Spawns by a peer, a federation request or an external steward have no parent
 sandbox here: they take the target group's assignment.
 
+### Denying a child more: `--sandbox-deny`
+
+A spawner can deny its child paths on top of whatever profiles the child
+resolves:
+
+```bash
+tclaude agent spawn crew --name worker --sandbox-deny ~/secrets --sandbox-deny /srv/keys
+```
+
+The API field is `sandbox_deny` (absolute paths); the CLI expands `~` and
+makes relative paths absolute.
+
+- **A denied path covers its whole subtree.** A more specific grant beneath
+  it, which profile composition alone would keep (the most specific rule
+  wins), is removed. The same goes for a temporary filesystem or a Unix
+  socket allowed there, and for a grant that mounts an ancestor of the denied
+  path at another sandbox path, since that path would expose the subtree. A
+  composition notice on the launch names what was removed.
+- **It is the agent's configuration.** The overlay is stored with the child
+  and reapplied at every resume and reincarnation, under re-resolve and reuse
+  alike. A later profile edit that adds a grant beneath a denied path is
+  removed again at the next relaunch rather than reopening it.
+- **It is inherited.** A child's overlay is its parent's plus its own, into
+  the parent's group or another, so denies only accumulate down a lineage.
+  A child can never drop its parent's. Members of a template the agent
+  instantiates, and agents launched on its behalf, inherit it too.
+- **It fails closed.** A spawn or relaunch whose launch would not enforce
+  the overlay is refused: a sandbox implementation of `off` or
+  `resource-only`, or a mode that omits the sandbox profiles
+  (`--omit-sandbox-profiles` is refused alongside `--sandbox-deny`), and an
+  operator's temporary sandbox-off restart.
+- **A launch never reopens it.** A launch opens some paths for itself: the
+  working directory, the workspace's Git administrative directories, the
+  harness's own state, and agent-owned directories. A denied path covering
+  one of those is not opened for it; the launch is refused and the error
+  names the path. The spawn request is refused up front for the working
+  directory and the Git directories; the rest are only known when the
+  session assembles its launch, and a spawn, resume, reincarnation or clone
+  fails there instead.
+
+The overlay denies filesystem paths only. External steward spawns cannot set
+it, and a group exported and imported elsewhere lands without it.
+
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a
 single-use challenge (`write_proof_required`); the parent must create the

@@ -18,6 +18,9 @@ type resumeDirsInput struct {
 	agentDirPaths, tmpfsDirs      []string
 	readDirs, writeDirs, denyDirs []string
 	resumeEnv                     map[string]string
+	// denyOverlay is the agent's spawn-time deny overlay, which no path this
+	// resume opens may lie under.
+	denyOverlay []string
 }
 
 // resumeDirs is the resume's directory plan: the read and write lists the
@@ -78,6 +81,12 @@ func planResumeDirs(in resumeDirsInput) (resumeDirs, error) {
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
+	// The agent's deny overlay covers a path's whole subtree, so a resume that
+	// would reopen one under it (its workspace, Git or agent directories) is
+	// refused rather than quietly widened.
+	if err := sandboxpolicy.ValidateDenyOverlayHeld(in.denyOverlay, readDirs, writeDirs, in.agentDirPaths, in.tmpfsDirs); err != nil {
+		return resumeDirs{}, fmt.Errorf("sandbox_profile_changed: %w", err)
+	}
 	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, renderedGrants); err != nil {
 			return resumeDirs{}, err
@@ -98,4 +107,12 @@ func planResumeDirs(in resumeDirsInput) (resumeDirs, error) {
 		read: readDirs, write: writeDirs,
 		tclaudeLayerContractWrite: tclaudeLayerContractWriteDirs,
 	}, nil
+}
+
+// resumeDenyOverlay is the resumed snapshot's deny overlay, nil without one.
+func resumeDenyOverlay(snapshot *sandboxpolicy.Snapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.DenyOverlay
 }

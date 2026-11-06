@@ -263,6 +263,10 @@ func (req *spawnRequest) authorize(w http.ResponseWriter, r *http.Request) *spaw
 		return fail
 	}
 	body.SandboxProfile = strings.TrimSpace(body.SandboxProfile)
+	if body.OmitSandboxProfiles && len(body.SandboxDeny) > 0 {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny",
+			"sandbox_deny needs the sandbox profiles omit_sandbox_profiles leaves out"}
+	}
 	if body.OmitSandboxProfiles && body.SandboxProfile != "" {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
 			"sandbox_profile and omit_sandbox_profiles are mutually exclusive"}
@@ -1294,8 +1298,12 @@ func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
 		spawnerConvID:       spawnerConvID,
 		externalSpawn:       externalSpawn,
 		sandboxScopePinned:  req.sandboxScopePinned,
+		denies:              body.SandboxDeny,
 	})
 	if fail != nil {
+		return fail
+	}
+	if fail := denyOverlayLaunchFailure(&effectiveSandbox, cwd, h.Name, harnessBuiltinMode, body.SandboxImplementation); fail != nil {
 		return fail
 	}
 	launchEnvironment, launchEnvironmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, profileTiers, body.Environment)
