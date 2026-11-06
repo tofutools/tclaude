@@ -2754,3 +2754,22 @@ func SetAgentPeerViewClockForTest(now func() time.Time) func() {
 	agentPeerViewNow = now
 	return func() { agentPeerViewNow = prev }
 }
+
+// PeerCeilingCoversForTest is peerCeilingCovers with a scope given by
+// dimension name.
+func PeerCeilingCoversForTest(peer, slug string, scope map[string][]string) error {
+	s := PermissionScope{}
+	for dim, values := range scope {
+		s[ScopeDim(dim)] = values
+	}
+	return peerCeilingCovers(peer, slug, s)
+}
+
+// PeerCeilingSlugsForTest lists the slugs a peer may confer.
+func PeerCeilingSlugsForTest() []string {
+	var out []string
+	for slug := range peerCeilingSlugs {
+		out = append(out, slug)
+	}
+	return out
+}
