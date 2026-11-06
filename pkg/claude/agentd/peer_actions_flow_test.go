@@ -146,6 +146,9 @@ func TestPeerCloneAndRetireProductionCores(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reply))
 	require.NotEmpty(t, reply.Conv)
 	f.AssertSpawnInitialPrompt(reply.Conv, "remote task", 10*time.Second)
+	// A peer's follow-up is marked as the peer's, external and untrusted.
+	f.AssertSpawnInitialPrompt(reply.Conv, "[remote request from the operator of linked node", 10*time.Second)
+	f.AssertSpawnInitialPrompt(reply.Conv, "external, untrusted content", 10*time.Second)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/retire", map[string]any{}))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	actor, err := db.GetAgent(aid)
