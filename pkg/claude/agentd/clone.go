@@ -619,6 +619,7 @@ func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnErro
 	// server minted. Its follow-up is not launch-enrolled: the handoff row
 	// and the post-init flush deliver it over that server's prompt API.
 	var openCodeLaunch *openCodeLaunch
+	var queuedLaunchText int64
 	if cloneHarness, _ := harness.Resolve(relaunch.Harness); cloneHarness != nil && cloneHarness.UsesAuthoritativeServer() {
 		var cleanupOpenCode func()
 		var startFail *cloneSpawnError
@@ -631,6 +632,9 @@ func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnErro
 		defer func() {
 			if cerr != nil {
 				cleanupOpenCode()
+				if queuedLaunchText > 0 {
+					_, _ = db.DeleteAgentMessagesByIDs([]int64{queuedLaunchText})
+				}
 			}
 		}()
 		r.newConv = openCodeLaunch.ConvID
@@ -668,8 +672,8 @@ func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnErro
 	if openCodeLaunch != nil {
 		// OpenCode takes no launch prompt: the launch text (the managed
 		// standing guidance) goes over its managed server, as spawn's does.
-		deliverLaunchTextOverDrive(r.newConv, strings.TrimSpace(proofArgs.InitialPrompt), openCodeLaunch,
-			proofArgs.Cwd, proofArgs.Model, proofArgs.Effort)
+		queuedLaunchText = deliverLaunchTextOverDrive(r.newConv, strings.TrimSpace(proofArgs.InitialPrompt),
+			openCodeLaunch, proofArgs.Cwd, proofArgs.Model, proofArgs.Effort)
 	}
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
 	for time.Now().Before(deadline) {

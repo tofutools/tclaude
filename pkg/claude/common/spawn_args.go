@@ -79,8 +79,16 @@ type SpawnArgs struct {
 	// itself, forwarded as `tclaude session new --initial-prompt <text>` →
 	// the harness's positional [prompt]. On the launch-enrollment path it
 	// carries the agent's welcome turn so it need not be injected over tmux.
-	// "" omits it. Fresh-spawn only (SpawnNew); a resume takes no launch prompt.
+	// "" omits it. A resume forwards it too (the managed standing guidance).
+	// A harness that takes no launch prompt (OpenCode) gets it over its drive
+	// instead, unless LaunchTextDeliveredByCaller.
 	InitialPrompt string
+
+	// LaunchTextDeliveredByCaller tells SpawnResume that its caller delivers
+	// InitialPrompt over the harness's drive itself, after the fork (a spawn
+	// that resumes imported history does), so the resume must not send it a
+	// second time.
+	LaunchTextDeliveredByCaller bool
 
 	// Cwd is the working directory to launch in; "" omits -C.
 	Cwd string

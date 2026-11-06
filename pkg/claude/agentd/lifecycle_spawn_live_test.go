@@ -142,7 +142,7 @@ func TestLiveSpawnResumeStopsOpenCodeWhenTheStateAllocationIsMissing(t *testing.
 // openCodeResumeWithPrompt resumes an OpenCode conversation carrying launch
 // text, with the managed server swapped for a fixture and the prompt API for
 // send, and returns the wrapper's argv.
-func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(string) error) []string {
+func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(string) error, byCaller ...bool) []string {
 	t.Helper()
 	argvFile, _ := fakeTclaudeOnPath(t, 0, "")
 	t.Cleanup(SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (OpenCodeRuntimeFixture, error) {
@@ -153,7 +153,7 @@ func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(str
 	require.NoError(t, liveSpawnResume(clcommon.SpawnArgs{
 		ConvID: convID, Cwd: t.TempDir(), Harness: harness.OpenCodeName,
 		Sandbox: harness.OpenCodeSandboxAccessControl, Approval: harness.OpenCodeApprovalAsk,
-		InitialPrompt: prompt,
+		InitialPrompt: prompt, LaunchTextDeliveredByCaller: len(byCaller) > 0 && byCaller[0],
 	}))
 	return readLines(t, argvFile)
 }
@@ -187,4 +187,19 @@ func TestLiveSpawnResumeQueuesOpenCodeLaunchTextWhenTheSendFails(t *testing.T) {
 	assert.Equal(t, launchTextSubject, msgs[0].Subject)
 	assert.Equal(t, "STANDING GUIDANCE", msgs[0].Body)
 	assert.True(t, msgs[0].ReadAt.IsZero(), "the queued copy is still unread, so it is delivered")
+}
+
+// A spawn that resumes imported history sends its launch prompt over the
+// server itself after the fork; the resume must not send it a second time.
+func TestLiveSpawnResumeLeavesCallerDeliveredLaunchTextAlone(t *testing.T) {
+	resetTestDB(t)
+	var sent []string
+	openCodeResumeWithPrompt(t, "ses_resume_import", "SPAWN BRIEF", func(text string) error {
+		sent = append(sent, text)
+		return nil
+	}, true)
+	assert.Empty(t, sent)
+	msgs, err := db.ListAgentMessagesForConv("ses_resume_import", 10)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
 }
