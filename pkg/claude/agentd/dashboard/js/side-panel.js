@@ -9,7 +9,9 @@
 // The body classes are the shell's whole state, for CSS: dock-tab while a
 // panel is offered, dock-open while it is open, dock-revealed while a folded
 // panel floats in because the pointer reached the edge (side-panel-reveal.js),
-// and data-dock-panel naming which one.
+// dock-peeking while only its leading edge shows because the pointer is
+// heading there fast (the predictive peek, same module), and data-dock-panel
+// naming which one.
 
 import { signal } from '@preact/signals';
 import { wizWord } from './slop.js';
@@ -38,6 +40,33 @@ export function registerSidePanel(name, { pane, pref, open = true, body, titles,
 let revealed = false;
 let revealedName = '';
 
+// peeked is whether the folded panel shows only its leading edge, ahead of a
+// reveal the pointer looks to be heading for. It is its own state, not a kind
+// of reveal: a peek holds nothing and is never "over", so none of the reveal's
+// hover-out rules run for it. A reveal or a conceal ends it.
+let peeked = false;
+let peekedName = '';
+
+// isSidePanelPeeking reports whether the folded panel is peeking.
+export function isSidePanelPeeking() {
+  return peeked;
+}
+
+// peekSidePanel shows the folded active panel's leading edge; unpeekSidePanel
+// takes it back. Neither touches the remembered open state.
+export function peekSidePanel(doc = globalThis.document) {
+  if (peeked || revealed || !canRevealSidePanel(doc)) return;
+  peeked = true;
+  peekedName = activeSidePanel(doc).name;
+  applySidePanel(doc);
+}
+
+export function unpeekSidePanel(doc = globalThis.document) {
+  if (!peeked) return;
+  peeked = false;
+  applySidePanel(doc);
+}
+
 // isSidePanelRevealed reports whether the folded panel is floating in.
 export function isSidePanelRevealed() {
   return revealed;
@@ -56,12 +85,14 @@ export function revealSidePanel(doc = globalThis.document) {
   if (revealed || !canRevealSidePanel(doc)) return;
   revealed = true;
   revealedName = activeSidePanel(doc).name;
+  peeked = false;
   applySidePanel(doc);
 }
 
 export function concealSidePanel(doc = globalThis.document) {
-  if (!revealed) return;
+  if (!revealed && !peeked) return;
   revealed = false;
+  peeked = false;
   applySidePanel(doc);
 }
 
@@ -119,9 +150,11 @@ export function applySidePanel(doc = globalThis.document) {
   // A tab switch (even to another panel that opted in), an unfold or a panel
   // that never opted in ends a reveal.
   if (revealed && (!panel || panel.name !== revealedName || open || !panel.autoReveal)) revealed = false;
+  if (peeked && (revealed || !panel || panel.name !== peekedName || open || !panel.autoReveal)) peeked = false;
   doc.body.classList.toggle('dock-tab', !!panel);
   doc.body.classList.toggle('dock-open', open);
   doc.body.classList.toggle('dock-revealed', revealed);
+  doc.body.classList.toggle('dock-peeking', peeked);
   if (panel) doc.body.dataset.dockPanel = panel.name;
   else delete doc.body.dataset.dockPanel;
   const handle = doc.getElementById('dock-toggle');
