@@ -25,7 +25,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// Exit codes for lookup-shaped commands.
+// Exit codes of the agent commands (MapDaemonErrorToRC maps a daemon error
+// onto them):
+//
+//	0  success
+//	1  not found
+//	2  ambiguous selector
+//	3  invalid argument
+//	4  I/O failure: the daemon is unreachable, or failed the request
+//	5  refused: a permission denial, or any 403 whose code is not one of
+//	   the above (a 403 "route_group" mismatch stays 3). Before tcl-cezwhu
+//	   a permission denial exited 4
 const (
 	rcOK         = 0
 	rcNotFound   = 1
