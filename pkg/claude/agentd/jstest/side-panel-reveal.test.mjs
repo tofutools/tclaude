@@ -15,6 +15,7 @@ function fakeTimers() {
   let next = 1;
   const pending = new Map();
   return {
+    now: () => now,
     setTimeout(fn, ms) {
       const id = next++;
       pending.set(id, { fn, at: now + ms });
@@ -69,7 +70,7 @@ async function shell(t, { fine = true } = {}) {
     titles: [['Hide O', 'Hide O'], ['Show O', 'Show O']] });
   const timers = fakeTimers();
   side.bindSidePanel(doc);
-  reveal.bindEdgeReveal(doc, { timers, finePointer: () => fine });
+  reveal.bindEdgeReveal(doc, { timers, now: timers.now, finePointer: () => fine, debug: false });
   reveal.setEdgeRevealEnabled(true, doc);
 
   const activate = (pane) => {
@@ -80,11 +81,27 @@ async function shell(t, { fine = true } = {}) {
   const move = (target, clientX, init = {}) => harness.fireEvent(target, 'pointermove', { clientX, clientY: 300, buttons: 0, pointerType: 'mouse', ...init });
   const atEdge = (init) => move(content, WIDTH - 4, init);
   const revealed = () => doc.body.classList.contains('dock-revealed');
+  const peeking = () => doc.body.classList.contains('dock-peeking');
+  // flick moves the pointer from x0 to x1 (and y0 to y1) in steps every
+  // stepMs, advancing the clock between them, as a real mousemove stream does.
+  // ease, when set, brakes the motion (each step a fraction of the last), as a
+  // move that is stopping does.
+  const flick = ({ x0, x1, y0 = 300, y1 = y0, steps = 6, stepMs = 16, ease = 0, target = content, init = {} }) => {
+    const weights = Array.from({ length: steps }, (_, i) => (ease ? (1 - ease) ** i : 1));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let x = x0; let y = y0;
+    move(target, x, { clientY: y, ...init });
+    for (const w of weights) {
+      timers.advance(stepMs);
+      x += ((x1 - x0) * w) / total; y += ((y1 - y0) * w) / total;
+      move(target, x, { clientY: y, ...init });
+    }
+  };
   const restAtEdge = () => {
     atEdge();
     timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
   };
-  return { harness, doc, dock, collapse, find, menuButton, content, side, reveal, timers, activate, move, atEdge, restAtEdge, revealed,
+  return { harness, doc, dock, collapse, find, menuButton, content, side, reveal, timers, activate, move, atEdge, restAtEdge, revealed, peeking, flick,
     hoverClose: watch.HOVER_CLOSE_MS };
 }
 
@@ -536,4 +553,145 @@ test('a dialog or popover drawn over the panel\'s band is not the panel', async 
   s.move(dialog, WIDTH - 100);
   s.timers.advance(s.hoverClose);
   assert.equal(s.revealed(), false, 'over something else in its band, it goes after the delay');
+});
+
+// The predictive peek (tcl-o4nims): a pointer heading for the edge fast shows
+// the folded panel's leading edge before it gets there. The false positives
+// are the risk, so most of these say when it must NOT peek.
+
+const FLING = { x0: 300, x1: 800 }; // 500px in ~96ms: a fling at the edge
+
+test('a fast, level fling at the edge peeks the panel before the pointer gets there', async (t) => {
+  const s = await shell(t);
+  s.flick(FLING);
+  assert.equal(s.peeking(), true, 'it peeks while the pointer is still 200px out');
+  assert.equal(s.revealed(), false, 'a peek is not a reveal');
+  assert.equal(s.doc.body.classList.contains('dock-open'), false, 'and nothing reflows or is remembered');
+});
+
+test('reaching the peeking strip reveals at once; the edge zone beside it takes the usual dwell', async (t) => {
+  let s = await shell(t);
+  s.flick(FLING);
+  s.move(s.dock, WIDTH - 20);
+  assert.equal(s.revealed(), true, 'on the strip: the prediction was right');
+  assert.equal(s.peeking(), false, 'and the peek is over');
+
+  s = await shell(t);
+  s.flick(FLING);
+  s.atEdge();
+  assert.equal(s.revealed(), false, 'in the edge zone but not on the strip, the dwell still decides');
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true);
+});
+
+test('sustained motion keeps a peek; when it stops short the peek retracts after PEEK_RETRACT_MS', async (t) => {
+  const s = await shell(t);
+  const { PEEK_RETRACT_MS } = (await s.harness.importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  assert.ok(PEEK_RETRACT_MS >= 400 && PEEK_RETRACT_MS <= 600, 'about half a second');
+  s.flick(FLING);
+  for (let i = 0; i < 4; i++) {
+    s.timers.advance(PEEK_RETRACT_MS - 100);
+    s.flick({ x0: 300, x1: 800, y0: 300 + i });
+    assert.equal(s.peeking(), true, `kept alive by fling ${i + 2}`);
+  }
+  s.timers.advance(PEEK_RETRACT_MS - 1);
+  assert.equal(s.peeking(), true, 'not before the delay');
+  s.timers.advance(1);
+  assert.equal(s.peeking(), false, 'the motion stopped short, so it goes');
+  s.timers.advance(5000);
+  assert.equal(s.revealed(), false, 'and nothing comes back on its own');
+});
+
+test('no peek for a move that is not a fling at the edge', async (t) => {
+  for (const [why, run] of [
+    ['a fast move braking to stop short of the edge', (s) => s.flick({ x0: 300, x1: 850, ease: 0.55 })],
+    ['a vertical flick', (s) => s.flick({ x0: 600, x1: 600, y0: 100, y1: 600 })],
+    ['a diagonal flick', (s) => s.flick({ x0: 300, x1: 700, y0: 100, y1: 500 })],
+    ['a leftward flick', (s) => s.flick({ x0: 800, x1: 300 })],
+    ['an ordinary move across the page', (s) => s.flick({ x0: 600, x1: 800, steps: 20 })],
+    ['one jump', (s) => { s.move(s.content, 300); s.timers.advance(16); s.move(s.content, 900); }],
+    ['a fling with a button held (a selection or a drag)', (s) => s.flick({ ...FLING, init: { buttons: 1 } })],
+    ['a fling at the handle', (s) => s.flick({ ...FLING, target: s.doc.getElementById('dock-toggle') })],
+    ['a fling from right beside the edge (the zone’s own dwell)', (s) => s.flick({ x0: 900, x1: 955, steps: 4, stepMs: 10 })],
+  ]) {
+    const s = await shell(t);
+    run(s);
+    assert.equal(s.peeking(), false, `${why}: no peek`);
+    s.timers.advance(2000);
+    assert.equal(s.revealed(), false, `${why}: and no reveal`);
+  }
+});
+
+test('no peek on a coarse pointer, with the setting off, on a panel that did not opt in, or unfolded', async (t) => {
+  let s = await shell(t, { fine: false });
+  s.flick(FLING);
+  assert.equal(s.peeking(), false, 'coarse pointer');
+  s = await shell(t);
+  s.reveal.setEdgeRevealEnabled(false, s.doc);
+  s.flick(FLING);
+  assert.equal(s.peeking(), false, 'dashboard.side_panel_edge_reveal off');
+  s = await shell(t);
+  s.activate('tab-other');
+  s.flick(FLING);
+  assert.equal(s.peeking(), false, 'a panel that did not opt in');
+  s = await shell(t);
+  s.side.setSidePanelOpen(true, 'groups');
+  assert.equal(s.side.isSidePanelOpen('groups'), true);
+  s.flick(FLING);
+  assert.equal(s.peeking(), false, 'an unfolded panel');
+});
+
+test('unfolding a peeking panel ends the peek', async (t) => {
+  const s = await shell(t);
+  s.flick(FLING);
+  assert.equal(s.peeking(), true);
+  s.side.setSidePanelOpen(true, 'groups');
+  assert.equal(s.peeking(), false);
+  assert.equal(s.doc.body.classList.contains('dock-peeking'), false);
+});
+
+test('a press, a drag, Escape, a tab switch or the setting going off takes a peek back at once', async (t) => {
+  for (const [why, run] of [
+    ['a press on the content', (s) => s.harness.fireEvent(s.content, 'pointerdown')],
+    ['a drag starting', (s) => s.harness.fireEvent(s.content, 'dragstart')],
+    ['Escape', (s) => s.harness.fireEvent(s.doc, 'keydown', { key: 'Escape' })],
+    ['a tab switch', (s) => s.activate('tab-other')],
+    ['the setting off', (s) => s.reveal.setEdgeRevealEnabled(false, s.doc)],
+    ['a move with a button held', (s) => s.move(s.content, 820, { buttons: 1 })],
+  ]) {
+    const s = await shell(t);
+    s.flick(FLING);
+    assert.equal(s.peeking(), true, `${why}: peeking first`);
+    run(s);
+    assert.equal(s.peeking(), false, `${why}: the peek goes at once`);
+    s.timers.advance(2000);
+    assert.equal(s.revealed(), false, `${why}: and no reveal follows`);
+  }
+});
+
+test('a fling to the page scrollbar peeks, and a press there takes it back with no reveal', async (t) => {
+  const s = await shell(t);
+  const { onScrollbar } = withPageScrollbar(s);
+  s.flick({ x0: 300, x1: 800 });
+  assert.equal(s.peeking(), true);
+  onScrollbar();
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS / 2);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerdown');
+  assert.equal(s.peeking(), false, 'grabbing the scrollbar ends the peek');
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  assert.equal(s.revealed(), false, 'and is no reveal: the dwell it would have needed was cancelled, as without a peek');
+});
+
+test('a peek is not a reveal: it runs no hover-out, so repeated short flings never loop it into a reveal', async (t) => {
+  const s = await shell(t);
+  const { PEEK_RETRACT_MS } = (await s.harness.importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  withPageScrollbar(s);
+  for (let i = 0; i < 6; i++) {
+    s.flick({ x0: 300, x1: 800, y0: 300 + i });
+    assert.equal(s.peeking(), true, `fling ${i + 1} peeks`);
+    s.move(s.content, 780, { clientY: 300 + i });
+    s.timers.advance(PEEK_RETRACT_MS + s.hoverClose);
+    assert.equal(s.peeking(), false, `fling ${i + 1}: stopped short, it retracts`);
+    assert.equal(s.revealed(), false, `fling ${i + 1}: never a reveal`);
+  }
 });
