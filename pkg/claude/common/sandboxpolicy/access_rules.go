@@ -133,7 +133,12 @@ const (
 	AccessNoticeClassComposition = "composition"
 	AccessNoticeClassLaunch      = "launch"
 
-	AccessNoticeReasonEmptyIntersection     = "empty_intersection"
+	AccessNoticeReasonEmptyIntersection = "empty_intersection"
+	// AccessNoticeReasonPartialIntersection says that two or more tiers
+	// authored network allow lists and the intersection kept only part of
+	// them, naming what each tier lost. Without it, an entry a group profile
+	// allows silently disappears because the global profile does not.
+	AccessNoticeReasonPartialIntersection   = "partial_intersection"
 	AccessNoticeReasonMissingInclude        = "missing_include"
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
@@ -182,6 +187,7 @@ const (
 	AccessNoticeEffectEnforcedWider     = "enforced_wider"
 	AccessNoticeEffectLaunchGated       = "launch_gated"
 	AccessNoticeEffectNothingAllowed    = "nothing_allowed"
+	AccessNoticeEffectNarrowed          = "narrowed"
 	AccessNoticeEffectNotMaterialized   = "not_materialized"
 	AccessNoticeEffectPreviewIncomplete = "preview_incomplete"
 	// AccessNoticeEffectMechanismSelected states that the notice reports which
@@ -209,6 +215,20 @@ type AccessNotice struct {
 	Detail  string   `json:"detail"`
 	Entries []int    `json:"entries,omitempty"`
 	Tiers   []string `json:"tiers,omitempty"`
+	// Layers is set only on a partial_intersection notice: for each tier
+	// whose network allow list lost entries in the cross-tier intersection,
+	// the entries it authored that the composed list does not keep as
+	// authored. It is disclosure only; the composed list is the authority.
+	Layers []AccessNoticeLayer `json:"layers,omitempty"`
+}
+
+// AccessNoticeLayer names one tier's share of a partial intersection.
+type AccessNoticeLayer struct {
+	Tier    string              `json:"tier"`
+	NotKept []NetworkAllowEntry `json:"not_kept"`
+	// More counts entries the tier also lost beyond the NotKept cap, so a
+	// reader knows NotKept is incomplete.
+	More int `json:"more,omitempty"`
 }
 
 // DeriveAccessAxes applies the forever-supported network_access compatibility
@@ -1369,6 +1389,118 @@ func compositionNotice(axis string, tiers []string) AccessNotice {
 	}
 }
 
+// maxPartialIntersectionEntries bounds how many lost entries one tier
+// reports, in both the detail text and the structured layers, so a large
+// pack cannot bloat every snapshot that carries the notice.
+const maxPartialIntersectionEntries = 32
+
+type networkListLayer struct {
+	tier  string
+	allow []NetworkAllowEntry
+}
+
+// partialIntersectionNotice reports what the cross-tier intersection of
+// network allow lists dropped. It returns false when fewer than two tiers
+// authored a list, when the result is empty (compositionNotice covers that),
+// or when every tier kept every entry it authored.
+func partialIntersectionNotice(
+	layers []networkListLayer,
+	composed NetworkRules,
+) (AccessNotice, bool) {
+	if len(layers) < 2 || composed.Mode != AccessModeList || len(composed.Allow) == 0 {
+		return AccessNotice{}, false
+	}
+	kept := make(map[string]struct{}, len(composed.Allow))
+	for _, entry := range composed.Allow {
+		kept[networkEntryKey(entry)] = struct{}{}
+	}
+	tiers := make([]string, 0, len(layers))
+	var lost []AccessNoticeLayer
+	var parts []string
+	for _, layer := range layers {
+		tiers = append(tiers, layer.tier)
+		var notKept []NetworkAllowEntry
+		var names []string
+		dropped := 0
+		for _, entry := range layer.allow {
+			if _, ok := kept[networkEntryKey(entry)]; ok {
+				continue
+			}
+			dropped++
+			if len(notKept) < maxPartialIntersectionEntries {
+				notKept = append(notKept, entry)
+				names = append(names, DescribeNetworkAllowEntry(entry))
+			}
+		}
+		if dropped == 0 {
+			continue
+		}
+		if extra := dropped - len(notKept); extra > 0 {
+			names = append(names, fmt.Sprintf("%d more", extra))
+		}
+		lost = append(lost, AccessNoticeLayer{
+			Tier: layer.tier, NotKept: notKept, More: dropped - len(notKept),
+		})
+		parts = append(parts, layer.tier+": "+strings.Join(names, ", "))
+	}
+	if len(lost) == 0 {
+		return AccessNotice{}, false
+	}
+	return AccessNotice{
+		Class:  AccessNoticeClassComposition,
+		Axis:   "network",
+		Reason: AccessNoticeReasonPartialIntersection,
+		Effect: AccessNoticeEffectNarrowed,
+		Detail: fmt.Sprintf(
+			"network allow lists intersect across %s, so a destination must be allowed by every one of them; dropped or narrowed by the intersection: %s",
+			strings.Join(tiers, " ∩ "), strings.Join(parts, "; ")),
+		Tiers:  tiers,
+		Layers: lost,
+	}, true
+}
+
+// DescribeNetworkAllowEntry renders one allow entry the way launch errors
+// name destinations: host, domain (with *. for subdomains), CIDR or
+// loopback, then any ports.
+func DescribeNetworkAllowEntry(entry NetworkAllowEntry) string {
+	name := "loopback"
+	switch {
+	case entry.Host != "":
+		name = entry.Host
+	case entry.Domain != "" && entry.IncludeSubdomains:
+		name = "*." + entry.Domain
+	case entry.Domain != "":
+		name = entry.Domain
+	case entry.CIDR != "":
+		name = entry.CIDR
+	}
+	if len(entry.Ports) == 0 {
+		return name
+	}
+	ports := make([]string, len(entry.Ports))
+	for i, port := range entry.Ports {
+		ports[i] = strconv.Itoa(port)
+	}
+	return name + ":" + strings.Join(ports, ",")
+}
+
+func cloneAccessNoticeLayers(in []AccessNoticeLayer) []AccessNoticeLayer {
+	if in == nil {
+		return nil
+	}
+	out := make([]AccessNoticeLayer, len(in))
+	for i, layer := range in {
+		out[i].Tier = layer.Tier
+		out[i].More = layer.More
+		out[i].NotKept = make([]NetworkAllowEntry, len(layer.NotKept))
+		for j, entry := range layer.NotKept {
+			entry.Ports = append([]int(nil), entry.Ports...)
+			out[i].NotKept[j] = entry
+		}
+	}
+	return out
+}
+
 // MergeAccessNotices appends structurally distinct notices in order. Launch
 // and lifecycle paths may recompute a target verdict while a snapshot already
 // carries authoring/resolution notices; neither class may mask or duplicate the
@@ -1393,6 +1525,7 @@ func MergeAccessNotices(existing []AccessNotice, additions ...AccessNotice) []Ac
 			copy := addition
 			copy.Entries = append([]int(nil), addition.Entries...)
 			copy.Tiers = append([]string(nil), addition.Tiers...)
+			copy.Layers = cloneAccessNoticeLayers(addition.Layers)
 			out = append(out, copy)
 		}
 	}

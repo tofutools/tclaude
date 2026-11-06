@@ -143,6 +143,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	hasNewNetwork := false
 	hasNewUnixSockets := false
 	networkListContributors := []string{}
+	networkListLayers := []networkListLayer{}
 	preLaunch := []PreLaunchBlock{}
 	filesystemRoot := FilesystemRootAutomatic
 	harnessConfig := HarnessConfigAccessDefault
@@ -322,6 +323,9 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		})
 		if axes.Network.Mode == AccessModeList {
 			networkListContributors = appendUniqueStrings(networkListContributors, tierLabel)
+			networkListLayers = append(networkListLayers, networkListLayer{
+				tier: tierLabel, allow: cloneNetworkRules(axes.Network).Allow,
+			})
 			networkSource := source
 			result.Provenance.Network = &networkSource
 		}
@@ -506,6 +510,9 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	if networkRules.Mode == AccessModeList && len(networkRules.Allow) == 0 {
 		result.AccessNotices = append(result.AccessNotices,
 			compositionNotice("network", networkListContributors))
+	}
+	if notice, ok := partialIntersectionNotice(networkListLayers, networkRules); ok {
+		result.AccessNotices = append(result.AccessNotices, notice)
 	}
 	if unixSocketRules.Mode == AccessModeList && len(unixSocketRules.Allow) == 0 {
 		result.AccessNotices = append(result.AccessNotices,

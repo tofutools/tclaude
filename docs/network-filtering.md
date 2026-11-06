@@ -101,6 +101,17 @@ dominates. Unix-socket lists intersect. `network.engine` is the one precedence
 field: most explicit wins (explicit > group > global), with a disclosure when
 composition was overridden.
 
+Because allow lists intersect, a destination is reachable only if **every**
+tier that authors an allow list allows it. A group profile cannot add a host
+that the global profile's list leaves out. When two or more tiers author lists
+and the intersection drops entries, the resolved profile carries a composition
+warning that names, per tier, what was dropped or narrowed. The spawn dialog,
+the profile editor and `tclaude agent sandbox-profiles plan` show it. If the
+dropped entry is the harness's model endpoint, the model-transport refusal
+below names the tier that allowed it and the tier that did not. Fix it in the
+tier that lacks it, or give the global tier no list (`baseline: "allow"` or no
+network policy) so the group list alone decides.
+
 ## The three postures
 
 - **Open baseline** (or omitted / legacy `internet`) → **host-open**: the host
@@ -171,6 +182,9 @@ Codex, OpenCode, Gemini CLI, pi and shell** launches on Linux. When OpenCode sup
 provider configuration, tclaude checks that provider endpoint against the
 authored rules. An OpenCode route tclaude cannot inspect is left to those rules:
 the launch proceeds, and the packet floor allows or blocks the actual request.
+The launch then carries a notice saying the model endpoint was not checked,
+and why resolution stopped; see
+[OpenCode under a filtered network](harnesses.md#opencode-under-a-filtered-network).
 If a prerequisite is missing before enforcement is selected
 — `bwrap`, `pasta`, `nft`, or `nsenter` resolved through trust-walked paths (no
 group/world-writable path component, a regular executable target; ownership is

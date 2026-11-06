@@ -249,3 +249,76 @@ func TestLocalAccessNetworkPresetUsesExactExistingWireShape(t *testing.T) {
 	rules.Allow = append(rules.Allow, sandboxpolicy.NetworkAllowEntry{Loopback: true})
 	assert.False(t, IsLocalAccessNetworkPreset(rules))
 }
+
+// The refusal must name the tier that allowed the endpoint and the tier that
+// dropped it when a partial_intersection notice is present, and must still
+// decide coverage from the composed rules alone.
+func TestModelTransportCoverageNamesTheLayerThatDroppedTheEndpoint(t *testing.T) {
+	h := MustGet(DefaultName)
+	requirement := ModelTransportRequirement{Destinations: []sandboxpolicy.NetworkAllowEntry{
+		{Host: "api.anthropic.com", Ports: []int{443}},
+	}}
+	rules := sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{Host: "git.example", Ports: []int{443}}},
+	}
+	notice := sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassComposition,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonPartialIntersection,
+		Tiers:  []string{`global "base"`, `group "dev"`},
+		Layers: []sandboxpolicy.AccessNoticeLayer{{
+			Tier:    `group "dev"`,
+			NotKept: []sandboxpolicy.NetworkAllowEntry{{Domain: "anthropic.com", IncludeSubdomains: true, Ports: []int{443}}},
+		}},
+	}
+
+	plain := ValidateModelTransportCoverage(h, rules, requirement)
+	require.Error(t, plain)
+	assert.NotContains(t, plain.Error(), "intersect")
+
+	err := ValidateModelTransportCoverageWithNotices(h, rules, requirement,
+		[]sandboxpolicy.AccessNotice{notice})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(),
+		`api.anthropic.com:443 (allowed by group "dev" but not by global "base"; network allow lists intersect across layers)`)
+	assert.Contains(t, err.Error(), "allow it in every layer that has a network allow list")
+
+	// A destination no tier listed keeps the plain wording.
+	other := ModelTransportRequirement{Destinations: []sandboxpolicy.NetworkAllowEntry{
+		{Host: "api.openai.com", Ports: []int{443}},
+	}}
+	err = ValidateModelTransportCoverageWithNotices(h, rules, other,
+		[]sandboxpolicy.AccessNotice{notice})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "intersect")
+
+	// The notice never grants: a covered endpoint passes, an uncovered one fails.
+	rules.Allow = append(rules.Allow, sandboxpolicy.NetworkAllowEntry{Host: "api.anthropic.com", Ports: []int{443}})
+	require.NoError(t, ValidateModelTransportCoverageWithNotices(h, rules, requirement,
+		[]sandboxpolicy.AccessNotice{notice}))
+}
+
+// A tier whose lost-entry list was cut short is not named as lacking the
+// endpoint: it may have allowed it beyond the cap.
+func TestModelTransportCoverageDoesNotBlameATruncatedLayer(t *testing.T) {
+	h := MustGet(DefaultName)
+	requirement := ModelTransportRequirement{Destinations: []sandboxpolicy.NetworkAllowEntry{
+		{Host: "api.anthropic.com", Ports: []int{443}},
+	}}
+	rules := sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList}
+	notice := sandboxpolicy.AccessNotice{
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonPartialIntersection,
+		Tiers:  []string{`global "base"`, `group "dev"`, `explicit "x"`},
+		Layers: []sandboxpolicy.AccessNoticeLayer{
+			{Tier: `global "base"`, NotKept: []sandboxpolicy.NetworkAllowEntry{{Host: "other.example"}}, More: 5},
+			{Tier: `group "dev"`, NotKept: []sandboxpolicy.NetworkAllowEntry{{Host: "api.anthropic.com", Ports: []int{443}}}},
+		},
+	}
+	err := ValidateModelTransportCoverageWithNotices(h, rules, requirement,
+		[]sandboxpolicy.AccessNotice{notice})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `allowed by group "dev" but not by explicit "x";`)
+	assert.NotContains(t, err.Error(), `not by global`)
+}

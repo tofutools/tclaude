@@ -1087,6 +1087,7 @@ func cloneAccessNotices(in []AccessNotice) []AccessNotice {
 		out[i] = notice
 		out[i].Entries = append([]int(nil), notice.Entries...)
 		out[i].Tiers = append([]string(nil), notice.Tiers...)
+		out[i].Layers = cloneAccessNoticeLayers(notice.Layers)
 	}
 	return out
 }

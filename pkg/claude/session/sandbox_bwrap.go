@@ -1044,6 +1044,36 @@ func TclaudeLayerLaunchRootPosture(
 		posture, sockets, effective.FilesystemRoot), nil
 }
 
+// openCodeUnresolvedModelNotice says, at launch, what the silent pass-through
+// above used to leave unsaid: tclaude did not check the OpenCode model
+// endpoint against the filtered network, so a model that cannot be reached is
+// the network policy doing its job, and the fix is in the policy. It adds no
+// access.
+func openCodeUnresolvedModelNotice(
+	mode sandboxpolicy.AccessMode,
+	resolved harness.ResolvedModelTransport,
+) sandboxpolicy.AccessNotice {
+	fix := "allow the provider's API host in every layer that has a network allow list"
+	if mode == sandboxpolicy.AccessModeOpen {
+		fix = "remove or narrow the deny rule that matches the provider's API host"
+	}
+	what := "tclaude could not resolve this OpenCode model's provider endpoint"
+	if strings.TrimSpace(resolved.Model) == "" {
+		what = "no launch model was selected, so OpenCode picks its own default model and provider"
+	}
+	detail := "Filtered network: " + what + "; tclaude did not check that endpoint against the network rules and added no model access. If OpenCode cannot reach its model, " + fix + ", or use network open. tclaude resolves only an explicit openai-compatible provider with options.baseURL in OPENCODE_CONFIG_CONTENT; see docs/harnesses.md#opencode-under-a-filtered-network."
+	if reason := strings.TrimSpace(resolved.UnresolvedReason); reason != "" {
+		detail += " Resolution stopped at: " + reason
+	}
+	return sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
+		Effect: sandboxpolicy.AccessNoticeEffectPreviewIncomplete,
+		Detail: detail,
+	}
+}
+
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // both the harness descriptor and the operator's resolved profile assert a
 // model transport that functions across the selected platform's boundary
@@ -1086,7 +1116,7 @@ func ValidateTclaudeLayerNetwork(
 		// may be unreachable.
 		if h != nil && h.Name == harness.OpenCodeName &&
 			!resolvedModel.ProviderResolved {
-			return nil, nil
+			return []sandboxpolicy.AccessNotice{openCodeUnresolvedModelNotice(axes.Network.Mode, resolvedModel)}, nil
 		}
 		if resolvedModel.SessionGateway && h != nil && h.SupportsModelProxy() {
 			return []sandboxpolicy.AccessNotice{{Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "network", Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic, Effect: sandboxpolicy.AccessNoticeEffectLaunchGated, Detail: "Model traffic uses the launch-bound loopback gateway and authenticated daemon socket, authorized separately by models.proxy. The authored IP network rules still govern tool traffic; no upstream model IP access is added."}}, nil
@@ -1100,8 +1130,8 @@ func ValidateTclaudeLayerNetwork(
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		if coverageErr := harness.ValidateModelTransportCoverage(
-			h, axes.Network, requirement); coverageErr != nil {
+		if coverageErr := harness.ValidateModelTransportCoverageWithNotices(
+			h, axes.Network, requirement, effective.AccessNotices); coverageErr != nil {
 			return nil, coverageErr
 		}
 		detail := describeModelTransportRequirementForPlatform(
