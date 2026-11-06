@@ -303,8 +303,13 @@ func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 	settings := func(param string, extra func(string, *db.AgentGroup) []string) peerViewRule {
 		return peerViewRule{feature: "groups.settings", requires: PermGroupsSettings, group: true, invoke: &peerInvokeSpec{param: param, extra: extra}}
 	}
+	// The PATCH carries the environment and the permission fields too, each
+	// under its own grant (groupUpdate.authorize gates every field), so any
+	// of those grants opens it.
+	patch := settings("name", nil)
+	patch.orGrants = []string{PermGroupsSettingsEnvironment, PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes}
+	rules["PATCH /api/groups/{name}"] = withPeerInvoke("PATCH /api/groups/{name}", patch)
 	for _, pattern := range []string{
-		"PATCH /api/groups/{name}",
 		"POST /api/groups/{name}/rename",
 		"GET /api/groups/{name}/attachment",
 		"POST /api/groups/{name}/attachment",

@@ -1103,7 +1103,9 @@ func (u *groupUpdate) applyMembershipPolicy(w http.ResponseWriter) bool {
 		// cosmetic group editing. Both meta-slugs were checked before mutations
 		// because a replacement can widen and narrow the set in one request.
 		grantedBy := u.caller
-		if grantedBy == "" {
+		if a := peerGrantFromRequest(u.r); a != nil {
+			grantedBy = "peer:" + a.peer
+		} else if grantedBy == "" {
 			grantedBy = "<human>"
 		}
 		if err := db.ReplaceAgentGroupPermissionGrants(u.g.ID, u.normalizedPermissions, grantedBy); err != nil {

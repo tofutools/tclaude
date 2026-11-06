@@ -58,13 +58,13 @@ func TestPeerGroupMemberPermissionsHoldTheCeiling(t *testing.T) {
 
 	require.Empty(t, peerSnapshotGroup(t, h, "crew").Permissions, "withheld without the grant")
 	// Pinned: without the grant that shows the rows, no replacement of them,
-	// even with every other settings and owner-scope grant there.
-	h.grant(t, agentd.PermGroupsSettings, "group=crew")
+	// even with the owner-scope grant there, which opens the same PATCH.
 	h.grant(t, agentd.PermGroupsSettingsOwnerScopes, "group=crew")
 	code, body := patch()
 	require.Equal(t, 403, code, "an empty list would wipe rows the peer never saw: %s", body)
 	require.Equal(t, []string{agentd.PermSelfRename}, groupPermissionSlugs(t, "crew"))
 
+	// The grant alone opens the PATCH: no groups.settings needed.
 	h.grant(t, agentd.PermGroupsSettingsMemberPermissions, "group=crew")
 	require.Equal(t, []string{agentd.PermSelfRename}, peerSnapshotGroup(t, h, "crew").Permissions, "shown under the grant")
 	// The operator's row, as shown, plus one the peer holds.
@@ -92,13 +92,15 @@ func TestPeerGroupOwnerScopesNarrowFreely(t *testing.T) {
 	_, err := db.SetAgentGroupOwnerScopes("crew", `{"groups.members.spawn":{"spawn_profile":["a","b"]}}`)
 	require.NoError(t, err)
 	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
-	h.grant(t, agentd.PermGroupsSettings, "group=crew")
 	set := func(scopes map[string]any) (int, string) {
 		return h.call("PATCH", "/api/groups/crew", map[string]any{"owner_scopes": scopes})
 	}
 	code, body := set(map[string]any{"groups.members.spawn": map[string]any{"spawn_profile": []string{"a"}}})
 	require.Equal(t, 403, code, "without the grant: %s", body)
+	// The grant alone opens the PATCH, for that field only.
 	h.grant(t, agentd.PermGroupsSettingsOwnerScopes, "group=crew")
+	code, body = h.call("PATCH", "/api/groups/crew", map[string]any{"descr": "x"})
+	require.Equal(t, 403, code, "a field of groups.settings: %s", body)
 	require.Contains(t, peerSnapshotGroup(t, h, "crew").OwnerScopes, "groups.members.spawn", "shown under the grant")
 
 	code, body = set(map[string]any{"groups.members.spawn": map[string]any{"spawn_profile": []string{"a"}}, "groups.members.stop": map[string]any{"group": []string{"crew"}}})
