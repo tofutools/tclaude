@@ -200,6 +200,19 @@ func peerScopeNarrows(now, was PermissionScope) bool {
 	return true
 }
 
+// peerGroupPermissionGrants lists which of the grants that show g's
+// permission settings (its member permission rows, its owner scopes and its
+// owners) peer holds there. A projection of those settings reads this list.
+func peerGroupPermissionGrants(peer string, g *db.AgentGroup) []string {
+	var held []string
+	for _, slug := range []string{PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes, PermGroupsOwnersManage} {
+		if fedPeerAllows(peer, g.ID, slug) {
+			held = append(held, slug)
+		}
+	}
+	return held
+}
+
 // projectPeerGroupPermissions fills a group row with the permission settings
 // the peer edits there: its member permission rows, its owner scopes and
 // which members own it, each under the grant that edits it, so an editor
