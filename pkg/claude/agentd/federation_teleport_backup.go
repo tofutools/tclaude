@@ -568,36 +568,11 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 	if err != nil {
 		return
 	}
-	if a != nil && a.Active() {
-		if !prepareTeleportShutdown(l, a.CurrentConvID) {
-			return
-		}
-		res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
-			l.LastError = res.Detail
-			if l.LastError == "" {
-				l.LastError = "pinned pane process still alive; waiting for verified exit"
-			}
-			_, _ = db.TransitionFederationTeleportLease(*l, "")
-			return
-		}
-	}
-	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
+	if a != nil && a.Active() && !stopTeleportAgentVerified(l, a) {
 		return
-	} else if presence != nil && a != nil {
-		if presence.State == "here" {
-			identity := presence.Transfer
-			identity.Hops++
-			if identity.Proofs == nil {
-				identity.Proofs = map[string]string{}
-			}
-			identity.Proofs[arrivalNode()] = db.NewAgentID()
-			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
-				return
-			}
-		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
-			return
-		}
+	}
+	if !retireTeleportPresence(l, a) {
+		return
 	}
 	l.State = "superseded"
 	l.LastError = ""
@@ -629,42 +604,59 @@ func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 			}
 			return
 		}
-	} else {
-		if !prepareTeleportShutdown(l, a.CurrentConvID) {
-			return
-		}
-		res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
-			l.LastError = res.Detail
-			if l.LastError == "" {
-				l.LastError = "pinned pane process still alive; waiting for verified exit"
-			}
-			_, _ = db.TransitionFederationTeleportLease(*l, "")
-			return
-		}
-	}
-	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
+	} else if !stopTeleportAgentVerified(l, a) {
 		return
-	} else if presence != nil && a != nil {
-		if presence.State == "here" {
-			identity := presence.Transfer
-			identity.Hops++
-			if identity.Proofs == nil {
-				identity.Proofs = map[string]string{}
-			}
-			identity.Proofs[arrivalNode()] = db.NewAgentID()
-			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
-				return
-			}
-		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
-			return
-		}
+	}
+	if !retireTeleportPresence(l, a) {
+		return
 	}
 	l.State = "stopped"
 	l.LastError = ""
 	if won, e := db.TransitionFederationTeleportLease(*l, ""); e == nil && won {
 		l.Revision++
 	}
+}
+
+// stopTeleportAgentVerified stops the agent's session and reports whether its
+// exit is verified. When it is not, the lease records why and stays as it is.
+func stopTeleportAgentVerified(l *db.FederationTeleportLease, a *db.Agent) bool {
+	if !prepareTeleportShutdown(l, a.CurrentConvID) {
+		return false
+	}
+	res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
+	if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
+		l.LastError = res.Detail
+		if l.LastError == "" {
+			l.LastError = "pinned pane process still alive; waiting for verified exit"
+		}
+		_, _ = db.TransitionFederationTeleportLease(*l, "")
+		return false
+	}
+	return true
+}
+
+// retireTeleportPresence retires the agent's visitor presence on this node,
+// or confirms it already left on this lease's offer. False leaves the lease
+// where it is.
+func retireTeleportPresence(l *db.FederationTeleportLease, a *db.Agent) bool {
+	presence, err := db.GetAgentFederationPresence(l.TargetAgent)
+	if err != nil {
+		return false
+	}
+	if presence == nil || a == nil {
+		return true
+	}
+	if presence.State == "here" {
+		identity := presence.Transfer
+		identity.Hops++
+		if identity.Proofs == nil {
+			identity.Proofs = map[string]string{}
+		}
+		identity.Proofs[arrivalNode()] = db.NewAgentID()
+		_, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity)
+		return err == nil
+	}
+	return presence.State == "away" && presence.DepartureOffer == l.Offer
 }
 func handleTeleportReport(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requireAgent(w, r)
