@@ -13,7 +13,7 @@ func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 		PermAgentSpawn:         {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		PermProcessRunsManage:  {ScopeDimProcessTemplate},
-		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent},
+		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent, ScopeDimPeer},
 		PermAgentStanddown:     {ScopeDimGroup, ScopeDimTargetAgent},
 		PermRoutesPublish:      {ScopeDimGroup},
 		PermRoutesConsume:      {ScopeDimGroup, ScopeDimPeer},

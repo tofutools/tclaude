@@ -34,8 +34,10 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	// Normal dashboard clients expect arrays/maps, even for withheld concepts.
 	// Initialize only empty collections; this introduces no values or names.
 	fields := allPeerProjectionFields
-	catalogs := peerSpawnCatalogReadable(v)
-	if catalogs || v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
+	// An agent's view carries no spawn catalogs or defaults: profiles can
+	// hold environment values, and agents cannot spawn through a view.
+	catalogs := v.agent == nil && peerSpawnCatalogReadable(v)
+	if catalogs || v.agent == nil && v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
 		fields = peerDefaultsProjectionFields
 		if p := globalDefaultProfile(); p != nil {
 			out.SpawnProfileDefault = p.Name
@@ -118,12 +120,15 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 	rules := peerViewRules()
 	// The settings a peer may change in a group reach it too, so its editors
 	// start from the real values (peerGroupGrants lists its grants once).
-	var settings map[string][]string
-	if v != nil {
+	// An agent's view gets neither: its routes change no setting it would
+	// need to read first, and environment or startup context are the
+	// operator's.
+	var settings, agentHeld map[string][]string
+	if v != nil && v.agent == nil {
 		settings = peerGroupGrants(v.peer.InstanceID, groups)
+		// So do the member settings its editors change (peerAgentGrants).
+		agentHeld = v.agentGrants(groups)
 	}
-	// So do the member settings its editors change (peerAgentGrants).
-	agentHeld := v.agentGrants(groups)
 	for _, g := range groups {
 		if g.IsArchived() || (v != nil && !fedPeerGroupVisible(v.peer.InstanceID, g.ID)) {
 			continue
@@ -253,7 +258,7 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			waiting++
 		}
 	}
-	if v == nil || db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v == nil || v.unrestricted() {
 		// Unrestricted visibility includes loose agents, which are deliberately
 		// absent from a restricted peer's group-scoped projection.
 		active, err := db.ListActiveAgents()

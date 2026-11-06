@@ -22,7 +22,7 @@ func servePeerBackgroundTerminals(w http.ResponseWriter, _ *http.Request, v *pee
 		return
 	}
 	// Not the local handler: that adds the board rows, and boards stay here.
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: classifyBackgroundTerminals(sessions)})
 		return
 	}

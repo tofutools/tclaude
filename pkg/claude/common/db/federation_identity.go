@@ -205,6 +205,11 @@ func rebindFederationIdentityTx(tx *sql.Tx, old, next string, newKey, pinnedKey 
 	if _, err := tx.Exec(`INSERT INTO federation_peers(instance_id,pubkey,label,name,trusted_at,trust_level) SELECT ?,?,?,name,trusted_at,trust_level FROM federation_peers WHERE instance_id=?`, next, newKey, p.Label, old); err != nil {
 		return err
 	}
+	// The predecessor's agent view policy wins over a row left for the
+	// successor's id by an earlier trust, which would otherwise conflict.
+	if _, err := tx.Exec(`DELETE FROM federation_peer_agent_views WHERE peer=? AND EXISTS (SELECT 1 FROM federation_peer_agent_views WHERE peer=?)`, next, old); err != nil {
+		return err
+	}
 	for _, r := range FederationIdentityColumns {
 		if r.Rule != IdentityRebind || r.Column != "peer" {
 			continue

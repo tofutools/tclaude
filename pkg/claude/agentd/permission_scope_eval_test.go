@@ -345,6 +345,16 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 	}
 }
 
+// Every agent peer view route's slug takes a peer= scope, which
+// servePeerViewForAgent evaluates over the route's footprint on the peer.
+func init() {
+	for _, slug := range agentPeerViewSlugs() {
+		if scopedSlugEnforcementPaths[slug] == "" {
+			scopedSlugEnforcementPaths[slug] = "servePeerViewForAgent evaluates peer=<inst>/<group> over the route's footprint"
+		}
+	}
+}
+
 // Enforcement checklist. Every slug that declares ScopeDims must have a
 // named authorization path that actually evaluates the scope — otherwise an
 // operator can write a grant that reads as narrow in `permissions ls` and is

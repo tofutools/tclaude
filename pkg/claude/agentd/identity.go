@@ -1059,7 +1059,7 @@ func resolvePermissionVerdictForAction(r *http.Request, convID, slug string, act
 // resolveRemotePermissionVerdictForActionFrom also accepts sources loaded under
 // the route gate's strict read policy, without weakening that caller's errors.
 func resolveRemotePermissionVerdictForActionFrom(r *http.Request, src permSources, slug string, actx ActionContext) permVerdict {
-	if !db.FederationPeerUnrestricted(actx.RemotePeer) {
+	if actx.strictPeerScope || !db.FederationPeerUnrestricted(actx.RemotePeer) {
 		return resolveRemotePermissionVerdictFrom(src, slug)
 	}
 	// Unrestricted peers also admit truly unscoped standing grants. Bind those

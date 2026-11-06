@@ -66,6 +66,10 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		}
 	}
 	fail := func(err error) {
+		if errors.Is(err, errPeerViewNoAgents) {
+			writeError(w, http.StatusConflict, "peer_lacks_agent_views", "the peer does not serve agent peer views; its operator must upgrade it")
+			return
+		}
 		if errors.Is(err, errPeerViewBusy) {
 			writeError(w, 503, "peer_busy", "peer view concurrency limit reached")
 			return
@@ -93,15 +97,18 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		writeError(w, 413, "request_too_large", "peer request body exceeds limit")
 		return
 	}
-	body, err = prepareHarnessCredentialPush(r, body)
-	if err != nil {
-		writeError(w, 400, "invalid_arg", err.Error())
-		return
-	}
-	body, err = prepareClaudeSubscriptionPush(r, body, peer)
-	if err != nil {
-		writeError(w, 409, "claude_subscription", err.Error())
-		return
+	// An agent's view never carries this node's credentials.
+	if peerViewPrincipalFrom(r.Context()) == nil {
+		body, err = prepareHarnessCredentialPush(r, body)
+		if err != nil {
+			writeError(w, 400, "invalid_arg", err.Error())
+			return
+		}
+		body, err = prepareClaudeSubscriptionPush(r, body, peer)
+		if err != nil {
+			writeError(w, 409, "claude_subscription", err.Error())
+			return
+		}
 	}
 	auditNodeRunProxyRequest(r, peer.InstanceID, body)
 	auditPeerAccessProxy(r, peer.InstanceID, "requested", 202, nil)

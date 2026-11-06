@@ -69,6 +69,7 @@ type PermSlug struct {
 }
 
 func initPermissionRegistry() {
+	initAgentPeerViewScopes(permissionRegistry)
 	initPermissionRegistryEntries(permissionRegistry)
 	initFederationReach(permissionRegistry, slugFederationReach)
 }
@@ -1731,6 +1732,9 @@ type permissionsMutateResp struct {
 	Effect    string          `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
 	Scope     PermissionScope `json:"scope,omitempty"`
 	Effective []string        `json:"effective"` // post-mutation GRANTED slug list for that target
+	// Warnings call out what the grant reaches that its slug may not say,
+	// such as a peer-scoped grant that ends sessions on a peer.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {
@@ -1881,6 +1885,9 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant, Scope: scope}
+	if len(scope[ScopeDimPeer]) != 0 && agentPeerViewDestructive(body.Slug) {
+		resp.Warnings = append(resp.Warnings, agentPeerViewDestructiveWarning(body.Slug, strings.Join(scope[ScopeDimPeer], ", ")))
+	}
 	if target.Sentinel {
 		if len(scope) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_scope", "scoped grants are not supported on the default-permissions list")

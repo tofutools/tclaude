@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Optional observation at the receiver's production dispatch boundary. Tests
@@ -25,6 +26,17 @@ var peerViewObserver atomic.Pointer[func() func()]
 // browser-selected identity. No route falls through to the local dashboard.
 // Trust and grants are rechecked on every request, including existing handlers.
 func PeerViewHandler(instanceID string) http.Handler {
+	return peerViewHandlerFor(instanceID, nil)
+}
+
+// peerViewHandlerFor is PeerViewHandler for a view principal: nil for the
+// peer's operator, or one of the peer's agents (peer_view_agents.go), which
+// reaches only agentPeerViewRoutes and never a local-operator path.
+func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.Handler {
+	actor := "operator@" + instanceID
+	if principal != nil {
+		actor = "agent:" + principal.Name + "/" + principal.ID + "@" + instanceID
+	}
 	mux := http.NewServeMux()
 	for pattern, rule := range peerViewRules() {
 		if strings.HasPrefix(pattern, "feature:") {
@@ -40,8 +52,15 @@ func PeerViewHandler(instanceID string) http.Handler {
 				return
 			}
 			out := &peerViewResponse{header: make(http.Header)}
-			view := &peerView{peer: p}
-			if rule.write != nil && peerViewJobRoute(pattern, r) && view.allows(rule, 0) {
+			view := &peerView{peer: p, agent: principal}
+			if principal != nil {
+				if status, code, msg := agentPeerViewRefusal(instanceID, pattern, r, principal); status != 0 {
+					writeError(w, status, code, msg)
+					recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (agent refused: "+code+")", status)
+					return
+				}
+			}
+			if principal == nil && rule.write != nil && peerViewJobRoute(pattern, r) && view.allows(rule, 0) {
 				// Its work outlasts one exchange: it runs as a job, audited
 				// when it is done (peer_view_jobs.go).
 				id, ok := startPeerViewJob(instanceID, r, func(job *peerViewResponse, req *http.Request) {
@@ -51,7 +70,7 @@ func PeerViewHandler(instanceID string) http.Handler {
 					if jobView.auditDetail != "" {
 						label += " " + jobView.auditDetail
 					}
-					recordFederationAudit("federation.peer_view", "operator@"+instanceID, jobView.targetConv, jobView.groupName, label, job.statusCode())
+					recordFederationAudit("federation.peer_view", actor, jobView.targetConv, jobView.groupName, label, job.statusCode())
 				})
 				if !ok {
 					writeError(w, http.StatusServiceUnavailable, "peer_busy", "this peer already runs its maximum of long operations here")
@@ -59,7 +78,7 @@ func PeerViewHandler(instanceID string) http.Handler {
 				}
 				// Audited when it starts too: work a restart cuts short
 				// still leaves its trail.
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, "", "", r.Method+" "+pattern+" (started)", http.StatusAccepted)
+				recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (started)", http.StatusAccepted)
 				writeJSON(w, http.StatusAccepted, map[string]string{"peer_job": id})
 				return
 			}
@@ -72,13 +91,15 @@ func PeerViewHandler(instanceID string) http.Handler {
 			} else {
 				rule.serve(out, r, view, rule)
 			}
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			// An agent's reads are audited too: the receiving operator sees
+			// which remote agent looked at what.
+			if principal != nil || r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// Do not audit untrusted input (body, target selector, query) as a label.
 				label := r.Method + " " + pattern
 				if view.auditDetail != "" {
 					label += " " + view.auditDetail
 				}
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, label, out.statusCode())
+				recordFederationAudit("federation.peer_view", actor, view.targetConv, view.groupName, label, out.statusCode())
 			}
 			if out.statusCode() >= 200 && out.statusCode() < 300 && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				out.addMetadata(view.metadata())
@@ -245,7 +266,9 @@ func peerViewRules() map[string]peerViewRule {
 }
 
 type peerView struct {
-	peer       *db.FederationPeer
+	peer *db.FederationPeer
+	// agent is the view's agent principal, nil for the peer's operator.
+	agent      *proto.PeerViewAgent
 	targetConv string
 	groupName  string
 	// auditDetail is a validated closed value (never request text) that
@@ -284,9 +307,15 @@ type peerViewMetadata struct {
 	Agents map[string][]string `json:"agents,omitempty"`
 }
 
+// unrestricted reports a view that acts as this node's operator: the
+// operator of a peer this node trusts unrestricted, never one of its agents.
+func (v *peerView) unrestricted() bool {
+	return v != nil && v.agent == nil && db.FederationPeerUnrestricted(v.peer.InstanceID)
+}
+
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 	if rule.unrestrictedOnly {
-		return v != nil && db.FederationPeerUnrestricted(v.peer.InstanceID)
+		return v.unrestricted()
 	}
 	if v != nil && rule.accessRequest {
 		return peerHasAccess(v.peer.InstanceID)
@@ -307,7 +336,7 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 }
 func (v *peerView) metadata() peerViewMetadata {
 	out := peerViewMetadata{Peer: peerDisplay(v.peer), Level: db.FederationTrustRestricted, Included: []string{}, Omitted: []peerViewOmission{}}
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		out.Level = db.FederationTrustUnrestricted
 	}
 	groups, _ := db.ListAgentGroups()
@@ -443,7 +472,7 @@ func servePeerAsLocal(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 }
 
 func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		// Unrestricted trust grants complete collection visibility, while route
 		// classification still limits the available actions.
 		ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerSnapshotCtxKey{}, true)
@@ -511,7 +540,7 @@ func servePeerMessage(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 	var announce struct {
 		AllLive bool `json:"all_live"`
 	}
-	if json.Unmarshal(raw, &announce) == nil && announce.AllLive && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if json.Unmarshal(raw, &announce) == nil && announce.AllLive && v.unrestricted() {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
 		return

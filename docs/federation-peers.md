@@ -362,6 +362,74 @@ Peer grants for roster, presence and attachments control what the receiving
 instance shares. Agents do not need separate roster, presence or attachment
 grants for these remote operations.
 
+### Agent peer views: lifecycle and settings on a peer
+
+An agent can also act on a peer's agents and groups through the peer view
+API (`/v1/federation/peer/{node}/{tail...}`), the way its operator can from
+the dashboard. Two gates apply, and **both** must pass:
+
+1. **On your node**, the agent holds the route's slugs with an explicit
+   `peer=<peer>/<remote-group>` (or `peer=<peer>`) grant covering every
+   group the route touches. For an agent route that is every group your
+   node's latest catalog of the peer shows the target in, plus a clone's
+   destination group. Nothing is granted by default. An unscoped grant, a
+   `group=` grant, ownership and agent defaults never count, even toward a
+   peer you trust unrestricted. An explicit deny wins. One missing group
+   can still be approved once with `--ask-human`; more than one is refused.
+2. **On the peer**, the request runs under an *agent principal*. The peer's
+   own grants to your node still decide, as for your operator. An agent
+   never gets the peer's local-operator paths, not even when the peer trusts
+   your node unrestricted. Your node sends the groups it checked, and the
+   peer refuses a request that touches any other group (`agent_footprint`),
+   so a stale catalog cannot widen what the agent reaches. Its operator can turn agent views off for your
+   node with `tclaude federation agent-views <peer> deny`. The default is
+   `allow`, because gate 1 already requires an explicit grant per slug.
+
+| Route on the peer | Agent slug (`peer=` scope) |
+|---|---|
+| `GET snapshot`, `groups`, `groups/{name}`, `agents/{id}` | `agents.status.read` |
+| `POST agents/{id}/stop` · `resume` · `restart` · `retire` · `clone` | `agent.stop` · `agent.resume` · both for restart · `agent.retire` · `agent.clone` |
+| `POST agents/{id}/rename` · `tags` · `task` · `notify` | `agent.rename` · `agent.tags` · `agent.task` (notify too) |
+| `PATCH groups/{name}/members/{conv}` | `groups.members.update` |
+| `POST groups/{name}/shutdown` · `power-on` | `groups.members.stop` · `groups.members.resume` |
+| `PATCH groups/{name}` with `descr`, `max_members`, `notify_enabled` | `groups.settings.description`, `.max-members`, `.notifications` |
+| `POST groups/{name}/rename`, `GET`/`POST groups/{name}/attachment` | `groups.rename`, `groups.attachment` |
+
+```bash
+tclaude agent permissions peer-reach add ops-lead --peer bob/builders --slug agent.stop --slug agent.resume
+tclaude agent permissions peer-reach add ops-lead --peer bob --slug agents.status.read
+```
+
+`peer-reach add` adds the peer to the agent's existing grant of each slug.
+It refuses a grant the agent holds for local use, rather than replacing it.
+Both `peer-reach add` and `permissions grant --scope peer=…` warn for
+`agent.stop`, `agent.retire` and `groups.members.stop`, which end sessions
+on the peer, and for `agent.resume`, which a restart also needs.
+
+Everything else on the peer view stays the operator's: moves and teleports,
+spawns (agents use the spawn request), sessions and shells, node management,
+environment and sandbox, and every group setting that shapes future members
+(startup context, saved prompts, default directory, profile and spawn target,
+member permissions, owners, nesting).
+
+Other limits:
+
+- An agent gets at most 60 peer view attempts a minute, refused ones
+  included, and 4 at once. Past the limit, one refusal per minute is
+  audited.
+- A peer that does not advertise agent views (an older tclaude) is refused
+  locally with `peer_lacks_agent_views`. It never receives the request,
+  because it would serve it as your operator's. A peer that answers without
+  confirming the agent principal, for example one downgraded since its last
+  catalog, is refused the same way, before the request is sent.
+- An agent's reads carry no group or member settings and no spawn catalogs
+  or defaults, even where the peer's grants would show them to its operator.
+- Both nodes audit the agent, reads and refusals included:
+  `federation.peer_view.agent.out` on yours, and
+  `agent:<name>/<agent-id>@<node>` on the peer's.
+- A reply carries `X-Tclaude-Remote-Content: untrusted`. What a peer returns
+  is remote content, so treat it like remote mail.
+
 ## Discovery: what your agents may address
 
 ```bash
@@ -867,7 +935,8 @@ tclaude agent groups ls --all-nodes --json
 accept `self` for the local instance. Hub-reported names do not select peers.
 Normal `federation nodes` still reads the cached node capability catalog under
 its existing `node.read` policy; live summaries and live peer views are
-operator reads. The local daemon APIs are `GET /v1/federation/node-summary`
+operator reads (an agent reaches only the routes in
+[Agent peer views](#agent-peer-views-lifecycle-and-settings-on-a-peer)). The local daemon APIs are `GET /v1/federation/node-summary`
 and `GET /v1/federation/peer/{node}/{tail...}`.
 
 A summary listing explicitly fetches self and trusted peers in the CLI, with
