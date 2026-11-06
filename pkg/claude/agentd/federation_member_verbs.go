@@ -172,7 +172,10 @@ func remoteMemberVerbBody(r *http.Request, verb string) (body []byte, note, refu
 				return nil, "", "remote context info does not take " + k
 			}
 		}
-		return nil, "", ""
+		if q.Get("fresh") == "1" {
+			note = "a peer reads the cached figures: a fresh read spends the agent's own budget"
+		}
+		return nil, note, ""
 	case "prs":
 		if len(q) > 0 {
 			return nil, "", "remote PRs take no options"
@@ -190,10 +193,10 @@ func remoteMemberVerbBody(r *http.Request, verb string) (body []byte, note, refu
 		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.URL) == "" {
 			return nil, "", "expected a PR link"
 		}
-		if in.RepoDir != "" {
-			note = "the repository directory was not sent: it is a path on this node, not the peer's"
+		if in.RepoDir != "" || strings.TrimSpace(in.Summary) != "" {
+			note = "only the link and its state were sent: a peer takes no repository directory or summary"
 		}
-		out, _ := json.Marshal(map[string]any{"url": in.URL, "summary": in.Summary, "state": in.State, "handled": in.Handled})
+		out, _ := json.Marshal(map[string]any{"url": in.URL, "state": in.State, "handled": in.Handled})
 		return out, note, ""
 	case "stop":
 		for k := range q {

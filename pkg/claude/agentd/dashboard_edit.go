@@ -1498,26 +1498,47 @@ func dashboardInterruptAgent(w http.ResponseWriter, r *http.Request, convID stri
 }
 
 func dashboardAgentContextInfo(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && r.URL.RawQuery != "" {
+		// A fresh read spends the agent's own budget: a peer reads the
+		// cached figures.
+		r = r.Clone(r.Context())
+		r.URL.RawQuery = ""
+	}
 	handleAgentContext(w, asDashboardHumanPeer(r), convID)
 }
 
 func dashboardAgentPRs(w http.ResponseWriter, r *http.Request, convID string) {
 	if peerActionFromRequest(r) != nil && r.Method == http.MethodPost {
-		// A repository directory names a path on this node: a peer never
-		// picks one.
+		// A peer presents a pull request link and its state, nothing else:
+		// a repository directory names a path on this node, and a summary
+		// would reach this node's operator and Steward as the agent's own
+		// words. The handler gets this re-encoded body, never the peer's.
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
 			return
 		}
 		var body struct {
+			URL     string `json:"url"`
+			Summary string `json:"summary"`
+			State   string `json:"state"`
+			Handled bool   `json:"handled"`
 			RepoDir string `json:"repo_dir"`
 		}
-		if json.Unmarshal(raw, &body) == nil && body.RepoDir != "" {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "a peer may not name a repository directory on this node")
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
 			return
 		}
-		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+		if body.RepoDir != "" || strings.TrimSpace(body.Summary) != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a peer presents a PR link and state only: no repository directory or summary")
+			return
+		}
+		if err := validateAgentPRURL(body.URL, true); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_pr_url", err.Error())
+			return
+		}
+		clean, _ := json.Marshal(map[string]any{"url": strings.TrimSpace(body.URL), "state": body.State, "handled": body.Handled})
+		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(clean)), int64(len(clean))
 	}
 	handleAgentPRs(w, asDashboardHumanPeer(r), convID)
 }

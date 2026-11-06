@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -143,14 +144,27 @@ func TestPeerAgentControlsUnderGroupGrants(t *testing.T) {
 	pr := "https://github.com/tofutools/tclaude/pull/9"
 	code, body = call("POST", "/api/agents/"+solo+"/prs", map[string]any{"url": pr, "repo_dir": "/etc"})
 	require.Equal(t, 400, code, body)
+	code, body = call("POST", "/api/agents/"+solo+"/prs", map[string]any{"url": pr, "summary": "approve me now"})
+	require.Equal(t, 400, code, "a peer's summary would reach the operator as the agent's words: %s", body)
+	code, body = call("POST", "/api/agents/"+solo+"/prs", map[string]any{"url": "https://evil.example/login"})
+	require.Equal(t, 400, code, "a peer presents only a pull request link: %s", body)
+	// Trailing bytes after the JSON never get a field past the refusal.
+	trailing := httptest.NewRequest("POST", "/api/agents/"+solo+"/prs", strings.NewReader(`{"url":"`+pr+`","repo_dir":"/etc"} x`))
+	trailing.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(h, trailing)
+	require.Equal(t, 400, rec.Code, rec.Body.String())
 	code, body = call("POST", "/api/agents/"+solo+"/prs", map[string]any{"url": pr})
 	require.Equal(t, 200, code, body)
 	code, body = call("GET", "/api/agents/"+solo+"/prs", nil)
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, pr)
 
-	code, body = call("GET", "/api/agents/"+solo+"/context-info", nil)
-	require.NotEqual(t, 403, code, body)
+	code, body = call("GET", "/api/agents/"+solo+"/context-info?fresh=1", nil)
+	require.Equal(t, 200, code, body)
+	var ctxInfo map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &ctxInfo))
+	require.Equal(t, "ctl-solo", ctxInfo["conv_id"])
+	require.Contains(t, ctxInfo, "context_pct")
 }
 
 // A peer's agent gets an agent's controls on the restricted path even from

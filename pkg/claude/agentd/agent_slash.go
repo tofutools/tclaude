@@ -370,8 +370,13 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// and, on failure, the step that said no. Neither is re-derived afterwards
 	// from a condition that could have changed, or that the dispatch never
 	// reached. TCL-1053 shipped the other version.
+	reason := slashReason(label, caller, target)
+	if a := peerActionFromRequest(r); a != nil {
+		// A peer's action names the target as its caller: say who drove it.
+		reason = label + " (" + peerRequesterLabel(a.peer) + ")"
+	}
 	transport, failure := dispatchSlashCommand(
-		target, slash, body.FollowUp, slashReason(label, caller, target))
+		target, slash, body.FollowUp, reason)
 	if transport == slashTransportNone {
 		writeError(w, http.StatusServiceUnavailable, string(failure),
 			slashFailureDetail(failure, target, slash))
