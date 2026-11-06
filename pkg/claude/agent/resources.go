@@ -61,6 +61,9 @@ type groupResourcesResp struct {
 		TemplateID   string `json:"templateId"`
 		Name         string `json:"name"`
 		AgentsLocked bool   `json:"agentsLocked"`
+		// CanLock is whether this caller may lock the template: in every
+		// group it is pinned to, which the group's own CanLock does not say.
+		CanLock bool `json:"canLock"`
 	} `json:"processes"`
 	Boards []struct {
 		ID           string `json:"id"`
@@ -91,6 +94,12 @@ func runResourcesLs(p *resourcesLsParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		return writeBoardJSON(stdout, resp)
 	}
+	printGroupResources(stdout, resp)
+	return rcOK
+}
+
+// printGroupResources is resources ls's table and its lock hint.
+func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 	lock := func(locked bool) string {
 		if locked {
 			return "locked"
@@ -118,8 +127,16 @@ func runResourcesLs(p *resourcesLsParams, stdout, stderr io.Writer) int {
 	}
 	if resp.CanLock {
 		fmt.Fprintln(stdout, "You hold groups.resources.lock here: `tclaude agent resources lock|unlock <kind> <id>`.")
+		var elsewhere []string
+		for _, r := range resp.Processes {
+			if !r.CanLock {
+				elsewhere = append(elsewhere, r.TemplateID)
+			}
+		}
+		if len(elsewhere) > 0 {
+			fmt.Fprintf(stdout, "Not process %s: also pinned to a group where you do not hold it.\n", strings.Join(elsewhere, ", "))
+		}
 	}
-	return rcOK
 }
 
 type resourcesLockParams struct {

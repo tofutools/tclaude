@@ -254,7 +254,9 @@ tclaude agent permissions grant <agent> groups.resources.lock --scope group=desi
 ```
 
 `tclaude agent resources ls <group>` lists a group's processes, boards and
-pages with their locks, for its members (`groups.resources.read`).
+pages with their locks, for its members (`groups.resources.read`). Holding
+the lock in the group covers its boards and pages, but not a template that
+is also pinned to a group where you don't hold it: the list names those.
 
 An operator of a trusted federation peer can lock from their own dashboard
 only as far as this node's grants to that peer reach: the group-scoped peer

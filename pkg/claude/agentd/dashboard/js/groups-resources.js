@@ -400,9 +400,14 @@ export async function loadPeerResources(name, fetchImpl) {
   return body;
 }
 
-function peerRows(resources) {
+// A template's lock reaches every group it is pinned to, so each says for
+// itself whether the node lets this one change it; a node from before that
+// answers for the group only.
+export function peerRows(resources) {
+  const groupAllows = !!resources.canLock;
   return [
-    ['processes', 'Processes', '⚙', 'process', (resources.processes || []).map((p) => ({ id: p.templateId, name: p.name || p.templateId, locked: !!p.agentsLocked }))],
+    ['processes', 'Processes', '⚙', 'process', (resources.processes || []).map((p) => ({ id: p.templateId, name: p.name || p.templateId, locked: !!p.agentsLocked,
+      allowed: typeof p.canLock === 'boolean' ? p.canLock : groupAllows }))],
     ['boards', 'Boards', '▦', 'board', (resources.boards || []).map((b) => ({ id: b.id, name: b.title || b.id, locked: !!b.agentsLocked }))],
     ['pages', 'Pages', '◧', 'page', (resources.pages || []).map((p) => ({ id: p.id, name: p.title || p.name, locked: !!p.agentsLocked }))],
   ].filter(([, , , , rows]) => rows.length > 0);
@@ -473,13 +478,14 @@ export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = 
   const kinds = peerRows(resources);
   if (!kinds.length) return null;
   const peer = { fetchImpl: reach, allowed: !!resources.canLock, node: node?.name };
+  const peerFor = (row) => (row.allowed === undefined || row.allowed === peer.allowed ? peer : { ...peer, allowed: row.allowed });
   return html`<div class="gr-resources" data-group-resources=${group.name} data-peer-resources=${node?.id || ''}>
     ${kinds.map(([key, label, glyph, kind, rows]) => html`<div key=${key} class="gr-kind" data-resource-kind=${key}>
       <span class="ui-eyebrow gr-kind-label">${label}</span>
       ${rows.map((row) => html`<div key=${row.id} class="gr-row" data-peer-resource=${`${kind}:${row.id}`}>
         <span class="gr-name-text" title=${row.name}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${row.name}</span>
         <span class="gr-spacer"></span>
-        <${LockChip} kind=${kind} id=${row.id} name=${row.name} locked=${row.locked} peer=${peer} notify=${notify}
+        <${LockChip} kind=${kind} id=${row.id} name=${row.name} locked=${row.locked} peer=${peerFor(row)} notify=${notify}
           source=${{ refresh }} />
       </div>`)}
     </div>`)}
