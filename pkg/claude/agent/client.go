@@ -507,12 +507,43 @@ func DaemonGetRaw(path string) ([]byte, http.Header, error) {
 }
 
 func daemonGetRaw(path string) ([]byte, http.Header, error) {
+	return daemonGetRawWithOptions(path, DaemonOpts{})
+}
+
+// DaemonGetRawWithOptionsImpl is the seam for DaemonGetRawWithOptions, as
+// DaemonGetRawImpl is for DaemonGetRaw.
+var DaemonGetRawWithOptionsImpl = daemonGetRawWithOptions
+
+// DaemonGetRawWithOptions is DaemonGetRaw with opts: an AskHuman turns a
+// permission refusal into the operator's approval popup, as on the JSON
+// transport. Like DaemonPostRawWithOptions it honours AskHuman and
+// RetryOutput only; TargetConv, Timeout and NoRetry are not applied.
+func DaemonGetRawWithOptions(path string, opts DaemonOpts) ([]byte, http.Header, error) {
+	return DaemonGetRawWithOptionsImpl(path, opts)
+}
+
+// rawGetRequest builds a raw GET and the client to send it with.
+func rawGetRequest(path string, opts DaemonOpts) (*http.Request, *http.Client, error) {
 	req, err := http.NewRequest(http.MethodGet, "http://_"+path, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	attachCallerIdentity(req)
-	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, cliStderr, defaultRetryPolicy())
+	client := httpClientWithTimeout(daemonRawTimeout)
+	if opts.AskHuman > 0 {
+		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
+		// Defensive: ParseAskHuman caps the popup well inside the raw budget.
+		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
+	}
+	return req, client, nil
+}
+
+func daemonGetRawWithOptions(path string, opts DaemonOpts) ([]byte, http.Header, error) {
+	req, client, err := rawGetRequest(path, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), defaultRetryPolicy())
 	if err != nil {
 		return nil, nil, err
 	}
