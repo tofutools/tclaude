@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { FilterCombobox } from './filter-combobox.js';
+import { AgentPickerDialog, TargetPicker } from './agent-picker.js';
 import { TransferTray } from './transfer-card.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
@@ -12,7 +13,7 @@ import { registerMessageAccessDialogController } from './message-access-dialog-c
 import { isPageNode, nodeSnapshot } from './node-api.js';
 import { LockReason, NodeChip } from './lock-reason.js';
 import {
-  DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, agentCandidates, groupMembers, groupsForPicker, permissionRows,
+  DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, groupMembers, permissionRows,
   permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
   RESOURCE_KIND_LABELS, SCOPE_CHIPS_SHOWN, SCOPE_COMBOBOX_DIMS, scopeComboItems, scopeCountText,
   scopeCatalogueIndex, scopeDimUsesCombobox, scopeValueLabel, umbrellaCover,
@@ -198,106 +199,6 @@ function useLiveTheme() {
   }, []);
 }
 
-export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, groupLocked = '' }) {
-  useLiveTheme();
-  const scope = value.scopeGroup || '';
-  const groups = groupsForPicker(snapshot, scope);
-  const members = scope ? groupMembers(snapshot, scope) : [];
-  const groupOptions = value.groupName && !groups.includes(value.groupName)
-    ? [value.groupName, ...groups] : groups;
-  const memberOptions = value.target && !members.some((member) => member.key === value.target)
-    ? [{ key: value.target, title: `${value.target} (missing)`, online: false }, ...members] : members;
-  const modeName = `${prefix}-target-mode`;
-  const setMode = (mode) => onChange({ ...value, mode });
-  const choose = async () => {
-    const picked = await pickAgent({ title: 'Pick target', identity: 'agent' });
-    if (picked) onChange({ ...value, target: picked });
-  };
-  return html`<div class="cron-create-target" id=${`${prefix}-target-picker`}>
-    <div class="cron-target-modes">
-      <label><input type="radio" name=${modeName} value="solo" checked=${value.mode === 'solo'}
-        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo hero"/></label>
-      <label class=${groupLocked ? 'locked-field' : ''}><input type="radio" name=${modeName} value="group" checked=${value.mode === 'group'}
-        disabled=${!!groupLocked} onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label><${LockReason} why=${groupLocked}/>
-    </div>
-    ${value.mode === 'solo' && !scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-solo`}>
-      <input id=${`${prefix}-target`} type="text" value=${value.target}
-        placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false"
-        onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <${Button} id=${`${prefix}-target-pick`} title="Pick from the agent / hero list" onClick=${choose}>🔍<//>
-    </div>`}
-    ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-scoped`}>
-      <${Select} id=${`${prefix}-scoped-member`} value=${value.target}
-        onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
-        ${memberOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
-      <//>
-    </div>`}
-    ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
-      <${Select} id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
-        onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
-        ${groupOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${!groups.includes(name) ? ' (missing)' : ''}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      <//>
-    </div>`}
-  </div>`;
-}
-
-function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
-  const [query, setQuery] = useState('');
-  const [includeOffline, setIncludeOffline] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-  const searchRef = useRef(null);
-  const highlightedRef = useRef(null);
-  const candidates = agentCandidates(snapshot, { includeOffline, query });
-  const activeSudo = sudoByAgent(snapshot);
-  const bounded = Math.max(0, Math.min(highlight, Math.max(0, candidates.length - 1)));
-  const activeID = candidates[bounded] ? `cron-pick-target-option-${bounded}` : undefined;
-  const activeKey = candidates[bounded]?.agent_id || candidates[bounded]?.conv_id || '';
-  useEffect(() => { if (bounded !== highlight) setHighlight(bounded); }, [bounded, highlight]);
-  useEffect(() => { highlightedRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [bounded, activeKey]);
-  const choose = (agent) => state.finishPicker(descriptor.identity === 'conv'
-    ? agent.conv_id : (agent.agent_id || agent.conv_id));
-  const onKeyDown = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'ArrowDown') { event.preventDefault(); setHighlight(Math.min(bounded + 1, candidates.length - 1)); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); setHighlight(Math.max(bounded - 1, 0)); }
-    else if (event.key === 'Enter' && candidates[bounded]) { event.preventDefault(); choose(candidates[bounded]); }
-  };
-  return html`<${Dialog} id="cron-pick-target-modal" dialogClass="add-member-modal" onClose=${() => state.finishPicker('')}
-    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard} title=${html`${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span>`}>
-    <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
-      value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
-      role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
-      aria-autocomplete="list" aria-activedescendant=${activeID}
-      onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
-    <div class="add-member-list" id="cron-pick-target-list" role="listbox">
-      ${candidates.length === 0 ? html`<div class="ui-empty-block">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
-        : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
-          ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
-          role="option" aria-selected=${index === bounded ? 'true' : 'false'}
-          class=${`add-member-row${index === bounded ? ' highlighted' : ''}`} data-i=${index}
-          onMouseDown=${() => choose(agent)}>
-          <span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>
-          <span class="rowname">${agent.title || '(unnamed)'}</span>
-          <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span>
-          ${descriptor.showSudo && activeSudo.get(agent.agent_id || agent.conv_id)?.length
-            ? html`<span class="sudo-badge" title=${`${activeSudo.get(agent.agent_id || agent.conv_id).length} active sudo grant(s)`}>🔓</span>` : null}
-          ${agent.memberships.length ? html`<span class="groups-tag">in: ${agent.memberships.map((item) => item.group).join(', ')}</span>` : null}
-        </div>`)}
-    </div>
-    <div class="add-member-foot">
-      <label title=${descriptor.includeOfflineHint || 'Include offline / archived agents'}>
-        <input id="cron-pick-target-all" type="checkbox" checked=${includeOffline}
-          onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlight(0); }} />Include offline / archived
-      </label>
-      <span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
-    </div>
-  </${Dialog}>`;
-}
-
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   useLiveTheme();
@@ -438,7 +339,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       <${Button} id="message-create-from-pick" title="Pick from the agent / hero list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍<//>
     </div><${LockReason} id="message-create-from-lock" why=${lock.from}/></div></label>
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
-      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
+      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} groupLocked=${lock.group || ''} LockReason=${LockReason}
+        onPick=${async () => {
+          const picked = await state.pickAgent({ title: 'Pick target', identity: 'agent' });
+          if (picked) setTarget((current) => ({ ...current, target: picked }));
+        }}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
       <p class="cleanup-hint ui-hint" id="message-create-group-hint">${groupExists
         ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
@@ -1397,8 +1302,9 @@ export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot,
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'context-features') parent = html`<${ContextFeaturesDialog} key=${`context-features:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'relaunch-policy') parent = html`<${RelaunchPolicyDialog} key=${`relaunch-policy:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
-  return html`<${Fragment}>${parent}${current.picker && html`<${AgentPicker} key=${`picker:${current.picker.launchID}`}
-    descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}<${TransferTray} /></${Fragment}>`;
+  return html`<${Fragment}>${parent}${current.picker && html`<${AgentPickerDialog} key=${`picker:${current.picker.launchID}`}
+    descriptor=${current.picker} snapshot=${snapshot} sudo=${current.picker.showSudo ? sudoByAgent(snapshot) : null}
+    onChoose=${(key) => state.finishPicker(key)} onClose=${() => state.finishPicker('')} confirmDiscard=${confirmDiscard}/>`}<${TransferTray} /></${Fragment}>`;
 }
 
 export function mountMessageAccessDialogIsland({

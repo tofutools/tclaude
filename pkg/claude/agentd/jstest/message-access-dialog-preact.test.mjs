@@ -100,9 +100,9 @@ test('chooser keeps keyboard highlight visible and exposes the active option', a
   scrolled = '';
   const search = host.querySelector('#cron-pick-target-search');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
-  assert.equal(search.getAttribute('aria-activedescendant'), 'cron-pick-target-option-1');
-  assert.equal(host.querySelector('#cron-pick-target-option-1').getAttribute('aria-selected'), 'true');
-  assert.equal(scrolled, 'cron-pick-target-option-1');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'cron-pick-target-list-option-1');
+  assert.ok(host.querySelector('#cron-pick-target-list-option-1').classList.contains('highlighted'));
+  assert.equal(scrolled, 'cron-pick-target-list-option-1');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.equal(await picked, 'agt_01');
   await mounted.unmount();

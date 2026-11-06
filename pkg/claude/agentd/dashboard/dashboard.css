@@ -6547,6 +6547,18 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .filter-combobox-group { padding: 2px 10px 0; color: #a9b1c0; font-size: 11px; }
 .filter-combobox-tip { padding: 4px 10px; color: var(--ui-muted-text); font-size: 11px; }
 .filter-combobox-foot { border-top: 1px solid #2a3340; padding: 4px 10px; color: #e3b341; font-size: 11px; }
+/* The agent picker (agent-picker.js): in its dialog the list fills the
+   dialog, under a full-size box; in a form, the chosen agent sits above it. */
+.agent-picker { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.agent-picker .filter-combobox { max-width: none; margin-top: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.agent-picker .filter-combobox .filter-combobox-input { padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
+.agent-picker .filter-combobox .filter-combobox-list { flex: 1 1 auto; min-height: 80px; max-height: 50vh; margin-top: 0; border-color: #2a3340; }
+.agent-picker .filter-combobox .add-member-row { padding: 6px 10px; }
+.agent-combobox { flex: 1 1 auto; min-width: 0; }
+.agent-combobox .filter-combobox { margin-top: 0; }
+.agent-combobox-chosen { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; font-size: 12px; }
+.agent-combobox-chosen .rowname { color: #d4d4d4; font-weight: bold; }
+.agent-combobox-chosen .id { color: #7d8590; font-size: 11px; }
 .perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font-family: inherit; }
 .perm-scope-sheet {
   margin-top: 4px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 4px 8px; max-width: 460px;

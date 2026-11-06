@@ -292,7 +292,7 @@ test('cron explainer rejects stale responses while stacked pickers and live snap
   assert.ok(mounted.container.querySelector('#cron-create-modal'));
 
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-owner-pick'), 'click'));
-  const option = mounted.container.querySelector('#cron-pick-target-option-1');
+  const option = mounted.container.querySelector('#cron-pick-target-list-option-1');
   await harness.act(() => harness.fireEvent(option, 'mousedown'));
   assert.equal(mounted.container.querySelector('#cron-create-owner').value, 'agt_two');
   await mounted.unmount();
