@@ -1,9 +1,9 @@
 package agentd
 
 import (
+	"encoding/json"
 	"maps"
 	"os"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -350,15 +350,14 @@ func TestFederationReachNonePending(t *testing.T) {
 	}
 }
 
-// sandbox.harness-config is local: a peer's spawn request carries no field
-// that could lift the harness-config floor, and an unknown one is dropped
-// when the payload is decoded.
-func TestPeerSpawnRequestCarriesNoHarnessConfig(t *testing.T) {
-	typ := reflect.TypeFor[proto.SpawnRequestPayload]()
-	for i := range typ.NumField() {
-		f := typ.Field(i)
-		name := strings.ToLower(f.Name + " " + f.Tag.Get("json"))
-		assert.NotContains(t, name, "harness", "%s: a peer's spawn must not choose the harness-config posture", f.Name)
-		assert.NotContains(t, name, "sandbox", "%s: a peer's spawn must not choose sandbox posture", f.Name)
+// sandbox.harness-config is local: the launch settings a peer's spawn may
+// carry (fedSpawnLaunchKeys, enforced by validateFedSpawnLaunch) include no
+// harness-config selector.
+func TestPeerSpawnLaunchCarriesNoHarnessConfig(t *testing.T) {
+	_, carried := fedSpawnLaunchKeys[harnessConfigField]
+	assert.False(t, carried, "a peer's spawn must not select the harness-config posture: that is sandbox.harness-config, local")
+	for key := range fedSpawnLaunchKeys {
+		assert.NotContains(t, key, "harness", "%s: a peer's spawn must not select the harness-config posture", key)
 	}
+	assert.Error(t, validateFedSpawnLaunch(map[string]json.RawMessage{harnessConfigField: json.RawMessage(`"write"`)}))
 }

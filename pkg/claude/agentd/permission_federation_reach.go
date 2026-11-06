@@ -233,7 +233,7 @@ var slugFederationReach = map[string]FedReach{
 	PermConfigExport:                      {Kind: FedPeerInstance, Sensitive: true},
 	PermConfigImport:                      {Kind: FedPeerAlias, Via: []string{PermConfigOffer}},
 	PermProfilesManage:                    {Kind: FedPeerInstance, Sensitive: true},
-	PermSandboxHarnessConfig:              {Kind: FedLocal, Why: "lifts a spawn's read-only floor over the harness's own config; a peer never loosens a sandbox"},
+	PermSandboxHarnessConfig:              {Kind: FedLocal, Why: "selects a spawn's harness-config posture directly; a peer's spawn carries no such setting, and its sandbox choices take groups.members.spawn.sandbox and groups.members.spawn.permissions"},
 	PermSandboxProfilesManage:             {Kind: FedPeerInstance, Sensitive: true},
 	PermRelaunchPolicyManage:              {Kind: FedLocal, Why: "a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)"},
 	PermSandboxProfilesDraft:              {Kind: FedLocal, Why: "a scribe the local operator summoned hands its draft to that operator"},

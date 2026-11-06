@@ -229,8 +229,10 @@ their own node's proxies instead. Umbrella slugs (`groups.admin`,
 `resources.read`, `resources.write`) are not peer grants: a peer is granted
 each operation it needs, so its grant list says exactly what it holds. Morph
 (`agent.morph`, `groups.members.morph`) re-forms an agent's whole launch, and
-`sandbox.harness-config` lifts a spawn's floor over the harness's own config:
-a peer only narrows. `groups.settings.default-spawn-target`, inbox watch,
+`sandbox.harness-config` selects a spawn's harness-config posture directly,
+a setting a peer's spawn does not carry. A peer's sandbox choices go through
+`groups.members.spawn.sandbox` (an existing sandbox profile, whose own
+`harness_config` then applies) and `groups.members.spawn.permissions`. `groups.settings.default-spawn-target`, inbox watch,
 `human.notify` and `agent.standdown` belong to this node's own operator and
 agents. The dashboard's grant picker lists every one of them as a disabled
 row with its reason.

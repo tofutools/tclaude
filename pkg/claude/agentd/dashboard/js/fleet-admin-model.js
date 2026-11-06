@@ -263,7 +263,7 @@ export const UNGRANTABLE_SLUGS = Object.freeze([
   { slug: 'agent.standdown', why: 'reserved for the scoped stand-down flow; no operation checks it yet' },
   { slug: 'agent.inbox-watch', why: 'delivers another member\'s mail into the calling agent\'s own pane; a peer reads mail through node.messages.read' },
   { slug: 'groups.members.inbox-watch', why: 'delivers another member\'s mail into the calling agent\'s own pane; a peer reads mail through node.messages.read' },
-  { slug: 'sandbox.harness-config', why: 'lifts a spawn\'s read-only floor over the harness\'s own config; a peer never loosens a sandbox' },
+  { slug: 'sandbox.harness-config', why: 'selects a spawn\'s harness-config posture directly; a peer\'s spawn carries no such setting, and its sandbox choices take groups.members.spawn.sandbox and groups.members.spawn.permissions' },
   { slug: 'human.notify', why: 'an agent of this node reaching its own operator\'s Messages tab; a peer\'s agents notify their own operator' },
   { slug: 'relaunch-policy.manage', why: 'a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)' },
 ]);
