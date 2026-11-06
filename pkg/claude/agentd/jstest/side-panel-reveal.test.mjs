@@ -428,6 +428,35 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   s.harness.fireEvent(s.dock, 'focusout');
   s.timers.advance(s.hoverClose * 4);
   assert.equal(s.revealed(), true, 'the window losing focus while the pointer is out does not send it away');
+  s.harness.fireEvent(s.dock, 'focusout', { relatedTarget: s.content });
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'but a focus move out of it, by keyboard, still does');
+
+  s = await shell(t);
+  s.restAtEdge();
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  leaveWindow(s, { fromPanel: true });
+  const frame = s.doc.body.appendChild(s.doc.createElement('iframe'));
+  s.harness.fireEvent(frame, 'pointerover');
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'back in straight over a frame, away from the panel, it goes after the delay');
+
+  s = await shell(t);
+  s.restAtEdge();
+  s.move(s.content, 300);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { pointerType: 'touch' });
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'a touch lifting is no window exit: the pending hide still fires');
+
+  s = await shell(t);
+  snap(s, [420, 860]);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
+  assert.equal(s.revealed(), true, 'a snap running off the edge reveals on the way out');
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'and stays while the pointer is out');
+  s.move(s.content, 300);
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'back on the page, it goes after the delay');
 });
 
 test('leaving the panel straight into a frame still sends it away', async (t) => {

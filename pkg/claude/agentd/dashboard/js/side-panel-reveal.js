@@ -511,6 +511,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // sends a move inside the edge zone, so it counts when its next frame would
   // have got there.
   doc.documentElement?.addEventListener('pointerleave', (event) => {
+    // A touch or a pen lifting leaves the page too: no window exit.
+    if (event.pointerType && event.pointerType !== 'mouse') return;
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
@@ -539,8 +541,20 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // A motion is only measured from a rest the page saw: no pointermove comes
   // while the pointer is over a frame (a page or a board), so the gap after
   // one is no rest, and the next move starts a new motion where it is.
+  const isFrame = (el) => /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(el?.tagName || '');
   doc.addEventListener('pointerout', (event) => {
-    if (/^(IFRAME|FRAME|OBJECT|EMBED)$/.test(event.relatedTarget?.tagName || '')) motion = null;
+    if (isFrame(event.relatedTarget)) motion = null;
+  }, true);
+  // Back in from outside straight over a frame, the page sees no move, only
+  // the frame's over: the pointer is back, and away from the panel.
+  doc.addEventListener('pointerover', (event) => {
+    if (!outside || !isFrame(event.target)) return;
+    if (event.pointerType && event.pointerType !== 'mouse') return;
+    outside = false;
+    if (isSidePanelRevealed()) {
+      overPanel = false;
+      scheduleHide();
+    } else if (isSidePanelPeeking() && !retract) armRetract();
   }, true);
   doc.addEventListener('drop', dragOver, true);
   // The pointer can leave the panel straight into a frame (a page or a board),
@@ -558,8 +572,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     cancelHide();
   });
   doc.addEventListener('focusout', (event) => {
-    // The window losing focus while the pointer is out of it is no leave.
-    if (outside) return;
+    // The window losing focus while the pointer is out of it is no leave (a
+    // focus move inside the page, by keyboard, still is).
+    if (outside && !event.relatedTarget) return;
     if (dock()?.contains(event.target) && !overPanel) scheduleHide();
   });
   doc.addEventListener('keydown', (event) => {
