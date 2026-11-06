@@ -334,6 +334,10 @@ type snapshotPayload struct {
 	// right edge. On by default; refresh.js hands it to side-panel-reveal.js
 	// each poll. See Config.SidePanelEdgeReveal.
 	SidePanelEdgeReveal bool `json:"side_panel_edge_reveal"`
+	// SidePanelTuning mirrors config dashboard.side_panel_* (the predictive
+	// peek's switches and the reveal's tuning), defaulted and clamped. See
+	// Config.SidePanelTuning.
+	SidePanelTuning config.SidePanelTuning `json:"side_panel_tuning"`
 	// ShowFinalPRChecks mirrors config dashboard.show_final_pr_checks —
 	// whether merged/closed PRs keep a non-failing CI checks pill. Off by
 	// default; refresh.js toggles body.show-final-pr-checks off this each

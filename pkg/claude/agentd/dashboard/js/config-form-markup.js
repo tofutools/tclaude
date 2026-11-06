@@ -18,6 +18,7 @@ import { DICTATED_MARKER } from './companion-model.js';
 import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
 import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 import { KEYBINDINGS_LIST, shortcutText } from './keybindings.js';
+import { SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
 import { KeyboardShortcutList, Keys } from './shortcut-keys.js';
 
 const html = htm.bind(h);
@@ -466,10 +467,19 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-always-show-open-prs" /> always show the footer's Open PRs indicator, even at zero</label>
           <label class="cfg-inline">show pull requests merged or closed in the last <${ConfigInput} type="number" id="cfg-dashboard-recent-pr-window-days" min="0" max="30" step="1" placeholder="3" aria-label="Recently closed pull request window (days)" style="width:6em" /> days</label>
         </${Setting}>
-        <${Setting} title="Side panel at the edge" k="dashboard.side_panel_edge_reveal"
-          summary="Show the folded side panel when the pointer reaches the right edge."
-          more=${html`On the <strong>Groups</strong> and <strong>Collab</strong> tabs, a folded right side panel floats in over the page when the pointer rests at the right edge (no button held, no drag under way), and goes again a moment after the pointer leaves it, unless something in it has focus or one of its menus is open. Its handle still unfolds it for good. Pointer only: nothing changes on touch screens or for the keyboard, which keep the handle. <strong>Checked</strong> (default) turns it on. Stored as <code>dashboard.side_panel_edge_reveal</code> (default true, so only <code>false</code> is written).`}>
+        <${Setting} title="Side panel at the edge" k="dashboard.side_panel_*" wide
+          summary="Show the folded side panel when the pointer reaches the right edge, or is flung at it."
+          more=${html`On the <strong>Groups</strong> and <strong>Collab</strong> tabs, a folded right side panel floats in over the page when the pointer rests at the right edge (no button held, no drag under way), and goes again a moment after the pointer leaves it, unless something in it has focus or one of its menus is open. Its handle still unfolds it for good. Pointer only: nothing changes on touch screens or for the keyboard, which keep the handle. <strong>Predictive peek</strong>: a pointer flung at the edge slides the panel's leading edge in before it gets there; moving onto it reveals the panel, and a peek the motion does not follow through on goes again. A motion that starts within the near-edge band of the panel is never predicted, and the closer to the panel a motion starts, the less speed it needs, down to the floor. <strong>Growing peek</strong>: the peek widens as the pointer closes in, and crossing where the open panel's edge would be, or stopping there, reveals it. All three default on, so only <code>false</code> is written (<code>dashboard.side_panel_edge_reveal</code>, <code>dashboard.side_panel_predictive_peek</code>, <code>dashboard.side_panel_growing_peek</code>). The <strong>Advanced</strong> values are stored as <code>dashboard.side_panel_*</code> keys (e.g. <code>side_panel_dwell_ms</code>); blank runs the default shown, and out-of-range values are clamped.`}>
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-edge-reveal" /> show the side panel when the pointer reaches the right edge</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-predictive-peek" /> peek it in when the pointer is flung at the edge</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-growing-peek" /> grow the peek as the pointer closes in, and reveal the panel on crossing into it or stopping at it</label>
+          <details class="cfg-advanced cfg-side-panel-advanced"><summary>Advanced</summary>
+            <div class="cfg-terminal-attach-timings cfg-side-panel-tuning">
+              ${SIDE_PANEL_TUNING_FIELDS.map((f) => html`<label key=${f.key}><span>${f.label}</span><${ConfigInput} type="number" id=${sidePanelTuningId(f.key)} min=${String(f.min)} max=${String(f.max)} step="1" placeholder=${String(f.def)} aria-label=${`${f.label} (${f.unit})`} /><span class="cfg-terminal-attach-unit">${f.unit}</span></label>`)}
+              <span class="cfg-terminal-attach-note">Blank uses the shown default.</span>
+              <${ConfigButton} type="button" class="ui-btn ui-sm" id="cfg-side-panel-reset">Reset to defaults</${ConfigButton}>
+            </div>
+          </details>
         </${Setting}>
       </${Group}>
 

@@ -31,9 +31,19 @@ scrollbar beside it counts as part of it. It goes again shortly after the
 pointer leaves it, after the same delay as a popover, but not while something
 in it has focus, one of its menus is open, or you are dragging its scrollbar;
 **Esc** sends it away. Its handle still
-unfolds it for good. To turn this off, uncheck **Side panel at the edge** on the
-Config tab (`dashboard.side_panel_edge_reveal`). It does nothing on touch
-screens.
+unfolds it for good.
+
+A pointer flung at the edge peeks the panel's leading edge in before it gets
+there. The peek widens as the pointer closes in. Moving onto it, crossing
+where the open panel's edge would be, or stopping there reveals the panel. A
+motion that brakes, as one aimed at something on the page does, lets the peek
+shrink back and go. A motion that starts close to the panel is left to the
+edge zone. The closer to the panel a motion starts, the less speed it needs.
+
+To turn this off, uncheck **Side panel at the edge** on the Config tab
+(`dashboard.side_panel_edge_reveal`). The peek and its growth have switches of
+their own there, and **Advanced** holds the values that tune them. None of
+this does anything on touch screens.
 
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
   Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,

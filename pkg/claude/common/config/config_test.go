@@ -1823,3 +1823,25 @@ func TestVoice(t *testing.T) {
 	assert.Equal(t, "over", phrase(cfg.Voice(), VoiceActionSend), "the list wins")
 	assert.Len(t, cfg.Voice().Phrases, len(VoicePhraseDefaults))
 }
+
+func TestSidePanelTuning(t *testing.T) {
+	def := (*Config)(nil).SidePanelTuning()
+	assert.Equal(t, SidePanelTuning{
+		PredictivePeek: true, GrowingPeek: true, EdgeZonePx: 32, DwellMs: 150, RetractMs: 500,
+		PredictMinSpeed: 1200, PredictSpeedDistancePx: 600, PredictMinSpeedFloor: 600,
+		PredictMinReadings: 4, NearEdgeBandPx: 100, BrakePercent: 70, PeekMinPx: 48,
+	}, def, "nil → today's defaults")
+	assert.Equal(t, def, (&Config{Dashboard: &DashboardConfig{}}).SidePanelTuning(), "absent keys → defaults")
+	off, big, neg, slow := false, 100000, -5, 300
+	got := (&Config{Dashboard: &DashboardConfig{
+		SidePanelPredictivePeek: &off, SidePanelGrowingPeek: &off,
+		SidePanelEdgeZonePx: &big, SidePanelDwellMs: &neg, SidePanelBrakePercent: &big,
+		SidePanelPredictMinSpeed: &slow,
+	}}).SidePanelTuning()
+	assert.False(t, got.PredictivePeek)
+	assert.False(t, got.GrowingPeek)
+	assert.Equal(t, 200, got.EdgeZonePx, "clamped to the max")
+	assert.Equal(t, 0, got.DwellMs, "clamped to the min")
+	assert.Equal(t, 100, got.BrakePercent)
+	assert.Equal(t, 300, got.PredictMinSpeedFloor, "the floor never exceeds the minimum speed")
+}
