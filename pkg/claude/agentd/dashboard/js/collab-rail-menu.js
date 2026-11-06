@@ -47,7 +47,8 @@ export function railRowActions(item) {
       done: `Ended the sessions on ${item.title}`, failed: 'Could not end the sessions',
     }));
   }
-  if (item.kind === 'board') {
+  // A peer's board (tcl-ug8bb8) is deleted on its own node.
+  if (item.kind === 'board' && !item.resource?.peer) {
     end.push({ id: 'delete-board', label: 'Delete board…', danger: true, run: (ctx) => ctx.askDeleteBoard({ id: boardID(item), title: item.title }) });
   }
   return { open, end };

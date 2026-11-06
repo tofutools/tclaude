@@ -47,10 +47,25 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 		return ids
 	}
 	edit := map[string]any{"elements": []map[string]any{rect("card", 1, 1, 0)}}
+	// The page reads its access to a group's boards from the peer view's
+	// per-group grants, so they must list both slugs.
+	viewGrants := func() []any {
+		t.Helper()
+		code, body := h.call("GET", "/api/groups", nil)
+		require.Equal(t, 200, code, body)
+		var got struct {
+			PeerView struct {
+				Groups map[string][]any `json:"groups"`
+			} `json:"peer_view"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &got))
+		return got.PeerView.Groups["crew"]
+	}
 
 	code, body := h.call("GET", "/api/boards", nil)
 	require.Equal(t, 403, code, "no grant: %s", body)
 	h.grant(t, agentd.PermGroupsResourcesRead, "group=crew")
+	require.Contains(t, viewGrants(), agentd.PermGroupsResourcesRead, "the page shows the group's boards read-only")
 	require.Equal(t, []string{"plan"}, list(), "only a board in a group the peer reads")
 	code, body = h.call("GET", "/api/boards/plan", nil)
 	require.Equal(t, 200, code, body)
@@ -75,6 +90,7 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 	require.Contains(t, body, `"group_members"`, "shown with the roster grant")
 
 	h.grant(t, agentd.PermGroupsResourcesWrite, "group=crew")
+	require.Contains(t, viewGrants(), agentd.PermGroupsResourcesWrite, "the page lets the peer edit them")
 	code, body = h.call("PATCH", "/api/boards/plan", edit)
 	require.Equal(t, 200, code, body)
 	elems, err := db.ListCollabBoardElements("plan", -1)

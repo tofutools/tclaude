@@ -10,6 +10,7 @@ import { OTHER_SESSIONS, UNGROUPED, isAgentItem, railItems } from './collab-rail
 import { MOVABLE_KINDS, canMoveResource, moveResource } from './resource-moves.js';
 import { processContext, processRunApi } from './process-context.js';
 import { onPeerPage } from './node-api.js';
+import { peerBoardResources, peerBoards } from './peer-boards.js';
 import { overlayResourceKey } from './resource-model.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
@@ -66,10 +67,13 @@ function terminalStatus(item, value) {
 
 // collabItems is everything the rail and the home list now: panes are the
 // strip's, snapshot the dashboard's.
-export function collabItems(panes, snapshot) {
+// On a peer's page its snapshot carries no resources: the boards it shares
+// come from its board list (peer-boards.js, tcl-ug8bb8).
+export function collabItems(panes, snapshot, peer = onPeerPage()) {
   const value = snapshot?.value;
+  const resources = peer ? peerBoardResources(peerBoards.value, value) : value?.group_resources || [];
   return railItems({
-    resources: value?.group_resources || [], groups: value?.groups || [], places: resourcePlaces.value,
+    resources, groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
     titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(),
   });
@@ -134,7 +138,8 @@ export async function railItemToFloat(item, at, ctx) {
   if (item.view === 'open-tab') return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
   const r = item.resource;
   if (r?.kind === 'page' && item.view !== 'closed') return openPageOverlay(r.id, item.title, at);
-  if (r?.kind === 'board') return openBoardOverlay(r.id, item.title, at);
+  // A peer's board opens as a tab only: the overlay is this node's own.
+  if (r?.kind === 'board') return r.peer ? openRailItem(item, ctx) : openBoardOverlay(r.id, item.title, at);
   if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
   // A shell or a terminal floats from the tab it opens in.
   const key = (await openRailItem(item, ctx))?.key || item.paneKey;

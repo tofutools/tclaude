@@ -397,6 +397,35 @@ receive the invitation mail. An agent can only create a board for a group it
 belongs to. Choosing "No group" unlinks the board. Archiving or deleting the
 group also unlinks it in effect: the board stays, without the group.
 
+## A peer's boards
+
+On a linked peer's page (the Fleet map's **Open**, `?node=…`), the peer's
+boards show when it shares them through their groups:
+`groups.resources.read` in a group reads that group's boards, and
+`groups.resources.write` also edits them (see
+[federation-peers.md](federation-peers.md)). A board in no group is never a
+peer's. The page lists them in two places:
+
+- The **Collab** panel lists each board under its group, with an **edit** or
+  **read-only** badge. A group you may edit has a ＋ that makes a new board
+  there; a group with no boards yet gets its first from the Groups tab.
+- Each group in the peer's **Groups** tab lists its **Boards**, with **Open**,
+  and **＋ Board** where you may edit.
+
+Both open the same editor, under a **Remote board** banner that names the peer
+and the group and says whether you can edit. The editor reads the board every
+second instead of keeping a live socket open. Your edits are authored
+`operator@INSTANCE` on the peer. Undo, invites, presence, deleting the board
+and its rendered snapshot stay with the peer's own dashboard.
+
+The board is read-only here when the group grants only read, when the peer's
+operator locked it, or when the peer refused an edit (the change is rolled
+back, the banner says so, and the board stays read-only until you reopen it).
+A peer's board opens as a tab only, never in an overlay window or a window of
+its own. A board the peer deleted or moved out of your
+groups says it is no longer shared. When the peer is out of reach, the editor
+keeps showing the last copy it read.
+
 ## Mapping the fleet
 
 `board from-fleet <board>` draws the fleet as a map you can talk staffing over.
@@ -465,8 +494,9 @@ snapshot is `~/.tclaude/data/boards/<id>.png` and the event images are under
 The dashboard uses `/api/boards` (list, create, read, patch, delete, snapshot
 upload and download, participants, events, view, group and undo), and
 `DELETE /api/boards/{id}/sessions` to end a board's sessions. A federation
-peer's dashboard view never reaches these routes: boards stay with their own
-node. Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,
+peer's dashboard view reaches only the list, create, read, patch, title and
+group routes, for the boards of the groups it was granted (see
+[A peer's boards](#a-peers-boards)). Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,
 `GET /v1/boards/{id}` (`?since=N`), `PATCH /v1/boards/{id}`,
 `GET /v1/boards/{id}/snapshot`, and `POST` and `DELETE /v1/boards/{id}/session`
 for the caller's own session. The snapshot response carries `X-Board-Snapshot-Version` and `X-Board-Version`
