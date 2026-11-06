@@ -469,6 +469,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // A press cancels a reveal still waiting out its dwell, and takes a peek
   // back. One on the peeking strip is swallowed with its click: the strip
   // slid under a still pointer, and the press was meant for what was there.
+  // The handle is the exception: a press there pins or unpins.
   // It closes nothing else, so it is not the shared outside-press rule
   // (ui-popover-dismiss.test.mjs).
   doc.addEventListener('pointerdown', (event) => {
@@ -476,6 +477,15 @@ export function bindEdgeReveal(doc = globalThis.document, {
     swallowClick = false;
     motion = null;
     if (isSidePanelPeeking()) {
+      // A press on the handle is the operator pinning: its click goes
+      // through, and the peek holds under it until then (the handle rides
+      // the peek), so the click lands where the press did.
+      if (doc.getElementById('dock-toggle')?.contains(event.target)) {
+        cancelRetract();
+        cancelStop();
+        samples = [];
+        return;
+      }
       if (dock()?.contains(event.target)) {
         event.preventDefault();
         event.stopPropagation();
