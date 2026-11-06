@@ -60,8 +60,8 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 		}
 		rules[pattern] = rule
 	}
-	// An agent's remote access and fast mode, its sandbox implementation, its
-	// removal from a group and its permanent delete reach
+	// An agent's remote access and fast mode, its sandbox implementation and
+	// its permanent delete reach
 	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
 	// handlers. One feature names one slug, so the metadata is stable.
 	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
@@ -84,10 +84,6 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	} {
 		rules[pattern] = read
 	}
-	full.write = servePeerFullGroup(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-		dashboardRemoveMember(w, g, r.PathValue("conv"))
-	}))
-	rules["DELETE /api/groups/{name}/members/{conv}"] = full
 }
 
 // peerAgentControlRoutes are an agent's controls a peer grant reaches, by

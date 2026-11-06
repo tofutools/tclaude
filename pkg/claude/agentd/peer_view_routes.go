@@ -14,7 +14,6 @@ var peerViewLocalRoutes = []string{
 	// A one-step move between this node's groups, for an unrestricted peer.
 	// A restricted peer cannot move a member between groups: no peer grant
 	// opens the member add and remove either, which take unrestricted trust.
-	"POST /api/groups/{name}/members/{conv}/move",
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",
@@ -284,7 +283,6 @@ var peerViewLocalRoutes = []string{
 	"/api/worktrees",
 	"/api/worktrees/cleanup",
 	"/api/worktrees/progress",
-	"DELETE /api/groups/{name}/links/{id}",
 	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
 	"GET /api/groups/{name}/standing-orders",
@@ -300,12 +298,9 @@ var peerViewLocalRoutes = []string{
 	// A workflow file is signed with this node's federation identity key: it
 	// stays this node's to hand out.
 	"GET /v1/process/templates/{id}/export",
-	"PATCH /api/groups/{name}/links/{id}",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",
-	"POST /api/groups/{name}/links",
-	"POST /api/groups/{name}/members",
 	"POST /api/groups/{name}/owners",
 	"POST /api/groups/{name}/spawn",
 	// Resolves a spawn without spawning, through the spawn handler.

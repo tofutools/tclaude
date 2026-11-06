@@ -83,6 +83,9 @@ func TestPeerOwnedCronJobs(t *testing.T) {
 	require.Nil(t, stored["operator_authored"], "never this node's operator's")
 	require.Equal(t, "", stored["owner_conv"])
 
+	// The member is offline, so the fires queue (queue_when_offline) and the
+	// nudge worker cannot deliver the first tick before the second coalesces it.
+	h.f.World.Tmux.KillBySignalForTest("tmux-worker")
 	// A fire delivers the peer's mail, bannered, never as this operator.
 	code, body = h.call("POST", path+"/run-now", map[string]any{})
 	require.Equal(t, 200, code, body)
@@ -90,6 +93,7 @@ func TestPeerOwnedCronJobs(t *testing.T) {
 	msgs := peerCronMessages(t, "proc-crew-member")
 	require.Len(t, msgs, 1)
 	require.False(t, msgs[0].OperatorAuthored)
+	require.True(t, msgs[0].DeliveredAt.IsZero(), "queued for the offline member")
 	require.True(t, strings.HasPrefix(msgs[0].Body, "[remote message from operator@bob"), msgs[0].Body)
 	require.Contains(t, msgs[0].Body, "post your status")
 	require.Contains(t, msgs[0].Subject, "[cron:nudge] standup")
