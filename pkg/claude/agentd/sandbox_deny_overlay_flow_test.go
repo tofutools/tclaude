@@ -239,3 +239,28 @@ func TestSandboxDenyIsInheritedByATemplateInstantiation(t *testing.T) {
 		assert.Equal(t, []string{fx.secrets}, childPolicy(t, f, member.ConvID).DenyOverlay, "member %s", member.ConvID)
 	}
 }
+
+// A worker a trigger starts on its owner's behalf keeps the owner's deny
+// overlay, as a child the owner spawned would (tcl-w0rr5d).
+func TestSandboxDenyIsInheritedByATriggerWorker(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	f.HaveGroup("crew")
+	fx := newDenyFixture(t)
+	owner := spawnDenied(t, f, "owner", map[string]any{"sandbox_deny": []string{fx.secrets}})
+	require.Equalf(t, http.StatusOK, owner.Code, "spawn body=%s", owner.Raw)
+	f.HaveMember("alpha", owner.ConvID)
+	for _, slug := range []string{agentd.PermGroupsTriggersManage, agentd.PermGroupsMembersSpawn} {
+		require.NoError(t, db.GrantAgentPermission(owner.ConvID, slug, "test"))
+	}
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude", Sandbox: "on"})
+	require.NoError(t, err)
+	ownerAgent, err := db.AgentIDForConv(owner.ConvID)
+	require.NoError(t, err)
+
+	out := openPR(t, refusalTrigger(t, f, ownerAgent), 31)
+	require.Equalf(t, "spawned", out.Outcome, "%+v", out)
+	require.NotEmpty(t, out.SpawnedAgent)
+	worker, err := db.CurrentConvForAgent(out.SpawnedAgent)
+	require.NoError(t, err)
+	assert.Equal(t, []string{fx.secrets}, childPolicy(t, f, worker).DenyOverlay)
+}
