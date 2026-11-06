@@ -38,6 +38,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,6 +178,11 @@ var authoredOpenMRState struct {
 type everyoneRefusal struct {
 	at     time.Time
 	reason string
+	// mine is the projects of the user's open merge requests past the Mine
+	// list's page, as fetchMineMRProjects last read them at mineAt. It is
+	// read again every everyoneOpenMRReprobe, not every poll.
+	mine   []string
+	mineAt time.Time
 }
 
 // recentMRAttempt is when (by poll number) and under which window an
@@ -659,8 +665,9 @@ const (
 	// the instance holds, each under its own authoredOpenMRTimeout. On an
 	// instance that refuses discovery it is at most 10: a re-probe every
 	// everyoneOpenMRReprobe, up to everyoneOpenMRPages pages of the user's own
-	// merge requests when the Mine list was cut (fetchMineMRProjects, read
-	// afresh each poll), and the 4 project queries.
+	// merge requests when the Mine list was cut (fetchMineMRProjects, read once
+	// per everyoneOpenMRReprobe, or again after a failure), and the 4 project
+	// queries.
 	everyoneOpenMRMaxProjects = 20
 	// everyoneOpenMRReprobe is how long an instance that refused the
 	// instance-wide list is read project by project before it is asked again.
@@ -690,7 +697,7 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 		var refusedErr *errEveryoneRefused
 		switch {
 		case errors.As(err, &refusedErr):
-			refusal = everyoneRefusal{at: now, reason: refusedErr.reason}
+			refusal.at, refusal.reason = now, refusedErr.reason
 		case err == nil:
 			delete(refused, base)
 			return all, retry, nil
@@ -703,21 +710,28 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 			refusal.at = now
 			probeRetry = retry
 		}
-		refused[base] = refusal
 	}
-	mine := known.mine
-	if known.mineMore {
+	mine := slices.Clone(known.mine)
+	switch {
+	case !known.mineMore:
+		refusal.mine, refusal.mineAt = nil, time.Time{}
+	case refusal.mineAt.IsZero() || now.Sub(refusal.mineAt) >= everyoneOpenMRReprobe:
 		// The Mine list stopped at its page, so later projects of the user's
-		// own merge requests are found by paging; on a failure, the first
-		// page's projects are read alone.
+		// own merge requests are found by paging, once per re-probe interval.
+		// On a failure, the projects found and the last good read are used,
+		// and the next poll tries again.
 		more, retry, err := fetchMineMRProjects(ctx, base, token)
 		probeRetry = max(probeRetry, retry)
 		if err != nil {
-			slog.Debug("open-mrs: GitLab read of the rest of your merge requests failed; reading the first page's projects",
+			slog.Debug("open-mrs: GitLab read of the rest of your merge requests failed; reading the projects known so far",
 				"host", gitlabBaseHost(base), "error", err, "module", "agentd")
+			mine = append(mine, more...)
+		} else {
+			refusal.mine, refusal.mineAt = more, now
 		}
-		mine = append(mine, more...)
 	}
+	mine = append(mine, refusal.mine...)
+	refused[base] = refusal
 	projects := everyoneFallbackProjects(base, agentProjects, append(mine, known.allowed...))
 	if len(projects) == 0 {
 		return authoredOpenMREveryone{}, probeRetry, fmt.Errorf("%s: this token can't list the whole instance, and no project "+
@@ -732,6 +746,13 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 	if err != nil {
 		return authoredOpenMREveryone{}, max(retry, probeRetry), fmt.Errorf("%s (listing the instance); reading its projects one by one: %w",
 			refusal.reason, err)
+	}
+	if all.found == 0 {
+		// Every path came back empty: groups, deleted projects, or ones the
+		// token may not read. A bare 0 would look like a quiet instance.
+		return authoredOpenMREveryone{}, probeRetry, fmt.Errorf("%s: this token can't list the whole instance, and none of "+
+			"the %d projects known to read one by one answered (a group, a deleted project, or one the token may not read)",
+			refusal.reason, len(projects))
 	}
 	all.truncated, all.byProject = truncated, all.found
 	return all, probeRetry, nil

@@ -432,14 +432,78 @@ func TestPollAuthoredOpenMRs_AMineProjectOnlyOnALaterPageIsRead(t *testing.T) {
 	require.NotNil(t, view)
 	assert.Equal(t, 3, view.Instances[0].EveryoneByProject)
 
+	// Within the re-probe interval the next poll reuses those projects.
 	gl.mineReads = 0
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, gl.mineReads, "the later pages are not read every poll")
+	require.Len(t, gl.projectRead, 2)
+	assert.Equal(t, []string{"acme/mine", "acme/second", "acme/allowed"}, gl.projectRead[1], "but their projects still are")
+
+	// Once the interval has passed, the pages are read again, under the cap.
 	gl.minePages = make([][]string, everyoneOpenMRPages+3)
 	for i := range gl.minePages {
 		gl.minePages[i] = []string{"acme/mine"}
 	}
+	authoredOpenMRState.Lock()
+	refusal := authoredOpenMRState.refused[testMRBase]
+	refusal.mineAt = refusal.mineAt.Add(-everyoneOpenMRReprobe)
+	authoredOpenMRState.refused[testMRBase] = refusal
+	authoredOpenMRState.Unlock()
 	_, err = pollAuthoredOpenMRs(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, everyoneOpenMRPages, gl.mineReads, "paging is bounded like instance-wide discovery")
+}
+
+// A failed read of the later pages is not cached: the next poll tries again,
+// and meanwhile the last good read's projects are still read.
+func TestReadEveryoneOpenMRs_AFailedMinePagingIsTriedAgain(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden}
+	failMine := false
+	t.Cleanup(SetGitLabTransportForTest(func(ctx context.Context, base, token string, req glAPIRequest) (glAPIResult, error) {
+		body, _ := json.Marshal(req.Body)
+		if failMine && strings.Contains(string(body), "pageInfo") {
+			gl.mineReads++
+			return glAPIResult{Status: http.StatusBadGateway, Body: []byte(`{"message":"bad gateway"}`), Header: http.Header{}}, nil
+		}
+		return gl.do(ctx, base, token, req)
+	}))
+	gl.minePages = [][]string{{"acme/second"}}
+	known := everyoneKnown{mine: []string{"acme/mine"}, mineMore: true}
+	refused := map[string]everyoneRefusal{}
+	now := time.Now()
+	_, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, known, refused, now)
+	require.NoError(t, err)
+	require.Equal(t, 1, gl.mineReads)
+
+	// The cache has expired and the read fails: the last good projects stand.
+	failMine = true
+	later := now.Add(everyoneOpenMRReprobe / 2)
+	refusal := refused[testMRBase]
+	refusal.mineAt = later.Add(-everyoneOpenMRReprobe)
+	refused[testMRBase] = refusal
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, known, refused, later)
+	require.NoError(t, err)
+	assert.Equal(t, 2, gl.mineReads)
+	assert.Equal(t, 2, got.byProject, "acme/second is still read from the last good paging")
+
+	_, _, err = readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, known, refused, later.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, 3, gl.mineReads, "a failure is retried on the next poll")
+}
+
+// Every known project coming back empty (a group, a deleted project, one the
+// token may not read) is not a quiet instance with no merge requests: it says
+// why, as when no project is known at all.
+func TestReadEveryoneOpenMRs_NoKnownProjectAnsweringIsAnError(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden}
+	t.Cleanup(SetGitLabTransportForTest(gl.do))
+	_, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil,
+		everyoneKnown{allowed: []string{"acme/gone", "acme/group"}}, map[string]everyoneRefusal{}, time.Now())
+	require.Error(t, err)
+	assert.Len(t, gl.projectRead, 1, "the projects were asked")
+	assert.Contains(t, err.Error(), "insufficient_granular_scope")
+	assert.Contains(t, err.Error(), "none of the 2 projects known to read one by one answered")
 }
 
 func TestReadEveryoneOpenMRs_NoPagingWhenTheMineListHeldEverything(t *testing.T) {

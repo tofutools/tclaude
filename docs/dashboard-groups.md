@@ -365,8 +365,10 @@ project on the instance (a `*` entry names none). The same 20-project cap
 applies. The popover says how many projects were read this way; it is not an
 error. A project in none of those lists does not show. agentd asks the
 instance-wide list again every 10 minutes, so a token given wider access
-switches back by itself. Only when the per-project read fails too, or there is
-no project to read, does the popover show an error, with both reasons.
+switches back by itself. Only when the per-project read fails too, there is
+no project to read, or none of the projects read answered (each is a group, a
+deleted project, or one the token may not read), does the popover show an
+error, with both reasons.
 
 If the project-wide read fails while your own list
 answers, the project tabs keep their last lists and say so. The instance is
