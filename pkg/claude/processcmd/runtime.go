@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
 	"net/url"
@@ -170,6 +171,7 @@ type processRunParams struct {
 	Authorize  []string `long:"authorize-program-profile" optional:"true"`
 	Group      string   `long:"group" optional:"true" help:"Bind the run to this group (name or id); needs process.runs.start covering it (group owners have it)"`
 	Agent      string   `long:"agent" optional:"true" help:"Bind the run to this agent; self needs self.process, another agent agent.process or groups.members.process"`
+	Remote     string   `long:"remote" optional:"true" help:"Start the run on a trusted peer node (label or instance id), scoped to one of its groups (--group, by name) or agents (--agent, by agt_ id); needs that node's process.runs.start or groups.members.process grant to this node"`
 	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 
@@ -222,13 +224,22 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 	if request.Group != "" && request.Agent != "" {
 		return fmt.Errorf("--group and --agent are mutually exclusive")
 	}
+	remote := strings.TrimSpace(p.Remote)
+	if remote != "" && request.Group == "" && request.Agent == "" {
+		return fmt.Errorf("--remote starts a run scoped to one of the peer's groups (--group) or agents (--agent)")
+	}
 	var run processRunJSON
-	if err := agent.DaemonRequest(http.MethodPost, "/v1/process/runs", request, &run,
+	if err := processRequest(remote, http.MethodPost, "/v1/process/runs", request, &run,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, remote)
 	fmt.Fprintf(stdout, "Created process run %s\n", run.ID)
 	printProcessRun(stdout, &run)
+	if remote != "" {
+		fmt.Fprintf(stdout, "Next: tclaude process show %s --remote %s\n", run.ID, proto.SafeName(remote, false))
+		return nil
+	}
 	fmt.Fprintf(stdout, "Next: tclaude process show %s; tclaude process events %s\n", run.ID, run.ID)
 	return nil
 }
@@ -239,6 +250,7 @@ type processRunsLsParams struct {
 	Group     string `long:"group" optional:"true" help:"Only runs scoped to this group (name or id)"`
 	Agent     string `long:"agent" optional:"true" help:"Only runs scoped to this agent"`
 	Performer string `long:"performer" optional:"true" help:"Only runs this agent performs in"`
+	Remote    string `long:"remote" optional:"true" help:"List a trusted peer node's runs instead (label or instance id); needs its process.runs.read grant to this node"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -288,10 +300,11 @@ func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
 		Runs []processRunSummaryJSON `json:"runs"`
 		Next string                  `json:"next"`
 	}
-	if err := agent.DaemonRequest(http.MethodGet, path, nil, &response,
+	if err := processRequest(p.Remote, http.MethodGet, path, nil, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, p.Remote)
 	if len(response.Runs) == 0 {
 		fmt.Fprintln(stdout, "No process runs.")
 		return nil
@@ -318,6 +331,7 @@ type processRunIDParams struct {
 type processShowParams struct {
 	RunID    string `pos:"true" help:"Process run id"`
 	JSON     bool   `long:"json" help:"Output the complete run snapshot as JSON"`
+	Remote   string `long:"remote" optional:"true" help:"Show a run on a trusted peer node instead (label or instance id); needs its process.runs.read grant to this node"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -330,6 +344,10 @@ func processShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processShowParams, _ *cobra.Command, _ []string) {
+			if strings.TrimSpace(p.Remote) != "" {
+				exitProcessRuntime(runProcessShowRemote(p, os.Stdout, os.Stderr), os.Stderr)
+				return
+			}
 			exitProcessRuntime(runProcessShow(p.RunID, p.AskHuman, false, p.JSON, os.Stdout, os.Stderr), os.Stderr)
 		},
 	}.ToCobra()
@@ -800,6 +818,35 @@ func runProcessResolveBlocked(p *processResolveBlockedParams, stdout, stderr io.
 	fmt.Fprintf(stdout, "Resolved blocked node %s attempt %d with %s for process run %s.\n",
 		node, p.Attempt, action, response.Run.ID)
 	printProcessRun(stdout, &response.Run)
+	return nil
+}
+
+// runProcessShowRemote shows one run of a peer node, as that node reports it.
+func runProcessShowRemote(p *processShowParams, stdout, stderr io.Writer) error {
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	runID := strings.TrimSpace(p.RunID)
+	if runID == "" {
+		return fmt.Errorf("run id is required")
+	}
+	var run processRunJSON
+	if err := processRequest(p.Remote, http.MethodGet, "/v1/process/runs/"+url.PathEscape(runID), nil, &run,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
+		return err
+	}
+	if p.JSON {
+		return json.NewEncoder(stdout).Encode(struct {
+			*processRunJSON
+			Remote processRemoteMarker `json:"remote"`
+		}{&run, processRemoteMarker{Target: proto.SafeName(p.Remote, false), Untrusted: true}})
+	}
+	printProcessRemoteBanner(stdout, p.Remote)
+	printProcessRun(stdout, &run)
 	return nil
 }
 

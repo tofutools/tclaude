@@ -239,7 +239,9 @@ Every run is bound to a context when it starts, and keeps that binding:
 | `agent` (◉) | `... --agent <agent>` | the agent's stable `agent_id`, so the run survives reincarnate and compact; a clone does not copy it |
 
 The run's **owner** is whoever started it (`human:operator` or
-`agent:<agent_id>`). `tclaude process show` prints the scope and owner;
+`agent:<agent_id>`, or `peer:<instance>` for a linked node; see
+[federation peers](federation-peers.md)). A linked node's run tasks only the
+members in its scope, spawns no performer and runs no program. `tclaude process show` prints the scope and owner;
 `tclaude process runs ls` adds a SCOPE column and filters with `--group`,
 `--agent` and `--performer`. `--performer` matches runs bound to that agent
 and runs with a node attempt dispatched to it.

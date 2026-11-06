@@ -1064,8 +1064,14 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	scope.Owner = string(actor)
-	run, err := createProcessRun(r.Context(), request, string(actor), scope)
+	startProcessRunAs(w, r, request, string(actor), scope)
+}
+
+// startProcessRunAs creates and starts an authorized run that actor owns, and
+// writes the created run's view.
+func startProcessRunAs(w http.ResponseWriter, r *http.Request, request processRunCreateRequest, actor string, scope db.ProcessRunScope) {
+	scope.Owner = actor
+	run, err := createProcessRun(r.Context(), request, actor, scope)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
