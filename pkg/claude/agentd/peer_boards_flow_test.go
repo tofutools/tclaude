@@ -126,3 +126,44 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "operator@"+h.peer.id.ID(), loose.UpdatedBy, "unrestricted edits are the peer's too, not this node's operator's")
 }
+
+// A board this node's operator locked is not a remote operator's to change,
+// whatever its trust, until it is unlocked; reading it still works.
+func TestPeerBoardsHonorOperatorLocks(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	_, err := db.CreateCollabBoard("plan", "plan", "operator", 500)
+	require.NoError(t, err)
+	require.NoError(t, db.SetCollabBoardGroup("plan", h.group.ID))
+	require.NoError(t, db.SetGroupResourceLocked(db.GroupResourceBoard, "plan", true))
+	h.grant(t, agentd.PermGroupsResourcesWrite, "group=crew")
+	changes := []struct {
+		method, path string
+		body         map[string]any
+	}{
+		{"PATCH", "/api/boards/plan", map[string]any{"elements": []map[string]any{rect("card", 1, 1, 0)}}},
+		{"POST", "/api/boards/plan/title", map[string]any{"title": "Mine"}},
+	}
+	refused := func(why string) {
+		t.Helper()
+		for _, c := range changes {
+			code, body := h.call(c.method, c.path, c.body)
+			require.Equal(t, 403, code, "%s %s, %s: %s", c.method, c.path, why, body)
+			require.Contains(t, body, "resource_locked")
+		}
+		b, err := db.GetCollabBoard("plan")
+		require.NoError(t, err)
+		require.Equal(t, "plan", b.Title)
+		require.Zero(t, b.ElementCount)
+	}
+	refused("restricted")
+	code, body := h.call("GET", "/api/boards/plan", nil)
+	require.Equal(t, 200, code, "a locked board still reads: %s", body)
+	h.trustUnrestricted(t)
+	refused("unrestricted")
+
+	require.NoError(t, db.SetGroupResourceLocked(db.GroupResourceBoard, "plan", false))
+	for _, c := range changes {
+		code, body = h.call(c.method, c.path, c.body)
+		require.Equal(t, 200, code, "unlocked: %s %s: %s", c.method, c.path, body)
+	}
+}
