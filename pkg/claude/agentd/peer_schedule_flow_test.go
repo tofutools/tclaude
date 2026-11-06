@@ -135,10 +135,15 @@ func TestPeerCronJobsUnderGrants(t *testing.T) {
 	require.ElementsMatch(t, []int64{group, member}, ids)
 
 	// Runs: their statuses, never their error text.
+	_, err := db.InsertAgentCronRun(&db.AgentCronRun{JobID: group, FiredAt: time.Now(), Status: "send_failed", ErrorMsg: "open /home/op/.cron-secret: denied"})
+	require.NoError(t, err)
+	rec = fedHuman(t, h.f, http.MethodGet, "/v1/cron/"+strconv.FormatInt(group, 10)+"/logs", nil)
+	require.Contains(t, rec.Body.String(), ".cron-secret", "the operator reads the error")
 	code, body := h.call("GET", "/v1/cron/"+strconv.FormatInt(group, 10)+"/logs", nil)
 	require.Equal(t, 200, code, body)
-	require.Contains(t, body, `"status":`)
+	require.Contains(t, body, `"status":"send_failed"`)
 	require.NotContains(t, body, "error_msg")
+	require.NotContains(t, body, ".cron-secret")
 	code, body = h.call("GET", "/v1/cron/"+strconv.FormatInt(hidden, 10)+"/logs", nil)
 	require.Equal(t, 404, code, "a job out of reach: %s", body)
 
