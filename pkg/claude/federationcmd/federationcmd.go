@@ -198,7 +198,7 @@ func statusCmd() *cobra.Command {
 		Short:       "Show identity, hub connection, peers, peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *statusParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStatusOptions(p, os.Stdout, os.Stderr))
+			os.Exit(runStatusOptions(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -263,15 +263,15 @@ func identityCmd() *cobra.Command {
 		Short:       "Print this instance's federation id and fingerprint (give the id to a hub admin)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			st, rc := loadStatus(os.Stderr)
+			st, rc := loadStatus(cliStderr)
 			if st == nil {
 				os.Exit(rc)
 			}
 			if p.JSON {
-				os.Exit(printJSON(os.Stdout, map[string]string{"instance_id": st.InstanceID, "fingerprint": st.Fingerprint, "name": st.Name}))
+				os.Exit(printJSON(cliStdout, map[string]string{"instance_id": st.InstanceID, "fingerprint": st.Fingerprint, "name": st.Name}))
 			}
-			fmt.Println(st.InstanceID)
-			fmt.Fprintf(os.Stderr, "fingerprint %s  name %s\n", st.Fingerprint, st.Name)
+			fmt.Fprintln(cliStdout, st.InstanceID)
+			fmt.Fprintf(cliStderr, "fingerprint %s  name %s\n", st.Fingerprint, st.Name)
 		},
 	}.ToCobra()
 }
@@ -304,15 +304,15 @@ func connectCmd() *cobra.Command {
 				// directory, so a relative path must be resolved here.
 				ca, err := filepath.Abs(p.CAFile)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
+					fmt.Fprintln(cliStderr, err)
 					os.Exit(1)
 				}
 				req["hub_ca_file"] = ca
 			}
-			if rc := post(os.Stderr, "/v1/federation/config", req, nil); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/config", req, nil); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Println("federation enabled; check with: tclaude federation status")
+			fmt.Fprintln(cliStdout, "federation enabled; check with: tclaude federation status")
 		},
 	}.ToCobra()
 }
@@ -323,10 +323,10 @@ func disconnectCmd() *cobra.Command {
 		Short:       "Disable the hub connection (keeps peers, peer grants)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			if rc := post(os.Stderr, "/v1/federation/config", map[string]any{"enabled": false}, nil); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/config", map[string]any{"enabled": false}, nil); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Println("federation disabled")
+			fmt.Fprintln(cliStdout, "federation disabled")
 		},
 	}.ToCobra()
 }
@@ -339,11 +339,11 @@ func peersCmd() *cobra.Command {
 		Short:       "List trusted peers and instances the hub makes visible",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			st, rc := loadStatus(os.Stderr)
+			st, rc := loadStatus(cliStderr)
 			if st == nil {
 				os.Exit(rc)
 			}
-			os.Exit(printPeers(p, st, os.Stdout))
+			os.Exit(printPeers(p, st, cliStdout))
 		},
 	}.ToCobra()
 }
@@ -395,7 +395,7 @@ func trustCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *trustParams, _ *cobra.Command, _ []string) {
 			if p.Level != "" && p.Level != "restricted" && p.Level != "unrestricted" {
-				fmt.Fprintln(os.Stderr, "level must be restricted or unrestricted")
+				fmt.Fprintln(cliStderr, "level must be restricted or unrestricted")
 				os.Exit(1)
 			}
 			in := map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "profile": p.Profile, "no_default_profile": p.NoDefaultProfile, "preview": true}
@@ -405,22 +405,22 @@ func trustCmd() *cobra.Command {
 				Level       string                        `json:"level"`
 				Plan        *db.FederationNodeProfilePlan `json:"plan"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &preview); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/peers/trust", in, &preview); rc != 0 {
 				os.Exit(rc)
 			}
 			if preview.Plan != nil {
-				if rc := printJSON(os.Stdout, preview.Plan); rc != 0 {
+				if rc := printJSON(cliStdout, preview.Plan); rc != 0 {
 					os.Exit(rc)
 				}
 				if len(preview.Plan.Conflicts) > 0 {
-					fmt.Fprintln(os.Stderr, "profile has manual-edit conflicts")
+					fmt.Fprintln(cliStderr, "profile has manual-edit conflicts")
 					os.Exit(1)
 				}
 				in["preview_token"] = preview.Plan.Token
 			}
 			if preview.Level == "unrestricted" {
 				if e := confirmNodeProfileUnrestricted(preview.Fingerprint, p.Yes); e != nil {
-					os.Exit(fail(os.Stderr, e))
+					os.Exit(fail(cliStderr, e))
 				}
 				in["confirm_fingerprint"] = preview.Fingerprint
 			}
@@ -429,10 +429,10 @@ func trustCmd() *cobra.Command {
 				InstanceID  string `json:"instance_id"`
 				Fingerprint string `json:"fingerprint"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &out); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/peers/trust", in, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("trusted %s (fingerprint %s)\n", out.InstanceID, out.Fingerprint)
+			fmt.Fprintf(cliStdout, "trusted %s (fingerprint %s)\n", out.InstanceID, out.Fingerprint)
 		},
 	}.ToCobra()
 }
@@ -447,10 +447,10 @@ func untrustCmd() *cobra.Command {
 		Short:       "Stop trusting a peer; its grants and cached catalog are removed",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *peerParam, _ *cobra.Command, _ []string) {
-			if rc := post(os.Stderr, "/v1/federation/peers/untrust", map[string]any{"instance": p.Peer}, nil); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/peers/untrust", map[string]any{"instance": p.Peer}, nil); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Println("untrusted", p.Peer)
+			fmt.Fprintln(cliStdout, "untrusted", p.Peer)
 		},
 	}.ToCobra()
 }
@@ -512,19 +512,19 @@ func grantCmd() *cobra.Command {
 		grant.SpawnPolicy.MaxUSD = p.MaxUSD
 		expires, err := parseGrantExpiry(p.For, p.Until, time.Now())
 		if err != nil {
-			os.Exit(fail(os.Stderr, err))
+			os.Exit(fail(cliStderr, err))
 		}
 		grant.ExpiresAt = expires
 		var resp struct {
 			Warnings []string `json:"warnings"`
 		}
-		if rc := post(os.Stderr, "/v1/federation/grants", grant, &resp); rc != 0 {
+		if rc := post(cliStderr, "/v1/federation/grants", grant, &resp); rc != 0 {
 			os.Exit(rc)
 		}
 		for _, warning := range resp.Warnings {
-			fmt.Fprintln(os.Stderr, warning)
+			fmt.Fprintln(cliStderr, warning)
 		}
-		fmt.Printf("granted %s to %s (%s)%s\n", p.Slug, p.Peer, p.Scope, expiryText(expires))
+		fmt.Fprintf(cliStdout, "granted %s to %s (%s)%s\n", p.Slug, p.Peer, p.Scope, expiryText(expires))
 	}}.ToCobra()
 }
 
@@ -539,7 +539,7 @@ type extendParams struct {
 
 func extendCmd() *cobra.Command {
 	return boa.CmdT[extendParams]{Use: "extend", Short: "Change when a peer grant expires, keeping its settings (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *extendParams, _ *cobra.Command, _ []string) {
-		os.Exit(runExtend(p, os.Stdout, os.Stderr))
+		os.Exit(runExtend(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 
@@ -628,10 +628,10 @@ type revokeParams struct {
 
 func revokeCmd() *cobra.Command {
 	return boa.CmdT[revokeParams]{Use: "revoke", Short: "Revoke a peer grant (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *revokeParams, _ *cobra.Command, _ []string) {
-		if rc := del(os.Stderr, "/v1/federation/grants", map[string]any{"peer": p.Peer, "slug": p.Slug, "scope": p.Scope}); rc != 0 {
+		if rc := del(cliStderr, "/v1/federation/grants", map[string]any{"peer": p.Peer, "slug": p.Slug, "scope": p.Scope}); rc != 0 {
 			os.Exit(rc)
 		}
-		fmt.Printf("revoked %s from %s\n", p.Slug, p.Peer)
+		fmt.Fprintf(cliStdout, "revoked %s from %s\n", p.Slug, p.Peer)
 	}}.ToCobra()
 }
 
@@ -646,38 +646,38 @@ func grantsCmd() *cobra.Command {
 			Grants []peerGrant `json:"grants"`
 		}
 		if err := agent.DaemonGet("/v1/federation/grants?peer="+url.QueryEscape(p.Peer), &resp); err != nil {
-			os.Exit(fail(os.Stderr, err))
+			os.Exit(fail(cliStderr, err))
 		}
 		if p.JSON {
-			if rc := printJSON(os.Stdout, resp); rc != 0 {
+			if rc := printJSON(cliStdout, resp); rc != 0 {
 				os.Exit(rc)
 			}
 			return
 		}
 		for _, g := range resp.Grants {
-			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			fmt.Fprintf(cliStdout, "%s %s %s", g.Peer, g.Slug, g.Scope)
 			if g.GroupDeleted {
-				fmt.Print(" [group deleted]")
+				fmt.Fprint(cliStdout, " [group deleted]")
 			} else if g.GroupName != "" {
-				fmt.Printf(" [group %s]", g.GroupName)
+				fmt.Fprintf(cliStdout, " [group %s]", g.GroupName)
 			}
 			if g.Inert != "" {
-				fmt.Printf(" [inert: %s]", g.Inert)
+				fmt.Fprintf(cliStdout, " [inert: %s]", g.Inert)
 			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
-				fmt.Printf(" [inherited from group:%s]", g.PoolName)
+				fmt.Fprintf(cliStdout, " [inherited from group:%s]", g.PoolName)
 			}
 			if g.SpawnPolicy.MaxUSD > 0 {
-				fmt.Printf(" [max $%.2f]", g.SpawnPolicy.MaxUSD)
+				fmt.Fprintf(cliStdout, " [max $%.2f]", g.SpawnPolicy.MaxUSD)
 			}
 			if g.ExpiresAt != nil {
-				fmt.Printf(" [expires %s]", g.ExpiresAt.Local().Format("2006-01-02 15:04 MST"))
+				fmt.Fprintf(cliStdout, " [expires %s]", g.ExpiresAt.Local().Format("2006-01-02 15:04 MST"))
 			}
 			if g.Slug == "groups.members.spawn" {
 				policy, _ := json.Marshal(g.SpawnPolicy)
-				fmt.Printf(" %s", policy)
+				fmt.Fprintf(cliStdout, " %s", policy)
 			}
-			fmt.Println()
+			fmt.Fprintln(cliStdout)
 		}
 	}}.ToCobra()
 }
@@ -688,7 +688,7 @@ func remoteCmd() *cobra.Command {
 		Short:       "Show what each trusted peer grants you, plus your peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			os.Exit(runRemote(p, os.Stdout, os.Stderr))
+			os.Exit(runRemote(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -772,16 +772,16 @@ func sendCmd() *cobra.Command {
 			if len(p.Attach) > 0 {
 				atts, err := agent.ReadAttachments(p.Attach)
 				if err != nil {
-					os.Exit(fail(os.Stderr, err))
+					os.Exit(fail(cliStderr, err))
 				}
 				req["attachments"] = atts
 			}
-			if rc := post(os.Stderr, "/v1/federation/send", req, &out); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/send", req, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
+			fmt.Fprintf(cliStdout, "%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
 			if !out.Connected {
-				fmt.Fprintln(os.Stderr, "hub not connected; the message will be sent when it is")
+				fmt.Fprintln(cliStderr, "hub not connected; the message will be sent when it is")
 			}
 		},
 	}.ToCobra()
@@ -805,12 +805,12 @@ func notifyCmd() *cobra.Command {
 				State      string `json:"state"`
 				Connected  bool   `json:"hub_connected"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/notify", map[string]any{"peer": p.Peer, "body": p.Body, "subject": p.Subject}, &out); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/notify", map[string]any{"peer": p.Peer, "body": p.Body, "subject": p.Subject}, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
+			fmt.Fprintf(cliStdout, "%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
 			if !out.Connected {
-				fmt.Fprintln(os.Stderr, "hub not connected; the message will be sent when it is")
+				fmt.Fprintln(cliStderr, "hub not connected; the message will be sent when it is")
 			}
 		},
 	}.ToCobra()
@@ -827,7 +827,7 @@ func inboxCmd() *cobra.Command {
 		Short:       "Show messages remote operators sent you",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxParams, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			type msg struct {
@@ -843,7 +843,7 @@ func inboxCmd() *cobra.Command {
 			}
 			var rows []msg
 			if err := agent.DaemonGet("/v1/federation/inbox", &rows); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 			kept := rows[:0]
 			for _, r := range rows {
@@ -852,10 +852,10 @@ func inboxCmd() *cobra.Command {
 				}
 			}
 			if p.JSON {
-				os.Exit(printJSON(os.Stdout, kept))
+				os.Exit(printJSON(cliStdout, kept))
 			}
 			if len(kept) == 0 {
-				fmt.Println("no remote operator messages")
+				fmt.Fprintln(cliStdout, "no remote operator messages")
 				return
 			}
 			for _, r := range kept {
@@ -864,14 +864,14 @@ func inboxCmd() *cobra.Command {
 					state = "read"
 				}
 				if r.OfferID != "" {
-					fmt.Printf("offer %s  %s  %s\n", r.OfferID, r.From, r.OfferState)
+					fmt.Fprintf(cliStdout, "offer %s  %s  %s\n", r.OfferID, r.From, r.OfferState)
 				} else {
-					fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+					fmt.Fprintf(cliStdout, "#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
 				}
 				if r.Subject != "" {
-					fmt.Printf("Subject: %s\n", r.Subject)
+					fmt.Fprintf(cliStdout, "Subject: %s\n", r.Subject)
 				}
-				fmt.Printf("%s\n\n", strings.TrimRight(r.Body, "\n"))
+				fmt.Fprintf(cliStdout, "%s\n\n", strings.TrimRight(r.Body, "\n"))
 			}
 		},
 	}.ToCobra()
@@ -888,7 +888,7 @@ func outboxCmd() *cobra.Command {
 		Short:       "Show outbound remote mail and its delivery state",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *outboxParams, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var rows []struct {
@@ -902,12 +902,12 @@ func outboxCmd() *cobra.Command {
 				CreatedAt  time.Time `json:"created_at"`
 			}
 			if err := agent.DaemonGet(fmt.Sprintf("/v1/federation/outbox?limit=%d", p.Limit), &rows); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 			if p.JSON {
-				os.Exit(printJSON(os.Stdout, rows))
+				os.Exit(printJSON(cliStdout, rows))
 			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			tw := tabwriter.NewWriter(cliStdout, 0, 2, 2, ' ', 0)
 			_, _ = fmt.Fprintln(tw, "ENVELOPE\tFROM\tTO\tSTATE\tTRIES\tSENT\tPREVIEW\tNOTE")
 			for _, r := range rows {
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", r.EnvelopeID[:12], r.From, r.To, r.State, r.Attempts, ago(r.CreatedAt), r.Preview, r.LastError)
@@ -941,7 +941,7 @@ func spawnRequestCmd() *cobra.Command {
 			"The peer either spawns under its granted policy or asks its operator; the decision arrives in your inbox.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *spawnRequestParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSpawnRequest(p, os.Stdout, os.Stderr))
+			os.Exit(runSpawnRequest(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -978,12 +978,12 @@ func requestsCmd() *cobra.Command {
 		Short:       "List spawn requests remote peers sent to your visible groups (pending and capacity-queued)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *requestsParams, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var rows []spawnRequestRow
 			if err := agent.DaemonGet("/v1/federation/spawn-requests", &rows); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 			kept := rows[:0]
 			for _, r := range rows {
@@ -992,10 +992,10 @@ func requestsCmd() *cobra.Command {
 				}
 			}
 			if p.JSON {
-				os.Exit(printJSON(os.Stdout, kept))
+				os.Exit(printJSON(cliStdout, kept))
 			}
 			if len(kept) == 0 {
-				fmt.Println("no pending or queued spawn requests (--all shows decided ones)")
+				fmt.Fprintln(cliStdout, "no pending or queued spawn requests (--all shows decided ones)")
 				return
 			}
 			for _, r := range kept {
@@ -1004,36 +1004,36 @@ func requestsCmd() *cobra.Command {
 					// Waits in this node's capacity queue; approve opens once it is handed on.
 					status = fmt.Sprintf("queued (#%d)", r.Position)
 				}
-				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, status, r.From, r.Group, ago(r.CreatedAt))
+				fmt.Fprintf(cliStdout, "#%d  %s  from %s  into %s  %s\n", r.ID, status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
-					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+					fmt.Fprintf(cliStdout, "    name %q  role %q\n", r.Name, r.Role)
 				}
 				if r.Profile != "" {
-					fmt.Printf("    requested profile: %s\n", r.Profile)
+					fmt.Fprintf(cliStdout, "    requested profile: %s\n", r.Profile)
 				}
 				if o := r.Overrides; o != nil {
 					for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}} {
 						if kv[1] != "" {
-							fmt.Printf("    requested %s: %q\n", kv[0], kv[1])
+							fmt.Fprintf(cliStdout, "    requested %s: %q\n", kv[0], kv[1])
 						}
 					}
 					if len(r.WouldDrop) > 0 {
-						fmt.Printf("    approve drops (no longer the peer's to choose): %s\n", strings.Join(r.WouldDrop, ", "))
+						fmt.Fprintf(cliStdout, "    approve drops (no longer the peer's to choose): %s\n", strings.Join(r.WouldDrop, ", "))
 					}
 				}
 				if r.Credentials != "" {
-					fmt.Printf("    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)
+					fmt.Fprintf(cliStdout, "    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)
 				}
 				if r.PlacementVersion != 0 {
-					fmt.Printf("    requires: %s (choose a compatible harness)\n", r.Require)
+					fmt.Fprintf(cliStdout, "    requires: %s (choose a compatible harness)\n", r.Require)
 				}
 				if r.ResultAgent != "" {
-					fmt.Printf("    spawned %s\n", r.ResultAgent)
+					fmt.Fprintf(cliStdout, "    spawned %s\n", r.ResultAgent)
 				}
 				if r.Reason != "" {
-					fmt.Printf("    reason: %s\n", r.Reason)
+					fmt.Fprintf(cliStdout, "    reason: %s\n", r.Reason)
 				}
-				fmt.Printf("    %s\n\n", strings.ReplaceAll(strings.TrimSpace(r.Brief), "\n", "\n    "))
+				fmt.Fprintf(cliStdout, "    %s\n\n", strings.ReplaceAll(strings.TrimSpace(r.Brief), "\n", "\n    "))
 			}
 		},
 	}.ToCobra()
@@ -1064,12 +1064,12 @@ func approveCmd() *cobra.Command {
 				Dropped []string `json:"dropped_overrides"`
 			}
 			body := map[string]any{"name": p.Name, "profile": p.Profile, "cwd": p.Cwd, "harness": p.Harness, "model": p.Model, "effort": p.Effort}
-			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
+			if rc := post(cliStderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("launch started for %s (%s) into %s; the requester is told after enrollment\n", out.Label, out.AgentID, out.Group)
+			fmt.Fprintf(cliStdout, "launch started for %s (%s) into %s; the requester is told after enrollment\n", out.Label, out.AgentID, out.Group)
 			if len(out.Dropped) > 0 {
-				fmt.Printf("requested settings dropped (the peer may no longer choose them): %s\n", strings.Join(out.Dropped, ", "))
+				fmt.Fprintf(cliStdout, "requested settings dropped (the peer may no longer choose them): %s\n", strings.Join(out.Dropped, ", "))
 			}
 		},
 	}.ToCobra()
@@ -1086,10 +1086,10 @@ func denyCmd() *cobra.Command {
 		Short:       "Deny a spawn request",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *denyParams, _ *cobra.Command, _ []string) {
-			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", p.ID), map[string]any{"reason": p.Reason}, nil); rc != 0 {
+			if rc := post(cliStderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", p.ID), map[string]any{"reason": p.Reason}, nil); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("denied request #%d\n", p.ID)
+			fmt.Fprintf(cliStdout, "denied request #%d\n", p.ID)
 		},
 	}.ToCobra()
 }
@@ -1101,10 +1101,10 @@ type abandonParams struct {
 
 func abandonCmd() *cobra.Command {
 	return boa.CmdT[abandonParams]{Use: "abandon", Short: "Return an unconfirmed launch to pending; WARNING a late worker may still appear", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *abandonParams, _ *cobra.Command, _ []string) {
-		fmt.Fprintln(os.Stderr, "WARNING: abandoning a launch permits another approval; a late worker may still appear")
-		if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/abandon", p.ID), map[string]any{"acknowledge_late_worker": p.Acknowledge}, nil); rc != 0 {
+		fmt.Fprintln(cliStderr, "WARNING: abandoning a launch permits another approval; a late worker may still appear")
+		if rc := post(cliStderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/abandon", p.ID), map[string]any{"acknowledge_late_worker": p.Acknowledge}, nil); rc != 0 {
 			os.Exit(rc)
 		}
-		fmt.Printf("request #%d returned to pending\n", p.ID)
+		fmt.Fprintf(cliStdout, "request #%d returned to pending\n", p.ID)
 	}}.ToCobra()
 }

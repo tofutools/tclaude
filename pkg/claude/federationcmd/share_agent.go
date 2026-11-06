@@ -25,7 +25,7 @@ type shareAgentParams struct {
 
 func shareAgentCmd() *cobra.Command {
 	return boa.CmdT[shareAgentParams]{Use: "share-agent", Short: "Offer an agent's configuration, optionally with conversation history", Long: "Shares configuration by default. --history clones the conversation while leaving the source running. The receiving operator previews and creates a fresh local agent; source permissions and ownership are advisory. Agent callers need agent.share with peer= scope; exporting another agent also requires agent.bundle.export.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *shareAgentParams, _ *cobra.Command, _ []string) {
-		os.Exit(runShareAgent(p, os.Stdout, os.Stderr))
+		os.Exit(runShareAgent(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runShareAgent(p *shareAgentParams, out, stderr io.Writer) int {

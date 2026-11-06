@@ -335,12 +335,12 @@ func viewersCmd() *cobra.Command {
 	return boa.CmdT[viewersParams]{Use: "viewers", Short: "List incoming remote terminal viewers (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *viewersParams, _ *cobra.Command, _ []string) {
 		var rows []remoteViewer
 		if err := agent.DaemonGet("/v1/federation/viewers?session="+url.QueryEscape(p.Session), &rows); err != nil {
-			os.Exit(fail(os.Stderr, err))
+			os.Exit(fail(cliStderr, err))
 		}
 		if p.JSON {
-			os.Exit(printJSON(os.Stdout, rows))
+			os.Exit(printJSON(cliStdout, rows))
 		}
-		tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		tw := tabwriter.NewWriter(cliStdout, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(tw, "VIEWER\tPEER\tAGENT\tGROUP\tMODE\tSTARTED")
 		for _, v := range rows {
 			mode := "interactive"
@@ -359,9 +359,9 @@ type kickParams struct {
 
 func kickCmd() *cobra.Command {
 	return boa.CmdT[kickParams]{Use: "kick", Short: "Disconnect one incoming remote terminal viewer (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *kickParams, _ *cobra.Command, _ []string) {
-		if rc := post(os.Stderr, "/v1/federation/viewers/"+url.PathEscape(p.ID)+"/kick", map[string]any{}, nil); rc != 0 {
+		if rc := post(cliStderr, "/v1/federation/viewers/"+url.PathEscape(p.ID)+"/kick", map[string]any{}, nil); rc != 0 {
 			os.Exit(rc)
 		}
-		fmt.Println("Disconnected remote viewer", p.ID)
+		fmt.Fprintln(cliStdout, "Disconnected remote viewer", p.ID)
 	}}.ToCobra()
 }

@@ -25,7 +25,7 @@ type viewParams struct {
 
 func peerViewCmd() *cobra.Command {
 	return boa.CmdT[viewParams]{Use: "view <endpoint>", Short: "Read an authorized peer dashboard endpoint as JSON (operator only)", Args: cobra.ExactArgs(1), ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *viewParams, _ *cobra.Command, args []string) {
-		os.Exit(runPeerView(p, args[0], os.Stdout, os.Stderr))
+		os.Exit(runPeerView(p, args[0], cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runPeerView(p *viewParams, endpoint string, stdout, stderr io.Writer) int {

@@ -32,13 +32,13 @@ func ReplayCmd() *cobra.Command {
 				var err error
 				delay, err = time.ParseDuration(p.Delay)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: invalid delay %q: %v\n", p.Delay, err)
+					fmt.Fprintf(cliStderr, "Error: invalid delay %q: %v\n", p.Delay, err)
 					os.Exit(1)
 				}
 			}
 
 			if err := runReplay(p.File, delay); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -91,7 +91,7 @@ func runReplay(file string, delay time.Duration) error {
 		}
 		lineNum++
 
-		fmt.Fprintf(os.Stderr, "[replay] line %d\n", lineNum)
+		fmt.Fprintf(cliStderr, "[replay] line %d\n", lineNum)
 
 		env := append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionID), "TCLAUDE_REPLAY_MODE=true")
 		if strings.HasPrefix(sessionID, "tasks-") {
@@ -104,7 +104,7 @@ func runReplay(file string, delay time.Duration) error {
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "[replay] hook-callback failed on line %d: %v\n", lineNum, err)
+			fmt.Fprintf(cliStderr, "[replay] hook-callback failed on line %d: %v\n", lineNum, err)
 		}
 
 		if delay > 0 {
@@ -113,12 +113,12 @@ func runReplay(file string, delay time.Duration) error {
 	}
 
 	if err := DeleteSessionState(sessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "[replay] warning: failed to delete session state %q: %v\n", sessionID, err)
+		fmt.Fprintf(cliStderr, "[replay] warning: failed to delete session state %q: %v\n", sessionID, err)
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "[replay] done (%d lines)\n", lineNum)
+	fmt.Fprintf(cliStderr, "[replay] done (%d lines)\n", lineNum)
 	return nil
 }

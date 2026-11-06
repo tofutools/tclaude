@@ -26,7 +26,7 @@ type hubRunParams struct {
 }
 
 func hubRunCmd() *cobra.Command {
-	return boa.CmdT[hubRunParams]{Use: "run", Short: "Run a script on the connected hub (hub.exec and host opt-in required)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubRunParams, _ *cobra.Command, _ []string) { os.Exit(runHubScript(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[hubRunParams]{Use: "run", Short: "Run a script on the connected hub (hub.exec and host opt-in required)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubRunParams, _ *cobra.Command, _ []string) { os.Exit(runHubScript(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runHubScript(p *hubRunParams, stdout, stderr io.Writer) int {
 	if p.Job != "" && (!noderun.ValidID(p.Job) || p.File != "") || p.Log != "" && (p.Job == "" || p.Log != "stdout" && p.Log != "stderr") || p.Offset < 0 {

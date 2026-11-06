@@ -179,12 +179,12 @@ func tclaudeLayerDarwinProxyLauncherCmd() *cobra.Command {
 		Run: func(*cobra.Command, []string) {
 			spec, err := decodeDarwinProxyLaunchSpec(encoded)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "tclaude: Darwin filtering proxy launcher: %v\n", err)
+				fmt.Fprintf(cliStderr, "tclaude: Darwin filtering proxy launcher: %v\n", err)
 				os.Exit(125)
 			}
 			code, err := runDarwinProxyLauncher(spec)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "tclaude: Darwin filtering proxy launcher: %v\n", err)
+				fmt.Fprintf(cliStderr, "tclaude: Darwin filtering proxy launcher: %v\n", err)
 			}
 			os.Exit(code)
 		},

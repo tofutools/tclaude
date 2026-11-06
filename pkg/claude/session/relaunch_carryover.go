@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 
@@ -537,7 +536,7 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 			slog.Warn("session new: dropped a recorded launch parameter the resume harness cannot honour",
 				"conv_id", convID, "harness", h.Name, "flag", field.flag)
 			if field.containment {
-				fmt.Fprintf(os.Stderr,
+				fmt.Fprintf(cliStderr,
 					"Warning: this conversation's recorded --%s does not apply to harness %q; "+
 						"resuming without it. Pass --%s to choose the posture yourself.\n",
 					field.flag, h.Name, field.flag)
@@ -556,7 +555,7 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 	// banner on every ordinary resume, and an operator who has learned to skip
 	// it will skip the one that says `--sandbox off` too.
 	if len(carried) > 0 {
-		fmt.Fprintf(os.Stderr, "Resuming with this conversation's recorded launch posture (%s). "+
+		fmt.Fprintf(cliStderr, "Resuming with this conversation's recorded launch posture (%s). "+
 			"Pass a flag explicitly to override it.\n", strings.Join(carried, " "))
 		slog.Debug("session new: carried recorded launch posture into resume",
 			"conv_id", convID, "harness", h.Name, "fields", strings.Join(carried, ","))

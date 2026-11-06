@@ -44,7 +44,7 @@ func resolveResumeLast(params *NewParams) error {
 		return err
 	}
 	if skippedRetired != "" {
-		fmt.Fprintf(os.Stderr, "Skipping retired conversation %s; use --resume to open it\n", skippedRetired)
+		fmt.Fprintf(cliStderr, "Skipping retired conversation %s; use --resume to open it\n", skippedRetired)
 	}
 	if convID == "" {
 		return fmt.Errorf("no conversation to resume in this directory")
@@ -70,7 +70,7 @@ func ReinstateRetiredForResume(convID, cwd string) error {
 	}
 	if !retiredHead {
 		if state, err := db.AgentState(convID); err == nil && state == db.AgentStateRetired {
-			fmt.Fprintf(os.Stderr, "Conversation %s is an old generation of a retired agent; the agent stays retired.\n", convID)
+			fmt.Fprintf(cliStderr, "Conversation %s is an old generation of a retired agent; the agent stays retired.\n", convID)
 		}
 		return nil
 	}
@@ -83,7 +83,7 @@ func ReinstateRetiredForResume(convID, cwd string) error {
 	if _, err := db.ReinstateAgent(convID); err != nil {
 		return fmt.Errorf("conversation %s is retired and reinstating it failed: %w", convID, err)
 	}
-	fmt.Fprintf(os.Stderr, "Reinstated retired conversation %s. Its old groups and permissions don't come back.\n", convID)
+	fmt.Fprintf(cliStderr, "Reinstated retired conversation %s. Its old groups and permissions don't come back.\n", convID)
 	return nil
 }
 

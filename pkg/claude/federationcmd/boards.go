@@ -82,7 +82,7 @@ func boardsCmd() *cobra.Command {
 	}
 	for _, a := range actions {
 		p := &boardCommandParams{Action: a.dispatch}
-		cmd := &cobra.Command{Use: a.name, Aliases: a.aliases, Short: a.short, Args: cobra.NoArgs, Run: func(_ *cobra.Command, _ []string) { os.Exit(runBoardCommand(p, os.Stdout, os.Stderr)) }}
+		cmd := &cobra.Command{Use: a.name, Aliases: a.aliases, Short: a.short, Args: cobra.NoArgs, Run: func(_ *cobra.Command, _ []string) { os.Exit(runBoardCommand(p, cliStdout, cliStderr)) }}
 		for _, name := range a.flags {
 			addBoardFlag(cmd, p, name)
 		}

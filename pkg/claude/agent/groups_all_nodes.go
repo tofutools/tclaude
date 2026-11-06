@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // allNodesGroup is one row of `groups ls --all-nodes`, the CLI side of the

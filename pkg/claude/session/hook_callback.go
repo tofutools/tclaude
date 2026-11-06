@@ -677,7 +677,7 @@ func runHookCallback() error {
 	// agentd, which runs this same dispatch host-side on the caller's
 	// behalf. Every other launch keeps writing directly, unchanged.
 	if brokerHookEvents() {
-		return brokerHookEvent(input, os.Stdout)
+		return brokerHookEvent(input, cliStdout)
 	}
 
 	// An ordinary launch applies its own hooks, but a permission prompt
@@ -695,11 +695,11 @@ func runHookCallback() error {
 	// event out of that carve-out would half-break the very thing the carve-out
 	// exists to keep whole.
 	if _, inTaskMode := taskSignalPath(); !inTaskMode &&
-		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
+		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, cliStdout) {
 		return nil
 	}
 
-	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
+	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), cliStdout); err != nil {
 		return err
 	}
 	MaybeRequestAutoName(input)

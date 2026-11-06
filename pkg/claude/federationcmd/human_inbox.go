@@ -35,11 +35,17 @@ type humanInboxDecideParams struct {
 
 func humanInboxCmd() *cobra.Command {
 	cmd := boa.CmdT[humanInboxParams]{Use: "human-inbox", Short: "List another own node's human notifications and pending access requests (operator only)", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInbox(p, os.Stdout, os.Stderr)) }}.ToCobra()
+		RunFunc: func(p *humanInboxParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInbox(p, cliStdout, cliStderr))
+		}}.ToCobra()
 	cmd.AddCommand(boa.CmdT[humanInboxReplyParams]{Use: "reply", Short: "Reply to an agent's notification on another own node", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxReplyParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInboxReply(p, os.Stdout, os.Stderr)) }}.ToCobra())
+		RunFunc: func(p *humanInboxReplyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInboxReply(p, cliStdout, cliStderr))
+		}}.ToCobra())
 	cmd.AddCommand(boa.CmdT[humanInboxDecideParams]{Use: "decide", Short: "Approve or deny one pending access request on another own node, once", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxDecideParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInboxDecide(p, os.Stdout, os.Stderr)) }}.ToCobra())
+		RunFunc: func(p *humanInboxDecideParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInboxDecide(p, cliStdout, cliStderr))
+		}}.ToCobra())
 	return cmd
 }
 

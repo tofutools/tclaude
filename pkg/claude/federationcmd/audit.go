@@ -26,7 +26,7 @@ type auditParams struct {
 }
 
 func auditCmd() *cobra.Command {
-	return boa.CmdT[auditParams]{Use: "audit", Short: "Show local metadata for incoming and outgoing remote activity", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *auditParams, _ *cobra.Command, _ []string) { os.Exit(runAudit(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[auditParams]{Use: "audit", Short: "Show local metadata for incoming and outgoing remote activity", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *auditParams, _ *cobra.Command, _ []string) { os.Exit(runAudit(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runAudit(p *auditParams, stdout, stderr io.Writer) int {
 	limit := p.Limit

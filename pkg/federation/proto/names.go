@@ -1,9 +1,12 @@
 package proto
 
 import (
-	"github.com/google/uuid"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // MaxNameLen bounds every remote-supplied display name.
@@ -148,14 +151,13 @@ func safeOptional(s string) string {
 	return SafeName(s, false)
 }
 
-// StripControls removes C0/C1 control characters (and DEL) from remote
-// text, keeping newlines and tabs, so it cannot drive a terminal.
+// StripControls removes C0/C1 control characters (and DEL) and the bidi
+// embedding, override and isolate controls from remote text, keeping
+// newlines and tabs, so it cannot drive a terminal or read reordered
+// (termtext.UnsafeRune, the rule local printers clean by).
 func StripControls(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+		if termtext.UnsafeRune(r) {
 			return -1
 		}
 		return r

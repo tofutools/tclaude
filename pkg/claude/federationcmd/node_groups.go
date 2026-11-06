@@ -25,14 +25,14 @@ type nodeGroupRemoveParams struct {
 }
 
 func nodeGroupMutation(method, path string, in any) {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		os.Exit(rc)
 	}
 	var out any
 	if err := agent.DaemonRequest(method, path, in, &out, agent.DaemonOpts{}); err != nil {
-		os.Exit(fail(os.Stderr, err))
+		os.Exit(fail(cliStderr, err))
 	}
-	os.Exit(printJSON(os.Stdout, out))
+	os.Exit(printJSON(cliStdout, out))
 }
 
 // NodeGroupsCmd is attached beneath the nodes discovery command.
@@ -54,7 +54,7 @@ func NodeGroupsCmd() *cobra.Command {
 			nodeGroupMutation(http.MethodDelete, path, in)
 		}}.ToCobra(),
 		boa.CmdT[jsonParam]{Use: "ls", Short: "List local pools with immutable IDs and current trusted members", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var out struct {
@@ -68,15 +68,15 @@ func NodeGroupsCmd() *cobra.Command {
 				} `json:"groups"`
 			}
 			if err := agent.DaemonGet("/v1/federation/nodes/groups", &out); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 			if p.JSON {
-				os.Exit(printJSON(os.Stdout, out))
+				os.Exit(printJSON(cliStdout, out))
 			}
 			for _, g := range out.Groups {
-				fmt.Printf("%s (%s): %d peers\n", g.Name, g.ID, len(g.Members))
+				fmt.Fprintf(cliStdout, "%s (%s): %d peers\n", g.Name, g.ID, len(g.Members))
 				for _, peer := range g.Members {
-					fmt.Printf("  %s %s\n", peer.Label, peer.InstanceID)
+					fmt.Fprintf(cliStdout, "  %s %s\n", peer.Label, peer.InstanceID)
 				}
 			}
 		}}.ToCobra(),

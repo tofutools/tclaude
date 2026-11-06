@@ -22,7 +22,7 @@ type hubUpdateParams struct {
 }
 
 func hubUpdateCmd() *cobra.Command {
-	return boa.CmdT[hubUpdateParams]{Use: "update", Short: "Check or update a supervised hub (hub.update required)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubUpdateParams, _ *cobra.Command, _ []string) { os.Exit(runHubUpdate(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[hubUpdateParams]{Use: "update", Short: "Check or update a supervised hub (hub.update required)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubUpdateParams, _ *cobra.Command, _ []string) { os.Exit(runHubUpdate(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runHubUpdate(p *hubUpdateParams, stdout, stderr io.Writer) int {
 	if p.Job != "" {

@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
-	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/common"
 )

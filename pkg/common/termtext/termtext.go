@@ -26,8 +26,11 @@ import (
 	"golang.org/x/term"
 )
 
-// unsafeRune reports whether r must not reach a terminal.
-func unsafeRune(r rune) bool {
+// UnsafeRune reports whether r must not reach a terminal: C0 but newline and
+// tab, DEL, C1, and the bidi embedding, override and isolate controls.
+// proto.StripControls uses it on federation ingress, so a peer's text and a
+// local printer agree.
+func UnsafeRune(r rune) bool {
 	switch {
 	case r == '\n' || r == '\t':
 		return false
@@ -49,7 +52,7 @@ func Clean(s string) string {
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if (r != utf8.RuneError || size != 1) && !unsafeRune(r) {
+		if (r != utf8.RuneError || size != 1) && !UnsafeRune(r) {
 			b.WriteString(s[i : i+size])
 		}
 		i += size
@@ -60,7 +63,7 @@ func Clean(s string) string {
 func isClean(s string) bool {
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if (r == utf8.RuneError && size == 1) || unsafeRune(r) {
+		if (r == utf8.RuneError && size == 1) || UnsafeRune(r) {
 			return false
 		}
 		i += size
@@ -140,3 +143,13 @@ func ForTerminal(f *os.File) io.Writer {
 	}
 	return f
 }
+
+// Stdout and Stderr are the process's standard streams for a command that
+// prints agent- or peer-authored text: cleaned on a terminal, untouched when
+// piped or redirected (ForTerminal). One Writer per stream, so a rune split
+// across two writes from different packages still joins.
+var (
+	Stdout = ForTerminal(os.Stdout)
+	Stderr = ForTerminal(os.Stderr)
+)
+

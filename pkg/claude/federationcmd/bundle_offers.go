@@ -31,7 +31,7 @@ type offerConfigParams struct {
 
 func offerConfigCmd() *cobra.Command {
 	return boa.CmdT[offerConfigParams]{Use: "offer-config", Short: "Offer a config bundle to a trusted peer's operator", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerConfigParams, _ *cobra.Command, _ []string) {
-		os.Exit(runOfferConfig(p, os.Stdout, os.Stderr))
+		os.Exit(runOfferConfig(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runOfferConfig(p *offerConfigParams, out, stderr io.Writer) int {
@@ -120,7 +120,7 @@ type offerImportParams struct {
 
 func offersCmd() *cobra.Command {
 	return boa.CmdT[offersParams]{Use: "offers", Short: "List, preview, apply or decline bundle offers", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offersParams, _ *cobra.Command, _ []string) {
-		if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+		if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 			os.Exit(rc)
 		}
 		direction := "in"
@@ -136,39 +136,39 @@ func offersCmd() *cobra.Command {
 			ImportAgent string                    `json:"import_agent,omitempty"`
 		}
 		if err := agent.DaemonGet("/v1/federation/bundle-offers?direction="+direction, &rows); err != nil {
-			os.Exit(fail(os.Stderr, err))
+			os.Exit(fail(cliStderr, err))
 		}
 		if p.JSON {
-			os.Exit(printJSON(os.Stdout, rows))
+			os.Exit(printJSON(cliStdout, rows))
 		}
 		for _, r := range rows {
-			fmt.Printf("%s  %s  %s  %s  %d bytes  expires %s\n", r.Offer.ID, r.Peer, r.Offer.Type, r.State, r.Offer.Bytes, r.Offer.ExpiresAt.Format("2006-01-02 15:04 MST"))
+			fmt.Fprintf(cliStdout, "%s  %s  %s  %s  %d bytes  expires %s\n", r.Offer.ID, r.Peer, r.Offer.Type, r.State, r.Offer.Bytes, r.Offer.ExpiresAt.Format("2006-01-02 15:04 MST"))
 			if r.ImportAgent != "" {
-				fmt.Println("  Imported/reserved agent: " + r.ImportAgent)
+				fmt.Fprintln(cliStdout, "  Imported/reserved agent: "+r.ImportAgent)
 			}
 			if r.Offer.Group != "" {
-				fmt.Println("  Receiving group: " + r.Offer.Group)
+				fmt.Fprintln(cliStdout, "  Receiving group: "+r.Offer.Group)
 			}
 			if r.LastError != "" {
-				fmt.Println("  " + r.LastError)
+				fmt.Fprintln(cliStdout, "  "+r.LastError)
 			}
 		}
 		if len(rows) == 0 {
-			fmt.Println("no bundle offers")
+			fmt.Fprintln(cliStdout, "no bundle offers")
 		}
 	}, SubCmds: []*cobra.Command{
 		offerContentsCmd(),
 		offerDownloadCmd(),
 		boa.CmdT[offerImportParams]{Use: "import", Short: "Preview a received config or agent offer; --apply imports it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runOfferImport(p, os.Stdout, os.Stderr))
+			os.Exit(runOfferImport(p, cliStdout, cliStderr))
 		}}.ToCobra(),
 		boa.CmdT[offerIDParams]{Use: "fetch", Short: "Download and verify a large offer without applying it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerIDParams, _ *cobra.Command, _ []string) {
 			var out any
-			os.Exit(offerPost(os.Stderr, offerPath(p.ID, p.Peer, "fetch"), nil, &out))
+			os.Exit(offerPost(cliStderr, offerPath(p.ID, p.Peer, "fetch"), nil, &out))
 		}}.ToCobra(),
 		boa.CmdT[offerIDParams]{Use: "decline", Short: "Decline an offer and delete its local payload", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerIDParams, _ *cobra.Command, _ []string) {
 			var out any
-			os.Exit(offerPost(os.Stderr, offerPath(p.ID, p.Peer, "decline"), nil, &out))
+			os.Exit(offerPost(cliStderr, offerPath(p.ID, p.Peer, "decline"), nil, &out))
 		}}.ToCobra(),
 	}}.ToCobra()
 }
@@ -244,7 +244,7 @@ type offerContentsParams struct {
 
 func offerContentsCmd() *cobra.Command {
 	return boa.CmdT[offerContentsParams]{Use: "contents", Short: "Inspect a verified offer's entries or bounded text", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerContentsParams, _ *cobra.Command, _ []string) {
-		os.Exit(runOfferContents(p, os.Stdout, os.Stderr))
+		os.Exit(runOfferContents(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runOfferContents(p *offerContentsParams, out, stderr io.Writer) int {
@@ -269,7 +269,7 @@ type offerDownloadParams struct {
 }
 
 func offerDownloadCmd() *cobra.Command {
-	return boa.CmdT[offerDownloadParams]{Use: "download", Short: "Save a verified offer without importing it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerDownloadParams, _ *cobra.Command, _ []string) { os.Exit(runOfferDownload(p, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[offerDownloadParams]{Use: "download", Short: "Save a verified offer without importing it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerDownloadParams, _ *cobra.Command, _ []string) { os.Exit(runOfferDownload(p, cliStderr)) }}.ToCobra()
 }
 func runOfferDownload(p *offerDownloadParams, stderr io.Writer) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {

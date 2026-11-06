@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func PruneEmptyCmd() *cobra.Command {
 		Long:        "Delete Claude Code conversations that have no user messages, remove stale index entries, and clean up dangling companion directories (subagents, etc.) with no corresponding .jsonl file.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *PruneEmptyParams, cmd *cobra.Command, args []string) {
-			exitCode := RunPruneEmpty(params, os.Stdout, os.Stderr, os.Stdin)
+			exitCode := RunPruneEmpty(params, cliStdout, cliStderr, os.Stdin)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -45,7 +46,7 @@ type emptyConversation struct {
 	IsIndexed   bool
 }
 
-func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.File) int {
+func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr io.Writer, stdin *os.File) int {
 	var projectPaths []string
 
 	if params.Global {

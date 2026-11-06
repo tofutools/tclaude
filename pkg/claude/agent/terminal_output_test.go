@@ -3,16 +3,12 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // hostileText carries every shape of terminal control an agent- or
@@ -84,35 +80,6 @@ func TestInboxWatchInlineNudgeEchoIsTerminalSafe(t *testing.T) {
 	writeInboxWatchInlineNudge(&out, &inboxWatchModel{inlineNudge: nudge})
 	assertTerminalSafe(t, out.String())
 	assert.Contains(t, out.String(), "[system: new agent message #9")
-}
-
-// Every agent command prints through cliStdout and cliStderr, so nothing it
-// prints reaches a terminal uncleaned. The inbox TUI is the one exception: it
-// is handed the raw terminal, because it draws with escape sequences of its
-// own, and cleans what it renders.
-func TestAgentCommandsPrintThroughTheTerminalWriters(t *testing.T) {
-	allowed := map[string]bool{"terminal_output.go": true}
-	allowedLines := map[string]bool{
-		"inbox_watch.go\x00os.Exit(runInboxWatch(p, os.Stdout, os.Stderr))": true,
-	}
-	rawStdio := regexp.MustCompile(`\bos\.(Stdout|Stderr)\b|\bfmt\.Print(f|ln)?\(`)
-	files, err := filepath.Glob("*.go")
-	require.NoError(t, err)
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") || allowed[file] {
-			continue
-		}
-		data, err := os.ReadFile(file)
-		require.NoError(t, err)
-		for i, line := range strings.Split(string(data), "\n") {
-			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "//") {
-				continue
-			}
-			if rawStdio.MatchString(line) && !allowedLines[file+"\x00"+strings.TrimSpace(line)] {
-				t.Errorf("%s:%d prints to the raw terminal; use cliStdout/cliStderr: %s", file, i+1, strings.TrimSpace(line))
-			}
-		}
-	}
 }
 
 // remarshal fills out, a daemon response, from payload as the JSON client

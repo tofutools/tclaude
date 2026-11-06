@@ -1,11 +1,6 @@
 package agent
 
-import (
-	"io"
-	"os"
-
-	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
-)
+import "github.com/tofutools/tclaude/pkg/common/termtext"
 
 // cliStdout and cliStderr are where the agent commands print. Almost
 // everything they print can carry agent- or peer-authored text (message
@@ -14,6 +9,6 @@ import (
 // control sequences the terminal would otherwise interpret (termtext). Piped
 // or redirected output passes through unchanged.
 var (
-	cliStdout io.Writer = termtext.ForTerminal(os.Stdout)
-	cliStderr io.Writer = termtext.ForTerminal(os.Stderr)
+	cliStdout = termtext.Stdout
+	cliStderr = termtext.Stderr
 )
