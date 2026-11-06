@@ -33,8 +33,8 @@ const (
 	peerHumanInboxMessages = 50
 	// peerHumanInboxScan bounds how many unread notices a restricted peer's
 	// listing reads past the ones it may not see.
-	peerHumanInboxScan = 2000
-	peerHumanInboxBodyMax  = 4 << 10
+	peerHumanInboxScan    = 2000
+	peerHumanInboxBodyMax = 4 << 10
 )
 
 func addPeerHumanInboxRules(rules map[string]peerViewRule) {
