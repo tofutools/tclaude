@@ -188,7 +188,7 @@ func peerGroupImportGate(w http.ResponseWriter, sub *http.Request, v *peerView) 
 		set("default_context", exp.Group.DefaultContext)
 	}
 	if fail := peerLaunchBodyFailure(v, launch); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return peerImportCheck{}, false
 	}
 	need := func(what string, fields ...string) bool {
