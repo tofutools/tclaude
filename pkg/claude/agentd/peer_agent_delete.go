@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // An agent's permanent delete and its debug export over the peer view, each
@@ -33,11 +36,49 @@ func servePeerAgentDelete(w http.ResponseWriter, r *http.Request, v *peerView, r
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a remote delete takes no options")
 		return
 	}
-	if !peerAgentActionAllowed(v.peer.InstanceID, target.CurrentConvID, rule.requires) {
+	if !peerAgentActionAllowed(v.peer.InstanceID, target.CurrentConvID, rule.requires) ||
+		!peerArchivedFootprintHeld(v.peer.InstanceID, target.CurrentConvID, rule.requires) {
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for every affected group", rule.requires))
 		return
 	}
 	servePeerAgentAsLocal(w, r, v, target)
+}
+
+// peerArchivedFootprintHeld reports whether the peer holds slug, scoped to
+// the group, in every archived group the agent is in or owns. A delete
+// purges those memberships and seats too, and an archived group can be
+// unarchived; no peer grant answers in an archived group otherwise
+// (fedPeerAllows), so the grant must name it.
+func peerArchivedFootprintHeld(peer, conv, slug string) bool {
+	groups, err := db.ListGroupsForConv(conv)
+	if err != nil {
+		return false
+	}
+	ids := map[int64]bool{}
+	for _, g := range groups {
+		if g.IsArchived() {
+			ids[g.ID] = true
+		}
+	}
+	owned, err := db.ListGroupsOwnedBy(conv)
+	if err != nil {
+		return false
+	}
+	for _, id := range owned {
+		g, err := db.GetAgentGroupByID(id)
+		if err != nil {
+			return false
+		}
+		if g != nil && g.IsArchived() {
+			ids[id] = true
+		}
+	}
+	for id := range ids {
+		if fedPeerExplicitGroupGrant(peer, id, slug) == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // servePeerAgentDebugExport serves an agent's debug export for a peer
@@ -95,7 +136,8 @@ func servePeerAgentDebugExport(w http.ResponseWriter, r *http.Request, v *peerVi
 }
 
 // redactPeerEnvironmentValues replaces every value under an environment
-// field (any key naming an environment, at any depth) with a redaction
+// field (any key naming an environment, at any depth, a recorded process
+// PATH and a pre-launch script) with a redaction
 // marker, recording each field's path once. Entries keep their names; a
 // name-to-value map keeps its keys.
 func redactPeerEnvironmentValues(node any, path string, underEnv bool, redacted *[]string) {
@@ -107,9 +149,15 @@ func redactPeerEnvironmentValues(node any, path string, underEnv bool, redacted 
 				childPath = path + "." + key
 			}
 			// Provenance names where each variable came from, not its value.
-			env := underEnv || peerEnvironmentKey(key) && !strings.HasSuffix(strings.ToLower(path), "provenance")
+			// A process's recorded PATH is an environment value under another
+			// name (live_process.path, execution_boundary.path).
+			// A sandbox profile's pre-launch script sets what its environment
+			// field may not hold, secrets included: the script is a value too.
+			env := underEnv || peerEnvironmentKey(key) && !strings.HasSuffix(strings.ToLower(path), "provenance") ||
+				key == "path" && (strings.HasSuffix(path, "live_process") || strings.HasSuffix(path, "execution_boundary")) ||
+				key == "script" && strings.HasSuffix(path, "pre_launch")
 			if env && !underEnv {
-				if redactPeerEnvironmentField(n, key) {
+				if redactPeerEnvironmentField(n, key) && !slices.Contains(*redacted, childPath) {
 					*redacted = append(*redacted, childPath)
 				}
 				continue

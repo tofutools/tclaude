@@ -30,6 +30,17 @@ func TestPeerAgentDeleteHoldsItsGroupsAndNeverTheWorktree(t *testing.T) {
 	code, body = del("")
 	require.Equal(t, 403, code, "a delete purges its seat in the group it owns: %s", body)
 	h.grant(t, agentd.PermGroupsMembersDelete, "group=other")
+	// An archived group's membership goes with the delete too, and the
+	// group may come back: the grant must name it.
+	// (A grant names a group while it is active, and outlives its archiving.)
+	h.f.HaveGroup("attic")
+	h.f.HaveMemberWithRole("attic", "del-conv", "dev")
+	require.NoError(t, db.ArchiveAgentGroup("attic"))
+	code, body = del("")
+	require.Equal(t, 403, code, "an archived group of the agent: %s", body)
+	require.NoError(t, db.UnarchiveAgentGroup("attic"))
+	h.grant(t, agentd.PermGroupsMembersDelete, "group=attic")
+	require.NoError(t, db.ArchiveAgentGroup("attic"))
 
 	for _, query := range []string{"?delete_worktree=1", "?delete_worktree=true&expected_worktree=/w", "?expected_worktree=/w"} {
 		code, body = del(query)
@@ -90,8 +101,8 @@ func TestPeerAgentDebugExportRedactsEnvironmentValues(t *testing.T) {
 	require.Contains(t, body, "s3cret-group")
 }
 
-// Remote access switches under groups.members.remote-control in every group
-// of the agent.
+// Remote access is reached under groups.members.remote-control in every
+// group of the agent (the gate; a status read stands in for a switch).
 func TestPeerAgentRemoteControlHoldsItsGroups(t *testing.T) {
 	h := newPeerProcessHarness(t)
 	h.f.HaveGroup("other")
