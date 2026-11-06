@@ -88,7 +88,9 @@ export function HelpDisclosure({
 
    `open`/`setOpen` are lifted so only one field's disclosure shows at a time;
    the caller keys them by field id. onChange receives the raw event, matching
-   the plain select rows these replaced.
+   the plain select rows these replaced. `control`, when given, stands in for
+   the Select (a type-to-filter choice whose box is `${id}-input`); the label
+   then names that box.
 
    The caveat renders as a sibling of .spawn-field-with-help rather than inside
    it: that element is the containing block for the absolutely-positioned
@@ -104,17 +106,17 @@ export function HelpDisclosure({
    select does not resize when the help lands. */
 export function HelpField({
   id, descriptionID = `${id}-hint`, label, title, value, options,
-  onChange, help, open, setOpen, disabled = false, busy = false, showCaveat = true,
+  onChange, help, open, setOpen, disabled = false, busy = false, showCaveat = true, control = null,
 }) {
   const caveat = showCaveat ? helpCaveat(help) : '';
   return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
-    <label class="cron-create-label" for=${id}>${label}</label>
+    <label class="cron-create-label" for=${control ? `${id}-input` : id}>${label}</label>
     <div class="cron-create-target spawn-field-help-column">
       <div class="spawn-field-with-help">
-        <${Select} id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
+        ${control || html`<${Select} id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
           onChange=${onChange}>
           ${options.map((option) => html`<option key=${option.value} value=${option.value} data-no-fill=${option.noFill}>${option.label}</option>`)}
-        <//>
+        <//>`}
         <${HelpDisclosure} id=${id} descriptionID=${descriptionID} label=${label} help=${help}
           open=${open} setOpen=${setOpen} />
       </div>
