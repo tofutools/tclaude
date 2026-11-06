@@ -95,10 +95,28 @@ test('Enter adds a path as a chip, × removes it, and a bad path is flagged', as
   assert.deepEqual(state.value, ['/work']);
 });
 
-test('a launch that cannot enforce a deny disables the box and keeps the chips', async (t) => {
+test('a launch that cannot enforce a deny says the spawn will be refused and keeps every path removable', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, input } = await mountChips(harness, { value: ['~/secrets'], blockedReason: 'Sandbox off cannot enforce a deny.' });
-  assert.equal(input(), null, 'nothing more can be added');
+  assert.equal(input().disabled, false, 'a pending path can still be cleared');
   assert.ok(host.querySelector('.spawn-deny-chip'), 'the chosen path stays on screen');
   assert.match(host.textContent, /daemon will refuse this spawn/);
+});
+
+// The uncommitted text is sent when valid, so it must stay on screen through
+// anything that remounts the box: a queued spawn reopened, a blocked launch
+// switched back. Only the draft carries it across.
+test('a path still being typed stays on screen across a remount and a blocked launch', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { DenyPathChips } = await harness.importDashboardModule('js/spawn-deny-paths.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const render = (props) => harness.mount(harness.html`<${DenyPathChips} id="deny" value=${[]} draftText="/srv/keys"
+    onChange=${() => {}} onDraft=${() => {}} ...${props} />`, host);
+  let mounted = await render({});
+  assert.equal(host.querySelector('#deny-input').value, '/srv/keys', 'a reopened draft shows its pending path');
+  await mounted.unmount();
+  mounted = await render({ blockedReason: 'Sandbox off cannot enforce a deny.' });
+  assert.equal(host.querySelector('#deny-input').value, '/srv/keys', 'blocked, the box keeps it, still editable');
+  assert.match(host.textContent, /daemon will refuse this spawn/, 'and the refusal is foretold for a pending path too');
+  await mounted.unmount();
 });

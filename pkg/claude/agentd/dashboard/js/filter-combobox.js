@@ -28,6 +28,9 @@
 //   onQuery      (text) → void — the typed text as it changes, so a caller can
 //                treat what is left in the box as an uncommitted value
 //   inputId      the input's id, so a <label for> can name it
+//   initialQuery the box's text on mount: a caller that keeps uncommitted
+//                text (onQuery) hands it back, so a remount does not hide it
+//   disabled     the input takes no typing and opens no list
 //   placeholder, emptyHint, ariaLabel, id (the listbox's)
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -101,9 +104,9 @@ export function comboGroupSummary(items) {
 
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
-  placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId,
+  placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
 }) {
-  const [query, setQueryState] = useState('');
+  const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -180,7 +183,7 @@ export function FilterCombobox({
   const summary = summarize ? comboGroupSummary(items) : [];
   const shownGroups = summary.slice(0, 5);
   return html`<div class="filter-combobox">
-    <input ref=${inputRef} id=${inputId} type="text" class="add-member-search filter-combobox-input" value=${query}
+    <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${query}
       placeholder=${placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
