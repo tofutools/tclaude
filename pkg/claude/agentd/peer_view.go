@@ -292,6 +292,7 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerSpawnCatalogRules(rules)
 	addPeerNodeManageRules(rules)
 	addPeerLibraryRules(rules)
+	addPeerGroupLaunchRules(rules)
 	addPeerSpawnWorktreeRules(rules)
 	addPeerHumanInboxRules(rules)
 	addPeerMailboxRules(rules)

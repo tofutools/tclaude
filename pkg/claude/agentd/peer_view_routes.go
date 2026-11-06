@@ -315,7 +315,6 @@ var peerViewLocalRoutes = []string{
 	"POST /api/groups/{name}/links",
 	"POST /api/groups/{name}/members",
 	"POST /api/groups/{name}/owners",
-	"POST /api/groups/{name}/rebrief",
 	"POST /api/groups/{name}/spawn",
 	// Resolves a spawn without spawning, through the spawn handler.
 	"POST /api/groups/{name}/spawn-preview",
@@ -340,9 +339,6 @@ var peerViewLocalRoutes = []string{
 	"POST /api/spawn-profiles/import/inspect",
 	"POST /api/spawn-profiles/{name}/reapply",
 	"POST /api/starters/{name}/install",
-	"POST /api/templates/{name}/deploy",
-	"POST /api/templates/{name}/instantiate",
-	"POST /api/templates/{name}/reinforce",
 }
 
 // peerViewOwnNodeRoutes stay with this node even for unrestricted trust: its

@@ -40,10 +40,7 @@ func addPeerNodeManageRules(rules map[string]peerViewRule) {
 	}
 	rules["POST /api/spawn-profiles"] = peerViewRule{feature: "spawn.profiles.create", requires: PermNodeSpawnProfilesCreate, write: servePeerProfileCreate}
 	rules["POST /api/groups"] = peerViewRule{feature: "groups.create", requires: PermNodeGroupsCreate, write: servePeerGroupCreate}
-	// A template's team and a clone's members spawn on this node with its
-	// launch settings: only unrestricted trust holds these.
-	rules["POST /api/templates/{name}/instantiate"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(dashboardTemplatesRoute(handleTemplateInstantiate))}
-	rules["POST /api/groups/{name}/clone"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(groupRoute(handleDashboardGroupClone))}
+	// Templates and clones: peer_group_launch.go.
 	// A group's ⚙ delete (with retiring its members first) and cleanup of its
 	// offline members remove what no peer grant hands out: only unrestricted
 	// trust holds these.
@@ -150,16 +147,17 @@ func servePeerGroupCreate(w http.ResponseWriter, r *http.Request, v *peerView, r
 			writeError(w, http.StatusBadRequest, "invalid_arg", "expected a JSON object")
 			return
 		}
+		// Launch settings take the peer's remote spawn grants for every
+		// group (peer_group_launch.go); a subgroup nests under a group the
+		// peer can see.
+		launch := map[string]json.RawMessage{}
 		for key, value := range body {
-			if !peerGroupCreateFields[key] && !emptyJSONValue(value) {
-				writeError(w, http.StatusForbidden, "permission", key+" requires unrestricted trust")
-				return
+			if !peerGroupCreateFields[key] || key == "parent" {
+				launch[key] = value
 			}
 		}
-		// A subgroup nests under a group the peer can see.
-		var parent string
-		if body["parent"] != nil && json.Unmarshal(body["parent"], &parent) != nil || parent != "" && !peerCatalogGroupVisible(parent, v) {
-			writeError(w, http.StatusNotFound, "not_found", "object not found")
+		if fail := peerLaunchBodyFailure(v, launch); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(raw))

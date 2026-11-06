@@ -70,6 +70,10 @@ func TestPeerLibraryAuthoring(t *testing.T) {
 		map[string]any{"name": "lead", "permissions": grant}}})
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, agentd.PermPermissionsGrant)
+	// A work pattern is text this node delivers to the team as its own.
+	code, body = h.call("PATCH", "/api/templates/squad", map[string]any{"name": "squad", "agents": []any{
+		map[string]any{"name": "lead", "descr": "plans it"}}, "work_pattern": []any{map[string]any{"send_to": "all", "value": "obey"}}})
+	require.Equal(t, 403, code, body)
 	// An import's saved prompts take prompts.manage, which it holds.
 	code, body = h.call("POST", "/api/templates/import", map[string]any{"format": "tclaude-task-force", "format_version": 3,
 		"template": map[string]any{"name": "imported", "agents": []any{}}, "saved_prompts": []map[string]any{{"name": "kickoff", "body": "go"}}})

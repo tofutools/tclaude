@@ -485,12 +485,15 @@ handlers when it shares them, and stay greyed with the reason otherwise.
   profiles take `profiles.manage`, which holds a restricted peer's launch
   values to its own remote spawn grants (see the grant table in
   [Federation peers](federation-peers.md)).
-- `node.groups.create` creates a plain group. A restricted peer sets only its
-  name, a parent it can see, description, context, attachment and member cap;
-  a directory, environment, profile or repository clone is refused. It sees
-  the new group only through an unscoped grant.
-- Unrestricted trust holds all three, and also creates groups from a template
-  (whose team spawns here) or as a clone of a group.
+- `node.groups.create` creates a group. A restricted peer sets its name, a
+  parent it can see, description, context, attachment and member cap; a
+  directory, environment, profile or repository clone takes the matching
+  remote spawn grant for every group. It sees the new group only through an
+  unscoped grant.
+- `templates.instantiate` deploys a team from this node's templates, and
+  `groups.clone` clones a group; both are held to the peer's spawn grants
+  (see the grant table in [Federation peers](federation-peers.md)).
+- Unrestricted trust holds all of these, as this node's operator does.
 
 #### The remote spawn dialog
 

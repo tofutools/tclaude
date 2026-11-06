@@ -343,8 +343,11 @@ var peerTemplateAgentFreeFields = map[string]bool{
 var peerTemplateFields = map[string]string{"per_agent_worktrees": fedOverrideWorktree, "default_context": fedOverridePrompts}
 
 var peerTemplateFreeFields = map[string]bool{
-	"name": true, "descr": true, "work_pattern": true, "process": true,
-	"rhythms": true, "wave_max_wait": true, "created_at": true, "updated_at": true, "id": true,
+	// A work pattern and rhythms are text this node delivers to the team
+	// as its operator's, unbannered: from a peer they take unrestricted
+	// trust (no table maps them).
+	"name": true, "descr": true, "process": true,
+	"wave_max_wait": true, "created_at": true, "updated_at": true, "id": true,
 	// Owner scopes have their own gate; agents are judged one by one.
 	"owner_scopes": true, "agents": true,
 }
@@ -358,11 +361,17 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 	if a == nil {
 		return nil
 	}
+	return peerTemplateLaunchFailure(a.peer, before, after)
+}
+
+// peerTemplateLaunchFailure judges a template change from before (nil: none)
+// to after against what peer could launch itself.
+func peerTemplateLaunchFailure(peer string, before *templateJSON, after templateJSON) *spawnFailure {
 	var was map[string]json.RawMessage
 	if before != nil {
 		was = wireKeys(*before)
 	}
-	if fail := peerLaunchChangeFailure(a.peer, was, wireKeys(after), before == nil, peerTemplateFields, peerTemplateFreeFields, "template field"); fail != nil {
+	if fail := peerLaunchChangeFailure(peer, was, wireKeys(after), before == nil, peerTemplateFields, peerTemplateFreeFields, "template field"); fail != nil {
 		return fail
 	}
 	had := map[string]templateAgentJSON{}
@@ -378,10 +387,10 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 			prevKeys = wireKeys(prev)
 		}
 		what := fmt.Sprintf("template agent %q field", ag.Name)
-		if fail := peerLaunchChangeFailure(a.peer, prevKeys, wireKeys(ag), !existed, peerTemplateAgentFields, peerTemplateAgentFreeFields, what); fail != nil {
+		if fail := peerLaunchChangeFailure(peer, prevKeys, wireKeys(ag), !existed, peerTemplateAgentFields, peerTemplateAgentFreeFields, what); fail != nil {
 			return fail
 		}
-		if ag.SpawnProfile != "" && (!existed || prev.SpawnProfile != ag.SpawnProfile) && !peerProfileSelectableEverywhere(a.peer, ag.SpawnProfile) {
+		if ag.SpawnProfile != "" && (!existed || prev.SpawnProfile != ag.SpawnProfile) && !peerProfileSelectableEverywhere(peer, ag.SpawnProfile) {
 			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
 				"template agent %q names a spawn profile it could not pick for a spawn into every group", ag.Name)}
 		}
@@ -397,7 +406,7 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 		if ag.ProfileInline != nil {
 			inline = *ag.ProfileInline
 		}
-		if fail := peerLaunchChangeFailure(a.peer, wireKeys(prevInline), wireKeys(inline), !existed || prevInline == nil,
+		if fail := peerLaunchChangeFailure(peer, wireKeys(prevInline), wireKeys(inline), !existed || prevInline == nil,
 			peerProfileFields, peerProfileFreeFields, fmt.Sprintf("template agent %q inline profile field", ag.Name)); fail != nil {
 			return fail
 		}
@@ -442,7 +451,13 @@ func peerProfileSelectableEverywhere(peer, name string) bool {
 	if name == "" {
 		return true
 	}
-	if checkSelectableProfile(peer, 0, name) != nil {
+	// Groups created later: the profile grant held for every group, and
+	// the profile not operator-only (which every live group's check below
+	// also refuses).
+	if !peerFieldGrantedEverywhere(peer, fedOverrideProfile) {
+		return false
+	}
+	if p, err := db.ResolveSpawnProfile(name); err != nil || p == nil || p.Disabled || p.OperatorOnly {
 		return false
 	}
 	groups, err := db.ListAgentGroups()
