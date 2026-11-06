@@ -17,9 +17,6 @@ func prepareLaunchCommand(p *spawnParams, spawnArgs *clcommon.SpawnArgs, importe
 	if importedID != "" {
 		spawnArgs.ConvID = importedID
 		spawnArgs.SessionID = ""
-		// executeSpawn sends the launch prompt over the managed server after
-		// the fork; the resume must not send it too.
-		spawnArgs.LaunchTextDeliveredByCaller = true
 		launch = SpawnDetachedTclaudeResume
 	}
 	if p.launchAuthority != nil {

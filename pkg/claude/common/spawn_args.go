@@ -81,14 +81,9 @@ type SpawnArgs struct {
 	// carries the agent's welcome turn so it need not be injected over tmux.
 	// "" omits it. A resume forwards it too (the managed standing guidance).
 	// A harness that takes no launch prompt (OpenCode) gets it over its drive
-	// instead, unless LaunchTextDeliveredByCaller.
+	// instead: from the resume when the resume starts the drive, from the
+	// caller when the caller already started it (see OpenCodeServerURL).
 	InitialPrompt string
-
-	// LaunchTextDeliveredByCaller tells SpawnResume that its caller delivers
-	// InitialPrompt over the harness's drive itself, after the fork (a spawn
-	// that resumes imported history does), so the resume must not send it a
-	// second time.
-	LaunchTextDeliveredByCaller bool
 
 	// Cwd is the working directory to launch in; "" omits -C.
 	Cwd string

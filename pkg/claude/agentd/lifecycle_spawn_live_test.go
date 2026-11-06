@@ -142,7 +142,7 @@ func TestLiveSpawnResumeStopsOpenCodeWhenTheStateAllocationIsMissing(t *testing.
 // openCodeResumeWithPrompt resumes an OpenCode conversation carrying launch
 // text, with the managed server swapped for a fixture and the prompt API for
 // send, and returns the wrapper's argv.
-func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(string) error, byCaller ...bool) []string {
+func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(string) error) []string {
 	t.Helper()
 	argvFile, _ := fakeTclaudeOnPath(t, 0, "")
 	t.Cleanup(SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (OpenCodeRuntimeFixture, error) {
@@ -153,7 +153,7 @@ func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(str
 	require.NoError(t, liveSpawnResume(clcommon.SpawnArgs{
 		ConvID: convID, Cwd: t.TempDir(), Harness: harness.OpenCodeName,
 		Sandbox: harness.OpenCodeSandboxAccessControl, Approval: harness.OpenCodeApprovalAsk,
-		InitialPrompt: prompt, LaunchTextDeliveredByCaller: len(byCaller) > 0 && byCaller[0],
+		InitialPrompt: prompt,
 	}))
 	return readLines(t, argvFile)
 }
@@ -189,17 +189,30 @@ func TestLiveSpawnResumeQueuesOpenCodeLaunchTextWhenTheSendFails(t *testing.T) {
 	assert.True(t, msgs[0].ReadAt.IsZero(), "the queued copy is still unread, so it is delivered")
 }
 
-// A spawn that resumes imported history sends its launch prompt over the
-// server itself after the fork; the resume must not send it a second time.
-func TestLiveSpawnResumeLeavesCallerDeliveredLaunchTextAlone(t *testing.T) {
+// tcl-gjmtvb: a spawn that resumes imported history already started this
+// launch's managed server and briefs through it after the fork. The resume
+// must reuse it: starting its own would retire the spawn's server and lose
+// the brief. It also must not send the brief a second time.
+func TestLiveSpawnResumeReusesTheCallersOpenCodeServer(t *testing.T) {
 	resetTestDB(t)
+	argvFile, envFile := fakeTclaudeOnPath(t, 0, "")
+	starts := 0
+	t.Cleanup(SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (OpenCodeRuntimeFixture, error) {
+		starts++
+		return OpenCodeRuntimeFixture{SessionID: sessionID, ConvID: resumeID}, nil
+	}))
 	var sent []string
-	openCodeResumeWithPrompt(t, "ses_resume_import", "SPAWN BRIEF", func(text string) error {
+	sendOpenCodePromptForSpawn = func(_ *openCodeLaunch, _, text, _, _ string) error {
 		sent = append(sent, text)
 		return nil
-	}, true)
-	assert.Empty(t, sent)
-	msgs, err := db.ListAgentMessagesForConv("ses_resume_import", 10)
-	require.NoError(t, err)
-	assert.Empty(t, msgs)
+	}
+	require.NoError(t, liveSpawnResume(openCodeWrapperArgs(clcommon.SpawnArgs{
+		ConvID: "ses_imported", Cwd: t.TempDir(), Harness: harness.OpenCodeName,
+		Sandbox: harness.OpenCodeSandboxAccessControl, Approval: harness.OpenCodeApprovalAsk,
+		InitialPrompt: "SPAWN BRIEF",
+	})))
+	assert.Zero(t, starts, "the resume reuses the server its caller started")
+	assert.Empty(t, sent, "the caller briefs through its own server")
+	assert.Contains(t, readLines(t, argvFile), "ses_imported")
+	assertOpenCodeWrapperEnv(t, envFile)
 }
