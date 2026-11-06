@@ -2542,6 +2542,18 @@ func runClonePostInit(newConv, title, target, caller string) {
 		slog.Warn("clone: new conv never came online; rename + handoff abandoned", "conv", newConv)
 		return
 	}
+	// An API-driven clone (Copilot API, pi drive, Codex app-server) takes its
+	// rename over a drive that connects after the pane is alive. Wait for it,
+	// as spawn's post-init does, or the rename fails while the drive is still
+	// coming up and is never retried (tcl-aut383).
+	h := harnessForConv(newConv)
+	codexSelected, piSelected, ok := postInitDriveSelection("clone", newConv, h)
+	if !ok || !awaitPostInitDrive("clone", newConv, h, codexSelected, piSelected) {
+		// The handoff row stays queued; the delivery pipeline holds it for
+		// the drive rather than typing it in.
+		enqueueDeliveryForConv(newConv)
+		return
+	}
 	// Rename first so the clone's CC title shows the proper
 	// `<base>-c-<N>` before any handoff output streams. Skip only when
 	// the title is empty or fails the rename charset gate.
