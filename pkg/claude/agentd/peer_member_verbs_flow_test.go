@@ -52,6 +52,20 @@ func TestPeerMemberVerbPins(t *testing.T) {
 	require.Nil(t, m["groups"], "unrestricted trust holds every grant; none is listed")
 }
 
+// Two local agents titled member@peer are an ambiguous local selector, not a
+// peer's agent: the verb never reaches the peer.
+func TestRemoteMemberVerbAmbiguousLocalStaysLocal(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	remoteMemberCatalog(t, fh)
+	f.HaveConvWithTitle("019fe740-43a4-7023-b8ae-0000000a1b01", "target@bob")
+	f.HaveConvWithTitle("019fe740-43a4-7023-b8ae-0000000a1b02", "target@bob")
+	rec := fedHuman(t, f, http.MethodPost, "/v1/agent/target@bob/stop", nil)
+	require.Equal(t, 404, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "multiple")
+	require.Empty(t, fh.peer.envelopes(proto.KindPeerViewOpen), "an ambiguous local selector opens no peer view")
+}
+
 // remoteMemberCatalog has the test peer advertise one shared agent, plus two
 // that share a name.
 func remoteMemberCatalog(t *testing.T, fh *fedHarness) {
@@ -256,4 +270,33 @@ func TestPeerFleetReachThroughGroupKeepsLocalGrant(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.NotNil(t, open.Agent)
 	require.Equal(t, "/api/fleet", wire.URI)
+}
+
+// An agent view's metadata lists the grants of its footprint groups only; a
+// node-wide route lists none.
+func TestPeerViewAgentMetadataFootprint(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	f.HaveGroup("other")
+	for _, g := range []string{"crew", "other"} {
+		rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersStop, "scope": "group=" + g})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	groupsOf := func(worker *proto.PeerViewAgent) map[string]any {
+		t.Helper()
+		reply := agentPeerViewExchange(t, p, worker, "GET", "/api/groups", nil)
+		require.Equal(t, 200, reply.Status, string(reply.Body))
+		var body struct {
+			PeerView struct {
+				Groups map[string]any `json:"groups"`
+			} `json:"peer_view"`
+		}
+		require.NoError(t, json.Unmarshal(reply.Body, &body))
+		return body.PeerView.Groups
+	}
+	got := groupsOf(&proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker", Groups: []string{"crew"}})
+	require.Contains(t, got, "crew")
+	require.NotContains(t, got, "other", "a group outside the agent's footprint is not listed")
+	require.Empty(t, groupsOf(&proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker"}))
 }

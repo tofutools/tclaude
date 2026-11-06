@@ -387,6 +387,7 @@ func (v *peerView) metadata() peerViewMetadata {
 	out.Agents = v.agentGrants(groups)
 	if agentSlugs != nil {
 		out.Groups, out.Agents = filterGrantLists(out.Groups, agentSlugs), filterGrantLists(out.Agents, agentSlugs)
+		out.Groups, out.Agents = footprintGrantLists(v.agent, groups, out.Groups, out.Agents)
 	}
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })

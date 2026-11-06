@@ -28,7 +28,9 @@ type fleetParams struct {
 }
 
 type fleetResp struct {
-	GeneratedAt time.Time `json:"generated_at"`
+	// Remote is set for a peer's brief (--remote) and marks it untrusted.
+	Remote      *remoteMarker `json:"remote,omitempty"`
+	GeneratedAt time.Time     `json:"generated_at"`
 	Counts      struct {
 		Agents   int `json:"agents"`
 		Online   int `json:"online"`
@@ -102,7 +104,8 @@ func runFleet(p *fleetParams, stdout, stderr io.Writer) int {
 		// context.
 		var raw any
 		if err := DaemonGet(path, &raw); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
+			// The error can carry the peer's own text.
+			fmt.Fprintf(stderr, "Error: %s\n", proto.StripControls(err.Error()))
 			return MapDaemonErrorToRC(err)
 		}
 		clean, _ := json.Marshal(stripControlsDeep(raw))
@@ -110,6 +113,8 @@ func runFleet(p *fleetParams, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Error: the peer returned an invalid fleet brief: %v\n", err)
 			return rcInvalidArg
 		}
+		// JSON consumers (agents, mostly) get the marker in the output.
+		resp.Remote = &remoteMarker{Target: proto.SafeName(remote, false), Untrusted: true}
 		if !p.JSON {
 			fmt.Fprintf(stdout, "Remote fleet of %s, as that node reports it (untrusted content)\n\n", proto.SafeName(remote, false))
 		}

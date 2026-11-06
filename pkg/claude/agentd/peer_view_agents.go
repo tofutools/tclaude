@@ -578,6 +578,44 @@ func agentPeerViewMetadataScope() (features, slugs map[string]bool) {
 	return features, slugs
 }
 
+// footprintGrantLists limits an agent principal's grant lists to the groups
+// its node checked its grants for and the agents in them: an agent learns
+// nothing of the groups outside its footprint. A node-wide route's footprint
+// has no groups, so it lists none.
+func footprintGrantLists(principal *proto.PeerViewAgent, groups []*db.AgentGroup, groupGrants, agentGrants map[string][]string) (map[string][]string, map[string][]string) {
+	if len(principal.Groups) == 0 {
+		return nil, nil
+	}
+	outGroups := map[string][]string{}
+	for name, held := range groupGrants {
+		if slices.Contains(principal.Groups, name) {
+			outGroups[name] = held
+		}
+	}
+	if len(agentGrants) == 0 {
+		return outGroups, agentGrants
+	}
+	var ids []int64
+	for _, g := range groups {
+		if !g.IsArchived() && slices.Contains(principal.Groups, g.Name) {
+			ids = append(ids, g.ID)
+		}
+	}
+	members, err := db.ListAgentGroupMembersBatch(ids)
+	if err != nil {
+		return outGroups, nil
+	}
+	outAgents := map[string][]string{}
+	for _, id := range ids {
+		for _, m := range members[id] {
+			if aid, err := db.AgentIDForConv(m.ConvID); err == nil && agentGrants[aid] != nil {
+				outAgents[aid] = agentGrants[aid]
+			}
+		}
+	}
+	return outGroups, outAgents
+}
+
 // filterGrantLists keeps, per key, only the grants in keep.
 func filterGrantLists(in map[string][]string, keep map[string]bool) map[string][]string {
 	if in == nil {

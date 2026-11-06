@@ -195,6 +195,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			Action string `json:"action"`
 			Detail string `json:"detail"`
 		} `json:"worktree"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		// A dangling agent entry — an enrollment whose conversation data
@@ -210,7 +211,9 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: retired → plain conversation (data kept, reinstatable)\n", short(resp.ConvID))
+	resp.printRemoteNote(stdout)
 	if len(resp.Outcome.GroupsLeft) > 0 {
 		fmt.Fprintf(stdout, "  left groups: %s\n", strings.Join(resp.Outcome.GroupsLeft, ", "))
 	}

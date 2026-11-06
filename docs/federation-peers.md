@@ -422,17 +422,20 @@ tclaude agent fleet --remote bob
 
 The same commands work for the operator, through the operator's own peer
 view and the peer's grants. A local agent whose title is `builder@bob`
-always wins over the peer.
+always wins over the peer, and two of them are an ambiguous selector: the
+verb never falls through to the peer.
 
 Options that stay the peer operator's are refused locally:
 - `resume --recreate-dir` and `--send-keys`;
 - `rename --auto`;
 - `task show` (read the agent with `agent ls --node`).
 
-`retire` never deletes a peer's worktree; the reply says it kept it. Replies
-are marked as remote and untrusted, and control characters are stripped
-from them. An agent's view metadata (`peer_view`) names `principal: agent`
-and lists only what agent views reach.
+`retire` never deletes a peer's worktree or records a reason; the reply
+says so. Replies are marked as remote and untrusted: the CLI prints an
+untrusted-content line first, and `fleet --remote --json` carries
+`remote.untrusted`. Control characters are stripped from replies and errors.
+An agent's view metadata (`peer_view`) names `principal: agent` and lists
+only what agent views reach, for the groups its node checked its grants for.
 
 An agent that already holds `fleet.read` for this node, such as the Steward,
 keeps that grant: one grant per slug cannot hold both a local and a peer

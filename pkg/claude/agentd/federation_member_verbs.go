@@ -141,9 +141,14 @@ func remoteMemberVerbBody(r *http.Request, verb string) (body []byte, note, refu
 				return nil, "", "remote retire does not take " + k
 			}
 		}
+		var notes []string
 		if q.Get("delete_worktree") == "1" {
-			note = "the agent's worktree was kept: a peer's worktrees stay its operator's to delete"
+			notes = append(notes, "the agent's worktree was kept: a peer's worktrees stay its operator's to delete")
 		}
+		if strings.TrimSpace(q.Get("reason")) != "" {
+			notes = append(notes, "the reason was not recorded: a peer's retire takes none")
+		}
+		note = strings.Join(notes, "; ")
 		return nil, note, ""
 	case "rename":
 		var in struct {
