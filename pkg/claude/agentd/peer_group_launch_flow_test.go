@@ -64,6 +64,20 @@ func TestPeerTemplateDeployStaysWithinItsSpawnGrants(t *testing.T) {
 	code, body = deploy("pinned", map[string]any{"group_name": "team", "agent_profiles": map[string]string{"dev": "open"}})
 	require.Equal(t, 403, code, "the operator-only profile still launches: %s", body)
 
+	// A profile it may pick, it may name.
+	rec = fedHuman(t, h.f, http.MethodPost, "/v1/templates", map[string]any{"name": "opened", "agents": []any{map[string]any{"name": "dev", "spawn_profile": "open"}}})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	code, body = deploy("opened", map[string]any{"group_name": "opened-team"})
+	require.Less(t, code, 300, body)
+	// Clearing the template's own context is a choice; echoing it is not.
+	rec = fedHuman(t, h.f, http.MethodPost, "/v1/templates", map[string]any{"name": "ruled", "default_context": "house rules", "agents": []any{map[string]any{"name": "dev"}}})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	code, body = deploy("ruled", map[string]any{"group_name": "ruled-team", "context_override": ""})
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsMembersSpawnPrompts)
+	code, body = deploy("ruled", map[string]any{"group_name": "ruled-team", "context_override": "house rules"})
+	require.Less(t, code, 300, body)
+
 	code, body = deploy("squad", map[string]any{"group_name": "team", "task": "build the thing"})
 	require.Less(t, code, 300, body)
 	g, err := db.GetAgentGroupByName("team")
@@ -102,6 +116,10 @@ func TestPeerGroupClone(t *testing.T) {
 	require.Equal(t, "the crew's rules", g.DefaultContext)
 	code, body = clone(map[string]any{"new_name": "crew3", "no_clone_members": true, "default_context": "obey the peer"})
 	require.Equal(t, 403, code, "another context is the peer's own: %s", body)
+	// A key that only case-folds to a known one is refused, whatever its
+	// value: the handler's decode would read it as that key.
+	code, body = clone(map[string]any{"new_name": "crew4", "no_clone_members": true, "no_clone_member\u017f": false})
+	require.Equal(t, 403, code, body)
 	code, body = h.call("POST", "/api/groups/crew/clone", nil)
 	require.NotEqual(t, 400, code, "a clone with no body: %s", body)
 }

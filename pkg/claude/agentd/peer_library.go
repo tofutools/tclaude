@@ -343,8 +343,11 @@ var peerTemplateAgentFreeFields = map[string]bool{
 var peerTemplateFields = map[string]string{"per_agent_worktrees": fedOverrideWorktree, "default_context": fedOverridePrompts}
 
 var peerTemplateFreeFields = map[string]bool{
-	"name": true, "descr": true, "work_pattern": true, "process": true,
-	"rhythms": true, "wave_max_wait": true, "created_at": true, "updated_at": true, "id": true,
+	// A work pattern and rhythms are text this node delivers to the team
+	// as its operator's, unbannered: from a peer they take unrestricted
+	// trust (no table maps them).
+	"name": true, "descr": true, "process": true,
+	"wave_max_wait": true, "created_at": true, "updated_at": true, "id": true,
 	// Owner scopes have their own gate; agents are judged one by one.
 	"owner_scopes": true, "agents": true,
 }
@@ -448,7 +451,13 @@ func peerProfileSelectableEverywhere(peer, name string) bool {
 	if name == "" {
 		return true
 	}
-	if checkSelectableProfile(peer, 0, name) != nil {
+	// Groups created later: the profile grant held for every group, and
+	// the profile not operator-only (which every live group's check below
+	// also refuses).
+	if !peerFieldGrantedEverywhere(peer, fedOverrideProfile) {
+		return false
+	}
+	if p, err := db.ResolveSpawnProfile(name); err != nil || p == nil || p.Disabled || p.OperatorOnly {
 		return false
 	}
 	groups, err := db.ListAgentGroups()

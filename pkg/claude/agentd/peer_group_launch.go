@@ -83,7 +83,14 @@ func peerLaunchBodyFailure(v *peerView, body map[string]json.RawMessage) *spawnF
 	sort.Strings(keys)
 	for _, key := range keys {
 		value := body[key]
-		if emptyJSONValue(value) {
+		_, launch := peerLaunchBodyFields[key]
+		if !launch && !peerLaunchFreeFields[key] {
+			// Refused whatever its value: the handler's decode folds key case
+			// (Unicode included), so an unknown key can stand in for a known
+			// one, and an empty value is still a value to it.
+			return &spawnFailure{http.StatusForbidden, "permission", key + " requires unrestricted trust"}
+		}
+		if peerLaunchSetsNothing(key, value) {
 			continue
 		}
 		if fields, ok := peerLaunchBodyFields[key]; ok {
@@ -94,9 +101,6 @@ func peerLaunchBodyFailure(v *peerView, body map[string]json.RawMessage) *spawnF
 				}
 			}
 			continue
-		}
-		if !peerLaunchFreeFields[key] {
-			return &spawnFailure{http.StatusForbidden, "permission", key + " requires unrestricted trust"}
 		}
 	}
 	var parent string
@@ -178,13 +182,18 @@ func servePeerTemplateLaunch(into bool) func(http.ResponseWriter, *http.Request,
 				delete(body, "cwd")
 			}
 		}
-		if fail := peerLaunchBodyFailure(v, body); fail != nil {
-			writeSpawnFailure(w, fail)
-			return
-		}
 		tmpl, err := db.GetGroupTemplate(r.PathValue("name"))
 		if err != nil || tmpl == nil {
 			writeError(w, http.StatusNotFound, "not_found", "no such template")
+			return
+		}
+		// The dialog prefills the template's own context: only another one
+		// (or clearing it) is the peer's choice.
+		if peerJSONStringIs(body["context_override"], tmpl.DefaultContext) {
+			delete(body, "context_override")
+		}
+		if fail := peerLaunchBodyFailure(v, body); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := peerTemplateTeamFailure(peer, tmpl, body["agent_profiles"], into); fail != nil {
@@ -216,6 +225,18 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 	team := *tmpl
 	team.Agents = applyAgentProfileOverrides(tmpl.Agents, overrides)
 	t := templateToJSON(&team)
+	// The template's own text (its context, work pattern, rhythms and first
+	// messages) is this node's operator's, which a deploy delivers as such:
+	// only what the team launches with is judged.
+	t.DefaultContext, t.WorkPattern, t.Rhythms = "", nil, nil
+	for i := range t.Agents {
+		t.Agents[i].InitialMessage = ""
+		if in := t.Agents[i].ProfileInline; in != nil {
+			inline := *in
+			inline.InitialMessage, inline.StartupContext = "", ""
+			t.Agents[i].ProfileInline = &inline
+		}
+	}
 	if !reinforce {
 		if len(t.OwnerScopes) > 0 {
 			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take " + PermGroupsOwnersManage}
@@ -328,4 +349,18 @@ func peerCloneCopiedSettings(src *db.AgentGroup, body map[string]json.RawMessage
 func peerJSONStringIs(raw json.RawMessage, s string) bool {
 	var got string
 	return raw != nil && json.Unmarshal(raw, &got) == nil && strings.TrimSpace(got) == strings.TrimSpace(s)
+}
+
+// peerLaunchPresenceFields are launch keys a handler reads as pointers: an
+// explicit empty value clears the template's or source group's context, so
+// it is a choice too (an echo of it is dropped first).
+var peerLaunchPresenceFields = map[string]bool{"context_override": true, "default_context": true}
+
+// peerLaunchSetsNothing reports a launch request value that leaves the
+// launch as this node would make it.
+func peerLaunchSetsNothing(key string, value json.RawMessage) bool {
+	if peerLaunchPresenceFields[key] {
+		return absentJSONValue(value) && string(value) != `""` && string(value) != "[]"
+	}
+	return emptyJSONValue(value)
 }
