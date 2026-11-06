@@ -290,9 +290,15 @@ export function scopeComboItems(dim, options, catalogue) {
 
 // scopeValueLabel is how one matcher reads in a chip: a resource the
 // catalogue knows by its title, anything else as stored.
-export function scopeValueLabel(value, catalogue) {
-  if (!catalogue) return { kind: '', text: value };
-  const entry = catalogue.find((item) => `${item.kind}:${item.id}` === value);
+export function scopeCatalogueIndex(catalogue) {
+  return catalogue ? new Map(catalogue.map((entry) => [`${entry.kind}:${entry.id}`, entry])) : null;
+}
+
+// scopeValueLabel takes the index scopeCatalogueIndex built, so a sheet of
+// hundreds of chips over thousands of resources is a lookup per chip.
+export function scopeValueLabel(value, index) {
+  if (!index) return { kind: '', text: value };
+  const entry = index.get(value);
   return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
 }
 
@@ -316,18 +322,27 @@ export function scopeCountText(scope) {
 // re-derived here) that is granted in this editor or held from a source.
 // null when nothing covers it, or the row itself is decided: a Deny of the
 // row wins over its umbrella, and a Grant needs no hint.
+//
+// row.effect is the STORED effect. In the sudo editor effectOf reads the sudo
+// picks instead, and a stored Deny still stops the chain there unless that
+// very slug is picked: sudo wins over a deny of its own slug only.
+//
+// An umbrella's global default is not a source: the resolver's umbrella step
+// reads explicit, group, role and owner grants, never config defaults.
 export function umbrellaCover(row, rowsBySlug, effectOf, scopeOf) {
-  if (effectOf(row.slug) !== 'default') return null;
+  const denied = (slug) => effectOf(slug) === 'deny'
+    || (rowsBySlug.get(slug)?.effect === 'deny' && effectOf(slug) !== 'grant');
+  if (effectOf(row.slug) !== 'default' || denied(row.slug)) return null;
   const seen = new Set([row.slug]);
   for (let slug = row.umbrella; slug && !seen.has(slug); slug = rowsBySlug.get(slug)?.umbrella) {
     seen.add(slug);
     const umbrella = rowsBySlug.get(slug);
     if (!umbrella) return null;
-    const effect = effectOf(slug);
     // A deny of a step in the chain stops the chain there, as the resolver does.
-    if (effect === 'deny') return null;
-    if (effect === 'grant') return { slug, scope: scopeOf(slug), sources: [] };
-    if (umbrella.granted && umbrella.sources.length) return { slug, scope: null, sources: umbrella.sources };
+    if (denied(slug)) return null;
+    if (effectOf(slug) === 'grant') return { slug, scope: scopeOf(slug), sources: [] };
+    const sources = umbrella.granted ? umbrella.sources.filter((source) => source !== 'global default') : [];
+    if (sources.length) return { slug, scope: null, sources };
   }
   return null;
 }

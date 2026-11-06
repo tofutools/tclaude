@@ -22,6 +22,11 @@
 //   kindLabels   { kind: 'Heading' } for the kind headings
 //   freeText     opt-in: (text) → key | '' — Enter with no highlighted row
 //                commits the typed text through it ('' refuses)
+//   literal      opt-in: (text) → bool — typed text of this shape (a whole
+//                kind:id, say) is meant as typed, so Enter commits it through
+//                freeText instead of the fuzzy-highlighted row
+//   onQuery      (text) → void — the typed text as it changes, so a caller can
+//                treat what is left in the box as an uncommitted value
 //   placeholder, emptyHint, ariaLabel, id
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -94,10 +99,11 @@ export function comboGroupSummary(items) {
 }
 
 export function FilterCombobox({
-  items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null,
+  items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id,
 }) {
-  const [query, setQuery] = useState('');
+  const [query, setQueryState] = useState('');
+  const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef(null);
@@ -122,6 +128,14 @@ export function FilterCombobox({
     setQuery(''); setHighlight(0);
     if (!multi) setOpen(false);
   };
+  const add = (item) => {
+    if (!choosable(item)) return;
+    if (!chosen.has(item.key)) {
+      if (multi) onChange([...chosen, item.key]); else onChange(item.key);
+    }
+    setQuery(''); setHighlight(0);
+    if (!multi) setOpen(false);
+  };
   const commitFree = () => {
     const key = freeText?.(query.trim()) || '';
     if (!key) return false;
@@ -139,8 +153,17 @@ export function FilterCombobox({
     } else if (event.key === 'ArrowUp') {
       event.preventDefault(); setHighlight(Math.max(bounded - 1, 0));
     } else if (event.key === 'Enter') {
-      if (open && visible[bounded]) { event.preventDefault(); choose(visible[bounded]); }
-      else if (query.trim() && freeText) { event.preventDefault(); commitFree(); }
+      // Enter only ever adds. An exact key or label wins over the ranking, a
+      // literal-shaped entry is taken as typed, and otherwise the highlighted
+      // row is the one added. Taking a value away is the ✓ row's or the
+      // chip's, never Enter's: a stray Enter must not empty a dimension.
+      const typed = query.trim();
+      const exact = typed && items.find((item) => !item.disabled
+        && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase()));
+      if (exact) { event.preventDefault(); add(exact); }
+      else if (typed && freeText && literal?.(typed)) { event.preventDefault(); commitFree(); }
+      else if (open && visible[bounded]) { event.preventDefault(); add(visible[bounded]); }
+      else if (typed && freeText) { event.preventDefault(); commitFree(); }
     } else if (event.key === 'Tab' && open && query.trim() && visible[bounded]) {
       // Tab completes the typed text to the highlighted row's label, the way
       // a shell completes; a second Tab moves focus on as usual.

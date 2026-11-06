@@ -15,7 +15,7 @@ import {
   DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
   RESOURCE_KIND_LABELS, SCOPE_CHIPS_SHOWN, SCOPE_COMBOBOX_DIMS, scopeComboItems, scopeCountText,
-  scopeDimUsesCombobox, scopeValueLabel, umbrellaCover,
+  scopeCatalogueIndex, scopeDimUsesCombobox, scopeValueLabel, umbrellaCover,
   scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
   sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
 } from './message-access-dialog-model.js';
@@ -649,9 +649,14 @@ function ScopeDimLabel({ dim, declared }) {
 // drawer opens, or a snapshot catalogue past SCOPE_SELECT_MAX values. It is
 // the shared FilterCombobox, so nothing here renders more than a handful of
 // rows however many values there are. A value the catalogue does not list is
-// typed and committed with Enter, which the daemon validates on save. What is
-// typed is a search, not a draft: Save does not flush it into a matcher.
-function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loadValues }) {
+// typed and committed with Enter, which the daemon validates on save.
+//
+// Text left in the box is reported as this dimension's draft, as the plain
+// box's is, so Save folds it in rather than writing the grant wider than the
+// operator meant: it becomes the matching catalogue key when the text names
+// one exactly, and is otherwise taken as typed for the daemon to accept or
+// refuse. Either way the grant is never saved unscoped by accident.
+function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loadValues, onDraft }) {
   const served = SCOPE_COMBOBOX_DIMS.includes(dim);
   const [catalogue, setCatalogue] = useState(served ? null : []);
   const [loadError, setLoadError] = useState('');
@@ -664,7 +669,10 @@ function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loa
       (cause) => { if (live) { setCatalogue([]); setLoadError(errorText(cause)); } });
     return () => { live = false; };
   }, [dim, served]);
-  const known = served ? catalogue : null;
+  const known = useMemo(() => (served ? scopeCatalogueIndex(catalogue || []) : null), [served, catalogue]);
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
   const items = useMemo(() => scopeComboItems(dim, options, served ? (catalogue || []) : null),
     [dim, served, catalogue, options.values.join('\u0000'), options.selectors.join('\u0000')]);
   const set = (next) => onChange([...new Set(next)].sort());
@@ -677,7 +685,14 @@ function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loa
         kindLabels=${RESOURCE_KIND_LABELS} ariaLabel=${`Find a ${dim} value`}
         placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
         emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
-        freeText=${(text) => text} />
+        freeText=${(text) => text}
+        literal=${served ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:') : null}
+        onQuery=${(text) => {
+    const typed = text.trim();
+    const exact = typed && items.find((item) => item.key === typed
+      || String(item.label || '').toLowerCase() === typed.toLowerCase());
+    onDraft?.(dim, exact ? exact.key : typed);
+  }} />
       ${loadError ? html`<div class="perm-scope-hint ui-hint perm-scope-load-error">Could not load the catalogue (${loadError}). Type a value and press Enter.</div>` : null}
       ${values.length ? null : html`<div class="perm-scope-hint ui-hint">empty — unconstrained on this dimension</div>`}
     </div>
@@ -1212,7 +1227,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
-        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
+        : row.granted ? `✓ ${row.sources.join(' + ')}`
+          // The umbrella is a source here as at the gate: a row it covers is
+          // not "denied (no source)", only as narrow as the umbrella's scope.
+          : cover ? `✓ via ${cover.slug}${cover.scope && scopeCountText(cover.scope) ? ' (scoped)' : ''}` : '✗ denied (no source)';
+    const effGranted = row.granted || (!sudoMode && !groupMode && !(stewardAccess && picked) && !!cover);
     return html`<${Fragment} key=${row.slug}>${sudoMode && row.area !== visible[index - 1]?.area
       ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
@@ -1242,7 +1261,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // neighbours', and a column of buttons that steps sideways row by row
     // reads as a rendering bug. The text itself lives in the drawer.
     ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
-    : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
+    : html`<span class=${`perm-row-eff ${effGranted ? 'granted' : 'denied'}`}>${effText}</span>`}
     </div>
     ${scopable && openScope === row.slug && html`<${ScopeDrawer} key=${`${row.slug}:${draftEpoch}`}
       row=${row} scope=${scopeOf(row.slug)}

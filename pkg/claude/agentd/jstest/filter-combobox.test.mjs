@@ -123,3 +123,30 @@ test('single-select and the opt-in free-text commit', async (t) => {
   await harness.act(() => harness.fireEvent(opened.input, 'keydown', { key: 'Enter' }));
   assert.equal(opened.changes.length, 1, 'the free-text hook may refuse a value');
 });
+
+test('Enter only adds: an exact entry wins, a literal one is taken as typed, a chosen row stays', async (t) => {
+  const harness = await createPreactHarness(t);
+  const items = [
+    { key: 'board:planning', label: 'Planning', kind: 'board' },
+    { key: 'board:roadmap', label: 'Roadmap', kind: 'board' },
+  ];
+  const { input, changes } = await mountCombobox(harness, {
+    items, value: ['board:roadmap'], freeText: (text) => text, literal: (text) => /^[a-z_]+:\S+$/.test(text),
+  });
+  await harness.act(() => harness.fireEvent(input, 'focus'));
+  await harness.input(input, 'roadmap');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.equal(changes.length, 0, 'Enter on a chosen value does not take it away');
+  await harness.input(input, 'roadm');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.equal(changes.length, 0, 'nor does Enter on a highlighted row that is already chosen');
+
+  await harness.input(input, 'board:plan');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(changes.at(-1), ['board:roadmap', 'board:plan'],
+    'a whole kind:id the catalogue lacks is added as typed, not as the fuzzy match board:planning');
+
+  await harness.input(input, 'plan');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(changes.at(-1), ['board:roadmap', 'board:plan', 'board:planning'], 'otherwise the highlighted row');
+});

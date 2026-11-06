@@ -66,10 +66,13 @@ func resourceScopeCatalogue(r *http.Request) ([]permissionScopeValueItem, error)
 	if err != nil {
 		return nil, err
 	}
-	records, err := fs.ListTemplates(r.Context())
+	// One head per template: the version walk ListTemplates does is not
+	// needed to name a template.
+	heads, err := fs.ListTemplateHeads(r.Context())
 	if err != nil {
 		return nil, err
 	}
+	slices.SortFunc(heads, func(a, b store.TemplateHead) int { return strings.Compare(a.ID, b.ID) })
 	pinned, err := db.ProcessTemplatePinnedGroups()
 	if err != nil {
 		return nil, err
@@ -84,18 +87,11 @@ func resourceScopeCatalogue(r *http.Request) ([]permissionScopeValueItem, error)
 			live[g.Name] = true
 		}
 	}
-	ids := make([]string, 0, len(records))
-	for _, record := range records {
-		ids = append(ids, record.ID)
-	}
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
-	for _, id := range ids {
+	for _, head := range heads {
+		id := head.ID
 		item := permissionScopeValueItem{Kind: resourceScopeKindProcessTemplate, ID: id, Title: id}
-		if head, err := fs.GetTemplateHead(r.Context(), id); err == nil {
-			if tmpl, err := fs.GetTemplate(r.Context(), head.Ref); err == nil && tmpl.Name != "" {
-				item.Title = tmpl.Name
-			}
+		if tmpl, err := fs.GetTemplate(r.Context(), head.Ref); err == nil && tmpl.Name != "" {
+			item.Title = tmpl.Name
 		}
 		for _, g := range pinned[id] {
 			if live[g] {

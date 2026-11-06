@@ -6547,7 +6547,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .filter-combobox-group { padding: 2px 10px 0; color: #a9b1c0; font-size: 11px; }
 .filter-combobox-tip { padding: 4px 10px; color: var(--ui-muted-text); font-size: 11px; }
 .filter-combobox-foot { border-top: 1px solid #2a3340; padding: 4px 10px; color: #e3b341; font-size: 11px; }
-.perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font: inherit; }
+.perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font-family: inherit; }
 .perm-scope-sheet {
   margin-top: 4px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 4px 8px; max-width: 460px;
 }

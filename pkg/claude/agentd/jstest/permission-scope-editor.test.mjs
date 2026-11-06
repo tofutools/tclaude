@@ -697,10 +697,33 @@ test('the resource= drawer searches the catalogue it loads once, and saves kind:
   await harness.input(box, 'board:roadmap');
   assert.equal(dim.querySelectorAll('[role="option"]').length, 8);
   assert.match(dim.querySelector('.filter-combobox-foot').textContent, /Refine your search/);
+  await harness.input(box, '');
 
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], { 'resources.read': { resource: ['board:res-7'] } },
-    'the search text is not flushed into a matcher; the chosen kind:id is saved');
+  assert.deepEqual(saved[0], { 'resources.read': { resource: ['board:res-7'] } }, 'the chosen kind:id is saved');
+});
+
+// Text left in the search box is an uncommitted value, as in the plain box:
+// Save folds it in (as the catalogue key it names, or as typed for the daemon
+// to judge), and never writes the grant unscoped because Enter was not pressed.
+test('Save folds what is left in the resource box in, never saving the grant unscoped', async (t) => {
+  const harness = await createPreactHarness(t);
+  for (const [typed, want] of [['Q4 plan', 'board:res-7'], ['board:not-listed', 'board:not-listed']]) {
+    const saved = [];
+    const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [RES_READ], dimOptions: { resource: {} } }), {
+      ...noopActions,
+      loadScopeValues: async () => resourceCatalogue(20),
+      savePermissions: async (descriptor, selection, scopes) => saved.push(scopes),
+    });
+    await harness.act(() => host.querySelector('[data-slug="resources.read"] button.perm-scope-twisty').click());
+    await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const box = host.querySelector('.perm-scope-dim[data-dim="resource"] input[role="combobox"]');
+    await harness.act(() => harness.fireEvent(box, 'focus'));
+    await harness.input(box, typed);
+    await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+    assert.deepEqual(saved[0], { 'resources.read': { resource: [want] } }, `typed ${typed}`);
+    await mounted.unmount();
+  }
 });
 
 test('many selected resources collapse, in the drawer and in the row', async (t) => {
@@ -745,8 +768,11 @@ test('a per-kind row an umbrella covers says so, in counts', async (t) => {
   const covered = () => opened.host.querySelector('[data-slug="boards.read"] .perm-row-covered')?.textContent || '';
   assert.match(covered(), /covered by resources\.read, scoped to 2 groups and 3 resources/);
   assert.doesNotMatch(covered(), /board:a/, 'counts, never names');
+  const eff = () => opened.host.querySelector('[data-slug="boards.read"] .perm-row-eff').textContent;
+  assert.equal(eff(), '✓ via resources.read (scoped)', 'a covered row is not "denied (no source)"');
   await harness.act(() => opened.host.querySelector('[data-slug="boards.read"] [data-effect="deny"]').click());
   assert.equal(covered(), '', 'a deny of the row wins over its umbrella');
+  assert.match(eff(), /denied \(explicit veto\)/);
   await opened.mounted.unmount();
 
   snapshot.permissions.overrides['conv-s'] = { 'resources.write': 'grant' };
@@ -773,4 +799,31 @@ test('a long snapshot catalogue switches the dimension to the searchable box', a
   await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter' }));
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0], { 'groups.members.spawn': { group: ['group-17'] } });
+});
+
+// The sudo editor reads its picks through effectOf, while the agent's stored
+// denies stay on row.effect. The resolver returns a dedicated deny before it
+// consults an umbrella, so the hint must not claim coverage past one.
+test('the covered-by hint honours stored denies the sudo picks do not override', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { umbrellaCover } = await harness.importDashboardModule('js/message-access-dialog-model.js');
+  const rows = [
+    { slug: 'boards.read', umbrella: 'resources.read', effect: 'deny', granted: false, sources: [] },
+    { slug: 'resources.read', umbrella: 'resources.write', effect: 'default', granted: false, sources: [] },
+    { slug: 'resources.write', effect: 'default', granted: false, sources: [] },
+  ];
+  const by = (list) => new Map(list.map((row) => [row.slug, row]));
+  const picks = (map) => (slug) => map[slug] || 'default';
+  const scopeOf = () => ({});
+  assert.equal(umbrellaCover(rows[0], by(rows), picks({ 'resources.read': 'grant' }), scopeOf), null,
+    'a stored deny of the row wins over a sudo of its umbrella');
+  const stepDenied = rows.map((row) => (row.slug === 'resources.read' ? { ...row, effect: 'deny' } : { ...row, effect: 'default' }));
+  assert.equal(umbrellaCover(stepDenied[0], by(stepDenied), picks({ 'resources.write': 'grant' }), scopeOf), null,
+    'a stored deny of a step stops the chain');
+  assert.equal(umbrellaCover(stepDenied[0], by(stepDenied), picks({ 'resources.read': 'grant' }), scopeOf)?.slug, 'resources.read',
+    'a sudo of the denied step itself wins over its deny');
+  const viaDefault = rows.map((row) => ({ ...row, effect: 'default',
+    ...(row.slug === 'resources.read' ? { granted: true, sources: ['global default'] } : {}) }));
+  assert.equal(umbrellaCover(viaDefault[0], by(viaDefault), picks({}), scopeOf), null,
+    'a config default of an umbrella is not a source its step reads');
 });
