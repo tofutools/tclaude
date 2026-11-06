@@ -216,7 +216,7 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 	// reopens (the workspace, Git admin paths, agent directories) fall under
 	// it is refused rather than quietly reopening it.
 	if in.launchSandbox != nil {
-		if err := sandboxpolicy.ValidateDenyOverlayHeld(in.launchSandbox.DenyOverlay, launchReadDirs, launchWriteDirs); err != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(in.launchSandbox.DenyOverlay, []string{in.cwd}, launchReadDirs, launchWriteDirs); err != nil {
 			return launchDirs{}, err
 		}
 	}

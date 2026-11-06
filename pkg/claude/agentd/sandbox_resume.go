@@ -640,6 +640,13 @@ func prepareRereadRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox,
 // connect. A relaunch has no allow-unenforced override.
 func relaunchSandboxGateFailure(harnessName, mode, implementation string, snapshot *sandboxpolicy.Snapshot,
 	copilotAPI bool, transport session.ModelTransportLaunchContext) *spawnFailure {
+	// Every relaunch (resume, reincarnate, clone, a layer change) carries the
+	// agent's deny overlay, so one whose mode confines nothing is refused.
+	if snapshot != nil && len(snapshot.DenyOverlay) > 0 && sandboxProfileTierInert(harnessName, mode, implementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			"this agent carries a sandbox deny overlay (" + strings.Join(snapshot.DenyOverlay, ", ") +
+				"), and the relaunch's sandbox mode would not enforce it"}
+	}
 	if fail := sandboxProfileCapabilityFailure(harnessName, mode, snapshot, implementation); fail != nil {
 		return fail
 	}
@@ -692,6 +699,14 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		policy.Snapshot = effective
 	}
 	if req.temporaryBuiltinMode {
+		// A temporary sandbox-off relaunch confines no filesystem, so an
+		// agent whose overlay promises a denied subtree stays unreachable is
+		// refused it rather than relaunched without that promise.
+		if effective != nil && len(effective.DenyOverlay) > 0 {
+			return nil, cleanup(&spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+				"this agent carries a sandbox deny overlay (" + strings.Join(effective.DenyOverlay, ", ") +
+					"), which a temporary sandbox-off relaunch would not enforce"}), false
+		}
 		effective = temporarySandboxLaunchSnapshot(req.harness, effective)
 	}
 	if fail := relaunchSandboxGateFailure(req.harness, req.builtinMode, req.implementation,

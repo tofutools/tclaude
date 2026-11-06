@@ -212,3 +212,30 @@ func TestSandboxDenyRefusesAGitDirTheLaunchReopens(t *testing.T) {
 	other := spawnDenied(t, f, "git-ok", map[string]any{"sandbox_deny": []string{fx.inner}, "cwd": worktree})
 	assert.Equalf(t, http.StatusOK, other.Code, "a deny beside the repository leaves it alone: body=%s", other.Raw)
 }
+
+// The overlay binds every launch an agent makes, not only a spawn: the members
+// of a template it instantiates inherit it too.
+func TestSandboxDenyIsInheritedByATemplateInstantiation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	fx := newDenyFixture(t)
+	parent := spawnDenied(t, f, "parent", map[string]any{"sandbox_deny": []string{fx.secrets}})
+	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermTemplatesUse, "test"))
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "deny-crew", "agents": []map[string]any{{"name": "worker", "role": "worker", "sandbox": "on"}}}).Code)
+
+	rec := agentReqProof(t, f, parent.ConvID, http.MethodPost, "/v1/templates/deny-crew/instantiate",
+		map[string]any{"group_name": "deny-deployed", "task": "t", "cwd": t.TempDir()})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), `"failed":1`)
+	g, err := db.GetAgentGroupByName("deny-deployed")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	for _, member := range members {
+		assert.Equal(t, []string{fx.secrets}, childPolicy(t, f, member.ConvID).DenyOverlay, "member %s", member.ConvID)
+	}
+}

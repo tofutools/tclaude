@@ -126,3 +126,36 @@ func TestDenyOverlayNormalizesAndRefusesAnOmittedLaunch(t *testing.T) {
 	require.NoError(t, err, "no overlay asks nothing of an omitted launch")
 	assert.True(t, unchanged.ProfilesOmitted)
 }
+
+// A remapped grant over an ancestor projects the denied subtree to a sandbox
+// path the deny row does not cover, and a socket allowed beneath the deny
+// stays connectable on a socket rule alone: both are removed and named.
+func TestDenyOverlayRemovesARemappedAncestorAndSocketsBeneathIt(t *testing.T) {
+	_, workspace, _ := denyLineageDirs(t)
+	project := filepath.Join(workspace, "project")
+	secrets := filepath.Join(project, "client-secrets")
+	require.NoError(t, os.MkdirAll(secrets, 0o755))
+	effective, err := Resolve(Scopes{Explicit: &Profile{Name: "p",
+		Filesystem: []FilesystemGrant{
+			{Path: workspace, Access: AccessWrite},
+			{Path: project, Access: AccessRead, MountPath: "/srv/project"},
+		},
+		UnixSockets: &UnixSocketRules{Mode: AccessModeList, Allow: []SocketAllowEntry{
+			{Path: filepath.Join(secrets, "agent.sock")}, {Path: filepath.Join(workspace, "ok.sock")},
+		}},
+	}})
+	require.NoError(t, err)
+	got, err := ApplyDenyOverlay(NewSnapshot(effective, nil), []string{secrets})
+	require.NoError(t, err)
+	_, ok := accessAt(got, "/srv/project")
+	assert.False(t, ok, "the remap of the deny's ancestor is removed")
+	access, _ := accessAt(got, workspace)
+	assert.Equal(t, AccessWrite, access)
+	require.NotNil(t, got.Effective.UnixSockets)
+	assert.Equal(t, []SocketAllowEntry{{Path: filepath.Join(workspace, "ok.sock")}}, got.Effective.UnixSockets.Allow)
+	notice := overlayNotice(got)
+	require.NotNil(t, notice)
+	assert.Contains(t, notice.Detail, "(mounted at /srv/project)")
+	assert.Contains(t, notice.Detail, "unix socket "+filepath.Join(secrets, "agent.sock"))
+	require.NoError(t, RequireContained(NewSnapshot(effective, nil), got))
+}

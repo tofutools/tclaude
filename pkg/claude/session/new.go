@@ -1244,7 +1244,7 @@ func OneShotLaunchPosture(
 		launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if effectiveSandbox != nil {
-		if err := sandboxpolicy.ValidateDenyOverlayHeld(effectiveSandbox.DenyOverlay, launchReadDirs, launchWriteDirs); err != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(effectiveSandbox.DenyOverlay, []string{cwd}, launchReadDirs, launchWriteDirs); err != nil {
 			return harness.SpawnSpec{}, err
 		}
 	}

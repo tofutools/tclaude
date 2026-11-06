@@ -3,6 +3,7 @@ package sandboxpolicy
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -15,7 +16,9 @@ import (
 //
 // A denied path covers its whole subtree. A more specific grant beneath it,
 // which ordinary profile composition would keep (the most specific rule wins),
-// is removed instead, and the removal is named in a composition notice. The
+// is removed instead, and the removal is named in a composition notice; so
+// is a remapped grant of an ancestor, whose sandbox path the deny row at the
+// host spelling does not cover, and a Unix socket allowed beneath it. The
 // paths a launch itself must open (the workspace, its Git administrative
 // directories, the harness's state, materialized agent directories) are not
 // the profiles' to remove: a launch that would open one beneath a denied path
@@ -122,6 +125,12 @@ func ApplyDenyOverlay(s Snapshot, add []string) (Snapshot, error) {
 			deny = DenyOverlayCovers(denies, grant.GuestPath())
 		}
 		switch {
+		case deny == "" && grant.IsRemapped() && grant.Access != AccessDeny && remapExposes(denies, grant.Path):
+			// A remap of an ancestor projects the denied host subtree to a
+			// sandbox path the overlay's own deny row, which sits at the host
+			// spelling, does not cover. It cannot be narrowed, so it goes.
+			removed = append(removed, fmt.Sprintf("%s %s", grant.Access, describeGrantPath(grant)))
+			continue
 		case deny == "":
 			// Untouched.
 		case grant.Path == deny && grant.GuestPath() == deny:
@@ -188,6 +197,22 @@ func ApplyDenyOverlay(s Snapshot, add []string) (Snapshot, error) {
 		aliases = append(aliases, alias)
 	}
 	effective.MountAliases = aliases
+	if effective.UnixSockets != nil && len(effective.UnixSockets.Allow) > 0 {
+		sockets := *effective.UnixSockets
+		sockets.Allow = nil
+		for _, entry := range effective.UnixSockets.Allow {
+			path := entry.Path
+			if path == "" {
+				path = filepath.Dir(entry.PathGlob)
+			}
+			if DenyOverlayCovers(denies, path) != "" {
+				removed = append(removed, "unix socket "+entry.Path+entry.PathGlob)
+				continue
+			}
+			sockets.Allow = append(sockets.Allow, entry)
+		}
+		effective.UnixSockets = &sockets
+	}
 	if len(effective.MountAliases) == 0 {
 		effective.MountAliases = nil
 	}
@@ -223,6 +248,17 @@ func ApplyDenyOverlay(s Snapshot, add []string) (Snapshot, error) {
 		effective.AccessNotices = notices
 	}
 	return out, nil
+}
+
+// remapExposes reports whether a remapped grant at host path holds a denied
+// path beneath it.
+func remapExposes(denies []string, host string) bool {
+	for _, deny := range denies {
+		if pathContainsOrEqual(host, deny) {
+			return true
+		}
+	}
+	return false
 }
 
 func describeGrantPath(grant FilesystemGrant) string {
