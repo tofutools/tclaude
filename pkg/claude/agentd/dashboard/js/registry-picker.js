@@ -1,8 +1,8 @@
 // registry-picker.js — the dashboard's choice of a named entry from a list
 // that grows: a group template, a role or a saved prompt (tcl-986r2g), or a
-// federation peer, node or board (tcl-saada2). Each grows to tens of entries
-// (federation without bound), so every such <select> is this type-to-filter
-// choice instead (ChoiceCombobox, on FilterCombobox). Profiles have their
+// federation peer, node or board, or a harness's model (tcl-saada2). Each
+// grows to tens of entries (federation and OpenCode's models without bound),
+// so every such <select> is this type-to-filter choice instead (ChoiceCombobox, on FilterCombobox). Profiles have their
 // own (profile-picker.js), as do groups (group-picker.js).
 //
 //   namedItems(entries, opts)  entries as FilterCombobox items
@@ -12,6 +12,8 @@
 //   PeerCombobox               the choice of a peer (or pool)
 //   NodeCombobox               the choice of a node
 //   BoardCombobox              the choice of a board
+//   ModelCombobox              the choice of a model (the spawn dialog's stays a
+//                              <select>: an agent can fill it, tcl-alhauf)
 
 import { h } from 'preact';
 import { useMemo } from 'preact/hooks';
@@ -56,3 +58,4 @@ export const PromptCombobox = named('prompt', 'saved prompts');
 export const PeerCombobox = named('peer', 'peers');
 export const NodeCombobox = named('node', 'nodes');
 export const BoardCombobox = named('board', 'boards');
+export const ModelCombobox = named('model', 'models');
