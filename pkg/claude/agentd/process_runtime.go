@@ -998,7 +998,7 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 			group = g.Name
 		}
 	}
-	if _, ok := requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false); !ok {
+	if _, ok := requireGroupResourceAccess(w, r, PermProcessRunsRead, group, "", false); !ok {
 		return
 	}
 	filter, ok := processRunListFilter(w, r)

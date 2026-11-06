@@ -154,7 +154,7 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 // gate authorizes either. An unscoped row from either source absorbs the union.
 func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerImpliedTier, slug string) ([]PermissionScope, bool) {
 	v := resolveEffectivePermissionVerdictFrom(src, slug,
-		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(permissionUmbrellaFor(slug)))
 	if v.Resolution == permDeny {
 		// A granter DENIED a slug may confer nothing through it. Reading a deny
 		// as "unconstrained" (the same answer as "does not hold it") would make

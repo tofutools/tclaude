@@ -1132,8 +1132,9 @@ func boardCaller(w http.ResponseWriter, convID string) (author, participant stri
 }
 
 // GET /v1/boards — every board under boards.read; without it, the boards an
-// agent reads as a member of their group (groups.resources.read). An agent
-// with neither gets the shared gate's answer for boards.read.
+// agent reads as a member of their group (groups.resources.read) and those a
+// scoped resources.read grant reaches. An agent with none of these gets the
+// shared gate's answer for boards.read.
 func handleBoardList(w http.ResponseWriter, r *http.Request) {
 	clearAuthorizedPermission(r)
 	if conv := confirmedAgentConv(r); conv != "" && !silentAgentAllows(r, conv, PermBoardsRead, ActionContext{}) {
@@ -1148,8 +1149,22 @@ func handleBoardList(w http.ResponseWriter, r *http.Request) {
 				readable[g.Name] = true
 			}
 		}
-		if len(readable) > 0 {
-			serveBoardList(w, func(b *db.CollabBoard) bool { return readable[b.GroupName] })
+		umbrella, scoped := scopedResourceUmbrella(r, conv, PermBoardsRead)
+		if len(readable) > 0 || scoped {
+			serveBoardList(w, func(b *db.CollabBoard) bool {
+				if readable[b.GroupName] {
+					return true
+				}
+				if !scoped {
+					return false
+				}
+				var groups []string
+				if b.GroupName != "" {
+					groups = []string{b.GroupName}
+				}
+				ok, _ := umbrellaVerdictReaches(umbrella, conv, PermBoardsRead, groups, resourceRef(resourceScopeKindBoard, b.ID), false)
+				return ok
+			})
 			return
 		}
 	} else if conv != "" {
@@ -1212,7 +1227,7 @@ func handleBoardCreate(w http.ResponseWriter, r *http.Request) {
 			group = g.Name
 		}
 	}
-	convID, ok := requireGroupResourceAccess(w, r, PermBoardsWrite, group, true)
+	convID, ok := requireGroupResourceAccess(w, r, PermBoardsWrite, group, "", true)
 	if !ok {
 		return
 	}

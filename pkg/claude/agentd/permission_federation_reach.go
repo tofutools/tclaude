@@ -93,6 +93,8 @@ var slugFederationReach = map[string]FedReach{
 	PermKnowledgeRead:                     {Kind: FedLocal, Why: "the docs and source of the build answering; a peer's agents read their own"},
 	PermBoardsRead:                        {Kind: FedPeerInstance, Pending: true},
 	PermBoardsWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermResourcesRead:                     {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermResourcesWrite:                    {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermHostRead:                          {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermHumanInboxRead:                    {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermHumanInboxAnswer:                  {Kind: FedPeerInstance, Pending: true, Sensitive: true},

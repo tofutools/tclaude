@@ -63,6 +63,9 @@ type ActionContext struct {
 	// several workspaces describes each of them in turn rather than passing a
 	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
+	// Resource is the resource acted on as kind:id (board:plan,
+	// process_template:release), "" when the action targets no one resource.
+	Resource string
 	// RemotePeer is the trusted instance ID targeted by a federation action.
 	RemotePeer string
 	// RemoteGroup is the target group name from that peer's catalog.
@@ -123,6 +126,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.LinearTeam
 	case ScopeDimAWBWorkspace:
 		return a.AWBWorkspace
+	case ScopeDimResource:
+		return a.Resource
 	case ScopeDimPeer:
 		if a.RemotePeer != "" && a.RemoteGroup != "" {
 			return a.RemotePeer + "/" + a.RemoteGroup
@@ -273,7 +278,7 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 			return err == nil && ok
 		}
 		return matcher == value || (!grouped && strings.HasPrefix(value, peer+"/"))
-	case permissionScopeMatchExact:
+	case permissionScopeMatchExact, permissionScopeMatchResourceRef:
 		return matcher == value
 	case permissionScopeMatchRemotePattern:
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")
