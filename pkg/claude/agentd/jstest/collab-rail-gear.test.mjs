@@ -71,6 +71,15 @@ test('an agent\'s ⚙ is its Groups row ⚙ for the group it is listed under, wi
   assert.equal(menu.querySelector('[data-act="edit-member"]'), null, 'not the Groups row\'s inline editor');
   assert.ok(menu.querySelector('[data-act="perm-edit"]'), 'the agent-level items too');
   assert.deepEqual([...menu.querySelectorAll('[data-rail-move-to]')].map((el) => el.dataset.railMoveTo), ['lab', '']);
+  // The Groups row items are handled on the document (row-actions.js): a
+  // click on one must get there.
+  const reached = [];
+  const spy = (event) => { const act = event.target.closest?.('[data-act]'); if (act) reached.push([act.dataset.act, act.dataset.group || '']); };
+  harness.document.addEventListener('click', spy);
+  t.after(() => harness.document.removeEventListener('click', spy));
+  await harness.act(() => harness.fireEvent(menu.querySelector('[data-act="remove-member"]'), 'click'));
+  assert.deepEqual(reached, [['remove-member', 'crew']], 'a data-act item reaches the document handler');
+  await harness.act(() => harness.fireEvent(container.querySelector('.cr-gear .cog-btn'), 'click'));
   await harness.act(() => harness.fireEvent(menu.querySelector('[data-rail-move-to="lab"]'), 'click'));
   await harness.act(() => harness.fireEvent(container.querySelector('.cr-gear .cog-btn'), 'click'));
   await harness.act(() => harness.fireEvent(container.querySelector('[data-rail-move-to=""]'), 'click'));

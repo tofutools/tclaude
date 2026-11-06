@@ -49,7 +49,9 @@ function AgentGear({ item, snapshotValue, notify, ctx }) {
   const extra = targets.length ? html`${targets.map((to) => html`<${MenuItem} key=${`move:${to}`} data-rail-move-to=${to}
     title=${to ? `Move ${item.title} to ${to}` : `Take ${item.title} out of ${item.group}`}
     onClick=${move(to)}>${to ? `move to ${to}` : 'move to Not in a group'}<//>`)}<${MenuSep} />` : null;
-  return html`<span class="cr-gear row-actions" draggable="false" onClick=${(event) => event.stopPropagation()}>
+  // Clicks must reach the document: the menu's data-act items are handled
+  // there (row-actions.js), as on a Groups row.
+  return html`<span class="cr-gear row-actions" draggable="false">
     <${AgentGearMenu} member=${member} group=${group} snapshot=${snapshotValue} menuKey=${`rail:${item.key}`} extra=${extra} />
   </span>`;
 }
@@ -61,7 +63,7 @@ function ResourceGear({ item, snapshotValue, notify, onRename, ctx }) {
     groupId, snapshotValue, api: ctx.api || processRunApi, source: ctx.source || processContext, notify,
     confirm: ctx.confirm || shellConfirm, startRename: onRename,
   });
-  return html`<span class="cr-gear" draggable="false" onClick=${(event) => event.stopPropagation()}>
+  return html`<span class="cr-gear" draggable="false">
     <${RowMenu} label=${item.title} items=${items} glyph="⚙" title=${`Edit ${item.title}`} buttonClass="cr-tool cr-gear-btn" />
   </span>`;
 }

@@ -157,8 +157,8 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, edita
     : `${item.title} · ${item.row.superseded ? 'previous generation' : item.row.attachLock || 'not a tclaude terminal'}. ${tmuxAttachHint(item.row)}`;
   const ctx = { open: (it) => openRailItem(it, { actions, snapshot, notify }), ...(rowContext || defaultRowContext()), notify };
   return html`<div class=${`cr-item cr-${item.bucket} ${statusClass(item)}${idle?.stale ? ' cr-stale' : ''}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
-    draggable=${attachable ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
-    onDragStart=${(event) => { if (attachable) startRailDrag(event, item, { actions, snapshot, notify, floatsOf }); else event.preventDefault(); }}>
+    draggable=${attachable && !renaming ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
+    onDragStart=${(event) => { if (attachable && !renaming) startRailDrag(event, item, { actions, snapshot, notify, floatsOf }); else event.preventDefault(); }}>
     ${renaming ? html`<span class="cr-name"><span class="cr-glyph" aria-hidden="true">${glyph}</span><${RenameField} value=${item.title} label=${item.title}
       onSave=${renameResource(railResource(item), { api: processRunApi, source: processContext, notify: notify || defaultRowContext().notify })} onDone=${() => setRenaming(false)} /></span>`
     : html`<span role="button" tabIndex="0" class="cr-name" title=${title}
