@@ -36,7 +36,7 @@ function fakeTimers() {
 // shell stands up the side panel the way dashboard.html does, with the Groups
 // palette, the Collab list and a third panel that did not opt in, and binds
 // the reveal. It returns what the tests drive.
-async function shell(t, { fine = true } = {}) {
+async function shell(t, { fine = true, grow = false } = {}) {
   const harness = await createPreactHarness(t);
   const doc = harness.document;
   const win = doc.defaultView || globalThis;
@@ -72,6 +72,11 @@ async function shell(t, { fine = true } = {}) {
   side.bindSidePanel(doc);
   reveal.bindEdgeReveal(doc, { timers, now: timers.now, finePointer: () => fine, debug: false });
   reveal.setEdgeRevealEnabled(true, doc);
+  // The growing peek is off by default (tcl-bg5qm1); its tests turn it on.
+  if (grow) {
+    reveal.setSidePanelTuning({ growing_peek: true }, doc);
+    t.after(() => reveal.setSidePanelTuning(null, doc));
+  }
 
   const activate = (pane) => {
     for (const id of ['tab-groups', 'tab-terminals', 'tab-other']) doc.getElementById(id).classList.toggle('active', id === pane);
@@ -320,22 +325,31 @@ test('a drag whose dragend never arrives does not leave the reveal dead', async 
   });
 });
 
-// The folded handle is no exception to the edge zone (tcl-bg5qm1): resting on
-// it reveals after the dwell like anywhere else, and pinning is still one
-// click on the handle, before the dwell or on the revealed panel.
-test('resting on the folded handle takes the dwell like the rest of the edge zone; its click still pins', async (t) => {
+// On the handle nothing opens or closes by itself (tcl-bg5qm1): a pointer
+// there is about to pin or unpin the panel. Moving off it resumes the rest.
+test('on the handle the panel neither opens nor closes by itself; its click pins; moving off resumes', async (t) => {
   let s = await shell(t);
   const handle = () => s.doc.getElementById('dock-toggle');
   s.move(handle(), WIDTH - 4);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  assert.equal(s.revealed(), false, 'no dwell reveal on the folded handle');
   s.harness.fireEvent(handle(), 'click');
-  assert.equal(s.side.isSidePanelOpen('groups'), true, 'a click before the dwell pins it');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'and its click pins the panel');
 
   s = await shell(t);
   s.move(handle(), WIDTH - 4);
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true, 'resting there reveals it');
+  s.atEdge();
+  assert.equal(s.revealed(), false, 'off the handle, the dwell starts afresh');
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true, 'and reveals as anywhere in the edge zone');
+  s.move(handle(), WIDTH - 4);
+  s.move(s.content, 300);
+  s.move(handle(), WIDTH - 4);
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'back on the revealed panel’s handle, it does not go');
   s.harness.fireEvent(handle(), 'click');
-  assert.equal(s.side.isSidePanelOpen('groups'), true, 'and the revealed panel’s handle pins it');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'and its click pins it');
 });
 
 test('a reveal does not carry over from one tab\'s panel to another\'s', async (t) => {
@@ -617,8 +631,9 @@ test('a fling at the handle’s height peeks like any other, and the click still
   const handle = s.doc.getElementById('dock-toggle');
   handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
   s.flick({ ...FLING, y0: 300 });
-  assert.equal(s.peeking(), true, 'it peeks');
+  assert.equal(s.peeking(), true, 'it peeks: the prediction does not know the handle');
   s.move(handle, WIDTH - 10);
+  assert.equal(s.revealed(), false, 'reaching the handle does not turn the peek into a reveal');
   handle.click();
   assert.equal(s.side.isSidePanelOpen('groups'), true, 'the handle’s click unfolds it');
 });
@@ -777,7 +792,7 @@ test('a peek is not a reveal: it runs no hover-out, so repeated short flings nev
 const peekW = (s) => parseFloat(s.doc.body.style.getPropertyValue('--dock-peek-w')) || 0;
 
 test('the peek grows as the pointer closes in on the open panel’s edge, up to the panel’s width', async (t) => {
-  const s = await shell(t);
+  const s = await shell(t, { grow: true });
   withPageScrollbar(s);
   const widths = [];
   const { x0, x1 } = SHORT_FLING;
@@ -794,7 +809,7 @@ test('the peek grows as the pointer closes in on the open panel’s edge, up to 
 });
 
 test('crossing where the open panel’s edge would be reveals the panel', async (t) => {
-  const s = await shell(t);
+  const s = await shell(t, { grow: true });
   withPageScrollbar(s);
   s.flick(FLING);
   assert.equal(s.revealed(), true, 'past FULL_LEFT with the prediction holding');
@@ -804,7 +819,7 @@ test('crossing where the open panel’s edge would be reveals the panel', async 
 
 test('a stop inside the full panel’s area, or just short of the peek, reveals; a stop well short does not', async (t) => {
   const { STOP_MS, PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
-  let s = await shell(t);
+  let s = await shell(t, { grow: true });
   withPageScrollbar(s);
   s.flick({ x0: 300, x1: 715 });
   assert.equal(s.peeking(), true, 'peeking, 6px short of FULL_LEFT');
@@ -813,7 +828,7 @@ test('a stop inside the full panel’s area, or just short of the peek, reveals;
   s.timers.advance(1);
   assert.equal(s.revealed(), true, 'stopped just short of the grown peek: a reveal, not a retract');
 
-  s = await shell(t);
+  s = await shell(t, { grow: true });
   withPageScrollbar(s);
   s.reveal.setSidePanelTuning({ growing_peek: false }, s.doc);
   t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
@@ -821,7 +836,7 @@ test('a stop inside the full panel’s area, or just short of the peek, reveals;
   s.timers.advance(STOP_MS);
   assert.equal(s.revealed(), false, 'with no growth, 6px short of the panel is far from the 48px peek');
 
-  s = await shell(t);
+  s = await shell(t, { grow: true });
   withPageScrollbar(s);
   s.flick({ x0: 300, x1: 600 });
   assert.equal(s.peeking(), true);
@@ -842,7 +857,7 @@ test('a braking stop on content under the would-be panel does not peek or reveal
 });
 
 test('a prediction that stops holding shrinks the peek back before it retracts', async (t) => {
-  const s = await shell(t);
+  const s = await shell(t, { grow: true });
   withPageScrollbar(s);
   const { PEEK_RETRACT_MS, PEEK_MIN_PX } = s.reveal.REVEAL_DEFAULTS;
   s.flick(SHORT_FLING);
@@ -871,11 +886,17 @@ test('moving about near the panel does not peek: wiggling, drifting or vertical 
     assert.equal(s.revealed(), false, `${why}: nor later`);
   }
   // With no near band (tcl-bg5qm1) a fast flick from there is judged like
-  // any other: it crosses where the panel's edge would be, and reveals.
-  const s = await shell(t);
+  // any other: it peeks (and, with the growing peek on, crossing where the
+  // panel's edge would be reveals it).
+  let s = await shell(t);
   withPageScrollbar(s);
   s.flick({ x0: 640, x1: 920, steps: 5 });
-  assert.equal(s.revealed(), true, 'a fast flick from 81px out of the panel’s edge');
+  assert.equal(s.peeking(), true, 'a fast flick from 81px out of the panel’s edge peeks');
+  assert.equal(s.revealed(), false, 'and with the growing peek off (the default), crossing does not reveal');
+  s = await shell(t, { grow: true });
+  withPageScrollbar(s);
+  s.flick({ x0: 640, x1: 920, steps: 5 });
+  assert.equal(s.revealed(), true, 'with it on, the crossing reveals');
 });
 
 test('the closer to the panel a motion starts, the less speed it needs; a slow drift still never peeks', async (t) => {
@@ -950,7 +971,7 @@ test('the config switches and values take effect, and the form’s defaults are 
 });
 
 test('a steady move that starts peeking and then brakes onto content under the would-be panel shrinks the peek back, with no reveal', async (t) => {
-  const s = await shell(t);
+  const s = await shell(t, { grow: true });
   withPageScrollbar(s);
   const { PEEK_MIN_PX } = s.reveal.REVEAL_DEFAULTS;
   s.flick({ x0: 300, x1: 660, steps: 6 });
@@ -1047,7 +1068,9 @@ test('a three-frame snap from the left into the edge zone reveals the panel at o
   snap(s, [420, 860]);
   s.timers.advance(16);
   s.move(handle, 990);
-  assert.equal(s.revealed(), true, 'a snap onto the folded handle is no exception');
+  assert.equal(s.revealed(), false, 'a snap onto the folded handle does not open it: the pointer is there to pin');
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  assert.equal(s.revealed(), false, 'nor does resting there');
 });
 
 test('a snap that runs past the window’s edge reveals when its next frame would have reached the zone', async (t) => {

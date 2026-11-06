@@ -17,11 +17,13 @@ export const SIDE_PANEL_TUNING_FIELDS = Object.freeze([
   { key: 'peek_min_px', label: 'Peek start width', unit: 'px', def: 48, min: 8, max: 400 },
 ].map(Object.freeze));
 
-// SIDE_PANEL_TOGGLES are the switches, all default on, so only false is stored.
+// SIDE_PANEL_TOGGLES are the switches, each with its default (def): only a
+// value that differs from it is stored. The growing peek defaults off
+// (tcl-bg5qm1): opening is then an active choice, a move onto the peek.
 export const SIDE_PANEL_TOGGLES = Object.freeze([
-  { key: 'side_panel_edge_reveal', id: 'cfg-dashboard-side-panel-edge-reveal' },
-  { key: 'side_panel_predictive_peek', id: 'cfg-dashboard-side-panel-predictive-peek' },
-  { key: 'side_panel_growing_peek', id: 'cfg-dashboard-side-panel-growing-peek' },
-]);
+  { key: 'side_panel_edge_reveal', id: 'cfg-dashboard-side-panel-edge-reveal', def: true },
+  { key: 'side_panel_predictive_peek', id: 'cfg-dashboard-side-panel-predictive-peek', def: true },
+  { key: 'side_panel_growing_peek', id: 'cfg-dashboard-side-panel-growing-peek', def: false },
+].map(Object.freeze));
 
 export const sidePanelTuningId = (key) => `cfg-side-panel-${key.replace(/_/g, '-')}`;

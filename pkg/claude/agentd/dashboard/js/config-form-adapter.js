@@ -597,7 +597,10 @@ function populateConfigForm(cfg) {
   // its default (3) as a placeholder, so an absent key stays blank.
   $('#cfg-dashboard-always-show-open-prs').checked = !(cfg.dashboard && cfg.dashboard.always_show_open_prs === false);
   // Side panel edge reveal. Default on; only an explicit false unchecks it.
-  for (const { key, id } of SIDE_PANEL_TOGGLES) $('#' + id).checked = !(cfg.dashboard && cfg.dashboard[key] === false);
+  for (const { key, id, def } of SIDE_PANEL_TOGGLES) {
+    const v = cfg.dashboard && cfg.dashboard[key];
+    $('#' + id).checked = typeof v === 'boolean' ? v : def;
+  }
   for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
     const v = cfg.dashboard && cfg.dashboard[`side_panel_${key}`];
     $('#' + sidePanelTuningId(key)).value = v != null ? v : '';
@@ -1022,8 +1025,9 @@ function assembleConfig() {
   else delete dashboard.always_show_open_prs;
   // The side panel's switches: on is the default, so store only the false.
   // Its tuning values: blank is the default and stores nothing.
-  for (const { key, id } of SIDE_PANEL_TOGGLES) {
-    if (!$('#' + id).checked) dashboard[key] = false;
+  for (const { key, id, def } of SIDE_PANEL_TOGGLES) {
+    const on = $('#' + id).checked;
+    if (on !== def) dashboard[key] = on;
     else delete dashboard[key];
   }
   for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
@@ -1738,7 +1742,7 @@ function syncCfgSidePanel() {
 // resetCfgSidePanel puts the side panel's switches and tuning back to their
 // defaults in the form; Save writes it.
 function resetCfgSidePanel() {
-  for (const { id } of SIDE_PANEL_TOGGLES) $('#' + id).checked = true;
+  for (const { id, def } of SIDE_PANEL_TOGGLES) $('#' + id).checked = def;
   for (const { key } of SIDE_PANEL_TUNING_FIELDS) $('#' + sidePanelTuningId(key)).value = '';
   syncCfgSidePanel();
 }

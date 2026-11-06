@@ -31,13 +31,15 @@ scrollbar beside it counts as part of it. It goes again shortly after the
 pointer leaves it, after the same delay as a popover, but not while something
 in it has focus, one of its menus is open, or you are dragging its scrollbar;
 **Esc** sends it away. Its handle still
-unfolds it for good.
+unfolds it for good, and while the pointer is on the handle the panel neither
+opens nor closes by itself.
 
 A pointer flung at the edge peeks the panel's leading edge in before it gets
-there. The peek widens as the pointer closes in. Moving onto it, crossing
-where the open panel's edge would be, or stopping there reveals the panel. A
+there. Moving onto it reveals the panel, so opening stays a choice you make. A
 motion that brakes, as one aimed at something on the page does, lets the peek
-shrink back and go. Only the rightward part of a motion counts. The closer to
+go. With **growing peek** turned on (it is off by default), the peek widens as
+the pointer closes in, and crossing where the open panel's edge would be, or
+stopping there, reveals the panel too. Only the rightward part of a motion counts. The closer to
 the panel a motion starts, the less speed it needs, and a small move by the
 edge is too short to count. A fast snap into the edge zone from further out
 reveals the panel at once, without the short wait, even if it runs past the
