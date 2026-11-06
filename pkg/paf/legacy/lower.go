@@ -207,6 +207,7 @@ func toAgentBundle(a *paf.Archive, key string, limit int64, dir string) (*agentb
 		d.TaskURL, d.TaskLabel = t.URL, t.Label
 	}
 	d.Harness = env.Harness.Name
+	d.PiDrive = ext.PiDrive
 	d.Profile = json.RawMessage(`{}`)
 	if sp := ext.SpawnProfile; sp != nil {
 		d.ProfileName = sp.Name

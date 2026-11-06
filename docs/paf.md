@@ -1863,6 +1863,7 @@ own state that other systems are not expected to share:
 | Where | Field | Meaning |
 |---|---|---|
 | `agent.json` | `spawn_profile` | `name` (informational) and `profile`: tclaude's inline spawn profile, including launch posture. Receivers never look a profile up by name. |
+| `agent.json` | `pi_drive` | `true` when a pi agent is driven through tclaude's pi extension instead of tmux send-keys (`spawn --pi-drive`). A per-launch spawn field, so the spawn profile cannot carry it; the receiver's landing asks for the drive again. |
 | `agent.json` | `permissions` | Permission rows (`slug`, `effect`, `scope`, `source`) as advisory provenance. They never become grants unless the receiver's own policy approves them. |
 | `agent.json` | `teleport` | The teleport chain id and hops (`from_instance`, `from_agent`, `to_instance`, `to_group`, `at`). |
 | `agent.json` | `transfer` | Continuation state for move and teleport: the stable federation `identity`, the sender's `carry_permissions` opt-in, the `trigger` and source `warnings`. |

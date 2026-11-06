@@ -164,6 +164,9 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	// for the agent, and an explicit "inherit" is no profile value anyway.
 	seed.RelaunchPolicy = nil
 	d := agentbundle.Definition{Name: name, Role: requested.Role, Description: requested.Descr, Harness: h.Name, ProfileName: requested.Profile, InitialMessage: requested.InitialMessage, StartupContext: seed.StartupContext, Paths: agentbundle.Paths{Cwd: requested.Cwd, Worktree: requested.WorktreePath, Branch: requested.WorktreeBranch}}
+	if d.PiDrive, err = piDriveSelected(convID); err != nil {
+		return nil, err
+	}
 	sessions, err := db.FindSessionsByConvID(convID)
 	if err != nil {
 		return nil, err
@@ -1318,6 +1321,11 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 	wire["initial_message"] = brief
 	wire["task_ref_url"] = d.TaskURL
 	wire["task_ref_label"] = d.TaskLabel
+	// The drive is any spawn's to ask for (no grant gates it), so the landing
+	// asks for it as the source's spawn did.
+	if d.PiDrive && d.Harness == harness.PiName {
+		wire["pi_drive"] = true
+	}
 	return json.Marshal(wire)
 }
 

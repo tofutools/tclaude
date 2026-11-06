@@ -66,7 +66,10 @@ type Definition struct {
 	InitialMessage   string                 `json:"initial_message,omitempty"`
 	TaskURL          string                 `json:"task_url,omitempty"`
 	TaskLabel        string                 `json:"task_label,omitempty"`
-	Paths            Paths                  `json:"paths"`
+	// PiDrive carries a pi agent's extension drive (spawn --pi-drive). It is
+	// a per-launch spawn field, not a profile one, so Profile cannot say it.
+	PiDrive bool  `json:"pi_drive,omitempty"`
+	Paths   Paths `json:"paths"`
 	// Permission rows are advisory. Only explicit carry opt-in plus receiver
 	// authorization can promote them to grants; ownership never travels.
 

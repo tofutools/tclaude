@@ -46,8 +46,11 @@ func TclaudeExtension(systemVersion string) paf.ExtensionDecl {
 // AgentExt is the tclaude extension on agent.json.
 type AgentExt struct {
 	SpawnProfile *SpawnProfile `json:"spawn_profile,omitempty"`
-	Permissions  []Permission  `json:"permissions,omitempty"`
-	Transfer     *Transfer     `json:"transfer,omitempty"`
+	// PiDrive is a pi agent's extension drive: a per-launch spawn field the
+	// spawn profile cannot say.
+	PiDrive     bool         `json:"pi_drive,omitempty"`
+	Permissions []Permission `json:"permissions,omitempty"`
+	Transfer    *Transfer    `json:"transfer,omitempty"`
 }
 
 type SpawnProfile struct {
@@ -257,7 +260,7 @@ func writeAgent(w *paf.Writer, key string, b *agentbundle.Bundle, opts WriteOpti
 	}
 	env := paf.Environment{Harness: paf.Harness{Name: d.Harness}}
 	ws := &paf.Workspace{RepoURL: d.Paths.RepoURL, Cwd: d.Paths.Cwd, Worktree: d.Paths.Worktree, Branch: d.Paths.Branch}
-	ext := AgentExt{SpawnProfile: &SpawnProfile{Name: d.ProfileName, Profile: d.Profile}}
+	ext := AgentExt{SpawnProfile: &SpawnProfile{Name: d.ProfileName, Profile: d.Profile}, PiDrive: d.PiDrive}
 	if o := d.Origin; o != nil {
 		ag.ID = o.Agent
 		if o.Instance != "" {

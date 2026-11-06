@@ -185,7 +185,9 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 // placed in, when not the source's. The snapshot's briefing reference is the
 // clone's own handoff message (0 for none), since the source's briefing is in
 // the source's inbox, and the source's worktree is not carried. A source
-// without either record leaves the clone without it.
+// without either record leaves the clone without it. A pi source's drive is
+// carried too: it is no session-new flag, so the clone's launch argv cannot
+// say it, and the clone's extension finds it here on its recheck.
 func inheritLaunchRecord(sourceConv, cloneConv string, groupID, briefMsgID int64) error {
 	sourceAgentID, err := db.AgentIDForConv(sourceConv)
 	if err != nil {
@@ -200,6 +202,13 @@ func inheritLaunchRecord(sourceConv, cloneConv string, groupID, briefMsgID int64
 	}
 	if _, err := db.CopyAgentLaunchLayers(sourceAgentID, cloneAgentID); err != nil {
 		return fmt.Errorf("copy launch layers: %w", err)
+	}
+	if drive, err := piDriveSelected(sourceConv); err != nil {
+		return fmt.Errorf("read pi drive: %w", err)
+	} else if drive {
+		if err := db.SetAgentPiDriveForConv(cloneConv, true); err != nil {
+			return fmt.Errorf("carry pi drive: %w", err)
+		}
 	}
 	snapshot, err := db.GetAgentStartupSnapshot(sourceAgentID)
 	if err != nil || snapshot == nil {
