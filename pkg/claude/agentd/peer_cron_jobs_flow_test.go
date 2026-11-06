@@ -93,7 +93,13 @@ func TestPeerOwnedCronJobs(t *testing.T) {
 	msgs := peerCronMessages(t, "proc-crew-member")
 	require.Len(t, msgs, 1)
 	require.False(t, msgs[0].OperatorAuthored)
-	require.True(t, msgs[0].DeliveredAt.IsZero(), "queued for the offline member")
+	// Queued for the offline member, never typed into its pane. The offline
+	// flush (flushAgent) may already have run for the member, asynchronously:
+	// it marks the nudge discarded, which stamps delivered_at too. Either is
+	// an offline queue; only a delivered_at without a discard is a pane send.
+	require.True(t, msgs[0].DeliveredAt.IsZero() || !msgs[0].NudgeDiscardedAt.IsZero(),
+		"queued for the offline member: delivered_at=%v nudge_discarded_at=%v", msgs[0].DeliveredAt, msgs[0].NudgeDiscardedAt)
+	require.True(t, msgs[0].ReadAt.IsZero(), "unread")
 	require.True(t, strings.HasPrefix(msgs[0].Body, "[remote message from operator@bob"), msgs[0].Body)
 	require.Contains(t, msgs[0].Body, "post your status")
 	require.Contains(t, msgs[0].Subject, "[cron:nudge] standup")
