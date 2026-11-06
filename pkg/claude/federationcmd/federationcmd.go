@@ -471,16 +471,16 @@ func agentViewsCmd() *cobra.Command {
 				Policy string `json:"policy"`
 			}
 			if p.Policy == "" {
-				if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+				if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 					os.Exit(rc)
 				}
 				if e := agent.DaemonGet("/v1/federation/peers/agent-views?peer="+url.QueryEscape(p.Peer), &out); e != nil {
-					os.Exit(fail(os.Stderr, e))
+					os.Exit(fail(cliStderr, e))
 				}
-			} else if rc := post(os.Stderr, "/v1/federation/peers/agent-views", map[string]any{"instance": p.Peer, "policy": p.Policy}, &out); rc != 0 {
+			} else if rc := post(cliStderr, "/v1/federation/peers/agent-views", map[string]any{"instance": p.Peer, "policy": p.Policy}, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("agent views from %s: %s\n", out.Label, out.Policy)
+			fmt.Fprintf(cliStdout, "agent views from %s: %s\n", out.Label, out.Policy)
 		},
 	}.ToCobra()
 }
