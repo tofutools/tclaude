@@ -1,9 +1,11 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -72,4 +74,152 @@ func TestPeerSchedulePins(t *testing.T) {
 		code, body := h.call(c.method, c.path, c.body)
 		require.Equal(t, 403, code, "%s %s: %s", c.method, c.path, body)
 	}
+}
+
+// operatorJobs reads this node's cron jobs as its operator, by id.
+func operatorJobs(t *testing.T, h *peerProcessHarness) map[int64]map[string]any {
+	t.Helper()
+	rec := fedHuman(t, h.f, http.MethodGet, "/v1/cron", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var out struct {
+		Jobs []map[string]any `json:"jobs"`
+	}
+	testharness.DecodeJSON(t, rec, &out)
+	byID := map[int64]map[string]any{}
+	for _, j := range out.Jobs {
+		byID[int64(j["id"].(float64))] = j
+	}
+	return byID
+}
+
+// peerJobIDs lists the cron jobs the peer sees.
+func peerJobIDs(t *testing.T, h *peerProcessHarness) ([]int64, string) {
+	t.Helper()
+	code, body := h.call("GET", "/v1/cron", nil)
+	require.Equal(t, 200, code, body)
+	var out struct {
+		Jobs []struct {
+			ID int64 `json:"id"`
+		} `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	ids := []int64{}
+	for _, j := range out.Jobs {
+		ids = append(ids, j.ID)
+	}
+	return ids, body
+}
+
+// A restricted peer lists, reads and disables this node's cron jobs in its
+// reach, and nothing else: a group job under groups.messages.schedule there,
+// a member's job under groups.members.schedule in every group it is in.
+func TestPeerCronJobsUnderGrants(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	h.f.HaveGroup("other")
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	group := operatorCronJob(t, h, map[string]any{"target": "group:crew", "interval": "1h", "body": "standup"})
+	member := operatorCronJob(t, h, map[string]any{"target": h.member, "interval": "1h", "body": "check in"})
+	hidden := operatorCronJob(t, h, map[string]any{"target": "group:other", "interval": "1h", "body": "not yours"})
+	rec := fedHuman(t, h.f, http.MethodPost, "/v1/cron/"+strconv.FormatInt(group, 10)+"/run-now", map[string]any{})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+
+	h.grant(t, agentd.PermGroupsMessagesSchedule, "group=crew")
+	ids, body := peerJobIDs(t, h)
+	require.Equal(t, []int64{group}, ids, "only the group job: the member job needs groups.members.schedule")
+	require.Contains(t, body, `"body":"standup"`)
+	require.NotContains(t, body, "owner_conv", "conv ids stay this node's")
+	require.NotContains(t, body, "target_conv")
+
+	h.grant(t, agentd.PermGroupsMembersSchedule, "group=crew")
+	ids, _ = peerJobIDs(t, h)
+	require.ElementsMatch(t, []int64{group, member}, ids)
+
+	// Runs: their statuses, never their error text.
+	code, body := h.call("GET", "/v1/cron/"+strconv.FormatInt(group, 10)+"/logs", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"status":`)
+	require.NotContains(t, body, "error_msg")
+	code, body = h.call("GET", "/v1/cron/"+strconv.FormatInt(hidden, 10)+"/logs", nil)
+	require.Equal(t, 404, code, "a job out of reach: %s", body)
+
+	// Disable, which is reversible; nothing that authors or fires.
+	code, body = h.call("POST", "/v1/cron/"+strconv.FormatInt(member, 10)+"/disable", map[string]any{})
+	require.Equal(t, http.StatusNoContent, code, body)
+	require.Equal(t, false, operatorJobs(t, h)[member]["enabled"])
+	code, body = h.call("POST", "/v1/cron/"+strconv.FormatInt(hidden, 10)+"/disable", map[string]any{})
+	require.Equal(t, 404, code, body)
+	require.Equal(t, true, operatorJobs(t, h)[hidden]["enabled"])
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/v1/cron/" + strconv.FormatInt(member, 10) + "/enable"},
+		{"POST", "/v1/cron/" + strconv.FormatInt(group, 10) + "/run-now"},
+		{"PATCH", "/v1/cron/" + strconv.FormatInt(group, 10)},
+		{"DELETE", "/v1/cron/" + strconv.FormatInt(group, 10)},
+		{"POST", "/v1/cron"},
+	} {
+		code, body := h.call(c.method, c.path, map[string]any{"target": "group:crew", "interval": "1h", "body": "x"})
+		require.Equal(t, 403, code, "%s %s: %s", c.method, c.path, body)
+	}
+	require.Len(t, operatorJobs(t, h), 3, "nothing created or deleted")
+
+	// Unrestricted trust reads as this node's operator.
+	h.trustUnrestricted(t)
+	ids, body = peerJobIDs(t, h)
+	require.ElementsMatch(t, []int64{group, member, hidden}, ids)
+	require.Contains(t, body, "owner_conv")
+}
+
+// A restricted peer reads the trigger rules of a visible group it holds
+// groups.triggers.read on, without spawn instructions or error detail; global
+// rules and other groups' stay this node's, and no rule is authored.
+func TestPeerTriggersUnderGrant(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	other := h.f.HaveGroup("other")
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	crew := operatorTrigger(t, "crew-reviews", h.group.ID)
+	global := operatorTrigger(t, "global-reviews", 0)
+	hidden := operatorTrigger(t, "other-reviews", other.ID)
+	// A PR by a crew member fires the crew rule; its spawn fails (there is
+	// no reviewer profile), with detail the peer must not read.
+	_, err := db.UpsertAgentPRDetails(h.member, "https://github.com/o/r/pull/7", "ready", "open", "topic", false)
+	require.NoError(t, err)
+	agentd.RunTriggerTickForTest(time.Now())
+	agentd.WaitForBackgroundForTest()
+	firings, err := db.ListTriggerFirings(crew, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, firings)
+	require.NotEmpty(t, firings[0].Actions)
+	detail := firings[0].Actions[0].Detail
+	require.NotEmpty(t, detail)
+	outcome := firings[0].Actions[0].Outcome
+
+	code, body := h.call("GET", "/v1/triggers", nil)
+	require.Equal(t, 403, code, "no grant: %s", body)
+	h.grant(t, agentd.PermGroupsTriggersRead, "group=crew")
+	code, body = h.call("GET", "/v1/triggers", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, "crew-reviews")
+	require.NotContains(t, body, "global-reviews")
+	require.NotContains(t, body, "other-reviews")
+	require.Contains(t, body, "review-{{pr.number}}")
+	require.Contains(t, body, `"outcome":"`+outcome+`"`)
+	require.NotContains(t, body, "secret checklist", "a spawn's instruction template stays this node's")
+	require.NotContains(t, body, detail, "firing detail stays this node's")
+
+	code, body = h.call("GET", "/v1/triggers/"+strconv.FormatInt(crew, 10), nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"firings":[`)
+	require.NotContains(t, body, "secret checklist")
+	require.NotContains(t, body, detail)
+	for _, id := range []int64{global, hidden} {
+		code, body = h.call("GET", "/v1/triggers/"+strconv.FormatInt(id, 10), nil)
+		require.Equal(t, 404, code, body)
+	}
+	code, body = h.call("POST", "/api/triggers/"+strconv.FormatInt(crew, 10)+"/disable", map[string]any{})
+	require.Equal(t, 403, code, "trigger rules are this node's operator's: %s", body)
+
+	h.trustUnrestricted(t)
+	code, body = h.call("GET", "/v1/triggers", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, "global-reviews")
+	require.Contains(t, body, "secret checklist")
 }

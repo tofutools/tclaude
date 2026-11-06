@@ -76,6 +76,11 @@ func (f FedReach) peerGrantable() bool {
 	return false
 }
 
+// peerTriggersManageWhy: trigger rules are authored only on this node's
+// dashboard, by its operator; locally no agent creates or changes one either,
+// and the slug only revalidates an agent owner no path creates.
+const peerTriggersManageWhy = "trigger rules are authored only by this node's operator"
+
 var slugFederationReach = map[string]FedReach{
 	PermJobsRun:                           {Kind: FedPeerGroup, Cap: proto.CapJobs, Sensitive: true},
 	PermDashboardViewRead:                 {Kind: FedLocal, Why: "points at the local operator's own open dashboard"},
@@ -168,12 +173,12 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsMembersAdd:                  {Kind: FedPeerGroup, Pending: true, Sensitive: true},
 	PermGroupsMembersRemove:               {Kind: FedPeerGroup, Pending: true, Sensitive: true},
 	PermGroupsMembersUpdate:               {Kind: FedPeerAlias, Via: []string{PermGroupsMembersManage}},
-	PermGroupsMessagesSchedule:            {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermGroupsMessagesSchedule:            {Kind: FedPeerGroup, Cap: "messages_schedule", Sensitive: true},
 	PermPermissionsGrant:                  {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermPermissionsRevoke:                 {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermSelfSchedule:                      {Kind: FedLocal, Why: "acts on the calling agent itself"},
-	PermAgentSchedule:                     {Kind: FedPeerAlias, Via: []string{PermGroupsMembersSchedule}, Pending: true},
-	PermGroupsMembersSchedule:             {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermAgentSchedule:                     {Kind: FedPeerAlias, Via: []string{PermGroupsMembersSchedule}},
+	PermGroupsMembersSchedule:             {Kind: FedPeerGroup, Cap: "member_schedule", Sensitive: true},
 	PermAgentStop:                         {Kind: FedPeerAlias, Via: []string{PermGroupsMembersStop}},
 	PermAgentResume:                       {Kind: FedPeerAlias, Via: []string{PermGroupsMembersResume}},
 	PermGroupsArchive:                     {Kind: FedPeerGroup, Pending: true, Sensitive: true},
@@ -219,10 +224,10 @@ var slugFederationReach = map[string]FedReach{
 	PermProcessRunsRead:                   {Kind: FedPeerInstance, Sensitive: true},
 	PermProcessRunsStart:                  {Kind: FedPeerGroup, Cap: "process_runs_start", Sensitive: true},
 	PermProcessRunsManage:                 {Kind: FedPeerInstance, Sensitive: true},
-	PermTriggersRead:                      {Kind: FedPeerAlias, Via: []string{PermGroupsTriggersRead}, Pending: true},
-	PermTriggersManage:                    {Kind: FedPeerAlias, Via: []string{PermGroupsTriggersManage}, Pending: true},
-	PermGroupsTriggersRead:                {Kind: FedPeerGroup, Pending: true},
-	PermGroupsTriggersManage:              {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermTriggersRead:                      {Kind: FedPeerAlias, Via: []string{PermGroupsTriggersRead}},
+	PermTriggersManage:                    {Kind: FedLocal, Why: peerTriggersManageWhy},
+	PermGroupsTriggersRead:                {Kind: FedPeerGroup, Cap: "triggers_read"},
+	PermGroupsTriggersManage:              {Kind: FedLocal, Why: peerTriggersManageWhy},
 	PermHumanNotify:                       {Kind: FedPeerInstance, Pending: true},
 	PermHumanClipboard:                    {Kind: FedLocal, Why: "the local display"},
 	session.PermAutoPermitEnterWorktree:   {Kind: FedLocal, Why: "answers a harness check inside the agent's own pane"},
