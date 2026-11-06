@@ -52,6 +52,15 @@ func resolveProcessGroupForPin(w http.ResponseWriter, r *http.Request, name stri
 	if classify(p) == classHuman {
 		return group, true
 	}
+	// A linked node's operator on the group's own peer-granted route
+	// (peer_library.go), which already holds groups.settings there.
+	if a := peerGrantFromRequest(r); a != nil {
+		if a.group != nil && a.group.ID == group.ID {
+			return group, true
+		}
+		writeError(w, http.StatusNotFound, "not_found", "no such group")
+		return nil, false
+	}
 	if p.ConvID != "" {
 		if member, _ := db.FindMemberInGroup(group.ID, p.ConvID); member != nil {
 			return group, true

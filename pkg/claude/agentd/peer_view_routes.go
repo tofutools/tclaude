@@ -29,15 +29,10 @@ var peerViewLocalRoutes = []string{
 	"GET /api/profiles/{id}/archive",
 	"POST /api/profiles/{id}/share",
 	"/api/profiles/{id}/ui/{kind}/",
-	// Process runs are this node's own; a peer view never serves them.
+	// Process runs are this node's own; a peer view never serves them
+	// (template authoring is peer_library.go's).
 	"GET /v1/process/context",
 	"POST /v1/process/resolve-preview",
-	"POST /v1/process/templates/{id}/listing",
-	"POST /v1/process/groups/{group}/processes",
-	"DELETE /v1/process/groups/{group}/processes/{templateId}",
-	// Workflow files leave and enter this node's own template store.
-	"GET /v1/process/templates/{id}/export",
-	"POST /v1/process/import",
 	// Re-binding a run's scope is this node's human's: it is human-only
 	// locally too, whatever an agent is granted.
 	"POST /v1/process/runs/{id}/rescope",
@@ -297,7 +292,6 @@ var peerViewLocalRoutes = []string{
 	"DELETE /api/groups/{name}/links/{id}",
 	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
-	"DELETE /v1/process/templates/{id}",
 	"GET /api/groups/{name}/export",
 	"GET /api/groups/{name}/standing-orders",
 	"GET /api/groups/{name}/worktrees",
@@ -306,10 +300,9 @@ var peerViewLocalRoutes = []string{
 	"GET /api/spawn-profiles/{name}/running-agents",
 	"GET /api/starters",
 	"GET /api/starters/{name}",
+	// A staged download (dashboard_peer_downloads.go); a restricted peer reads
+	// the template itself through node.spawn.read.
 	"GET /api/templates/{name}/export",
-	"GET /v1/process/template-heads",
-	"GET /v1/process/templates",
-	"GET /v1/process/templates/{id}",
 	"PATCH /api/groups/{name}/links/{id}",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
@@ -344,14 +337,9 @@ var peerViewLocalRoutes = []string{
 	"POST /api/spawn-profiles/import/inspect",
 	"POST /api/spawn-profiles/{name}/reapply",
 	"POST /api/starters/{name}/install",
-	"POST /api/templates/from-group",
-	"POST /api/templates/import",
 	"POST /api/templates/{name}/deploy",
 	"POST /api/templates/{name}/instantiate",
 	"POST /api/templates/{name}/reinforce",
-	"POST /v1/process/templates",
-	"POST /v1/process/templates/{id}",
-	"POST /v1/process/validate",
 }
 
 // peerViewOwnNodeRoutes stay with this node even for unrestricted trust: its

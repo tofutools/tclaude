@@ -482,7 +482,9 @@ handlers when it shares them, and stay greyed with the reason otherwise.
 - `node.spawn.profiles.create` saves a new spawn profile from the peer's spawn
   dialog (**Save as profile…**, choosing the node under **Save on**). A
   restricted peer's profile is saved operator-only; editing and deleting
-  profiles stay with unrestricted trust.
+  profiles take `profiles.manage`, which holds a restricted peer's launch
+  values to its own remote spawn grants (see the grant table in
+  [Federation peers](federation-peers.md)).
 - `node.groups.create` creates a plain group. A restricted peer sets only its
   name, a parent it can see, description, context, attachment and member cap;
   a directory, environment, profile or repository clone is refused. It sees
