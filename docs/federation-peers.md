@@ -125,7 +125,8 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
 | `groups.settings` | change the group's ordinary settings from the peer's dashboard: description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting; its default directory, default profile, default saved prompts and sandbox profile also need the matching spawn grant (see "Changing a peer's groups") |
 | `groups.settings.environment` | change the group's spawn environment, whose values reach every agent spawned into it |
-| `groups.resources.read` | list the group's resources (saved processes, boards, live pages) with their agent locks on the peer's dashboard, by name only. Before it existed, this list came with `groups.roster.read`; a peer that held only roster read (and no unrestricted trust) no longer sees it until granted this. That includes a peer granted `groups.resources.lock`: its lock chips sit on this list, so grant both for the lock to be usable from its dashboard |
+| `groups.resources.read` | list the group's resources (saved processes, boards, live pages) with their agent locks on the peer's dashboard, and read the group's collab boards (the board API through the peer proxy; `boards.read` is the global slug a peer reaches only this way). Before it existed, this list came with `groups.roster.read`; a peer that held only roster read (and no unrestricted trust) no longer sees it until granted this. That includes a peer granted `groups.resources.lock`: its lock chips sit on this list, so grant both for the lock to be usable from its dashboard |
+| `groups.resources.write` | edit the group's collab boards: their elements and titles, create a board in the group, and move one to another group you hold this in (never unlink it). It implies reading them, as locally. Edits are authored `operator@INSTANCE`, and a new board takes its id from its title. Peers' creates leave this node's last 100 board slots to its own operator and agents. A peer's board read carries no presence and no invited agents, and the group's members only with `groups.roster.read`. An operator lock on a board refuses agents only, so a peer edits a locked board as this node's operator would. Deleting a board, its live view and presence, activity mail, undo, its rendered snapshot, and inviting agents stay with this node's dashboard. A board linked to no group is no peer's. Sensitive |
 | `groups.resources.lock` | lock and unlock the group's resources (saved processes, boards, live pages) against agent changes from the peer's dashboard; a process pinned to several groups needs it in each. Locks stay the operator's: no agent reaches them, granted or not |
 | `groups.members.manage` | change member agents' ordinary settings from the peer's dashboard: name, tags, task link and notifications, and role and description in the group; an agent's own settings need it in every group the agent is in |
 | `routes.consume` | lists ready group routes and permits opening them |
@@ -215,10 +216,12 @@ node profile saved by an older tclaude can still hold, authorizes nothing:
 `federation grants` and the dashboard's grant list mark it inert, and
 `federation profile show` warns about it, until it is granted per group.
 
-Some local permissions have no peer grant at all. Two examples:
+Some local permissions have no peer grant at all. Three examples:
 `settings.default-model` edits the host's `~/.claude/settings.json`, which
 reaches Claude sessions outside tclaude. `relaunch-policy.manage` is refused
-to every peer on purpose, unrestricted trust included.
+to every peer on purpose, unrestricted trust included. `groups.pages.*`: a
+live page is this node's stage origin, shown to the local operator's own
+dashboard and its agents, so a peer has no view of it.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's

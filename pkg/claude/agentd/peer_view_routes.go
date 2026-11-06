@@ -359,11 +359,14 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
-	// Collab boards are this node's operator workspace with its own agents.
-	"GET /api/boards", "POST /api/boards", "GET /api/boards/{id}", "PATCH /api/boards/{id}", "DELETE /api/boards/{id}",
+	// A collab board's live socket and presence, the operator's activity mail
+	// and undo, its rendered snapshot, inviting agents, ending their sessions
+	// and deleting it stay this node's own dashboard's; reading and editing
+	// one have peer routes (peer_boards.go).
+	"DELETE /api/boards/{id}",
 	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",
-	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view", "POST /api/boards/{id}/group",
-	"POST /api/boards/{id}/title", "DELETE /api/boards/{id}/sessions",
+	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view",
+	"DELETE /api/boards/{id}/sessions",
 	// Live pages are this node's own agents' stage origins.
 	"POST /api/pages", "DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
 	"POST /api/pages/{id}/reopen", "POST /api/pages/{id}/delete", "POST /api/pages/{id}/reload",
