@@ -516,7 +516,8 @@ var DaemonGetRawWithOptionsImpl = daemonGetRawWithOptions
 
 // DaemonGetRawWithOptions is DaemonGetRaw with opts: an AskHuman turns a
 // permission refusal into the operator's approval popup, as on the JSON
-// transport.
+// transport. Like DaemonPostRawWithOptions it honours AskHuman and
+// RetryOutput only; TargetConv, Timeout and NoRetry are not applied.
 func DaemonGetRawWithOptions(path string, opts DaemonOpts) ([]byte, http.Header, error) {
 	return DaemonGetRawWithOptionsImpl(path, opts)
 }
@@ -531,6 +532,7 @@ func rawGetRequest(path string, opts DaemonOpts) (*http.Request, *http.Client, e
 	client := httpClientWithTimeout(daemonRawTimeout)
 	if opts.AskHuman > 0 {
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
+		// Defensive: ParseAskHuman caps the popup well inside the raw budget.
 		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
 	}
 	return req, client, nil
