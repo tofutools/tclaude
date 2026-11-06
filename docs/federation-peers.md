@@ -115,7 +115,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see [Launch settings a peer may choose](federation-work.md#launch-settings-a-peer-may-choose)) |
 | `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
 | `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
-| `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.sandbox` | add any of this node's sandbox profiles to the spawn, with `groups.members.spawn`, so its `harness_config` and other rules apply as they would to a local spawn: granting it trusts the peer with every profile you have |
 | `groups.members.spawn.permissions` | choose the approval, tool and harness sandbox modes, the auto-reviewer, question timeout, trust-folder answer and per-slug permissions, and launching with unenforceable sandbox rules or no sandbox profiles, with `groups.members.spawn` |
 | `groups.members.spawn.environment` | set environment overrides on the spawn, with `groups.members.spawn` |
 | `groups.members.spawn.owner` | make the spawn a group owner at birth, with `groups.members.spawn` |
@@ -225,7 +225,17 @@ live page is this node's stage origin, shown to the local operator's own
 dashboard and its agents, so a peer has no view of it. The credential proxies (`proxy.git.*`,
 `proxy.github.*`, `proxy.gitlab.*`, `proxy.http`, `proxy.linear.*`,
 `proxy.awb.*`) use this node's operator's credentials, so a peer's agents use
-their own node's proxies instead.
+their own node's proxies instead. Umbrella slugs (`groups.admin`,
+`resources.read`, `resources.write`) are not peer grants: a peer is granted
+each operation it needs, so its grant list says exactly what it holds. Morph
+(`agent.morph`, `groups.members.morph`) re-forms an agent's whole launch, and
+`sandbox.harness-config` selects a spawn's harness-config posture directly,
+a setting a peer's spawn does not carry. A peer's sandbox choices go through
+`groups.members.spawn.sandbox` (an existing sandbox profile, whose own
+`harness_config` then applies) and `groups.members.spawn.permissions`. `groups.settings.default-spawn-target`, inbox watch,
+`human.notify` and `agent.standdown` belong to this node's own operator and
+agents. The dashboard's grant picker lists every one of them as a disabled
+row with its reason.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's

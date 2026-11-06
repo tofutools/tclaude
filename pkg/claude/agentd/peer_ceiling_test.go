@@ -30,9 +30,12 @@ func findPermissionSlug(slug string) string {
 	return ""
 }
 
-// A pending grant covers nothing, should one ever be listed.
+// A pending grant covers nothing, should one ever be listed. None is
+// (TestFederationReachNonePending), so the test marks one pending itself.
 func TestPeerCeilingRefusesAPendingGrant(t *testing.T) {
-	require.True(t, slugFederationReach[PermGroupsMembersMorph].Pending, "pick another pending group slug")
+	saved := slugFederationReach[PermGroupsMembersMorph]
+	slugFederationReach[PermGroupsMembersMorph] = FedReach{Kind: FedPeerGroup, Cap: "morph", Pending: true}
+	defer func() { slugFederationReach[PermGroupsMembersMorph] = saved }()
 	peerCeilingSlugs[PermGroupsMembersMorph] = true
 	defer delete(peerCeilingSlugs, PermGroupsMembersMorph)
 	_, err := peerCeilingVia(PermGroupsMembersMorph)

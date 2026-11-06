@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"maps"
 	"os"
 	"regexp"
@@ -335,7 +336,28 @@ func TestDashboardUngrantableSlugsMatchFederationReach(t *testing.T) {
 		require.Equal(t, FedLocal, reach.Kind, m[1])
 		require.Equal(t, reach.Why, strings.ReplaceAll(m[2], `\'`, `'`), "%s: the picker's reason is the registry's", m[1])
 	}
-	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage, PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge, PermGitLabRead, PermGitLabWrite, PermGitLabMerge, PermHTTP, PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite} {
+	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage, PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge, PermGitLabRead, PermGitLabWrite, PermGitLabMerge, PermHTTP, PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
+		PermResourcesRead, PermResourcesWrite, PermGroupsAdmin, PermAgentMorph, PermGroupsMembersMorph, PermGroupsSettingsDefaultSpawnTarget, PermAgentStanddown, PermAgentInboxWatch, PermGroupsMembersInboxWatch, PermSandboxHarnessConfig, PermHumanNotify} {
 		require.True(t, listed[slug], "%s is shown as not grantable", slug)
 	}
+}
+
+// Every local slug is either a peer grant some peer route serves, or local
+// with its reason: none waits on a route any more.
+func TestFederationReachNonePending(t *testing.T) {
+	for slug, reach := range slugFederationReach {
+		assert.False(t, reach.Pending, "%s is pending: give it a peer route or a FedLocal reason", slug)
+	}
+}
+
+// sandbox.harness-config is local: the launch settings a peer's spawn may
+// carry (fedSpawnLaunchKeys, enforced by validateFedSpawnLaunch) include no
+// harness-config selector.
+func TestPeerSpawnLaunchCarriesNoHarnessConfig(t *testing.T) {
+	_, carried := fedSpawnLaunchKeys[harnessConfigField]
+	assert.False(t, carried, "a peer's spawn must not select the harness-config posture: that is sandbox.harness-config, local")
+	for key := range fedSpawnLaunchKeys {
+		assert.NotContains(t, key, "harness", "%s: a peer's spawn must not select the harness-config posture", key)
+	}
+	assert.Error(t, validateFedSpawnLaunch(map[string]json.RawMessage{harnessConfigField: json.RawMessage(`"write"`)}))
 }
