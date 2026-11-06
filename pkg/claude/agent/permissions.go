@@ -579,13 +579,9 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHumanRaw)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHumanRaw, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp permissionsMutateResp
 	body := map[string]any{

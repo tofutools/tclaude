@@ -251,6 +251,21 @@ func (e *DaemonError) IsDangling() bool {
 	return body.Dangling
 }
 
+// parseAskHumanFlag is the prologue of a command that takes --ask-human: a
+// malformed value is an Error line and rcInvalidArg, and a set one says the
+// command will wait for the human. rc is rcOK otherwise.
+func parseAskHumanFlag(v string, stdout, stderr io.Writer) (time.Duration, int) {
+	ask, err := ParseAskHuman(v)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 0, rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	return ask, rcOK
+}
+
 // ParseAskHuman normalises a --ask-human flag value into a duration.
 // Accepts: "" (no popup), bare integers (seconds), or Go duration
 // strings ("30s", "2m"). Caps at 300s to match the daemon. Returns
