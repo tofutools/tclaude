@@ -27,7 +27,11 @@
 //                freeText instead of the fuzzy-highlighted row
 //   onQuery      (text) → void — the typed text as it changes, so a caller can
 //                treat what is left in the box as an uncommitted value
-//   placeholder, emptyHint, ariaLabel, id
+//   inputId      the input's id, so a <label for> can name it
+//   initialQuery the box's text on mount: a caller that keeps uncommitted
+//                text (onQuery) hands it back, so a remount does not hide it
+//   disabled     the input takes no typing and opens no list
+//   placeholder, emptyHint, ariaLabel, id (the listbox's)
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -100,9 +104,9 @@ export function comboGroupSummary(items) {
 
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
-  placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id,
+  placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
 }) {
-  const [query, setQueryState] = useState('');
+  const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -179,7 +183,7 @@ export function FilterCombobox({
   const summary = summarize ? comboGroupSummary(items) : [];
   const shownGroups = summary.slice(0, 5);
   return html`<div class="filter-combobox">
-    <input ref=${inputRef} type="text" class="add-member-search filter-combobox-input" value=${query}
+    <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${query}
       placeholder=${placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
@@ -195,7 +199,7 @@ export function FilterCombobox({
           data-group=${group} onMouseDown=${() => { if (group) { setQuery(`group:${group} `); setHighlight(0); } }}>
           <span class="rowname">${group || '(no group)'}</span><span class="id">${count}</span></div>`)}
         ${summary.length > shownGroups.length ? html`<div class="filter-combobox-tip">… ${summary.length - shownGroups.length} more groups</div>` : null}`
-    : visible.length === 0 ? html`<div class="ui-empty-block filter-combobox-empty">${query.trim() && freeText
+    : visible.length === 0 ? html`<div class="ui-empty-block filter-combobox-empty">${query.trim() && freeText?.(query.trim())
       ? html`No matches. <kbd>Enter</kbd> adds “${query.trim()}” as typed.` : emptyHint}</div>`
       : comboSections(visible).map((section, at, sections) => html`<div key=${`${section.kind}:${section.group}`} class="filter-combobox-section">
         ${section.kind && sections[at - 1]?.kind !== section.kind

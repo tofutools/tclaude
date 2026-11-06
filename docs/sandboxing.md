@@ -870,8 +870,13 @@ resolves:
 tclaude agent spawn crew --name worker --sandbox-deny ~/secrets --sandbox-deny /srv/keys
 ```
 
-The API field is `sandbox_deny` (absolute paths); the CLI expands `~` and
-makes relative paths absolute.
+The API field is `sandbox_deny`: absolute paths, or `~/…` under the daemon's
+home. The CLI expands `~` and makes relative paths absolute. In the
+dashboard's spawn dialog, **Deny paths** (under Sandbox profile) takes the
+same paths as chips. It flags a relative path and a deny over the working
+directory, and when the chosen sandbox cannot enforce a deny it says so and
+keeps the paths, so the spawn is refused rather than launched without them.
+It is not offered for a spawn on another node.
 
 - **A denied path covers its whole subtree.** A more specific grant beneath
   it, which profile composition alone would keep (the most specific rule

@@ -69,6 +69,7 @@ import {
   SPAWN_HARNESS_FIELDS,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
+import { DenyPathChips } from './spawn-deny-paths.js';
 import {
   createRemoteSpawnActions, isLocalRef, remotePromptBodies, remotePromptSetOpen, remoteSpawnIntro, remoteSpawnPins,
   remoteSpawnPrompts, watchRemoteSpawnLocks,
@@ -1740,6 +1741,18 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>
       </div>
     </div>
+    ${!context.remoteSpawn ? html`<div class="cron-create-row" id="agent-spawn-sandbox-deny-row">
+      <label class="cron-create-label" for="agent-spawn-sandbox-deny-input"
+        title="Paths this agent, and every agent it spawns, may never reach, whatever its sandbox profiles grant (--sandbox-deny).">Deny paths</label>
+      <div class="cron-create-target">
+        <${DenyPathChips} id="agent-spawn-sandbox-deny" value=${draft.sandboxDeny || []}
+          draftText=${draft.sandboxDenyDraft || ''} cwd=${draft.cwd || ''} busy=${busy}
+          blockedReason=${view.sandboxDenyBlockedReason}
+          onChange=${(next) => update('sandboxDeny', next)}
+          onDraft=${(text) => setDraft((before) => ({ ...before, sandboxDenyDraft: text }))} />
+        <span class="spawn-field-description">Nothing under these paths stays reachable to this agent or the agents it spawns, whatever its sandbox profiles grant.</span>
+      </div>
+    </div>` : null}
     ${!context.remoteSpawn ? html`<${HelpField} id="agent-spawn-usage-profile" label="Usage profile"
       title="The budget and alerts this agent runs under. Inherited: the spawn profile's usage profiles on top of the group's (else the global default). A profile picked here replaces them."
       value=${draft.usageProfile || ''}
