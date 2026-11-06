@@ -93,9 +93,10 @@ func TestAskHumanPrologue_SaysItWillWaitBeforeTheRequest(t *testing.T) {
 func TestAskHumanPrologue_SaysNothingWithoutTheFlag(t *testing.T) {
 	for _, c := range askHumanSample {
 		t.Run(c.name, func(t *testing.T) {
-			_, opts, printedBefore, stdout := askHumanStub(t)
+			calls, opts, printedBefore, stdout := askHumanStub(t)
 			var stderr bytes.Buffer
 			c.run("", stdout, &stderr)
+			assert.NotZero(t, *calls, "the command reached the daemon")
 			assert.Zero(t, opts.AskHuman)
 			assert.False(t, strings.Contains(*printedBefore, "Waiting"), *printedBefore)
 		})
