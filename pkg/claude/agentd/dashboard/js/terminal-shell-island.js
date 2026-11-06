@@ -34,7 +34,8 @@ import {
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
-import { BoardEditor, BoardsGate } from './board-island.js';
+import { BoardEditor, BoardPaneGate, BoardsGate } from './board-island.js';
+import { peerBoardsShared } from './peer-boards.js';
 import { BoardDeleteHost, askDeleteBoard, onBoardDeleted } from './board-manage.js';
 import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
@@ -610,7 +611,7 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
     role=${solo ? null : 'tabpanel'}
-  >${solo ? editor : html`<${BoardsGate}>${editor}<//>`}</div>`;
+  >${solo ? editor : html`<${BoardPaneGate}>${editor}<//>`}</div>`;
 }
 
 // PaneProcessOverlay reads the snapshot signal itself so only this small
@@ -1167,7 +1168,8 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        ...(menu.board && resourceLockState(snapshot?.value, 'board', menu.boardId) !== undefined ? [(() => {
+        // A peer's board (tcl-ug8bb8) is locked and deleted on its own node.
+        ...(menu.board && !onPeerPage() && resourceLockState(snapshot?.value, 'board', menu.boardId) !== undefined ? [(() => {
           const locked = resourceLockState(snapshot?.value, 'board', menu.boardId);
           return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
             setResourceLock('board', menu.boardId, !locked).then(
@@ -1175,7 +1177,7 @@ function PaneContextMenu({
               (cause) => shellToast(`Could not change the lock on ${menu.label}: ${cause.message}`, true));
           });
         })()] : []),
-        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
+        ...(menu.board && !onPeerPage() ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
         item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
@@ -1801,8 +1803,9 @@ function TerminalTabs({
   ]);
 
   // The Collab panel lists what is live in the shared right side panel, on
-  // the dashboard's own Collab view only (collab-rail.js).
-  const rail = !solo && !!snapshot && !onPeerPage();
+  // the dashboard's own Collab view (collab-rail.js), and on a peer's that
+  // shares its boards (tcl-ug8bb8), where it lists them.
+  const rail = !solo && !!snapshot && (!onPeerPage() || peerBoardsShared(snapshot.value));
   const floatsOf = (key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value);
   const rootClass = 'terminal-shell-root';
   return html`

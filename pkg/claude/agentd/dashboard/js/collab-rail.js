@@ -28,6 +28,8 @@ import { groupContextEntry, processContext, processRunApi } from './process-cont
 import { processesAvailable } from './feature-availability.js';
 import { onPeerPage } from './node-api.js';
 import { RailGear } from './collab-rail-gear.js';
+import { PeerBoardBadge, PeerNewBoard } from './peer-boards-ui.js';
+import { peerBoardAccess } from './peer-boards.js';
 import { RenameField, renameResource } from './groups-resources.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { railResource } from './collab-rail-actions.js';
@@ -171,7 +173,8 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, edita
       ${editable && html`<${RailGear} item=${item} snapshot=${snapshot} notify=${notify} onRename=${() => setRenaming(true)} />`}
       <${RailRowMenu} item=${item} open=${menu.open} onOpen=${menu.setOpen} ctx=${ctx} /></span>
     ${state && html`<span class="cr-state">${state}</span>`}
-    ${LOCKABLE.has(item.kind) && html`<${RailLock} kind=${item.kind} id=${item.resource?.id || item.key.slice(item.kind.length + 1)}
+    ${item.resource?.peer ? html`<${PeerBoardBadge} access=${peerBoardAccess(item.group, snapshot?.value)} />`
+      : LOCKABLE.has(item.kind) && html`<${RailLock} kind=${item.kind} id=${item.resource?.id || item.key.slice(item.kind.length + 1)}
       name=${item.title} snapshot=${snapshot} notify=${notify} />`}
   </div>`;
 }
@@ -221,7 +224,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
               <span class="ui-eyebrow cr-section-name">${section.name}</span>
               <span class="cr-count">${section.items.length}</span>
             </button>
-            ${group ? newMenu(group) : null}
+            ${group ? newMenu(group) : onPeerPage() ? html`<${PeerNewBoard} group=${section.name} />` : null}
           </div>
           ${!shut && section.items.map(item)}
         </div>`;

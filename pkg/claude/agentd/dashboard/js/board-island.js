@@ -35,6 +35,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { onPeerPage } from './node-api.js';
+import { peerBoardAccess, peerBoardsShared, peerName } from './peer-boards.js';
 import { LockChip, rememberLock } from './resource-lock.js';
 
 const html = htm.bind(h);
@@ -222,7 +223,7 @@ function gridStyle(view) {
 // its surroundings are. headActions are the host's own controls.
 export function BoardEditor({
   boardId, fetchImpl, notify = () => {}, snapshot, win, WebSocketCtor = win?.WebSocket, rasterize = rasterizeBoard, onOpenAgent,
-  onScreen = true, visible = null, headActions = null, onTitle = null,
+  onScreen = true, visible = null, headActions = null, onTitle = null, peer = onPeerPage(),
 }) {
   const [gone, setGone] = useState(false);
   const wheelScroll = useRef({ at: -Infinity, mouse: false });
@@ -234,6 +235,16 @@ export function BoardEditor({
   const [tick, setTick] = useState(0);
   const redraw = useCallback(() => setTick((n) => n + 1), []);
   const [meta, setMeta] = useState({ title: boardId, participants: [], group: '', groupMembers: [] });
+  // On a linked peer's page (tcl-ug8bb8) the board is that node's, reached
+  // through the peer proxy: it is editable with groups.resources.write in its
+  // group there, unless its operator locked it or the peer refused an edit,
+  // and otherwise read-only (pan and zoom). Undo, the snapshot, the view and
+  // the agents' events stay with the board's own node.
+  const [peerRefused, setPeerRefused] = useState('');
+  const peerAccess = peer ? peerBoardAccess(meta.group, snapshot?.value, true) : 'write';
+  const readOnly = peer && (peerAccess !== 'write' || !!meta.agentsLocked || !!peerRefused);
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const [status, setStatus] = useState('loading');
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState(BOARD_COLORS[0]);
@@ -371,7 +382,7 @@ export function BoardEditor({
         if (boardIsGone(error)) {
           missing = true;
           setGone(true);
-          notify(`The board ${boardId} was deleted.`);
+          notify(peer ? `The board ${boardId} is no longer shared with you on ${peerName()}.` : `The board ${boardId} was deleted.`);
           announceBoardDeleted(boardId);
           return;
         }
@@ -465,6 +476,7 @@ export function BoardEditor({
   // --view`: on a change, every BOARD_VIEW_REFRESH_MS while it stays, and
   // cleared when the operator looks away.
   async function reportView(looking) {
+    if (peer) return;
     const rect = svgRef.current?.getBoundingClientRect?.();
     const v = viewRef.current;
     const box = looking && rect?.width && rect?.height
@@ -586,6 +598,18 @@ export function BoardEditor({
         if (pending.current.size) void flush();
         return;
       }
+      // A peer that refuses the edit (no write in the board's group there, or
+      // its operator locked the board) will refuse a retry too: the edits go,
+      // and the board turns read-only.
+      if (peer && error?.status === 403) {
+        forgetEdits(batch.map((el) => el.id));
+        rollBack(batch.map((el) => el.id), steps);
+        if (!disposed.current) {
+          setPeerRefused(error.message || 'refused');
+          notify(`${peerName()} refused your edit, so the board is read-only here: ${error.message}`, true);
+        }
+        return;
+      }
       // Keep the edits; the next change or flush retries them.
       for (const el of batch) resent.current.add(el);
       keep();
@@ -621,6 +645,7 @@ export function BoardEditor({
   }
 
   function scheduleSnapshot() {
+    if (peer) return;
     clearTimeout(timers.current.snapshot);
     timers.current.snapshot = setTimeout(async () => {
       const box = contentBounds(liveElements(elements.current));
@@ -636,6 +661,7 @@ export function BoardEditor({
   }
 
   function scheduleEvent() {
+    if (peer) return;
     clearTimeout(timers.current.event);
     timers.current.event = setTimeout(sendEvent, BOARD_EVENT_IDLE_MS);
   }
@@ -695,7 +721,7 @@ export function BoardEditor({
   // commit records operator edits: the merged map, the undo step, the PATCH
   // batch, the agents' event batch and the snapshot.
   function commit(next, { record = true } = {}) {
-    if (!next.length) return;
+    if (!next.length || readOnlyRef.current) return;
     const step = [];
     const top = boardTopZ(elements.current);
     for (const el of next) {
@@ -731,7 +757,7 @@ export function BoardEditor({
 
   // Presses run in turn, each after everything before it has been saved.
   function undo(redo = false) {
-    if (gesture.current) return undoing.current;
+    if (gesture.current || peer) return undoing.current;
     undoing.current = undoing.current.then(() => undoStep(redo));
     return undoing.current;
   }
@@ -890,7 +916,7 @@ export function BoardEditor({
     const svg = svgRef.current;
     svg?.setPointerCapture?.(event.pointerId);
     const live = drawnElements(elements.current);
-    const panning = tool === 'hand' || event.button === 1;
+    const panning = tool === 'hand' || event.button === 1 || readOnlyRef.current;
     if (panning) {
       gesture.current = { kind: 'pan', sx: event.clientX, sy: event.clientY, view };
       return;
@@ -1269,6 +1295,7 @@ export function BoardEditor({
   // -- the context menu ---------------------------------------------------------
 
   function onContextMenu(event) {
+    if (readOnlyRef.current) { event.preventDefault(); return; }
     event.preventDefault();
     // A Mac's Ctrl+click arrives as a press first.
     const g = gesture.current;
@@ -1456,6 +1483,7 @@ export function BoardEditor({
   }
 
   function onDoubleClick(event) {
+    if (readOnlyRef.current) return;
     const p = toBoard(event);
     const live = liveElements(elements.current);
     const hit = topHit(live, p.x, p.y);
@@ -1579,6 +1607,15 @@ export function BoardEditor({
       }
       const key = event.key.toLowerCase();
       const mod = event.ctrlKey || event.metaKey;
+      // Read-only: only the view moves.
+      if (readOnlyRef.current) {
+        if (mod || event.altKey) return;
+        if (event.shiftKey && event.code === 'Digit0') { event.preventDefault(); zoomReset(); return; }
+        if (event.shiftKey && event.code === 'Digit1') { event.preventDefault(); fitView(); return; }
+        if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomIn(); return; }
+        if (event.key === '-') { event.preventDefault(); zoomOut(); return; }
+        return;
+      }
       if (mod && key === 'z') {
         event.preventDefault();
         undo(event.shiftKey);
@@ -1743,7 +1780,11 @@ export function BoardEditor({
   const editingId = editingText?.id || '';
   const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} editing=${el.id === editingId} />`), [tick, flash, editingId]);
 
-  if (gone) return html`<p class="board-gone" role="status">This board was deleted.</p>`;
+  if (gone) {
+    return html`<p class="board-gone" role="status">${peer
+      ? `This board is no longer shared with you on ${peerName()}: it was deleted there, or moved out of your groups.`
+      : 'This board was deleted.'}</p>`;
+  }
   return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
     <header class="board-head">
       <h2 class="board-title">${meta.title}</h2>
@@ -1757,7 +1798,7 @@ export function BoardEditor({
           const doing = state === 'drawing' ? ' (drawing…)' : state === 'looking' ? ' (looking at the board)' : '';
           return html`<span key=${id} class=${`board-person${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${agent ? `${agent.name}${agent.online ? '' : ' (offline)'}${doing}` : id}>
             <button data-ui-exempt type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
-            <button data-ui-exempt type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>
+            ${!peer && html`<button data-ui-exempt type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>`}
           </span>`;
         })}
         ${meta.groupMembers.filter((id) => !meta.participants.includes(id)).map((id) => {
@@ -1767,7 +1808,7 @@ export function BoardEditor({
             <button data-ui-exempt type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
           </span>`;
         })}
-        <span class="board-invite-wrap" ref=${inviteRef}>
+        ${!peer && html`<span class="board-invite-wrap" ref=${inviteRef}>
           <${Button} size="sm" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent<//>
           ${invite && html`<div class="board-invite-menu" role="menu">
             ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
@@ -1778,14 +1819,21 @@ export function BoardEditor({
           value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value, event.currentTarget)}>
           <option value="">No group</option>
           ${groupNames.map((name) => html`<option key=${name} value=${name}>Group: ${name}</option>`)}
-        <//>
+        <//>`}
       </div>
       <${Button} size="sm" class="board-export" title="Download as .excalidraw"
         onClick=${() => import('./download.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>
       ${headActions}
     </header>
+    ${peer && html`<div class=${`board-peer-banner${readOnly ? ' read-only' : ''}${status === 'offline' ? ' offline' : ''}`} role="note" data-board-peer=${readOnly ? 'read' : 'write'}>
+      <span class="board-peer-mark" aria-hidden="true">⇄</span>
+      <span>Remote board on <b>${peerName()}</b>${meta.group ? html` · group ${meta.group}` : ''} · <b>${readOnly ? 'read-only' : 'you can edit'}</b>${readOnly
+        ? (peerRefused ? ` (${peerName()} refused an edit)` : meta.agentsLocked ? ` (locked on ${peerName()})` : '')
+        : ''}</span>
+      ${status === 'offline' && html`<span class="board-peer-state">${peerName()} is out of reach: showing the last copy</span>`}
+    </div>`}
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">
-      ${BOARD_TOOLS.map((t, index) => {
+      ${!readOnly && html`${BOARD_TOOLS.map((t, index) => {
         const digit = boardToolDigit(index);
         const keys = digit ? [digit, t.key.toUpperCase()] : [t.key.toUpperCase()];
         return html`<button key=${t.id} type="button" data-ui-exempt class=${`board-tool${tool === t.id ? ' on' : ''}`}
@@ -1817,12 +1865,12 @@ export function BoardEditor({
           <button type="button" data-ui-exempt class=${`board-tool${shownText.fontStyle ? ' on' : ''}`} title="Italic" aria-label="Italic" aria-pressed=${shownText.fontStyle ? 'true' : 'false'}
             onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontStyle: shownText.fontStyle ? undefined : 'italic' }, texts)}><i>I</i></button>
         </span>`}
-      <span class="board-sep"></span>
+      ${!peer && html`<span class="board-sep"></span>
       <button data-ui-exempt type="button" class="board-tool" title=${withShortcut('Undo', 'board-undo')} aria-label="Undo" onClick=${() => undo(false)}>↶</button>
-      <button data-ui-exempt type="button" class="board-tool" title=${withShortcut('Redo', 'board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>
+      <button data-ui-exempt type="button" class="board-tool" title=${withShortcut('Redo', 'board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>`}
       ${sels.length > 0 && html`<button data-ui-exempt type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
       ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button data-ui-exempt key=${a.id} type="button" class="board-tool"
-        title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}
+        title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}`}
       <span class="board-zoom-controls" role="group" aria-label="Board zoom">
         <button data-ui-exempt type="button" class="board-tool" title="Zoom out (-)" aria-label="Zoom out" disabled=${view.zoom <= BOARD_ZOOM_MIN} onClick=${zoomOut}>−</button>
         <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
@@ -2009,4 +2057,11 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
 // BoardsGate leaves a board out of a peer's page: boards are this node's.
 export function BoardsGate({ children }) {
   return onPeerPage() ? null : children;
+}
+
+// BoardPaneGate lets a board pane through on a peer's page that shares its
+// boards (tcl-ug8bb8): the editor then reaches the peer's board through the
+// peer proxy. Anywhere else it is BoardsGate.
+export function BoardPaneGate({ children }) {
+  return onPeerPage() && !peerBoardsShared() ? null : children;
 }
