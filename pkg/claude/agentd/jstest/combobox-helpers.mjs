@@ -29,3 +29,12 @@ export async function comboPick(harness, box, key) {
   if (!row) throw new Error(`no row ${key} in the box`);
   await harness.act(() => harness.fireEvent(row, 'mousedown'));
 }
+
+// comboChoose sets a choice box (ChoiceCombobox) to key as a <select> change
+// would: '' clears it with its ×, any other key picks that row.
+export async function comboChoose(harness, box, key) {
+  if (key) return comboPick(harness, box, key);
+  const clear = box.querySelector('.choice-combobox-clear');
+  if (!clear) throw new Error('the box cannot be cleared');
+  await harness.act(() => harness.fireEvent(clear, 'click'));
+}

@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox, profileItems } from './profile-picker.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
@@ -175,16 +176,14 @@ export function ProfileChips({ names, profiles, disabled, onChange, label, onNew
       <span class="role-chip-inspect">${name}</span>
       <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
         onClick=${() => onChange(names.filter((n) => n !== name))}>×</button></span>`)}
-    <${Select} size="sm" value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
-      onChange=${(e) => {
-        const next = e.currentTarget.value; e.currentTarget.value = '';
+    <${ProfileCombobox} className="usage-profile-add" action=${true} value="" floating=${true}
+      disabled=${disabled || (!free.length && !onNew)} ariaLabel=${`Add usage profile to ${label}`}
+      placeholder=${profiles.length ? '＋ add…' : 'no usage profiles yet'} emptyHint="No more usage profiles."
+      items=${[...profileItems(free), ...(onNew ? [{ key: NEW_PROFILE, label: '＋ new usage profile…', hint: '', keywords: 'new create' }] : [])]}
+      onChange=${(next) => {
         if (next === NEW_PROFILE) onNew();
         else if (next) onChange([...names, next]);
-      }}>
-      <option value="">${profiles.length ? '＋ add…' : 'no usage profiles yet'}</option>
-      ${free.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
-      ${onNew ? html`<option value=${NEW_PROFILE}>＋ new usage profile…</option>` : null}
-    <//>
+      }} />
   </span>`;
 }
 

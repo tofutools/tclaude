@@ -7,6 +7,7 @@ import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { ProfileChips, UsageRulesDialog, useSpawnProfileUsageLink } from './usage-rules.js';
+import { ProfileCombobox } from './profile-picker.js';
 import { usageRulesApi } from './usage-rules-actions.js';
 import { ProfileReapplyControl } from './profile-reapply.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -1978,12 +1979,11 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       help=${INCLUDES_HELP} hidden=${advanced} entryCount=${draft.includes.length}><div class="sbx-rows">${draft.includes.map((name, index) => {
     const missing = !!name && !sandboxProfiles.some((item) => item.name === name);
     const warningID = `sandbox-profile-editor-include-warning-${index}`;
-    const options = [
-      ...(missing ? [[name, '— missing —']] : []),
-      ['', '— choose profile —'],
-      ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name]),
-    ];
-    return html`<div key=${index} class="sbx-row sbx-include-row"><${Select} class="sbx-inc-name" value=${name} aria-invalid=${missing || null} aria-describedby=${missing ? warningID : null} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${options} />${missing && html`<span id=${warningID} class="sbx-global-warning sbx-include-warning" role="alert">⚠ "${name}" not found in registry</span>`}<${Button} size="sm" icon=${true} variant="ghost danger" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×<//></div>`;
+    const choices = sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name);
+    return html`<div key=${index} class="sbx-row sbx-include-row"><${ProfileCombobox} className="sbx-inc-name" value=${name} profiles=${choices}
+      noneLabel="— choose profile —" missing="not in the registry" ariaLabel=${`Include ${index + 1}`} placeholder="Type to find a sandbox profile…"
+      attrs=${{ 'aria-invalid': missing || null, 'aria-describedby': missing ? warningID : null }}
+      onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} />${missing && html`<span id=${warningID} class="sbx-global-warning sbx-include-warning" role="alert">⚠ "${name}" not found in registry</span>`}<${Button} size="sm" icon=${true} variant="ghost danger" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×<//></div>`;
   })}</div><${Button} size="sm" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile<//></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-agent-directories-section" label="Agent-owned directories"
       help=${AGENT_DIRECTORIES_HELP} hidden=${advanced} entryCount=${draft.agent_directories.length}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><${Button} size="sm" icon=${true} variant="ghost danger" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×<//></div>`)}</div><${Button} size="sm" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory<//></${SandboxSection}>

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { comboKeys, comboPick } from './combobox-helpers.mjs';
+import { comboKeys, comboPick, comboChoose } from './combobox-helpers.mjs';
 
 const groups = [{
   name: 'alpha',
@@ -140,6 +140,7 @@ function setValue(element, value) {
 }
 
 function selectedValue(select) {
+  if (select.classList?.contains('choice-combobox')) return select.dataset.value || '';
   return select.getAttribute('value')
     ?? Array.from(select.options).find((option) => option.selected)?.getAttribute('value')
     ?? '';
@@ -1218,8 +1219,7 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch');
 
     const picker = host.querySelector('#agent-spawn-load-profile');
-    setValue(picker, 'codex-profile');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboChoose(harness, picker, 'codex-profile');
     await flush(harness);
 
     assert.equal(host.querySelector('#agent-spawn-owner').hasAttribute('checked'), false,
@@ -1263,8 +1263,7 @@ test('Preact agent-spawn profile clear keeps user text and the operator\'s workt
     await harness.act(() => harness.fireEvent(branch, 'input'));
 
     const picker = host.querySelector('#agent-spawn-load-profile');
-    setValue(picker, '');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboChoose(harness, picker, '');
     await flush(harness);
 
     assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
@@ -2461,8 +2460,7 @@ test('after an agent\'s harness fill is undone, a profile picked later applies i
     await flush(harness);
     assert.equal(harnessOf(), 'claude');
     const profile = host.querySelector('#agent-spawn-load-profile');
-    setValue(profile, 'codex-profile');
-    await harness.act(() => harness.fireEvent(profile, 'change'));
+    await comboChoose(harness, profile, 'codex-profile');
     await flush(harness);
     assert.equal(harnessOf(), 'codex', 'the profile\'s harness applies, as it would have before the fill');
   } finally {

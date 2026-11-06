@@ -7519,7 +7519,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    authored rows use the wider three-state grid below. */
 .sbx-global-row .sbx-access { flex: 0 0 7em; }
 .sbx-row .sbx-inc-name {
-  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;
+  flex: 1 1 14em; min-width: 0; max-width: 32em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .sbx-filesystem-row {
@@ -13141,8 +13141,7 @@ body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) opti
    already read parchment-muted, so only the control itself needs skinning.
    Options render on the OS layer: dark ink on parchment for legibility, same
    as tw-sendto. */
-body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option,
-body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
 /* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
    variants read muted-parchment (missing = gilt-warning); the legacy notice

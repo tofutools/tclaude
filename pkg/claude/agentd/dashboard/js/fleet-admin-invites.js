@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { ProfileCombobox } from './profile-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { fmtAge } from './fleet-model.js';
 import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
@@ -9,6 +10,10 @@ import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID,
 const html = htm.bind(h);
 
 function errText(error) { return error?.message || String(error); }
+
+// nodeProfileTrust is a node profile's row hint: the trust it grants, when
+// that is unrestricted.
+const nodeProfileTrust = (p) => (p.definition?.trust_level === 'unrestricted' ? 'unrestricted' : '');
 
 function until(iso, now) {
   const t = Date.parse(iso || '');
@@ -299,9 +304,8 @@ export function InvitesPage({ view, groups = [], actions, confirm, toast, copy, 
     ${profiles && !list.length
       ? html`<div class="empty">Invites need a node profile: create one with <code>tclaude federation profile</code>.</div>`
       : html`<div class="fa-grant-form">
-        <label><span class="fa-k">Profile</span><${Select} size="sm" id="fleet-invite-profile" value=${chosen?.name || ''} onChange=${(e) => setProfile(e.currentTarget.value)}>
-          ${list.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}${p.definition?.trust_level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        <//></label>
+        <label><span class="fa-k">Profile</span><${ProfileCombobox} id="fleet-invite-profile" value=${chosen?.name || ''} profiles=${list} ariaLabel="Node profile"
+          placeholder="Type to find a node profile…" hint=${nodeProfileTrust} onChange=${setProfile} /></label>
         <label><span class="fa-k">Uses</span><input id="fleet-invite-uses" type="number" min="1" max="10000" value=${uses} style="width:5em" onInput=${(e) => setUses(e.currentTarget.value)} /></label>
         <label><span class="fa-k">Valid</span><${Select} size="sm" id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
           ${TOKEN_TTLS.map((x) => html`<option key=${x.seconds} value=${String(x.seconds)}>${x.label}</option>`)}
