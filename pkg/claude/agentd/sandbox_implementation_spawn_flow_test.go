@@ -283,12 +283,6 @@ func TestForks_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.name == "clone" {
-				// The simulated spawner now refuses an OpenCode launch with no
-				// managed server, as `tclaude session new` does, and clone does
-				// not start one yet.
-				t.Skip("tcl-ncywjf: cloning an OpenCode agent starts no managed server")
-			}
 			f := newFlow(t)
 			f.HaveGroup("crew")
 			source := f.AsHuman().SpawnHarness("crew", "oc-source", harness.OpenCodeName)

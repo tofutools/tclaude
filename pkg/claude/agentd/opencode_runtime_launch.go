@@ -6,6 +6,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // startManagedOpenCodeServer starts the agentd-managed OpenCode server a
@@ -93,4 +94,25 @@ func startManagedOpenCodeServer(a *clcommon.SpawnArgs, runtimeKey, agentID, titl
 		a.OpenCodeStateIsolation = allocation.Mode
 	}
 	return launch, nil
+}
+
+// prepareOpenCodeLaunchAttachments creates a new launch's (a reincarnation
+// successor's, a clone's) private attachments directory before its OpenCode
+// server starts. Under tclaude's sandbox the server's launch spec grants that
+// directory and requires it to exist; spawn reserves it with the label and
+// resume prepares it the same way. created reports whether this call made it.
+func prepareOpenCodeLaunchAttachments(rawImplementation, label string, created *bool) error {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return err
+	}
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return nil
+	}
+	_, made, err := tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+	if err != nil {
+		return err
+	}
+	*created = made
+	return nil
 }

@@ -189,6 +189,12 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
 	resumeLaunched = true
+	if openCodeLaunch != nil {
+		// OpenCode ignores the --initial-prompt the wrapper was handed: its
+		// first turn of this launch (the managed standing guidance) goes over
+		// the managed server, as spawn's does.
+		deliverLaunchTextOverDrive(convID, a.InitialPrompt, openCodeLaunch, a.Cwd, a.Model, a.Effort)
+	}
 	return nil
 }
 
