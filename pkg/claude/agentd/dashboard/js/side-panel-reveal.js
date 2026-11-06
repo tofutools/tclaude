@@ -189,6 +189,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let motion = null; // where the current rightward motion started: { x, t }
   let lastT = 0; // when the last pointermove came
   let onHandle = false; // the last move was on the handle (#dock-toggle)
+  let pressOnHandle = false; // a press on the handle of a peeking panel is held
   let outside = false; // the pointer left the window and has not moved back in
   let peekStartX = 0; // where the pointer was when the peek started
   let peekW = 0; // the peek's width now
@@ -307,7 +308,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     if (event.pointerType && event.pointerType !== 'mouse') return;
     // A move with no button held ends a press, even one whose pointerup the
     // page never saw (a scrollbar drag released elsewhere).
-    if (!event.buttons) pressFromPanel = false;
+    if (!event.buttons) { pressFromPanel = false; pressOnHandle = false; }
     // Chrome sends a move at the same position when the layout changes under
     // a still pointer (the strip sliding in): that is not the pointer going
     // anywhere.
@@ -334,7 +335,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const allowed = enabled && !event.buttons && !dragging && finePointer() && canRevealSidePanel(doc);
     if (!allowed) {
       cancelDwell();
-      if (isSidePanelPeeking()) endPeek();
+      // A press held on the handle keeps the peek its click pins, through
+      // the jitter of a real click; dragged off the handle, it lets go.
+      if (isSidePanelPeeking() && !(pressOnHandle && onHandle)) endPeek();
       samples = [];
       // A move with a button held (a selection, a drag) is no snap's start.
       motion = null;
@@ -481,6 +484,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
       // through, and the peek holds under it until then (the handle rides
       // the peek), so the click lands where the press did.
       if (doc.getElementById('dock-toggle')?.contains(event.target)) {
+        pressOnHandle = true;
         cancelRetract();
         cancelStop();
         samples = [];
@@ -496,6 +500,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     if (isSidePanelRevealed() && onPanel(event)) pressFromPanel = true;
   }, true);
   const pressOver = () => {
+    pressOnHandle = false;
     if (!pressFromPanel) return;
     pressFromPanel = false;
     if (!overPanel) scheduleHide();

@@ -762,6 +762,8 @@ test('a press on the handle of a peeking panel pins it', async (t) => {
   assert.equal(s.peeking(), true);
   const down = s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
   assert.equal(down.defaultPrevented, false, 'the press goes through');
+  s.harness.fireEvent(handle, 'pointermove', { clientX: WIDTH - 39, clientY: 301, buttons: 1, pointerType: 'mouse' });
+  assert.equal(s.peeking(), true, 'a real click\'s jitter, button held, keeps the peek under it');
   s.timers.advance(PEEK_RETRACT_MS * 2);
   assert.equal(s.peeking(), true, 'and the peek holds under it until the click');
   const click = s.harness.fireEvent(handle, 'click');
@@ -771,6 +773,16 @@ test('a press on the handle of a peeking panel pins it', async (t) => {
   s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
   s.harness.fireEvent(handle, 'click');
   assert.equal(s.side.isSidePanelOpen('groups'), false, 'and a second click unpins it');
+});
+
+test('a press on the peeking panel\'s handle dragged off it lets the peek go', async (t) => {
+  const s = await shell(t);
+  const handle = s.doc.getElementById('dock-toggle');
+  s.flick(FLING);
+  s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
+  s.move(s.content, WIDTH - 200, { buttons: 1 });
+  assert.equal(s.peeking(), false);
+  assert.equal(s.side.isSidePanelOpen('groups'), false);
 });
 
 // Chrome sends a move at the same position when the layout changes under a
