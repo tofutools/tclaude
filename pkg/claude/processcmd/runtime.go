@@ -171,7 +171,7 @@ type processRunParams struct {
 	Authorize  []string `long:"authorize-program-profile" optional:"true"`
 	Group      string   `long:"group" optional:"true" help:"Bind the run to this group (name or id); needs process.runs.start covering it (group owners have it)"`
 	Agent      string   `long:"agent" optional:"true" help:"Bind the run to this agent; self needs self.process, another agent agent.process or groups.members.process"`
-	Remote     string   `long:"remote" optional:"true" help:"Start the run on a trusted peer node (label or instance id), scoped to one of its groups (--group) or agents (--agent); needs that node's process.runs.start or groups.members.process grant to this node"`
+	Remote     string   `long:"remote" optional:"true" help:"Start the run on a trusted peer node (label or instance id), scoped to one of its groups (--group, by name) or agents (--agent, by agt_ id); needs that node's process.runs.start or groups.members.process grant to this node"`
 	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 

@@ -626,10 +626,14 @@ func agentPeerViewRefusal(instanceID, pattern string, r *http.Request, principal
 func agentPeerViewMetadataScope() (features, slugs map[string]bool) {
 	features, slugs = map[string]bool{}, map[string]bool{}
 	rules := peerViewRules()
-	for pattern := range agentPeerViewRoutes {
+	for pattern, route := range agentPeerViewRoutes {
 		if rule, ok := rules[pattern]; ok {
 			features[rule.feature] = true
 			slugs[rule.requires] = true
+			if route.runScope {
+				// An agent-bound start is answered by the member grant.
+				slugs[PermGroupsMembersProcess] = true
+			}
 		}
 	}
 	return features, slugs

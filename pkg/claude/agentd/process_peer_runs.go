@@ -128,41 +128,84 @@ func writeRedacted(w http.ResponseWriter, rec *httptest.ResponseRecorder, redact
 	_, _ = w.Write(body)
 }
 
-// redactPeerRunView removes from a run view what describes host program
-// execution — argv, working directories and sandboxes, program
-// authorizations — and the bound agent prompts of its outstanding commands,
-// which carry the template's own text (templates are not peer-readable).
-func redactPeerRunView(doc map[string]any) {
-	delete(doc, "programBounds")
-	delete(doc, "programAuthorizations")
-	if commands, ok := doc["commands"].([]any); ok {
-		for _, c := range commands {
-			if m, ok := c.(map[string]any); ok {
-				delete(m, "program")
-			}
+// The peer view of a run is built from an allowlist, so a field added to the
+// operator's view later stays the operator's until it is listed here. Left
+// out: programAuthorizations, programBounds (directories and sandboxes), a
+// command's program argv and bound agent prompt (the template's own text,
+// which is not peer-readable), and a blocked branch's reason (it carries the
+// observation's error, which can name host paths).
+var (
+	peerRunViewKeys = []string{"id", "templateRef", "params", "status", "stateVersion", "checkpoint", "action",
+		"needsReconcile", "awaitingDecision", "awaitingDecisions", "commands", "blocked", "scope", "performers",
+		"paused", "loops", "createdAt", "updatedAt"}
+	peerRunCheckpointKeys = []string{"version", "runId", "status", "nodes", "attempts", "edges",
+		"awaitingDecisions", "blocked", "attemptCeilings", "iterations"}
+	peerRunCommandKeys = []string{"commandId", "nodeId", "kind", "attempt", "round", "rounds", "profile", "state", "performer"}
+	peerRunBlockedKeys = []string{"nodeId", "attempt"}
+)
+
+// peerBlockedReason stands in for a blocked branch's reason.
+const peerBlockedReason = "parked on this node's operator (the reason stays on that node)"
+
+func keepKeys(m map[string]any, keys []string) map[string]any {
+	out := make(map[string]any, len(keys))
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			out[k] = v
 		}
 	}
-	if checkpoint, ok := doc["checkpoint"].(map[string]any); ok {
-		if commands, ok := checkpoint["commands"].([]any); ok {
-			for _, c := range commands {
-				if m, ok := c.(map[string]any); ok {
-					delete(m, "program")
-					delete(m, "agent")
-				}
-			}
+	return out
+}
+
+func keepEach(v any, keys []string, fill map[string]any) any {
+	list, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	out := make([]any, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
 		}
+		kept := keepKeys(m, keys)
+		for k, val := range fill {
+			kept[k] = val
+		}
+		out = append(out, kept)
+	}
+	return out
+}
+
+// redactPeerRunView reduces a run view, in place, to peerRunViewKeys.
+func redactPeerRunView(doc map[string]any) {
+	kept := keepKeys(doc, peerRunViewKeys)
+	blocked := map[string]any{"reason": peerBlockedReason}
+	kept["commands"] = keepEach(kept["commands"], peerRunCommandKeys, nil)
+	if _, ok := kept["blocked"]; ok {
+		kept["blocked"] = keepEach(kept["blocked"], peerRunBlockedKeys, blocked)
+	}
+	if cp, ok := kept["checkpoint"].(map[string]any); ok {
+		cp = keepKeys(cp, peerRunCheckpointKeys)
+		if _, ok := cp["blocked"]; ok {
+			cp["blocked"] = keepEach(cp["blocked"], peerRunBlockedKeys, blocked)
+		}
+		kept["checkpoint"] = cp
+	}
+	for k := range doc {
+		delete(doc, k)
+	}
+	for k, v := range kept {
+		doc[k] = v
 	}
 }
 
-// redactPeerRunEvents drops every event's payload, which can hold program
-// commands, output and bounds; the sequence, time, node, kind and actor stay.
+// redactPeerRunEvents keeps each event's sequence, time, node, kind and
+// actor; the payload, which can hold program commands, output and bounds,
+// stays this node's.
 func redactPeerRunEvents(doc map[string]any) {
-	if events, ok := doc["events"].([]any); ok {
-		for _, e := range events {
-			if m, ok := e.(map[string]any); ok {
-				delete(m, "payload")
-			}
-		}
+	if events, ok := doc["events"]; ok {
+		doc["events"] = keepEach(events, []string{"sequence", "occurredAt", "nodeId", "kind", "actor"}, nil)
 	}
 }
 
