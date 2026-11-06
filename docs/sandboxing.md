@@ -854,7 +854,14 @@ An agent's child gets its sandbox as follows:
   and a group that assigns more than the parent has is refused
   (`sandbox_profile_restricted`).
 - **Naming a profile explicitly:** the child gets that profile, which must
-  fit inside the parent's recorded launch snapshot.
+  fit inside the parent's configuration as resolved now, the same bound.
+
+Members of a template the parent instantiates, and agents launched on its
+behalf, are held to that bound too. If the parent's profiles cannot be used
+now, as when one was deleted, the bound is the policy stored at its last
+launch, as the parent's own relaunch would fall back to. Judging the bound
+creates nothing on disk: the parent's agent-owned directories are not probed
+or recreated for it.
 
 In every case the child's own `--harness-config` posture is applied last and
 checked with the profiles. A parent's own explicit posture is not inherited.

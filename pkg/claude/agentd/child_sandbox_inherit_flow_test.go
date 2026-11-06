@@ -118,8 +118,8 @@ func TestChildSandboxInheritsAnOperatorWideningOfTheParentsProfile(t *testing.T)
 
 // Inheriting needs nothing from the parent's agent-owned directories: a
 // parent whose cache directory cannot be recreated still has children that
-// name no profile (an explicit one is still judged against the re-probed
-// stored snapshot: TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated).
+// name no profile (nor does one naming a profile:
+// TestChildSandboxRuleDoesNotProbeTheParentsDirectoriesForAnExplicitProfile).
 func TestChildSandboxInheritsWithoutProbingTheParentsDirectories(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
