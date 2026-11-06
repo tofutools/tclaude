@@ -10,18 +10,18 @@
 // dashboard-imperative-boundary: browser-io
 
 import { MASKED } from './capture-snapshot.js';
+import { CHOICE_FIELD as CHOICE, CHOICE_FILL_EVENT, CHOICE_PICK_EVENT } from './choice-fill.js';
 
 // What a spawn can have filled, and the word a warning uses for what can widen
 // access. Any change to these warns: whether a value is wider depends on the
 // harness, so the form does not try to rank them. A profile cannot be filled:
-// clearing one resets most of the form, and no undo can give that back. Nor
-// can the group, worktree or base branch: they are type-to-filter choices, not
-// form controls a value can be written into (the dialog claims them for the
-// operator on a pick, so the fields that reset them still refuse a fill).
+// clearing one resets most of the form, and no undo can give that back. The
+// group, worktree and base branch are type-to-filter choices, filled as a
+// <select> is (tcl-alhauf).
 const SPAWN_FIELDS = new Map(Object.entries({
-  name: '', 'init-msg': '', descr: '', task: '', role: '', 'wt-branch': '', 'wt-fetch': '', 'wt-sync': '',
+  name: '', 'init-msg': '', descr: '', task: '', role: '', 'wt-branch': '', 'wt-base': '', worktree: '', 'wt-fetch': '', 'wt-sync': '',
   model: '', 'model-codex': '', 'model-custom': '', effort: '', 'fast-mode': '', 'auto-compact-window': '', 'context-window-max': '', 'group-context': '', focus: '', 'auto-memory': '',
-  harness: 'harness', cwd: 'directory', 'wt-repo': 'directory',
+  harness: 'harness', group: 'group', cwd: 'directory', 'wt-repo': 'directory',
   owner: 'owner', sandbox: 'sandbox', 'sandbox-impl': 'sandbox', 'sandbox-profile': 'sandbox', 'allow-unenforced-sandbox': 'sandbox',
   approval: 'approval', 'approval-reviewer': 'approval', 'ask-timeout': 'approval', tools: 'tools', 'trust-dir': 'directory trust',
   'remote-control': 'remote control', 'peer-messaging': 'peer messaging', 'usage-profile': 'budget', 'copilot-api': 'API access',
@@ -82,11 +82,33 @@ const SETTLE_MS = 120;
 const defaultTick = () => new Promise((resolve) => { setTimeout(resolve, SETTLE_MS); });
 
 const NOT_A_VALUE = new Set(['button', 'submit', 'reset', 'image', 'file', 'hidden']);
-const isField = (el) => /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && !NOT_A_VALUE.has(el.type);
-const fieldsIn = (root) => [...root.querySelectorAll('input[id], select[id], textarea[id]')].filter(isField);
+// A type-to-filter choice (choice-combobox.js) is a field as a <select> is:
+// its wrapper holds the value, and the box inside it only what is typed.
+const isChoice = (el) => !!el.matches?.(CHOICE);
+const isField = (el) => isChoice(el) || (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && !NOT_A_VALUE.has(el.type) && !el.closest(CHOICE));
+const fieldsIn = (root) => [...root.querySelectorAll(`input[id], select[id], textarea[id], ${CHOICE}[id]`)].filter(isField);
 
 export function readField(el) {
+  if (isChoice(el)) return el.getAttribute('data-value') || '';
   return el.type === 'checkbox' || el.type === 'radio' ? String(el.checked) : el.value;
+}
+
+// fieldFor is the field an id names. A capture lists a choice by its box
+// (`<id>-input`), so that id names the choice around it.
+function fieldFor(doc, root, id) {
+  const found = doc.getElementById(id);
+  const el = found && root.contains(found) ? found : null;
+  const choice = el && !isChoice(el) ? el.closest(CHOICE) : null;
+  return choice && root.contains(choice) ? choice : el;
+}
+
+// choiceValue accepts a choice's key or its label ('' for none, where none is
+// one), as optionValue does an option's.
+function choiceValue(el, value) {
+  if (value === '') return el.choiceClearable ? '' : undefined;
+  const items = (el.choiceItems || []).filter((item) => !item.disabled);
+  const match = items.find((item) => item.key === value) || items.find((item) => String(item.label || '').trim() === value);
+  return match?.key;
 }
 
 const valuesIn = (root) => new Map(fieldsIn(root).map((el) => [el.id, readField(el)]));
@@ -99,6 +121,10 @@ function writeField(win, watch, el, value) {
   if (el.tagName === 'SELECT' && ![...el.options].some((option) => option.value === value)) return;
   watch.writing = true;
   try {
+    if (isChoice(el)) {
+      el.dispatchEvent(new win.CustomEvent(CHOICE_FILL_EVENT, { detail: value }));
+      return;
+    }
     if (el.type === 'checkbox' || el.type === 'radio') {
       if (String(el.checked) !== value) el.click();
       return;
@@ -245,18 +271,26 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
     if (!event.isTrusted || watch.writing || !event.target?.id) return;
     edited(event.target.id, event.type === 'change');
   };
+  // A choice is picked by a click on a row, which no change follows: the box
+  // says so itself. Only the operator picks; a fill chooses another way.
+  const onPick = (event) => {
+    if (watch.writing || !event.target?.id || !isChoice(event.target)) return;
+    edited(event.target.id, true);
+  };
   look();
   if (keepValues) {
     for (const el of fieldsIn(root)) {
-      if (el.type === 'checkbox' || el.type === 'radio' || el.value) owned.add(el.id);
+      if (el.type === 'checkbox' || el.type === 'radio' || readField(el)) owned.add(el.id);
     }
   }
   root.addEventListener('input', onEdit, true);
   root.addEventListener('change', onEdit, true);
+  root.addEventListener(CHOICE_PICK_EVENT, onPick, true);
   watches.set(form, watch);
   return () => {
     root.removeEventListener('input', onEdit, true);
     root.removeEventListener('change', onEdit, true);
+    root.removeEventListener(CHOICE_PICK_EVENT, onPick, true);
     if (watches.get(form) === watch) watches.delete(form);
     setFilled(form, []);
   };
@@ -284,7 +318,7 @@ function refusal(form, watch, el, id) {
   if (!form.accepts(id) || (el && !isField(el))) return 'not_fillable';
   if (!el) return 'not_available';
   if (el.matches(MASKED) || el.closest('[data-capture-mask]')) return 'sensitive';
-  if (el.disabled || el.readOnly) return 'disabled';
+  if (el.disabled || el.readOnly || (isChoice(el) && el.classList.contains('disabled'))) return 'disabled';
   if (!form.showsAll && !el.getClientRects().length) return 'not_available';
   if (watch.owned.has(id) || form.resets(id).some((reset) => watch.owned.has(reset))) return 'operator_edited';
   return '';
@@ -349,14 +383,19 @@ async function fillForm(win, request, tick) {
   const watch = watches.get(request.form);
   if (!form || !watch || !isOpen(request.form, watch) || !watch.root.getClientRects().length) return { error: `the ${request.form} form is not open` };
   const outcomes = [];
-  for (const { field: id, value: asked } of request.fields) {
+  for (let { field: id, value: asked } of request.fields) {
     watch.sweep();
-    const found = win.document.getElementById(id);
-    const el = found && watch.root.contains(found) ? found : null;
+    const el = fieldFor(win.document, watch.root, id);
+    // A choice answers by its own id, whichever of its ids was asked.
+    if (el && isChoice(el)) id = el.id;
     let status = refusal(form, watch, el, id);
     let value = asked;
     if (!status && el.tagName === 'SELECT') {
       value = optionValue(el, asked);
+      if (value === undefined) status = 'not_an_option';
+    }
+    if (!status && isChoice(el)) {
+      value = choiceValue(el, asked);
       if (value === undefined) status = 'not_an_option';
     }
     if (!status && (el.type === 'checkbox' || el.type === 'radio') && asked !== 'true' && asked !== 'false') status = 'not_a_boolean';
@@ -405,6 +444,10 @@ async function fillForm(win, request, tick) {
 // fillLabel names a field for the bar. A label can wrap its control, and a
 // select's text is every option.
 function fillLabel(el) {
+  if (isChoice(el)) {
+    const box = el.querySelector('input');
+    if (box) return fillLabel(box);
+  }
   const label = el.labels?.[0]?.cloneNode(true);
   for (const control of label?.querySelectorAll('input, select, textarea, button') || []) control.remove();
   return String(el.getAttribute('aria-label') || label?.textContent || el.id).replace(/\s+/g, ' ').trim().slice(0, 60);

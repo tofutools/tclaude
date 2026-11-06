@@ -771,12 +771,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
-  // operatorProfile is the operator choosing a profile (or Clear): as a
-  // <select> change did, it claims the profile and every field it moves
-  // against agent form-fills. The picker sends no trusted change of its own.
-  const operatorProfile = (handle) => {
+  // clearProfile is the operator's Clear: as a <select> change did, it claims
+  // the profile and every field it moves against agent form-fills. A pick in
+  // the profile box tells form-fill itself (choice-fill.js).
+  const clearProfile = () => {
     claimChange('spawn', 'agent-spawn-load-profile');
-    changeProfile(handle);
+    changeProfile('');
   };
   // A remote spawn opened with a chosen profile (a palette or dock open on a
   // peer) picks it once the peer's profiles load, as the operator would: the
@@ -1412,10 +1412,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           profiles=${profiles} aliases=${true} items=${remote ? remoteProfileItems(profiles, remote, showFrom, draft.profile) : null}
           noneLabel=${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'} ariaLabel="Spawn profile"
           attrs=${{ 'data-remote-spawn-field': 'profile' }}
-          onChange=${operatorProfile} />
+          onChange=${changeProfile} />
         <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
-          onClick=${() => operatorProfile('')}>Clear<//>
+          onClick=${clearProfile}>Clear<//>
         <${Button} size="sm" id="agent-spawn-save-profile" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}
@@ -1425,7 +1425,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
       <${GroupCombobox} id="agent-spawn-group" value=${draft.group} disabled=${busy}
-        groups=${snapshotGroups(context)} onChange=${(group) => { claimField('spawn', 'agent-spawn-group'); changeGroup(group); }} />
+        groups=${snapshotGroups(context)} onChange=${changeGroup} />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
@@ -1871,9 +1871,6 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         worktrees=${worktrees.worktrees || []} newKey=${worktreeUsable ? WT_NEW : ''} noneLabel=${worktreeEmptyLabel}
         attrs=${{ 'data-remote-spawn-field': 'worktree' }}
         onChange=${(value) => {
-          // A pick is a click on a row, which form-fill's watch does not see:
-          // claim the field, so an agent's fill of a field that resets it is refused.
-          claimField('spawn', 'agent-spawn-worktree');
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
           setDraft((before) => selectSpawnWorktree(before, value));
@@ -1916,7 +1913,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">Base branch</span>
       <${BranchCombobox} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
         branches=${worktrees.branches || []} attrs=${{ 'data-remote-spawn-field': 'worktree' }}
-        onChange=${(value) => { claimField('spawn', 'agent-spawn-wt-base'); update('worktreeBase', value); }} />
+        onChange=${(value) => update('worktreeBase', value)} />
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>
