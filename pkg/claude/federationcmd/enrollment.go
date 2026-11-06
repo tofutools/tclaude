@@ -44,7 +44,7 @@ type becomeNodeParams struct {
 	Preview            bool     `long:"preview" help:"Display the terms and the warning without enrolling"`
 	GivePermissions    []string `long:"give-permissions" optional:"true" help:"Exact peer permissions to give the master on this machine: slug or slug@group=<local group>, comma-separated or repeated"`
 	YesUnrestricted    bool     `long:"yes-unrestricted" help:"Give the master unrestricted trust on this machine instead of a permission list"`
-	ConfirmFingerprint string   `long:"confirm-fingerprint" optional:"true" help:"The master's fingerprint, compared with its operator over another channel (required)"`
+	ConfirmFingerprint string   `long:"confirm-fingerprint" optional:"true" help:"The master's fingerprint, compared with its operator over another channel. Needed to enroll; --preview shows the warning without it"`
 }
 
 func enrollmentGet(path string) {
