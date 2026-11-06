@@ -107,7 +107,9 @@ function fieldFor(doc, root, id) {
 function choiceValue(el, value) {
   if (value === '') return el.choiceClearable ? '' : undefined;
   const items = (el.choiceItems || []).filter((item) => !item.disabled);
-  const match = items.find((item) => item.key === value) || items.find((item) => String(item.label || '').trim() === value);
+  // The capture lists a label with its whitespace collapsed; so is it matched.
+  const spaced = (text) => String(text || '').replace(/\s+/g, ' ').trim();
+  const match = items.find((item) => item.key === value) || items.find((item) => spaced(item.label || item.key) === spaced(value));
   return match?.key;
 }
 

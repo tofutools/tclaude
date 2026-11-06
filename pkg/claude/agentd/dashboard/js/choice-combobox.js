@@ -64,7 +64,7 @@ export function ChoiceCombobox({
   const wrapper = useRef(null);
   // This render's, for the fill listener bound once.
   const latest = useRef(null);
-  latest.current = { items, onChange, value, disabled, clearable: !!(noneLabel || clearable) };
+  latest.current = { items, onChange, value, disabled };
   const fillable = !action && !!id;
   useEffect(() => {
     const el = wrapper.current;
