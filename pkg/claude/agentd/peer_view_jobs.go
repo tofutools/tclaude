@@ -89,7 +89,11 @@ func startPeerViewJob(peer string, r *http.Request, serve func(*peerViewResponse
 	req := r.Clone(ctx)
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	// Trust is rechecked while the job runs, as on every request: a peer no
-	// longer unrestricted, or federation stopping, cancels its work.
+	// longer trusted, one started unrestricted that no longer is, or
+	// federation stopping, cancels its work. A restricted peer's job holds
+	// its route's grants on its own: a staged download rechecks them at
+	// every chunk read (peer_transfer.go).
+	unrestricted := db.FederationPeerUnrestricted(peer)
 	go func() {
 		tick := time.NewTicker(peerViewJobTrustCheck)
 		defer tick.Stop()
@@ -98,7 +102,8 @@ func startPeerViewJob(peer string, r *http.Request, serve func(*peerViewResponse
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				if currentFederation() == nil || !db.FederationPeerUnrestricted(peer) {
+				p, err := db.GetFederationPeer(peer)
+				if currentFederation() == nil || err != nil || p == nil || unrestricted && !db.FederationPeerUnrestricted(peer) {
 					cancel()
 					return
 				}

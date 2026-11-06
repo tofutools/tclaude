@@ -516,13 +516,18 @@ notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
 
-A file download a peer trusting this node unrestricted serves (a snapshot's
-or an agent's `.paf`, a group archive, a template) crosses the same way.
+A file download a peer serves (a snapshot's or an agent's `.paf`, a group
+archive, a template) crosses the same way.
 `GET /api/peer-download/INSTANCE?path=PATH` (local-only) asks the peer to stage
 `PATH` (`POST /api/peer-downloads {"path"}`, a peer view job there; only the
-download routes stage, and only under unrestricted trust), reads it in 4 MiB
-chunks (`GET /api/peer-downloads/ID?offset=`; a staged file goes away once
-its last chunk is read, or 10 minutes after its last read), and serves it as
+download routes stage, each under its own peer rule: unrestricted trust, or
+for a group archive `groups.export` and for an agent's `.paf`
+`agent.bundle.export`, see [peer grants](federation-peers.md); snapshot,
+template and log exports take unrestricted trust). It reads the file in 4 MiB
+chunks (`GET /api/peer-downloads/ID?offset=`). Only the peer that staged a file
+reads it, and every chunk holds the route's rule again, so a grant revoked
+mid-download stops it. A staged file goes away once its last chunk is read, or
+10 minutes after its last read. This node serves the download as
 an opaque, sandboxed, `nosniff` attachment with Range support. A download is
 at most `federation.agent_transfer_max_bytes` (2 GiB by default), the cap
 agent archives already cross nodes under.

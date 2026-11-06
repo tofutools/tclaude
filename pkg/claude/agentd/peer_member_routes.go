@@ -31,7 +31,7 @@ const (
 // peerAgentControlGrants are the grants behind an agent's peer-invoked
 // controls, which peer_view.agents names per agent: its settings, and its
 // lifecycle and move (peer_actions.go).
-var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove,
+var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
 	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the

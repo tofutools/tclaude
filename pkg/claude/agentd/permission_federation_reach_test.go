@@ -76,6 +76,8 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermGroupsTriggersRead:            "triggers_read",
 	PermTemplatesUse:                  "templates_use",
 	PermGroupsClone:                   "group_clone",
+	PermGroupsExport:                  "group_export",
+	PermAgentBundleExport:             "agent_bundle_export",
 	PermRoutesConsume:                 proto.CapRoutes,
 	PermJobsRun:                       proto.CapJobs,
 	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).

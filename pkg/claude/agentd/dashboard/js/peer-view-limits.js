@@ -109,8 +109,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'queued-spawn-launch': ['feature:local_dashboard'],
   'queued-spawn-edit': ['feature:local_dashboard'],
   'queued-spawn-discard': ['feature:local_dashboard'],
-  // Its archive downloads from its node (dashboard_peer_downloads.go).
-  'export-group': ['feature:local_dashboard'],
+  // Its archive downloads from its node (dashboard_peer_downloads.go,
+  // peer_transfer.go); a group with an environment also takes
+  // groups.settings.environment, which the node names when it refuses.
+  'export-group': ['groups.export', 'sessions.files.read'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -121,8 +123,7 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cleanup-worktrees-group': ['feature:local_dashboard'],
   // Not listed, so local to their own node: the links manager,
   // messages, the template manager, terminals and showing a
-  // window (hiding one is an agent control); and export, whose binary archive the JSON peer
-  // view does not carry.
+  // window (hiding one is an agent control).
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group
@@ -190,7 +191,8 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // Its node's snapshot library and PAF export; the file downloads from
   // there (dashboard_peer_downloads.go).
   'snapshot-agent': ['feature:local_dashboard'],
-  'export-paf': ['feature:local_dashboard'],
+  // Its export carries the transcript by default.
+  'export-paf': ['agent.bundle.export', 'sessions.files.read'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way
