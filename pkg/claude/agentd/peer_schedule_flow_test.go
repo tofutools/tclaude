@@ -204,6 +204,7 @@ func TestPeerTriggersUnderGrant(t *testing.T) {
 	require.Contains(t, body, `"outcome":"`+outcome+`"`)
 	require.NotContains(t, body, "secret checklist", "a spawn's instruction template stays this node's")
 	require.NotContains(t, body, detail, "firing detail stays this node's")
+	require.NotContains(t, body, "github.com/o/r/pull/7", "a firing's event names the PR, which only groups.members.pr reads")
 
 	code, body = h.call("GET", "/v1/triggers/"+strconv.FormatInt(crew, 10), nil)
 	require.Equal(t, 200, code, body)
@@ -222,4 +223,54 @@ func TestPeerTriggersUnderGrant(t *testing.T) {
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, "global-reviews")
 	require.Contains(t, body, "secret checklist")
+}
+
+// The member rule holds in every group the agent is in, with
+// groups.members.schedule alone; a job's owner and routing group are named
+// only when the peer sees them; and a peer's disable keeps an automatic
+// pause's marker, so the job still comes back.
+func TestPeerCronReachAndReversibleDisable(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	h.f.HaveGroup("side")
+	h.f.HaveGroup("leads")
+	lead := havePerformerAgent(t, h.f, "leads", "proc-lead", "lead", "lead", "idle")
+	both := havePerformerAgent(t, h.f, "crew", "proc-both", "both", "dev", "idle")
+	h.f.HaveMemberWithRole("side", "proc-both", "dev")
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	h.grant(t, agentd.PermGroupsRosterRead, "group=side")
+	group := operatorCronJob(t, h, map[string]any{"target": "group:crew", "interval": "1h", "body": "standup", "owner": "proc-lead"})
+	member := operatorCronJob(t, h, map[string]any{"target": h.member, "interval": "1h", "body": "check in", "owner": "proc-lead"})
+	inSide := operatorCronJob(t, h, map[string]any{"target": both, "interval": "1h", "body": "two groups"})
+
+	// groups.members.schedule alone: the member's job, not the group's, and
+	// not one whose target is also in a group the grant leaves out.
+	h.grant(t, agentd.PermGroupsMembersSchedule, "group=crew")
+	ids, body := peerJobIDs(t, h)
+	require.Equal(t, []int64{member}, ids)
+	require.Equal(t, lead, operatorJobs(t, h)[member]["owner_agent"])
+	require.NotContains(t, body, lead, "the owner sits in a group the peer cannot see")
+	code, body := h.call("POST", "/v1/cron/"+strconv.FormatInt(inSide, 10)+"/disable", map[string]any{})
+	require.Equal(t, 404, code, body)
+	h.grant(t, agentd.PermGroupsMembersSchedule, "group=side")
+	ids, _ = peerJobIDs(t, h)
+	require.ElementsMatch(t, []int64{member, inSide}, ids)
+
+	// A retire emptied the crew: its rhythm is paused automatically. The
+	// peer's disable leaves that pause as it is, so the resume brings it back.
+	h.grant(t, agentd.PermGroupsMessagesSchedule, "group=crew")
+	n, err := db.DisableGroupTargetCronJobsForRetire(h.group.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	code, body = h.call("POST", "/v1/cron/"+strconv.FormatInt(group, 10)+"/disable", map[string]any{})
+	require.Equal(t, http.StatusNoContent, code, body)
+	n, err = db.ReenableGroupRetiredCronJobs(h.group.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "the automatic pause survived the peer's disable")
+	require.Equal(t, true, operatorJobs(t, h)[group]["enabled"])
+	// An enabled job is paused by hand: a resume leaves it off.
+	code, body = h.call("POST", "/v1/cron/"+strconv.FormatInt(group, 10)+"/disable", map[string]any{})
+	require.Equal(t, http.StatusNoContent, code, body)
+	_, err = db.ReenableGroupRetiredCronJobs(h.group.ID)
+	require.NoError(t, err)
+	require.Equal(t, false, operatorJobs(t, h)[group]["enabled"])
 }

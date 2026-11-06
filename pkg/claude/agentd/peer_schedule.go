@@ -27,8 +27,9 @@ import (
 // What a peer reads is built from an allowlist, so a field added to the
 // operator's view later stays the operator's until it is listed. Left out:
 // conv IDs, a spawn's instruction template (template text, as S6 keeps a
-// performer's prompt), and run and firing detail (error text, which can name
-// host paths). Unrestricted trust reads and disables as this node's
+// performer's prompt), run and firing detail (error text, which can name
+// host paths), a firing's event reference (it names the PR's URL, which only
+// groups.members.pr reads), and agents and groups the peer does not see. Unrestricted trust reads and disables as this node's
 // operator does.
 
 // peerCronJobInReach reports whether a restricted peer reaches job.
@@ -45,7 +46,7 @@ func peerCronJobInReach(v *peerView, job *db.AgentCronJob) bool {
 }
 
 var (
-	peerCronJobKeys = []string{"id", "name", "owner_agent", "target_kind", "target_agent", "group_id", "group_name",
+	peerCronJobKeys = []string{"id", "name", "target_kind", "target_agent", "group_id", "group_name",
 		"target_role", "interval_seconds", "cron_expr", "subject", "body", "action_kind", "spawn_profile", "spawn_roles",
 		"spawn_name_template", "spawn_concurrency_policy", "spawn_max_live_workers", "spawn_worker_deadline_seconds",
 		"enabled", "run_immediately", "queue_when_offline", "operator_authored", "disabled_reason", "created_at",
@@ -55,7 +56,7 @@ var (
 	peerTriggerActKeys = []string{"type", "spawn", "message"}
 	peerTriggerSpawn   = []string{"profile", "roles", "name_template", "max_live_workers", "worker_deadline_seconds"}
 	peerTriggerMessage = []string{"target", "subject_template", "body_template"}
-	peerTriggerFiring  = []string{"id", "rule_id", "rule_revision", "event_ref", "source", "previous_state", "current_state", "agent_id", "agent_harness", "fact_result", "fact_observed_at", "dwell_started_at", "outcome", "started_at", "finished_at", "actions"}
+	peerTriggerFiring  = []string{"id", "rule_id", "rule_revision", "source", "previous_state", "current_state", "agent_id", "agent_harness", "fact_result", "fact_observed_at", "dwell_started_at", "outcome", "started_at", "finished_at", "actions"}
 	peerTriggerOutcome = []string{"action_index", "action_type", "outcome", "spawned_agent", "message_id", "created_at"}
 	peerTriggerDwell   = []string{"rule_id", "agent_id", "rule_revision", "episode", "result", "harness", "fact_observed_at", "true_since", "fired_at", "updated_at"}
 )
@@ -168,6 +169,18 @@ func servePeerCronList(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 			continue
 		}
 		if view, ok := peerAllowlisted(toJobJSON(j), func(doc any) any { return allowKeys(doc, peerCronJobKeys) }); ok {
+			// The owner is named only when the peer sees it: a job is in
+			// reach for its target, and its owner can be any agent.
+			// A member's job routed through a group names that group only
+			// when the peer sees it.
+			if !j.IsGroupTarget() && j.GroupID > 0 && !fedPeerGroupVisible(v.peer.InstanceID, j.GroupID) {
+				delete(view.(map[string]any), "group_id")
+			}
+			if j.OwnerAgent != "" {
+				if _, seen := v.visibleAgent(j.OwnerAgent); seen {
+					view.(map[string]any)["owner_agent"] = j.OwnerAgent
+				}
+			}
 			out = append(out, view)
 		}
 	}
@@ -217,6 +230,11 @@ func servePeerCronLogs(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 	}
 	rec := httptest.NewRecorder()
 	handleCronLogs(rec, asDashboardHumanPeer(r), id)
+	if rec.Code < 200 || rec.Code >= 300 {
+		// This node's error text stays its own.
+		writeError(w, rec.Code, "cron_logs", "the job's runs could not be read")
+		return
+	}
 	writeRedacted(w, rec, func(doc map[string]any) {
 		doc["runs"] = allowEach(doc["runs"], peerCronRunKeys, nil)
 	})
@@ -229,7 +247,16 @@ func servePeerCronDisable(w http.ResponseWriter, r *http.Request, v *peerView, _
 	if !ok {
 		return
 	}
-	handleCronSetEnabled(w, asDashboardHumanPeer(r), id, false)
+	// Only an enabled job is paused, as a hand pause: one tclaude paused
+	// itself keeps the marker that re-enables it (a group's resume), so a
+	// peer's disable stays reversible.
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
+	if _, err := db.DisableEnabledAgentCronJob(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "update")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // peerTriggerInReach reports whether a restricted peer reads rule.

@@ -86,14 +86,17 @@ func runTriggersShow(stdout, stderr io.Writer, selector, remote string) int {
 	owner := "operator"
 	if !r.OperatorAuthored {
 		owner = r.OwnerAgent
+		if owner == "" {
+			owner = "agent"
+		}
 	}
 	fmt.Fprintf(stdout, "Owner:     %s\nEnabled:   %v\nScope:     %s\nSource:    %s\nDrafts:    %s\nDebounce:  %s\nCooldown:  %s\nFor:       %s\n", owner, r.Enabled, triggerScopeLabel(r, view.Group), r.Source, r.DraftFilter, durationLabel(r.DebounceSeconds), durationLabel(r.CooldownSeconds), durationLabel(r.ForSeconds))
 	fmt.Fprintln(stdout, "Actions:")
 	for i, a := range r.Actions {
-		switch a.Type {
-		case db.TriggerActionSpawn:
+		switch {
+		case a.Type == db.TriggerActionSpawn && a.Spawn != nil:
 			fmt.Fprintf(stdout, "  %d. spawn profile=%q roles=%v max_live=%d deadline=%s\n", i, a.Spawn.Profile, a.Spawn.RoleRefs, a.Spawn.MaxLiveWorkers, durationLabel(a.Spawn.WorkerDeadlineSeconds))
-		case db.TriggerActionMessage:
+		case a.Type == db.TriggerActionMessage && a.Message != nil:
 			fmt.Fprintf(stdout, "  %d. message target=%s subject=%q\n", i, a.Message.Target, a.Message.SubjectTemplate)
 		}
 	}

@@ -19,10 +19,10 @@ func TestRemoteScheduleVerbsGoThroughThePeerView(t *testing.T) {
 	DaemonAvailableImpl = func() bool { return true }
 	var calls []string
 	answers := map[string]string{
-		"/v1/federation/peer/bob/v1/cron":           `{"jobs":[{"id":3,"target_kind":"group","group_name":"crew","interval_seconds":3600,"body":"stand\u001b[2Jup","action_kind":"message","enabled":true}]}`,
+		"/v1/federation/peer/bob/v1/cron":           `{"jobs":[{"id":3,"target_kind":"group","group_name":"crew","interval_seconds":3600,"body":"stand\u001b[2Jup\nError: forged","action_kind":"message","enabled":true}]}`,
 		"/v1/federation/peer/bob/v1/cron/3/logs":    `{"runs":[{"id":1,"job_id":3,"fired_at":"2026-11-06T00:00:00Z","status":"o\u001bk"}]}`,
 		"/v1/federation/peer/bob/v1/triggers":       `{"triggers":[{"id":5,"name":"rev\u001b]0;x\u0007iews","scope":"group","group":"crew","source":"pr.opened","actions":[]}]}`,
-		"/v1/federation/peer/bob/v1/triggers/5":     `{"id":5,"name":"reviews","scope":"group","group":"crew","source":"pr.opened","actions":[]}`,
+		"/v1/federation/peer/bob/v1/triggers/5":     `{"id":5,"name":"reviews","scope":"group","group":"crew","source":"pr.opened","actions":[{"type":"spawn"},{"type":"message"}]}`,
 		"/v1/federation/peer/bob/v1/cron/3/disable": ``,
 	}
 	DaemonRequestImpl = func(method, path string, _, out any, _ DaemonOpts) error {
@@ -45,6 +45,7 @@ func TestRemoteScheduleVerbsGoThroughThePeerView(t *testing.T) {
 	out := run(func(o, e *bytes.Buffer) int { return runCronLs(&cronLsParams{Remote: "bob"}, o, e) })
 	assert.Contains(t, out, "Remote cron jobs of bob, as that node reports it (untrusted content)")
 	assert.Contains(t, out, "group:crew")
+	assert.NotContains(t, out, "\nError: forged", "a peer's text stays on its row")
 	out = run(func(o, e *bytes.Buffer) int { return runCronLogs(&cronLogsParams{ID: "3", Remote: "bob"}, o, e) })
 	assert.Contains(t, out, "untrusted content")
 	out = run(func(o, e *bytes.Buffer) int { return runCronSetEnabled("3", "bob", false, o, e) })
@@ -52,7 +53,7 @@ func TestRemoteScheduleVerbsGoThroughThePeerView(t *testing.T) {
 	out = run(func(o, e *bytes.Buffer) int { return runTriggersLs(o, e, "bob") })
 	assert.Contains(t, out, "Remote trigger rules of bob")
 	out = run(func(o, e *bytes.Buffer) int { return runTriggersShow(o, e, "5", "bob") })
-	assert.Contains(t, out, "Trigger:   reviews")
+	assert.Contains(t, out, "Trigger:   reviews", "an action without its body does not crash the print")
 	assert.Equal(t, []string{
 		http.MethodGet + " /v1/federation/peer/bob/v1/cron",
 		http.MethodGet + " /v1/federation/peer/bob/v1/cron/3/logs",

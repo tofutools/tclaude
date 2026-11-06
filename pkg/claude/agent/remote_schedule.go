@@ -26,8 +26,9 @@ func remotePath(remote, path string) string {
 }
 
 // remoteRequest is DaemonRequest for path on this node or, with remote, on
-// that peer. A peer's answer has its control characters stripped, keys and
-// values, before it is decoded into out; its errors too.
+// that peer. A peer's answer has its control characters stripped from its
+// values, and put on one line before it is decoded into out; its errors
+// are stripped too.
 func remoteRequest(remote, method, path string, body, out any) error {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
@@ -43,7 +44,7 @@ func remoteRequest(remote, method, path string, body, out any) error {
 	if out == nil || raw == nil {
 		return nil
 	}
-	clean, err := json.Marshal(stripControlsDeep(raw))
+	clean, err := json.Marshal(flattenDeep(stripControlsDeep(raw)))
 	if err != nil {
 		return err
 	}
@@ -58,4 +59,23 @@ func printRemoteScheduleBanner(w io.Writer, remote, what string) {
 	if remote = strings.TrimSpace(remote); remote != "" {
 		fmt.Fprintf(w, "Remote %s of %s, as that node reports it (untrusted content)\n\n", what, proto.SafeName(remote, false))
 	}
+}
+
+// flattenDeep puts every string of a peer's answer on one line: a name, body
+// or template it wrote cannot break a printed table row or forge a line under
+// the banner.
+func flattenDeep(v any) any {
+	switch t := v.(type) {
+	case string:
+		return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ").Replace(t)
+	case []any:
+		for i := range t {
+			t[i] = flattenDeep(t[i])
+		}
+	case map[string]any:
+		for k, val := range t {
+			t[k] = flattenDeep(val)
+		}
+	}
+	return v
 }

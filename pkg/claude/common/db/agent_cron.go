@@ -601,6 +601,23 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 	return tx.Commit()
 }
 
+// DisableEnabledAgentCronJob disables job id only while it is enabled, as a
+// hand pause (an empty disabled_reason). A job already disabled is left exactly as
+// it is, so an automatic pause (group-retired, steward-standby) keeps the
+// marker that brings it back. Reports whether it changed the job.
+func DisableEnabledAgentCronJob(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = '' WHERE id = ? AND enabled = 1`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // DisableGroupTargetCronJobsForRetire disables every currently-ENABLED
 // group-target cron job aimed at groupID, stamping disabled_reason =
 // CronDisabledReasonGroupRetired. Called when a retire leaves the group with no
