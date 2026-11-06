@@ -202,7 +202,7 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsMembersInboxWatch:           {Kind: FedPeerGroup, Pending: true, Sensitive: true},
 	PermMessageDirect:                     {Kind: FedPeerGroup, Cap: proto.CapMail},
 	PermGroupsExport:                      {Kind: FedPeerGroup, Cap: "group_export", Sensitive: true},
-	PermGroupsImport:                      {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermGroupsImport:                      {Kind: FedPeerInstance, Sensitive: true},
 	PermTemplatesManage:                   {Kind: FedPeerInstance, Sensitive: true},
 	PermTemplatesUse:                      {Kind: FedPeerGroup, Cap: "templates_use", SelfGate: true, Sensitive: true},
 	PermSelfTeleport:                      {Kind: FedSender, Via: []string{PermAgentsReceive, PermAgentsTeleportReceive}},

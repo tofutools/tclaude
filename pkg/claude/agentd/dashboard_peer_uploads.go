@@ -25,15 +25,17 @@ import (
 // way (dashboard_peer_downloads.go):
 //
 //	POST /api/peer-uploads
-//	    opens a staged upload and answers {id}. Through the peer view it is
-//	    held only by unrestricted trust.
+//	    opens a staged upload and answers {id}. Only the peer that opened it
+//	    appends to it or finishes it (peer_import.go).
 //
 //	POST /api/peer-uploads/chunk?id=ID&offset=O
 //	    appends one chunk (the raw body) at O, the staged size so far.
 //
 //	POST /api/peer-uploads/finish {"id", "path", "content_type"}
 //	    runs one upload route (peerUploadRoutes) with the staged file as its
-//	    body and answers that route's reply. A peer view job.
+//	    body and answers that route's reply. A peer view job, held by the
+//	    route's own peer rule: unrestricted trust, or its peer gate
+//	    (peerUploadGates).
 //
 //	POST /api/peer-upload/{node}?path=P
 //	    local-only: sends this request's body to the peer in chunks and
@@ -43,9 +45,12 @@ import (
 // default); the upload route applies its own caps on top.
 
 // peerUploadRoutes are the POSTs a staged upload may run: upload routes the
-// peer view already serves under unrestricted trust.
+// peer view serves under unrestricted trust, or under the route's own peer
+// grant (peerUploadGates).
 var peerUploadRoutes = map[string]bool{
-	"/api/spawn-attachments": true,
+	"/api/spawn-attachments":          true,
+	"POST /api/groups/import":         true,
+	"POST /api/groups/import/inspect": true,
 }
 
 const (
@@ -74,6 +79,8 @@ type peerUpload struct {
 	file    string
 	size    int64
 	written time.Time
+	// owner is the peer that opened it ("" when this node's dashboard did).
+	owner string
 }
 
 var peerUploads = struct {
@@ -89,7 +96,7 @@ func registerDashboardPeerUploadRoutes(mux *http.ServeMux) {
 }
 
 // sweepPeerUploadsLocked drops uploads nobody wrote to within
-// peerUploadKeep, then the oldest past peerUploadsKept.
+// peerUploadKeep.
 func sweepPeerUploadsLocked(now time.Time) {
 	for id, u := range peerUploads.byID {
 		if now.Sub(u.written) > peerUploadKeep {
@@ -97,12 +104,24 @@ func sweepPeerUploadsLocked(now time.Time) {
 			delete(peerUploads.byID, id)
 		}
 	}
-	for len(peerUploads.byID) >= peerUploadsKept {
-		oldest := ""
+}
+
+// capPeerUploadsLocked drops owner's oldest uploads past peerUploadsKept, so
+// one peer's uploads never evict another's.
+func capPeerUploadsLocked(owner string) {
+	for {
+		oldest, count := "", 0
 		for id, u := range peerUploads.byID {
+			if u.owner != owner {
+				continue
+			}
+			count++
 			if oldest == "" || u.written.Before(peerUploads.byID[oldest].written) {
 				oldest = id
 			}
+		}
+		if count < peerUploadsKept {
+			return
 		}
 		_ = os.Remove(peerUploads.byID[oldest].file)
 		delete(peerUploads.byID, oldest)
@@ -113,6 +132,11 @@ func handleDashboardPeerUploadOpen(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	openPeerUpload(w, "")
+}
+
+// openPeerUpload opens a staged upload for owner.
+func openPeerUpload(w http.ResponseWriter, owner string) {
 	f, err := os.CreateTemp("", "tclaude-peer-upload-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "stage upload")
@@ -125,7 +149,8 @@ func handleDashboardPeerUploadOpen(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	peerUploads.Lock()
 	sweepPeerUploadsLocked(now)
-	peerUploads.byID[id] = &peerUpload{file: f.Name(), written: now}
+	capPeerUploadsLocked(owner)
+	peerUploads.byID[id] = &peerUpload{file: f.Name(), written: now, owner: owner}
 	peerUploads.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -134,6 +159,11 @@ func handleDashboardPeerUploadChunk(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	appendPeerUpload(w, r, "")
+}
+
+// appendPeerUpload appends one chunk to an upload owner opened.
+func appendPeerUpload(w http.ResponseWriter, r *http.Request, owner string) {
 	offset, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 	if err != nil || offset < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "offset is required")
@@ -149,7 +179,7 @@ func handleDashboardPeerUploadChunk(w http.ResponseWriter, r *http.Request) {
 	defer peerUploads.Unlock()
 	sweepPeerUploadsLocked(time.Now())
 	u := peerUploads.byID[r.URL.Query().Get("id")]
-	if u == nil {
+	if u == nil || u.owner != owner {
 		writeError(w, http.StatusNotFound, "not_found", "no such upload")
 		return
 	}
@@ -185,6 +215,15 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	finishPeerUpload(w, r, "", func(w http.ResponseWriter, sub *http.Request, _ string) {
+		peerDashboardMux().ServeHTTP(w, sub)
+	})
+}
+
+// finishPeerUpload takes owner's staged upload off the stage and runs its
+// upload route through serve with the staged file as sub's body; pattern is
+// the route's.
+func finishPeerUpload(w http.ResponseWriter, r *http.Request, owner string, serve func(w http.ResponseWriter, sub *http.Request, pattern string)) {
 	var body struct {
 		ID          string `json:"id"`
 		Path        string `json:"path"`
@@ -196,7 +235,12 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	peerUploads.Lock()
 	u := peerUploads.byID[body.ID]
-	delete(peerUploads.byID, body.ID)
+	if u != nil && u.owner != owner {
+		u = nil
+	}
+	if u != nil {
+		delete(peerUploads.byID, body.ID)
+	}
 	peerUploads.Unlock()
 	if u == nil {
 		writeError(w, http.StatusNotFound, "not_found", "no such upload")
@@ -220,12 +264,12 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	if body.ContentType != "" {
 		sub.Header.Set("Content-Type", body.ContentType)
 	}
-	mux := peerDashboardMux()
-	if _, pattern := mux.Handler(sub); !peerUploadRoutes[pattern] {
+	_, pattern := peerDashboardMux().Handler(sub)
+	if !peerUploadRoutes[pattern] {
 		writeError(w, http.StatusForbidden, "not_uploadable", "that route is not an upload")
 		return
 	}
-	mux.ServeHTTP(w, sub)
+	serve(w, sub, pattern)
 }
 
 // peerUploadExchange runs one request of an upload on the peer and decodes

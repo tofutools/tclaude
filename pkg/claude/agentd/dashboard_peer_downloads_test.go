@@ -130,9 +130,19 @@ func TestPeerDownloadRoutesAreUnrestrictedLocalRoutes(t *testing.T) {
 	for _, pattern := range unchanged {
 		require.Nil(t, peerStageGates[pattern], pattern)
 	}
+	// Staged uploads: spawn attachments stay unrestricted only; a group
+	// import is gated by its own peer rule (peerUploadGates).
 	for pattern := range peerUploadRoutes {
+		if peerUploadGates[pattern] {
+			require.False(t, rules[pattern].unrestrictedOnly, pattern)
+			continue
+		}
 		require.True(t, rules[pattern].unrestrictedOnly, pattern)
 	}
+	for pattern := range peerUploadGates {
+		require.True(t, peerUploadRoutes[pattern], pattern)
+	}
+	require.False(t, peerUploadGates["/api/spawn-attachments"])
 }
 
 // A staged file is read only by the peer that staged it: another peer, or

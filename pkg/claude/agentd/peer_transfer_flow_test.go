@@ -16,7 +16,20 @@ import (
 // job's own reply.
 func (h *peerProcessHarness) stage(t *testing.T, path string) (int, string) {
 	t.Helper()
-	code, body := h.call("POST", "/api/peer-downloads", map[string]any{"path": path})
+	return h.awaitJob(t, "POST", "/api/peer-downloads", map[string]any{"path": path})
+}
+
+// finishUpload finishes a staged upload on path and answers the route's own
+// reply.
+func (h *peerProcessHarness) finishUpload(t *testing.T, id, path, contentType string) (int, string) {
+	t.Helper()
+	return h.awaitJob(t, "POST", "/api/peer-uploads/finish", map[string]any{"id": id, "path": path, "content_type": contentType})
+}
+
+// awaitJob sends a peer view job request and answers the job's own reply.
+func (h *peerProcessHarness) awaitJob(t *testing.T, method, path string, payload any) (int, string) {
+	t.Helper()
+	code, body := h.call(method, path, payload)
 	if code != 202 {
 		return code, body
 	}
@@ -39,7 +52,7 @@ func (h *peerProcessHarness) stage(t *testing.T, path string) (int, string) {
 		if state.Status == "done" {
 			return state.Result.Status, string(state.Result.Body)
 		}
-		require.True(t, time.Now().Before(deadline), "the staging job never finished")
+		require.True(t, time.Now().Before(deadline), "the peer view job never finished")
 		time.Sleep(20 * time.Millisecond)
 	}
 }
@@ -116,8 +129,15 @@ func TestPeerStagedTransfersOtherwiseStayUnrestricted(t *testing.T) {
 	}
 	code, body := h.stage(t, "/api/groups")
 	require.Equal(t, 403, code, "not a download: %s", body)
+	// A restricted peer stages an upload, but spawn attachments refuse it.
 	code, body = h.call("POST", "/api/peer-uploads", nil)
-	require.Equal(t, 403, code, "staged uploads: %s", body)
+	require.Equal(t, 200, code, body)
+	var opened struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &opened))
+	code, body = h.finishUpload(t, opened.ID, "/api/spawn-attachments", "")
+	require.Equal(t, 403, code, "spawn attachments: %s", body)
 	code, body = h.call("GET", "/api/peer-downloads/pdl_000000000000000000000000?offset=0", nil)
 	require.Equal(t, 404, code, body)
 }
