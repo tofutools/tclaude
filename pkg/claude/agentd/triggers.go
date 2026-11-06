@@ -789,6 +789,12 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		if fail.Kind == "io" || fail.Kind == "permission_denied" || isManagedProfileRefusal(fail.Kind) {
 			return nil, fail.Kind, fail.Msg
 		}
+		// The owner's sandbox refused the worker as it would refuse a child
+		// it spawned: a refusal of the owner's authority, in the outcome
+		// vocabulary a managed worker's run records.
+		if fail.Kind == "sandbox_profile_restricted" {
+			return nil, "permission_denied", fail.Msg
+		}
 		return nil, "spawn_failed", fail.Msg
 	}
 	// The owner's grant was conditioned on the inherited sandbox profile, so

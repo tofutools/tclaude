@@ -57,11 +57,10 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 	// bound, and checkSandboxLineage (sandboxScopePinned) refused a launch that
 	// would not enforce it.
 	if in.spawnerConvID != "" && !in.externalSpawn {
-		stored, err := db.AgentEffectiveSandboxConfigForConv(in.spawnerConvID)
-		if err != nil {
-			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
+		var fail *spawnFailure
+		if parent, fail = loadChildSandboxParent(in.spawnerConvID); fail != nil {
+			return sandboxpolicy.Snapshot{}, fail
 		}
-		parent = &childSandboxParent{conv: in.spawnerConvID, stored: stored}
 	}
 	// An omission the caller asked for is kept by every relaunch; one the
 	// launch mode forces is re-judged when the mode changes (derived).
@@ -94,40 +93,7 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 	} else {
 		effectiveSandbox = applied
 	}
-	// The deny overlay is laid on last, over whatever the child resolved: its
-	// parent's overlay, which every child of that parent keeps, plus the
-	// request's own. It only removes, so it is applied before the cap and the
-	// cap still holds.
-	denies := append([]string(nil), in.denies...)
-	if parent != nil && parent.stored != nil {
-		denies = append(denies, parent.stored.DenyOverlay...)
-	}
-	if overlaid, err := sandboxpolicy.ApplyDenyOverlay(effectiveSandbox, denies); err != nil {
-		if errors.Is(err, sandboxpolicy.ErrDenyOverlayUnenforced) {
-			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
-		}
-		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny", err.Error()}
-	} else {
-		effectiveSandbox = overlaid
-	}
-	if parent == nil {
-		return effectiveSandbox, nil
-	}
-	if parent.stored == nil {
-		if sandboxpolicy.HasCapabilities(effectiveSandbox) {
-			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
-				"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child"}
-		}
-		return effectiveSandbox, nil
-	}
-	bound, fail := parentSandboxBound(parent.conv, parent.stored)
-	if fail != nil {
-		return sandboxpolicy.Snapshot{}, fail
-	}
-	if err := sandboxpolicy.RequireContained(bound, effectiveSandbox); err != nil {
-		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
-	}
-	return effectiveSandbox, nil
+	return parent.contain(effectiveSandbox, in.denies, "spawn the child")
 }
 
 // childSandboxParent is the spawning agent's sandbox as its child is decided
@@ -135,6 +101,62 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 type childSandboxParent struct {
 	conv   string
 	stored *sandboxpolicy.Snapshot
+}
+
+// loadChildSandboxParent loads conv's stored launch snapshot as the parent
+// of what conv launches.
+func loadChildSandboxParent(conv string) (*childSandboxParent, *spawnFailure) {
+	stored, err := db.AgentEffectiveSandboxConfigForConv(conv)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
+	}
+	return &childSandboxParent{conv: conv, stored: stored}, nil
+}
+
+// contain is the cap on anything an agent launches: a spawned child, the
+// members of a template it deploys, a worker a trigger or process run it
+// owns starts. Every one of those surfaces admits and refuses through here
+// (tcl-w0rr5d), so none of them can launch wider than another would.
+//
+// launch is the configuration the surface resolved for the launch. The deny
+// overlay is laid on last, over it: the parent's overlay, which everything
+// the parent launches keeps, plus denies (a spawn request's own). It only
+// removes, so it is applied before the cap and the cap still holds. Then the
+// launch must fit inside the parent's configuration resolved now
+// (parentSandboxBound). A parent from before snapshots may launch nothing
+// with custom capabilities; humanAsk names, for its refusal, what to ask the
+// human to do instead. A nil parent (a human, a peer, an external steward,
+// the daemon) has no sandbox to contain the launch: only the overlay applies.
+func (p *childSandboxParent) contain(launch sandboxpolicy.Snapshot, denies []string, humanAsk string) (sandboxpolicy.Snapshot, *spawnFailure) {
+	denies = append([]string(nil), denies...)
+	if p != nil && p.stored != nil {
+		denies = append(denies, p.stored.DenyOverlay...)
+	}
+	overlaid, err := sandboxpolicy.ApplyDenyOverlay(launch, denies)
+	if err != nil {
+		if errors.Is(err, sandboxpolicy.ErrDenyOverlayUnenforced) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+		}
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny", err.Error()}
+	}
+	if p == nil {
+		return overlaid, nil
+	}
+	if p.stored == nil {
+		if sandboxpolicy.HasCapabilities(overlaid) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+				"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to " + humanAsk}
+		}
+		return overlaid, nil
+	}
+	bound, fail := parentSandboxBound(p.conv, p.stored)
+	if fail != nil {
+		return sandboxpolicy.Snapshot{}, fail
+	}
+	if err := sandboxpolicy.RequireContained(bound, overlaid); err != nil {
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+	}
+	return overlaid, nil
 }
 
 // inheritedProfiles is the parent's own profile chain for a child spawned

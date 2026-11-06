@@ -32,7 +32,8 @@ import (
 // rules), so nothing configured stays exactly as it was.
 //
 // A profile failure comes back as applyDefaultProfile reported it; the
-// sandbox steps fail with kind spawn_failed, io or permission_denied.
+// sandbox steps fail with kind spawn_failed or as a spawned child's would
+// (childSandboxParent.contain).
 func resolveManagedLaunch(g *db.AgentGroup, p *spawnParams, parentConv string, keepUnconfiguredBare bool) *spawnFailure {
 	if fail := applyDefaultProfile(g, p); fail != nil {
 		return fail
@@ -45,29 +46,15 @@ func resolveManagedLaunch(g *db.AgentGroup, p *spawnParams, parentConv string, k
 		}
 		snapshot = resolved
 	}
+	// The owning agent caps what is launched on its behalf, through the same
+	// rule a child it spawns is capped by.
 	if parentConv != "" {
-		parent, err := db.AgentEffectiveSandboxConfigForConv(parentConv)
-		if err != nil {
-			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		parent, fail := loadChildSandboxParent(parentConv)
+		if fail == nil {
+			snapshot, fail = parent.contain(snapshot, nil, "start the worker")
 		}
-		if parent == nil && sandboxpolicy.HasCapabilities(snapshot) {
-			return &spawnFailure{http.StatusForbidden, "permission_denied", "owning principal predates effective sandbox snapshots"}
-		}
-		if parent != nil {
-			validated, fail := parentSandboxBound(parentConv, parent)
-			if fail != nil {
-				return fail
-			}
-			// The owner's deny overlay binds what it launches, as a spawned
-			// child's does: it is inherited, never dropped.
-			overlaid, overlayErr := sandboxpolicy.ApplyDenyOverlay(snapshot, validated.DenyOverlay)
-			if overlayErr != nil {
-				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", overlayErr.Error()}
-			}
-			snapshot = overlaid
-			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
-				return &spawnFailure{http.StatusForbidden, "permission_denied", containErr.Error()}
-			}
+		if fail != nil {
+			return fail
 		}
 	}
 	p.EffectiveSandbox = &snapshot

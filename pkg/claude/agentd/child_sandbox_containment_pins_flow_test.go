@@ -16,11 +16,11 @@ import (
 
 // Everything an agent launches must fit inside the agent's own sandbox: a
 // child it spawns, the members of a template it deploys, and a worker a
-// trigger it owns starts (tcl-w0rr5d). These pin, for each of the three
-// surfaces, what the caller sees when the launch is refused because the
-// caller predates effective sandbox snapshots, when it is refused because the
-// launch would be wider than the caller, and that a launch that fits is
-// admitted.
+// trigger it owns starts (tcl-w0rr5d). All three are capped by one rule
+// (childSandboxParent.contain). These pin, for each surface, what the caller
+// sees when the launch is refused because the caller predates effective
+// sandbox snapshots, when it is refused because the launch would be wider
+// than the caller, and that a launch that fits is admitted.
 
 // containmentCase is one launch attempt's outcome as its surface reports it:
 // the HTTP status and error body for spawn and deploy, the action outcome and
@@ -172,7 +172,7 @@ func TestChildSandboxContainmentPins(t *testing.T) {
 				return triggerAs(t, f, caller)
 			},
 			want: outcomes{
-				legacy: containmentCase{kind: "permission_denied", detail: "owning principal predates effective sandbox snapshots"},
+				legacy: containmentCase{kind: "permission_denied", detail: pinsLegacyPrefix + "start the worker"},
 				wider:  containmentCase{kind: "permission_denied", detail: pinsContainmentMsg},
 				fits:   containmentCase{kind: "spawned"},
 			},
