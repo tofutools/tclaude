@@ -630,11 +630,23 @@ func planConfigBundleItem(r *http.Request, caller, section string, item configbu
 				check.Agents[n].ProfileInline = &inline
 			}
 		}
-		if _, fail := buildTemplateFromJSON(check); fail != nil {
+		built, fail := buildTemplateFromJSON(check)
+		if fail != nil {
 			return nil, bundleFailure(fail)
 		}
+		// Judged at planning, before any item applies, and again when it applies.
+		gate := callerTemplateOwnerScopesGate(r, caller)
+		if replace {
+			current, err := db.GetGroupTemplate(built.Name)
+			if err != nil {
+				return nil, err
+			}
+			if fail := checkTemplateOwnerScopes(gate, current, built.OwnerScopesJSON); fail != nil {
+				return nil, bundleFailure(fail)
+			}
+		}
 		return func() error {
-			res, exists, fail := importTemplateEnvelope(caller, env, "", replace)
+			res, exists, fail := importTemplateEnvelope(caller, env, "", replace, gate)
 			preview.Warnings = append(preview.Warnings, res.Warnings...)
 			if fail != nil {
 				return bundleFailure(fail)

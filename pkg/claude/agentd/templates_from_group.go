@@ -222,6 +222,12 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		// A live group has no template-default worktree preference to trace. Keep
 		// the curated value when refreshing a template from its running group.
 		t.PerAgentWorktrees = existing.PerAgentWorktrees
+		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
+			if fail != errTemplateGateResponded {
+				writeError(w, fail.Status, fail.Kind, fail.Msg)
+			}
+			return
+		}
 		t.ID = existing.ID
 		if err := db.UpdateGroupTemplate(t); err != nil {
 			if errors.Is(err, sql.ErrNoRows) && attempt == 0 {

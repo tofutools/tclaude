@@ -486,7 +486,10 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
 
-	res, existed, fail := importTemplateEnvelope(caller, env, asName, update)
+	res, existed, fail := importTemplateEnvelope(caller, env, asName, update, httpTemplateOwnerScopesGate(w, r))
+	if fail == errTemplateGateResponded {
+		return
+	}
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -513,14 +516,15 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 // machine-local references that don't resolve here (spawn profiles, unknown
 // slugs, dangling role refs — each warned), validates + builds the template,
 // then creates it (or, when update is set, replaces it in place). asName, when
-// non-empty, renames the template on import.
+// non-empty, renames the template on import. ownerScopesGate authorizes an
+// update that changes the stored template's owner scopes.
 //
 // It returns the result, whether a same-named template already EXISTED, and a
 // failure. When a template already exists and update is false, it does NOT
 // write — the caller decides what the collision means: /v1/templates/import
 // reports a 409, a starter install reports a friendly skip. This is the single
 // importer both paths share (JOH-246) — there is no second import path.
-func importTemplateEnvelope(caller string, env templateExportEnvelope, asName string, update bool) (templateImportResult, bool, *spawnFailure) {
+func importTemplateEnvelope(caller string, env templateExportEnvelope, asName string, update bool, ownerScopesGate templateOwnerScopesGate) (templateImportResult, bool, *spawnFailure) {
 	if strings.TrimSpace(env.Format) != templateExportFormat {
 		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat)}
@@ -584,6 +588,9 @@ func importTemplateEnvelope(caller string, env templateExportEnvelope, asName st
 			// Collision — leave the stored template untouched; the caller decides
 			// (409 for import, skip for starter install).
 			return templateImportResult{Imported: t.Name, Warnings: warnings}, true, nil
+		}
+		if fail := checkTemplateOwnerScopes(ownerScopesGate, existing, t.OwnerScopesJSON); fail != nil {
+			return templateImportResult{}, true, fail
 		}
 		// Overwrite in place: the envelope carries the full desired state, so this
 		// is a wholesale replace (the PATCH contract), reusing the existing row's id.

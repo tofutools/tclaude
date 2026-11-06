@@ -124,6 +124,14 @@ func TestTemplateWritesThatKeepOwnerScopesNeedOnlyTemplatesManage(t *testing.T) 
 	})
 }
 
+// grantOwnerScopesSlugs grants what a group's owner-scope change needs.
+func grantOwnerScopesSlugs(t *testing.T, conv string) {
+	t.Helper()
+	for _, slug := range []string{agentd.PermGroupsSettingsOwnerScopes, agentd.PermPermissionsGrant, agentd.PermPermissionsRevoke} {
+		require.NoError(t, db.GrantAgentPermission(conv, slug, "test"))
+	}
+}
+
 // Writes that change or remove an existing template's owner scopes.
 type ownerScopesWrite struct {
 	name  string
@@ -163,13 +171,85 @@ func ownerScopesWrites() []ownerScopesWrite {
 	}
 }
 
-func TestTemplateWritesThatChangeOwnerScopesNeedGroupsSettingsOwnerScopes(t *testing.T) {
+// crewOwnerScopes is the template's owner scopes, "" when it has none or is gone.
+func crewOwnerScopes(t *testing.T, f *testharness.Flow) string {
+	t.Helper()
+	rec := humanReq(t, f, http.MethodGet, "/v1/templates/crew", nil)
+	if rec.Code == http.StatusNotFound {
+		return ""
+	}
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		OwnerScopes json.RawMessage `json:"owner_scopes"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	if string(body.OwnerScopes) == "" || string(body.OwnerScopes) == "null" {
+		return ""
+	}
+	return string(body.OwnerScopes)
+}
+
+func assertCrewOwnerScopes(t *testing.T, f *testharness.Flow, want, msg string) {
+	t.Helper()
+	got := crewOwnerScopes(t, f)
+	if want == "" {
+		assert.Empty(t, got, msg)
+		return
+	}
+	assert.JSONEq(t, want, got, msg)
+}
+
+// A user-visible change (tcl-yjjbfh): changing or removing an existing
+// template's owner scopes needs what changing a live group's does
+// (groups.settings.owner-scopes, permissions.grant, permissions.revoke).
+// templates.manage alone is refused, and the template is left as it was.
+func TestTemplateWritesThatChangeOwnerScopesNeedTheGroupOwnerScopeSlugs(t *testing.T) {
 	for _, tc := range ownerScopesWrites() {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.name+" is refused with templates.manage alone", func(t *testing.T) {
 			f := newTemplateScribeFlow(t)
-			code := tc.write(t, f, templateScribe)
-			assert.Equal(t, tc.ok, code, "templates.manage alone changes them (before tcl-yjjbfh)")
-			_ = tc.after
+			assert.Equal(t, http.StatusForbidden, tc.write(t, f, templateScribe))
+			assertCrewOwnerScopes(t, f, roundTripScopes, "a refused write leaves the owner scopes as they were")
+		})
+		t.Run(tc.name+" is refused with groups.settings.owner-scopes alone", func(t *testing.T) {
+			f := newTemplateScribeFlow(t)
+			require.NoError(t, db.GrantAgentPermission(templateScribe, agentd.PermGroupsSettingsOwnerScopes, "test"))
+			assert.Equal(t, http.StatusForbidden, tc.write(t, f, templateScribe))
+			assertCrewOwnerScopes(t, f, roundTripScopes, "a refused write leaves the owner scopes as they were")
+		})
+		t.Run(tc.name+" passes with the group's owner-scope slugs", func(t *testing.T) {
+			f := newTemplateScribeFlow(t)
+			grantOwnerScopesSlugs(t, templateScribe)
+			assert.Equal(t, tc.ok, tc.write(t, f, templateScribe))
+			assertCrewOwnerScopes(t, f, tc.after, "the write applied")
 		})
 	}
+}
+
+// A config bundle that replaces a template with other owner scopes is judged
+// the same way, before any of its items apply.
+func TestConfigBundleReplacingTemplateOwnerScopesNeedsTheGroupOwnerScopeSlugs(t *testing.T) {
+	f := newTemplateScribeFlow(t)
+	require.NoError(t, db.GrantAgentPermission(templateScribe, agentd.PermConfigImport, "test"))
+	// A bundle of crew without its owner scopes.
+	patch := humanReq(t, f, http.MethodPatch, "/v1/templates/crew", crewWithScopes(t, f, ""))
+	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
+	rec := humanReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=templates/crew", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	patch = humanReq(t, f, http.MethodPatch, "/v1/templates/crew", crewWithScopes(t, f, roundTripScopes))
+	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
+
+	importBundle := func() *http.Response {
+		rec := agentReq(t, f, templateScribe, http.MethodPost, "/v1/config-bundle/import",
+			map[string]any{"bundle": bundle, "apply": true, "replace": true})
+		return rec.Result()
+	}
+	refused := importBundle()
+	assert.NotEqual(t, http.StatusOK, refused.StatusCode)
+	assertCrewOwnerScopes(t, f, roundTripScopes, "a refused bundle leaves the owner scopes as they were")
+
+	grantOwnerScopesSlugs(t, templateScribe)
+	assert.Equal(t, http.StatusOK, importBundle().StatusCode)
+	assertCrewOwnerScopes(t, f, "", "the bundle replaced the template")
 }

@@ -113,6 +113,15 @@ configuration (`process.templates.manage`, `agent.sandbox-impl`,
 `sandbox.harness-config`, `human.clipboard`, `usage-rules.manage`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
 
+A group template can carry owner scopes too, and every group deployed from it
+starts with them. Creating a template with owner scopes needs only
+`templates.manage`. Changing or removing an existing template's owner scopes
+(an edit, an import or bundle that replaces it, a re-snapshot from a group, or
+deleting a template that has them) also needs what changing a live group's
+does: `groups.settings.owner-scopes`, `permissions.grant` and
+`permissions.revoke`. Before this, `templates.manage` alone could loosen the
+narrowing a template's author declared for every later deployment.
+
 ## Scoped grants
 
 A grant can be narrowed to part of what its slug reaches:
