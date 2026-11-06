@@ -566,6 +566,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	// Previewed as the import will run it: mail and head aliases for
 	// conversations outside the file drop (import_foreign_refs.go).
 	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
@@ -846,6 +847,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	// aliases addressed to any other conversation drop, listed in the reply
 	// (import_foreign_refs.go). A peer import already refused them.
 	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
 
 	targetName := asName
 	if targetName == "" {
@@ -1205,15 +1207,21 @@ func groupImportPromptWarnings(result *db.GroupImportResult) []string {
 
 func validateImportedConvIDs(exp *groupexport.Export) error {
 	for _, convID := range importedIdentityConvIDs(exp) {
-		if harness.ValidOpenCodeConvID(convID) {
-			continue
-		}
-		parsed, err := uuid.Parse(convID)
-		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
+		if !canonicalConvID(convID) {
 			return fmt.Errorf("conversation id %q is not a canonical UUID or OpenCode session id", convID)
 		}
 	}
 	return nil
+}
+
+// canonicalConvID is whether id is a conversation id as the importer writes
+// one: a canonical UUID or an OpenCode session id.
+func canonicalConvID(id string) bool {
+	if harness.ValidOpenCodeConvID(id) {
+		return true
+	}
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed != uuid.Nil && parsed.String() == id
 }
 
 func importedIdentityConvIDs(exp *groupexport.Export) []string {

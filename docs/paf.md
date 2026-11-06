@@ -179,6 +179,15 @@ would reach that agent unchanged, under the sender the file names. A human
 import drops those entries, and the preview and the reply list them by archived
 message id and alias handle. A peer import refuses the file.
 
+Mail the file says came from a conversation on this node that the file does not
+carry lands from an unknown sender instead, on every import, so the imported
+agents never see a message from a trusted local agent that it did not send. Its
+id is replaced by a fresh one (one per sender, so a thread still reads as one),
+which no agent and no name resolves to, and the local agent's history gains
+nothing. A head alias the file says such a conversation created is credited the
+same way. Mail from a sender that is not on this node is kept as it is. The
+preview and the reply list the affected messages by archived id.
+
 ## How tclaude uses PAF
 
 | Operation | What PAF carries | Carrier in this release |
