@@ -338,4 +338,10 @@ func TestPeerViewResourceListCanLockIsPerTemplate(t *testing.T) {
 	e.grant(t, agentd.PermGroupsResourcesLock, "backstage")
 	assert.Equal(t, map[string]bool{"ship": true, "shared": true}, canLock())
 	require.Equal(t, http.StatusOK, e.lock(t, "process", "shared", true).Code)
+
+	// A group the peer is not shown counts too, as the lock route counts it.
+	rec := processTemplateRequest(t, e.fh.f, http.MethodPost, "/v1/process/groups/hidden/processes", map[string]any{"templateId": "ship"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]bool{"ship": false, "shared": true}, canLock(), "ship is pinned to a group hidden from the peer")
+	assert.Equal(t, http.StatusForbidden, e.lock(t, "process", "ship", true).Code)
 }
