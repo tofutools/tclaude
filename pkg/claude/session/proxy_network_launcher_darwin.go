@@ -82,6 +82,12 @@ type darwinProxyLaunchSpec struct {
 	RouteAuthority   *proxyRouteAuthorityConfig    `json:"route_authority,omitempty"`
 }
 
+// errDarwinProxyLaunchPreservesFDs refuses a launch that would hand the
+// sandboxed command inherited descriptors. Nothing renders one: the Darwin
+// OpenCode server boundary is an authenticated TCP control endpoint, not the
+// inherited Unix listener and relay executable of the Linux v4 boundary.
+var errDarwinProxyLaunchPreservesFDs = errors.New("Darwin proxy launcher preserves no inherited descriptors")
+
 func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 	if !tclaudeLayerPlanDeploysProxy(spec.Plan) || spec.Plan.FilteredNetwork == nil {
 		return "", fmt.Errorf("Darwin proxy launcher requires a compiled proxy network plan")
@@ -89,8 +95,8 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 	if _, err := sandboxproxy.NewEvaluatorFromRuleSet(*spec.Plan.FilteredNetwork); err != nil {
 		return "", fmt.Errorf("validate Darwin filtering proxy policy: %w", err)
 	}
-	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
-		return "", fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
+	if spec.PreserveFDs != 0 {
+		return "", errDarwinProxyLaunchPreservesFDs
 	}
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
 		return "", fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
@@ -140,8 +146,8 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 	if _, err := sandboxproxy.NewEvaluatorFromRuleSet(*spec.Plan.FilteredNetwork); err != nil {
 		return darwinProxyLaunchSpec{}, fmt.Errorf("validate Darwin filtering proxy policy: %w", err)
 	}
-	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
-		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
+	if spec.PreserveFDs != 0 {
+		return darwinProxyLaunchSpec{}, errDarwinProxyLaunchPreservesFDs
 	}
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
 		return darwinProxyLaunchSpec{}, fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
@@ -281,13 +287,6 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 	child.Stderr = os.Stderr
 	child.Env = proxyNetworkSandboxEnv(os.Environ(), int(endpoint.Port()))
 	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	for fd := 3; fd < 3+spec.PreserveFDs; fd++ {
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
-			return 125, fmt.Errorf("preserve inherited fd %d: %w", fd, err)
-		}
-		child.ExtraFiles = append(child.ExtraFiles,
-			os.NewFile(uintptr(fd), fmt.Sprintf("tclaude-preserved-fd-%d", fd)))
-	}
 	if err := child.Start(); err != nil {
 		return 125, fmt.Errorf("start Darwin Seatbelt sandbox: %w", err)
 	}

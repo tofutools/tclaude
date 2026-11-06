@@ -36,9 +36,16 @@ type layerPinInput struct {
 	in   tclaudeLayerRenderInput
 }
 
-// layerPinFixture builds the pin inputs under root and returns them with a
-// normaliser that replaces this run's paths with stable placeholders.
-func layerPinFixture(t *testing.T) ([]layerPinInput, func(string) string) {
+// layerPinEnv is the pins' isolated environment: a short root that holds
+// HOME, TMUX_TMPDIR and an extra unix socket, and a normaliser that replaces
+// this run's paths with stable placeholders.
+type layerPinEnv struct {
+	root      string
+	socket    string
+	normalise func(string) string
+}
+
+func newLayerPinEnv(t *testing.T) layerPinEnv {
 	t.Helper()
 	// The root is short and directly under /tmp: a unix socket path has a
 	// short length limit, and Seatbelt renders every ancestor of a protected
@@ -76,46 +83,6 @@ func layerPinFixture(t *testing.T) ([]layerPinInput, func(string) string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 
-	extra := func(dir string) string {
-		path := filepath.Join(root, "extra", dir)
-		require.NoError(t, os.MkdirAll(path, 0o700))
-		return path
-	}
-	var inputs []layerPinInput
-	for _, c := range []struct {
-		name     string
-		snapshot *sandboxpolicy.Snapshot
-	}{
-		{"host-open", nil},
-		{"packet", engineLaunchSnapshot(sandboxpolicy.NetworkEnginePacket)},
-		{"proxy", engineLaunchSnapshot(sandboxpolicy.NetworkEngineProxy)},
-	} {
-		dir := filepath.Join(root, c.name)
-		cwd, state := filepath.Join(dir, "cwd"), filepath.Join(dir, "state")
-		require.NoError(t, os.MkdirAll(cwd, 0o700))
-		require.NoError(t, os.MkdirAll(state, 0o700))
-		snapshot := c.snapshot
-		if snapshot == nil {
-			empty := sandboxpolicy.EmptySnapshot()
-			snapshot = &empty
-		}
-		spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-			HarnessName: "claude", Cwd: cwd, StateRoot: state, Snapshot: snapshot,
-		})
-		require.NoError(t, err, c.name)
-		in, err := tclaudeLayerSpecRenderInput(spec)
-		require.NoError(t, err, c.name)
-		in.Phase0WriteDirs = append(in.Phase0WriteDirs, extra("phase0"))
-		in.PrivateWriteDirs = append(in.PrivateWriteDirs, TclaudeLayerPrivateWriteDir{
-			Parent: extra("private"), Current: extra("private/current"),
-		})
-		in.FinalHideDirs = append(in.FinalHideDirs, extra("hide"))
-		in.ReadOnlyBinds = append(in.ReadOnlyBinds, TclaudeLayerReadOnlyBind{
-			Source: extra("ro"), Target: extra("ro"),
-		})
-		in.SocketPaths = append(in.SocketPaths, socket)
-		inputs = append(inputs, layerPinInput{name: c.name, in: in})
-	}
 	exe, _ := os.Executable()
 	normalise := func(s string) string {
 		if exe != "" {
@@ -141,7 +108,66 @@ func layerPinFixture(t *testing.T) ([]layerPinInput, func(string) string) {
 			return "--launch decoded(" + normalise(string(data)) + ")"
 		})
 	}
-	return inputs, normaliseLaunch
+	return layerPinEnv{root: root, socket: socket, normalise: normaliseLaunch}
+}
+
+// spec builds a launch spec named name under the root, on snapshot's plan
+// (host-open when nil), with mutate applied to the launch input.
+func (e layerPinEnv) spec(
+	t *testing.T, name string, snapshot *sandboxpolicy.Snapshot, mutate func(*TclaudeLayerLaunchInput),
+) (TclaudeLayerLaunchSpec, error) {
+	t.Helper()
+	dir := filepath.Join(e.root, name)
+	cwd, state := filepath.Join(dir, "cwd"), filepath.Join(dir, "state")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	require.NoError(t, os.MkdirAll(state, 0o700))
+	if snapshot == nil {
+		empty := sandboxpolicy.EmptySnapshot()
+		snapshot = &empty
+	}
+	input := TclaudeLayerLaunchInput{HarnessName: "claude", Cwd: cwd, StateRoot: state, Snapshot: snapshot}
+	if mutate != nil {
+		mutate(&input)
+	}
+	return BuildTclaudeLayerLaunchSpec(input)
+}
+
+// layerPinFixture builds the renderer pin inputs, each with fixed extras on
+// top of what its spec derived so every slot of the renderer carries
+// something.
+func layerPinFixture(t *testing.T) ([]layerPinInput, func(string) string) {
+	t.Helper()
+	env := newLayerPinEnv(t)
+	extra := func(dir string) string {
+		path := filepath.Join(env.root, "extra", dir)
+		require.NoError(t, os.MkdirAll(path, 0o700))
+		return path
+	}
+	var inputs []layerPinInput
+	for _, c := range []struct {
+		name     string
+		snapshot *sandboxpolicy.Snapshot
+	}{
+		{"host-open", nil},
+		{"packet", engineLaunchSnapshot(sandboxpolicy.NetworkEnginePacket)},
+		{"proxy", engineLaunchSnapshot(sandboxpolicy.NetworkEngineProxy)},
+	} {
+		spec, err := env.spec(t, c.name, c.snapshot, nil)
+		require.NoError(t, err, c.name)
+		in, err := tclaudeLayerSpecRenderInput(spec)
+		require.NoError(t, err, c.name)
+		in.Phase0WriteDirs = append(in.Phase0WriteDirs, extra("phase0"))
+		in.PrivateWriteDirs = append(in.PrivateWriteDirs, TclaudeLayerPrivateWriteDir{
+			Parent: extra("private"), Current: extra("private/current"),
+		})
+		in.FinalHideDirs = append(in.FinalHideDirs, extra("hide"))
+		in.ReadOnlyBinds = append(in.ReadOnlyBinds, TclaudeLayerReadOnlyBind{
+			Source: extra("ro"), Target: extra("ro"),
+		})
+		in.SocketPaths = append(in.SocketPaths, env.socket)
+		inputs = append(inputs, layerPinInput{name: c.name, in: in})
+	}
+	return inputs, env.normalise
 }
 
 // layerPinRender records a render's result, error included, as one pin line.
@@ -153,23 +179,24 @@ func layerPinRender(normalise func(string) string, out string, err error) string
 }
 
 // checkLayerPins compares the rendered pins with the golden file.
-func checkLayerPins(t *testing.T, pins map[string]string, order []string) {
+func checkLayerPins(t *testing.T, name string, pins map[string]string, order []string) {
 	t.Helper()
 	var b strings.Builder
 	for _, key := range order {
 		fmt.Fprintf(&b, "== %s\n%s\n", key, pins[key])
 	}
-	golden := filepath.Join("testdata", "layer_command_pins_"+runtime.GOOS+".golden")
+	golden := filepath.Join("testdata", name+"_"+runtime.GOOS+".golden")
 	if os.Getenv(layerPinsUpdateEnv) == "1" {
 		require.NoError(t, os.MkdirAll("testdata", 0o755))
 		require.NoError(t, os.WriteFile(golden, []byte(b.String()), 0o644))
 		return
 	}
 	want, err := os.ReadFile(golden)
-	if os.IsNotExist(err) {
-		// A platform's golden is first recorded where it runs (macOS CI):
-		// the render is logged whole to be committed as the golden.
-		t.Logf("missing %s; its content would be:\n-----BEGIN GOLDEN-----\n%s-----END GOLDEN-----", golden, b.String())
+	if err != nil || string(want) != b.String() {
+		// A platform's golden is recorded where it runs (macOS on CI): the
+		// render is logged whole, to be reviewed and committed as the golden.
+		t.Logf("%s does not hold this render; its content would be:\n-----BEGIN GOLDEN-----\n%s-----END GOLDEN-----",
+			golden, b.String())
 	}
 	require.NoError(t, err, "missing golden; regenerate with %s=1", layerPinsUpdateEnv)
 	gotLines := strings.Split(b.String(), "\n")

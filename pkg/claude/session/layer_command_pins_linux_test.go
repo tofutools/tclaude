@@ -39,5 +39,5 @@ func TestLayerCommandPins(t *testing.T) {
 		pin(p+"server+loopback-zero", server(0))
 		pin(p+"server+loopback", server(4567))
 	}
-	checkLayerPins(t, pins, order)
+	checkLayerPins(t, "layer_command_pins", pins, order)
 }
