@@ -66,6 +66,12 @@ func servePeerAgentPermissions(w http.ResponseWriter, r *http.Request, v *peerVi
 		return
 	}
 	v.targetConv = conv
+	// Whatever the batch holds: the handler answers with the agent's
+	// overrides, so even a batch that changes nothing takes a grant.
+	if !peerAgentActionAllowed(v.peer.InstanceID, conv, PermPermissionsGrant) && !peerAgentActionAllowed(v.peer.InstanceID, conv, PermPermissionsRevoke) {
+		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s or %s for every group of the agent", PermPermissionsGrant, PermPermissionsRevoke))
+		return
+	}
 	if isLiveSteward(conv) || db.IsExternalStewardConv(conv) {
 		writeError(w, http.StatusForbidden, "permission", "a Steward's permissions stay this node's operator's")
 		return
@@ -107,10 +113,14 @@ func peerAgentPermissionsFailure(peer, conv string, overrides map[string]string,
 			if !held {
 				continue
 			}
-			if stored.Effect == db.PermEffectDeny {
+			// An override shadows what the agent inherits, so dropping a
+			// deny, or a grant narrowed by a scope (or one whose scope this
+			// build cannot read, which authorizes nothing), restores a
+			// verdict that may be wider: a grant of the slug unscoped.
+			if stored.Effect == db.PermEffectDeny || stored.Scope != "" {
 				need[PermPermissionsGrant] = true
 				if err := peerCeilingCovers(peer, slug, nil); err != nil {
-					return http.StatusForbidden, "lifting the deny of " + slug + " restores what the agent inherits: " + err.Error()
+					return http.StatusForbidden, "dropping the override of " + slug + " restores what the agent inherits: " + err.Error()
 				}
 				continue
 			}
@@ -135,6 +145,9 @@ func peerAgentPermissionsFailure(peer, conv string, overrides map[string]string,
 			if held && stored.Effect == db.PermEffectGrant {
 				if desired == stored.Scope {
 					continue
+				}
+				if !peerSeesScope(peer, stored.Scope) {
+					return http.StatusForbidden, slug + "'s stored scope names what you cannot see; only this node's operator may change it"
 				}
 				if peerRowNarrows(desired, stored.Scope) {
 					need[PermPermissionsGrant] = true
@@ -170,7 +183,9 @@ func peerReadsAgentPermissions(agentHeld []string) bool {
 
 // projectPeerAgentPermissions fills the snapshot's permissions view with
 // conv's overrides, their scopes and the ones this build cannot read.
-func projectPeerAgentPermissions(perms *snapshotPermissionsView, conv string) error {
+// A scope that names what the peer cannot see is shown as unreadable, which
+// the editor leaves alone (peerSeesScope).
+func projectPeerAgentPermissions(perms *snapshotPermissionsView, peer, conv string) error {
 	rows, err := agentPermissionOverrides(conv)
 	if err != nil {
 		return err
@@ -182,7 +197,7 @@ func projectPeerAgentPermissions(perms *snapshotPermissionsView, conv string) er
 			continue
 		}
 		scope := permissionScopeFromJSON(row.Scope)
-		if len(scope) == 0 {
+		if len(scope) == 0 || !peerSeesScope(peer, row.Scope) {
 			perms.UnreadableScopes[conv] = append(perms.UnreadableScopes[conv], slug)
 			continue
 		}
@@ -219,7 +234,7 @@ func projectPeerAgentsPermissions(v *peerView, out *snapshotPayload, agents []da
 				Overrides: map[string]map[string]string{}, UnreadableScopes: map[string][]string{},
 			}
 		}
-		if err := projectPeerAgentPermissions(&out.Permissions, a.ConvID); err != nil {
+		if err := projectPeerAgentPermissions(&out.Permissions, v.peer.InstanceID, a.ConvID); err != nil {
 			return false, err
 		}
 	}
@@ -238,4 +253,30 @@ func projectPeerAgentsPermissions(v *peerView, out *snapshotPayload, agents []da
 	}
 	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(visible, nil, nil, nil, nil, nil)
 	return true, nil
+}
+
+// peerSeesScope reports whether a stored scope names only what peer can see:
+// no dimension but group, and only active groups in its view. Any other
+// dimension names this node's profiles, resources or remotes, which a peer's
+// view leaves out.
+func peerSeesScope(peer, raw string) bool {
+	if raw == "" {
+		return true
+	}
+	scope := permissionScopeFromJSON(raw)
+	if scope == nil {
+		return false
+	}
+	for dim, matchers := range scope {
+		if dim != ScopeDimGroup {
+			return false
+		}
+		for _, name := range matchers {
+			g, err := db.GetAgentGroupByName(name)
+			if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(peer, g.ID) {
+				return false
+			}
+		}
+	}
+	return true
 }

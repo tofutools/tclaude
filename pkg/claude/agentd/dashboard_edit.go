@@ -2441,6 +2441,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A peer reads the agent's overrides from its own projection, which
+	// leaves out what it may not see; the editor reloads from it.
+	if peerGrantFromRequest(r) != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": res.ConvID, "changed": changed})
+		return
+	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)
 	// The editor reseeds its chips from the response, so it has to carry what

@@ -84,11 +84,11 @@ func TestPeerAgentPermissionsHoldTheCeiling(t *testing.T) {
 
 	// Taking authority away needs the revoke grant.
 	h.grant(t, agentd.PermPermissionsRevoke, "group=crew")
-	code, body = post(map[string]string{agentd.PermGroupsPresenceRead: "deny", agentd.PermGroupsRosterRead: "default"}, nil)
+	code, body = post(map[string]string{agentd.PermGroupsPresenceRead: "deny", agentd.PermGroupsRosterRead: "deny"}, nil)
 	require.Equal(t, 200, code, body)
 	overrides, err := agentPermissionOverridesForTest(conv)
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{agentd.PermSelfRename: "deny", agentd.PermGroupsPresenceRead: "deny"}, overrides)
+	require.Equal(t, map[string]string{agentd.PermSelfRename: "deny", agentd.PermGroupsPresenceRead: "deny", agentd.PermGroupsRosterRead: "deny"}, overrides)
 
 	// The agent joins a group the peer holds nothing in: every group counts.
 	h.f.HaveMemberWithRole("secret", conv, "dev")
@@ -128,4 +128,63 @@ func agentPermissionOverridesForTest(conv string) (map[string]string, error) {
 		out[row.Slug] = row.Effect
 	}
 	return out, nil
+}
+
+// A batch that changes nothing still takes a permissions grant: the route
+// answers with what it stored. A peer's answer never carries the overrides,
+// and the projection shows a scope naming what the peer cannot see as
+// unreadable, which the peer may not change.
+func TestPeerAgentPermissionsShowOnlyWhatThePeerSees(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	const conv = "proc-crew-member"
+	h.f.HaveGroup("secret")
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(conv, agentd.PermGroupsRosterRead, db.PermEffectGrant, `{"group":["secret"]}`, "human"))
+	h.grant(t, agentd.PermGroupsPresenceRead, "group=crew")
+	noop := map[string]any{"conv": h.member, "overrides": map[string]string{agentd.PermGroupsMembersStop: "default"}}
+	code, body := h.call("POST", "/api/permissions", noop)
+	require.Equal(t, 403, code, "a no-op batch without either grant: %s", body)
+	require.NotContains(t, body, "secret")
+
+	h.grant(t, agentd.PermPermissionsGrant, "group=crew")
+	code, body = h.call("POST", "/api/permissions", noop)
+	require.Equal(t, 200, code, body)
+	require.NotContains(t, body, "secret", "the answer carries no overrides")
+
+	code, body = h.call("GET", "/api/snapshot", nil)
+	require.Equal(t, 200, code, body)
+	require.NotContains(t, body, `"secret"`, "a scope naming a hidden group is shown as unreadable")
+	var snap struct {
+		Permissions struct {
+			UnreadableScopes map[string][]string `json:"unreadable_scopes"`
+		} `json:"permissions"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &snap))
+	require.Equal(t, []string{agentd.PermGroupsRosterRead}, snap.Permissions.UnreadableScopes[conv])
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	code, body = h.call("POST", "/api/permissions", map[string]any{"conv": h.member,
+		"overrides": map[string]string{agentd.PermGroupsRosterRead: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsRosterRead: map[string]any{"group": []string{"crew"}}}})
+	require.Equal(t, 403, code, "replacing a scope the peer was not shown: %s", body)
+}
+
+// An override shadows what the agent inherits, so dropping a scoped grant
+// may widen it: that takes permissions.grant and the ceiling, as lifting a
+// deny does. Dropping an unscoped grant only takes authority away.
+func TestPeerAgentPermissionsDroppingANarrowingIsAGrant(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	const conv = "proc-crew-member"
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(conv, agentd.PermGroupsMembersRename, db.PermEffectGrant, `{"group":["crew"]}`, "human"))
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(conv, agentd.PermGroupsMembersTask, db.PermEffectGrant, "", "human"))
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	h.grant(t, agentd.PermPermissionsRevoke, "group=crew")
+	drop := func(slug string) (int, string) {
+		return h.call("POST", "/api/permissions", map[string]any{"conv": h.member, "overrides": map[string]string{slug: "default"}})
+	}
+	code, body := drop(agentd.PermGroupsMembersRename)
+	require.Equal(t, 403, code, "restores what the agent inherits: %s", body)
+	code, body = drop(agentd.PermGroupsMembersTask)
+	require.Equal(t, 200, code, body)
+	overrides, err := agentPermissionOverridesForTest(conv)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{agentd.PermGroupsMembersRename: "grant"}, overrides)
 }
