@@ -753,6 +753,14 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		handleGroupParent(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
+	// Archive and unarchive: the shared, permission-checked /v1 handlers,
+	// with the dashboard caller as this node's human.
+	mux.HandleFunc("POST /api/groups/{name}/archive", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupArchive(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/unarchive", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupUnarchive(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
 	mux.HandleFunc("POST /api/groups/{name}/spawn-preview", groupRoute(dashboardSpawnPreview))
