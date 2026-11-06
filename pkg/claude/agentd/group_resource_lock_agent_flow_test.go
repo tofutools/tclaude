@@ -117,3 +117,60 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, agent(keeper, http.MethodPost, "/v1/resource-locks",
 		map[string]any{"kind": "board", "id": "nope", "locked": true}).Code)
 }
+
+// tcl-xrs9v5: an agent's resource list says per template whether it may lock
+// it, since a template pinned to several groups needs the grant in each.
+func TestAgentResourceListCanLockIsPerTemplate(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	const conv = "lock-lister-4444"
+	f.HaveConvWithTitle(conv, "lister")
+	f.HaveGroup("crew")
+	f.HaveGroup("backstage")
+	f.HaveMember("crew", conv)
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	for _, id := range []string{"ship", "shared"} {
+		rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/"+id, map[string]any{"template": shipFeatureTemplate(id)})
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/crew/processes", map[string]any{"templateId": id})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/backstage/processes", map[string]any{"templateId": "shared"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	agent := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
+	}
+	canLock := func() (bool, map[string]bool) {
+		t.Helper()
+		rec := agent(http.MethodGet, "/v1/groups/crew/resources", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out struct {
+			CanLock   bool `json:"canLock"`
+			Processes []struct {
+				TemplateID string `json:"templateId"`
+				CanLock    bool   `json:"canLock"`
+			} `json:"processes"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		got := map[string]bool{}
+		for _, p := range out.Processes {
+			got[p.TemplateID] = p.CanLock
+		}
+		return out.CanLock, got
+	}
+	group, procs := canLock()
+	assert.False(t, group)
+	assert.Equal(t, map[string]bool{"ship": false, "shared": false}, procs)
+
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(conv, agentd.PermGroupsResourcesLock, db.PermEffectGrant, `{"group":["crew"]}`, "test"))
+	group, procs = canLock()
+	assert.True(t, group)
+	assert.Equal(t, map[string]bool{"ship": true, "shared": false}, procs, "shared is pinned to backstage too")
+	assert.Equal(t, http.StatusForbidden, agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "process", "id": "shared", "locked": true}).Code)
+
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(conv, agentd.PermGroupsResourcesLock, db.PermEffectGrant, `{"group":["crew","backstage"]}`, "test"))
+	_, procs = canLock()
+	assert.Equal(t, map[string]bool{"ship": true, "shared": true}, procs)
+	assert.Equal(t, http.StatusOK, agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "process", "id": "shared", "locked": true}).Code)
+}

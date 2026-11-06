@@ -215,7 +215,9 @@ func handleAgentResourceLock(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/groups/{name}/resources — a group's processes, boards and pages
 // with their locks, for a member (groups.resources.read) or the operator.
-// canLock says whether the caller may lock and unlock them there.
+// canLock says whether the caller may lock and unlock the group's boards and
+// pages; each process carries its own, since a template pinned to several
+// groups needs the grant in each.
 func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
 	g, err := db.GetAgentGroupByName(r.PathValue("name"))
 	if err != nil {
@@ -248,7 +250,9 @@ func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
 		out.Pages = []processGroupPage{}
 	}
 	for _, p := range processSavedTemplates().groupProcesses(r.Context(), g.ID) {
-		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked})
+		// A template's lock needs the grant in every group it is pinned to.
+		mayLock := conv == "" && callerIsHuman(r) || conv != "" && agentHoldsResourceLock(r, resourceKindProcess, p.TemplateID)
+		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked, CanLock: mayLock})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

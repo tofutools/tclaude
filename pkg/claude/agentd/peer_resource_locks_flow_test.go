@@ -28,6 +28,7 @@ type peerResourcesOut struct {
 	Processes []struct {
 		TemplateID   string `json:"templateId"`
 		AgentsLocked bool   `json:"agentsLocked"`
+		CanLock      bool   `json:"canLock"`
 	} `json:"processes"`
 	Boards []struct {
 		ID           string `json:"id"`
@@ -310,4 +311,37 @@ func TestPeerViewResourceListUnrestrictedTrust(t *testing.T) {
 	out, rec := e.resources(t, "backstage")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Len(t, out.Processes, 1)
+}
+
+// tcl-xrs9v5: a template pinned to several groups locks only with the grant in
+// every one of them, so the list says so per template: the group's canLock is
+// for its boards and pages, and a template carries its own.
+func TestPeerViewResourceListCanLockIsPerTemplate(t *testing.T) {
+	e := newPeerLockEnv(t)
+	e.grant(t, agentd.PermGroupsResourcesRead, "crew")
+	e.grant(t, agentd.PermGroupsResourcesLock, "crew")
+	canLock := func() map[string]bool {
+		t.Helper()
+		out, rec := e.resources(t, "crew")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.True(t, out.CanLock, "the group's own boards and pages")
+		got := map[string]bool{}
+		for _, p := range out.Processes {
+			got[p.TemplateID] = p.CanLock
+		}
+		return got
+	}
+	assert.Equal(t, map[string]bool{"ship": true, "shared": false}, canLock(),
+		"shared is pinned to backstage too, where the peer holds no lock")
+	requirePeerRefused(t, e.lock(t, "process", "shared", true), "every group it belongs to")
+
+	e.grant(t, agentd.PermGroupsResourcesLock, "backstage")
+	assert.Equal(t, map[string]bool{"ship": true, "shared": true}, canLock())
+	require.Equal(t, http.StatusOK, e.lock(t, "process", "shared", true).Code)
+
+	// A group the peer is not shown counts too, as the lock route counts it.
+	rec := processTemplateRequest(t, e.fh.f, http.MethodPost, "/v1/process/groups/hidden/processes", map[string]any{"templateId": "ship"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]bool{"ship": false, "shared": true}, canLock(), "ship is pinned to a group hidden from the peer")
+	assert.Equal(t, http.StatusForbidden, e.lock(t, "process", "ship", true).Code)
 }

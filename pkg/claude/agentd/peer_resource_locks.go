@@ -154,6 +154,10 @@ type peerGroupProcess struct {
 	TemplateID   string `json:"templateId"`
 	Name         string `json:"name"`
 	AgentsLocked bool   `json:"agentsLocked,omitempty"`
+	// CanLock is whether the caller may lock and unlock this template. A
+	// template's lock reaches every group it is pinned to, so the list's own
+	// canLock (its group's) does not answer it.
+	CanLock bool `json:"canLock"`
 }
 
 // servePeerGroupResources is GET /api/groups/{name}/resources through the
@@ -184,7 +188,23 @@ func servePeerGroupResources(w http.ResponseWriter, r *http.Request, v *peerView
 		out.Pages = []processGroupPage{}
 	}
 	for _, p := range processSavedTemplates().groupProcesses(r.Context(), g.ID) {
-		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked})
+		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked,
+			CanLock: peerMayLockProcess(v.peer.InstanceID, p.TemplateID)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// peerMayLockProcess is whether the peer's grants reach a template's lock: in
+// every group it is pinned to, as servePeerResourceLock requires.
+func peerMayLockProcess(peerID, templateID string) bool {
+	groups, _ := resourceLockGroups(resourceKindProcess, templateID)
+	if len(groups) == 0 {
+		return false
+	}
+	for _, g := range groups {
+		if !fedPeerAllows(peerID, g.ID, PermGroupsResourcesLock) {
+			return false
+		}
+	}
+	return true
 }

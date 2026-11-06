@@ -727,6 +727,30 @@ test('without the grant a peer lock chip is disabled and says why', async (t) =>
   assert.equal(peer.calls.some((c) => c.path === '/api/resource-locks'), false);
 });
 
+// tcl-xrs9v5: a template pinned to several groups locks only where the node
+// grants the lock in each, so its chip follows its own canLock.
+const PER_TEMPLATE_RESOURCES = { ...PEER_RESOURCES, processes: [
+  { templateId: 'ship', name: 'Ship', agentsLocked: true, canLock: false },
+  { templateId: 'solo', name: 'Solo', canLock: true },
+  { templateId: 'old', name: 'Old' },
+] };
+
+test('a peer template lock chip follows the template, not its group', async (t) => {
+  const { root } = await mountPeerResources(t, PER_TEMPLATE_RESOURCES);
+  assert.equal(root.querySelector('[data-resource-lock="board:plan"]').disabled, false, 'the group grants its boards');
+  const shared = root.querySelector('[data-resource-lock="process:ship"]');
+  assert.equal(shared.disabled, true, 'pinned where the node does not grant the lock');
+  assert.match(shared.title, /bob does not grant you groups\.resources\.lock/);
+  assert.equal(root.querySelector('[data-resource-lock="process:solo"]').disabled, false);
+  assert.equal(root.querySelector('[data-resource-lock="process:old"]').disabled, false, 'a node that does not say per template answers for the group');
+});
+
+test('a peer template its node lets this one lock stays lockable in a group that does not', async (t) => {
+  const { root: refused } = await mountPeerResources(t, { ...PER_TEMPLATE_RESOURCES, canLock: false });
+  assert.equal(refused.querySelector('[data-resource-lock="process:solo"]').disabled, false, 'its own answer wins over the group\'s');
+  assert.equal(refused.querySelector('[data-resource-lock="process:old"]').disabled, true);
+});
+
 test('a peer refusing a lock toggle is a toast, not silence', async (t) => {
   const { harness, root, notes } = await mountPeerResources(t, PEER_RESOURCES, { lockStatus: 403 });
   await harness.act(() => harness.fireEvent(root.querySelector('[data-resource-lock="process:ship"]'), 'click'));
