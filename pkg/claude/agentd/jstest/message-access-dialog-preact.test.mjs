@@ -467,7 +467,7 @@ test('granting sends the duration, reason and scope, and keeps the draft when it
   await pickSudo(harness, host, 'node.exec');
   assert.match(host.querySelector('#sudo-picked').textContent, /2 picked · 1 risky/);
   await harness.act(() => { sudoRow(host, 'groups.members.spawn').querySelector('.perm-scope-twisty').click(); });
-  await harness.input(host.querySelector('.perm-scope-free'), 'dev');
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'dev');
   await harness.act(() => { host.querySelector('.sudo-presets button:nth-child(2)').click(); });
   await harness.input(host.querySelector('#sudo-reason'), 'release');
   assert.equal(submit().textContent, 'Grant 2 for 15m');
@@ -492,8 +492,8 @@ test('a slug the agent already holds can be scoped, and the row says that narrow
   assert.ok(row().querySelector('button.perm-scope-twisty'));
   assert.equal(row().querySelector('.perm-narrows-held'), null, 'no scope, nothing narrows');
   await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
-  await harness.input(host.querySelector('.perm-scope-free'), 'dev');
-  await harness.act(() => { host.querySelector('.perm-scope-free-add').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'dev');
+  await harness.act(() => harness.fireEvent(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'keydown', { key: 'Enter' }));
   assert.match(row().querySelector('.perm-narrows-held').textContent, /replaces its own, group and default access/);
   await mounted.unmount();
 });
@@ -515,7 +515,7 @@ test('a peer draft still being typed drops the use limit from the grant', async 
   await pickSudo(harness, host, 'agent.spawn');
   await harness.input(sudoRow(host, 'agent.spawn').querySelector('.perm-uses input'), '3');
   await harness.act(() => { sudoRow(host, 'agent.spawn').querySelector('.perm-scope-twisty').click(); });
-  await harness.input(host.querySelector('.perm-scope-free'), 'inst_peer');
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'inst_peer');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(payloads[0].uses, undefined);
   assert.deepEqual(payloads[0].scopes, { 'agent.spawn': { peer: ['inst_peer'] } });
@@ -531,8 +531,8 @@ test('a peer-scoped grant says why it takes no use limit, and sends none', async
   const row = () => sudoRow(host, 'agent.spawn');
   await harness.input(row().querySelector('.perm-uses input'), '3');
   await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
-  await harness.input(host.querySelector('.perm-scope-free'), 'inst_peer');
-  await harness.act(() => { host.querySelector('.perm-scope-free-add').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'inst_peer');
+  await harness.act(() => harness.fireEvent(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'keydown', { key: 'Enter' }));
   assert.equal(row().querySelector('.perm-uses input'), null);
   assert.match(row().querySelector('.perm-uses.none').title, /scoped to a peer/);
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });

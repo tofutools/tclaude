@@ -16,7 +16,7 @@ import {
   DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, groupMembers, permissionRows,
   permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
   RESOURCE_KIND_LABELS, SCOPE_CHIPS_SHOWN, SCOPE_COMBOBOX_DIMS, scopeComboItems, scopeCountText,
-  scopeCatalogueIndex, scopeDimUsesCombobox, scopeValueLabel, umbrellaCover,
+  scopeCatalogueIndex, scopeValueLabel, umbrellaCover,
   scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
   sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
 } from './message-access-dialog-model.js';
@@ -516,32 +516,22 @@ function PermissionFilter({ value, onChange }) {
       onClick=${() => { onChange(''); inputRef.current?.focus(); }}>×</button>`}</div>`;
 }
 
-// holdFocus keeps the focused element focused through a mousedown on a
-// control that acts on it. The + beside a scope dimension's free-text box is
-// the case: browsers that focus a button on mousedown would blur the box
-// first, commit there, and then never dispatch the click to the (now inert)
-// button, while browsers that leave focus alone commit on the click — same
-// outcome, but only ever one of the two paths per browser, and the button
-// visibly goes inert under the cursor mid-click. Suppressing the focus move
-// makes the click the one gesture that commits, everywhere.
-const holdFocus = (event) => event.preventDefault();
-
 // ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
 // is editable here the moment the daemon advertises it.
 //
-// The free-text field is the ONLY way to narrow a dimension the daemon has no
-// catalogue for (remote, process_template, target_agent), so a value typed
-// there must not depend on the operator knowing to press Enter. The rule is:
-// a typed value commits whenever the box is left (Enter, the + button, blur),
-// and onDraft reports whatever is still uncommitted so Save can flush it
-// instead of silently discarding it. A box that leaves the screen without
-// committing withdraws its draft (the unmount cleanup below), so what Save
+// Every dimension, however short its catalogue, is one type-to-filter box
+// (tcl-4wt1wu) that also takes a typed value: the ONLY way to narrow a
+// dimension the daemon has no catalogue for (remote, process_template,
+// target_agent). So a typed value must not depend on the operator knowing to
+// press Enter: it commits on Enter or when the box is left, and onDraft
+// reports whatever is still uncommitted so Save can flush it instead of
+// silently discarding it. A box that leaves the screen without committing
+// withdraws its draft (ScopeDimCombobox's unmount cleanup), so what Save
 // writes is always what the dialog was showing.
 function ScopeDimEditor(props) {
-  return scopeDimUsesCombobox(props.dim, props.options)
-    ? html`<${ScopeDimCombobox} ...${props} />` : html`<${ScopeDimSelect} ...${props} />`;
+  return html`<${ScopeDimCombobox} ...${props} />`;
 }
 
 function ScopeDimLabel({ dim, declared }) {
@@ -549,18 +539,18 @@ function ScopeDimLabel({ dim, declared }) {
       title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>`;
 }
 
-// ScopeDimCombobox edits a dimension whose catalogue can be long: the
-// resource= catalogue the daemon serves on demand, loaded once when the
-// drawer opens, or a snapshot catalogue past SCOPE_SELECT_MAX values. It is
-// the shared FilterCombobox, so nothing here renders more than a handful of
-// rows however many values there are. A value the catalogue does not list is
-// typed and committed with Enter, which the daemon validates on save.
+// ScopeDimCombobox edits a dimension's values: the snapshot catalogue the
+// daemon offers, or for resource= the catalogue it serves on demand, loaded
+// once when the drawer opens. It is the shared FilterCombobox, so nothing
+// here renders more than a handful of rows however many values there are. A
+// value the catalogue does not list is typed and committed with Enter, or by
+// leaving the box, and the daemon validates it on save.
 //
-// Text left in the box is reported as this dimension's draft, as the plain
-// box's is, so Save folds it in rather than writing the grant wider than the
-// operator meant: it becomes the matching catalogue key when the text names
-// one exactly, and is otherwise taken as typed for the daemon to accept or
-// refuse. Either way the grant is never saved unscoped by accident.
+// Text still in the box is reported as this dimension's draft, so Save folds
+// it in rather than writing the grant wider than the operator meant: it
+// becomes the matching catalogue key when the text names one exactly, and is
+// otherwise taken as typed for the daemon to accept or refuse. Either way the
+// grant is never saved unscoped by accident.
 function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loadValues, onDraft }) {
   const served = SCOPE_COMBOBOX_DIMS.includes(dim);
   const [catalogue, setCatalogue] = useState(served ? null : []);
@@ -590,7 +580,7 @@ function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loa
         kindLabels=${RESOURCE_KIND_LABELS} ariaLabel=${`Find a ${dim} value`}
         placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
         emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
-        freeText=${(text) => text}
+        freeText=${(text) => text} commitOnBlur
         literal=${served ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:') : null}
         onQuery=${(text) => {
     const typed = text.trim();
@@ -649,64 +639,6 @@ function ScopeChipSheet({ dim, values, catalogue, remove }) {
     ${pages > 1 ? html`<div class="perm-scope-sheet-pager ui-hint">${at * SCOPE_SHEET_PAGE + 1}–${at * SCOPE_SHEET_PAGE + rows.length} of ${matched.length}
       <button data-ui-exempt type="button" aria-label="Previous page" disabled=${at === 0} onClick=${() => setPage(at - 1)}>‹</button>
       <button data-ui-exempt type="button" aria-label="Next page" disabled=${at >= pages - 1} onClick=${() => setPage(at + 1)}>›</button></div>` : null}
-  </div>`;
-}
-
-function ScopeDimSelect({ dim, values, options, onChange, declared = true, onDraft }) {
-  const [draft, setDraft] = useState('');
-  const remove = (value) => onChange(values.filter((item) => item !== value));
-  const add = (value) => {
-    const clean = String(value || '').trim();
-    if (!clean || values.includes(clean)) return;
-    onChange([...values, clean].sort());
-  };
-  // onDraft is a fresh closure every render, so the unmount cleanup reads it
-  // through a ref rather than capturing the one from the first render.
-  const onDraftRef = useRef(onDraft);
-  onDraftRef.current = onDraft;
-  const editDraft = (value) => {
-    setDraft(value);
-    onDraft?.(dim, value);
-  };
-  const commitDraft = () => {
-    if (!draft.trim()) return;
-    add(draft);
-    editDraft('');
-  };
-  // Every way this editor can vanish other than the twisty — the slug moved
-  // off Grant, a stale dimension emptied out of scopeDimRows, the drawer
-  // switching slugs — takes the box off screen with its draft still armed.
-  // Withdraw it here, at the one point common to all of them, so Save cannot
-  // write a matcher the operator abandoned and can no longer see.
-  useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
-  const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
-  return html`<div class="perm-scope-dim" data-dim=${dim}>
-    <${ScopeDimLabel} dim=${dim} declared=${declared} />
-    <div class="perm-scope-dim-body">
-      <span class="perm-scope-chips">
-        ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
-          <button data-ui-exempt type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`)}
-        ${unused.length ? html`<${Select} class="perm-scope-add" aria-label=${`Add a ${dim} value`}
-          onChange=${(event) => add(event.currentTarget.value)}>
-          <option value="" selected>+ add…</option>
-          ${unused.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
-        <//>` : null}
-        <input type="text" class="perm-scope-free" value=${draft}
-          placeholder=${unused.length ? 'or type a value' : 'type a value'}
-          autocomplete="off" spellcheck=${false} aria-label=${`Type a ${dim} value`}
-          onInput=${(event) => editDraft(event.currentTarget.value)}
-          onBlur=${commitDraft}
-          onKeyDown=${(event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
-    event.preventDefault();
-    commitDraft();
-  }} />
-        <${Button} class="perm-scope-free-add" aria-disabled=${draft.trim() ? 'false' : 'true'}
-          aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
-          onMouseDown=${holdFocus} onClick=${commitDraft}>+<//>
-      </span>
-      ${values.length ? null : html`<div class="perm-scope-hint ui-hint">empty — unconstrained on this dimension</div>`}
-    </div>
   </div>`;
 }
 

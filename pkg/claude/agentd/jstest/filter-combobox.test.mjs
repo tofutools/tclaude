@@ -178,3 +178,34 @@ test('Enter on a label two rows share takes the highlighted one', async (t) => {
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.deepEqual(changes, ['agt_2']);
 });
+
+test('commitOnBlur keeps what was typed when the box is left', async (t) => {
+  const harness = await createPreactHarness(t);
+  const items = [{ key: 'alpha', label: 'Alpha' }, { key: 'beta', label: 'Beta' }];
+  let opened = await mountCombobox(harness, { items, value: [], freeText: (text) => text, commitOnBlur: true });
+  await harness.act(() => harness.fireEvent(opened.input, 'focus'));
+  await harness.input(opened.input, 'beta');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.deepEqual(opened.changes.at(-1), ['beta'], 'a typed row is taken by its key');
+  await harness.act(() => harness.fireEvent(opened.input, 'focus'));
+  await harness.input(opened.input, 'gamma');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.deepEqual(opened.changes.at(-1), ['beta', 'gamma'], 'free text is taken as typed');
+  assert.equal(opened.input.value, '', 'the box empties once it commits');
+  await harness.act(() => harness.fireEvent(opened.input, 'focus'));
+  await harness.input(opened.input, 'alp');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.deepEqual(opened.changes.at(-1), ['beta', 'gamma'], 'a fragment of a row is a search, not a value');
+  assert.equal(opened.input.value, 'alp', 'the fragment stays in the box');
+  await harness.act(() => harness.fireEvent(opened.input, 'keydown', { key: 'Escape' }));
+  assert.equal(opened.input.value, '', 'Escape backs out of what was typed');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.equal(opened.changes.length, 2, 'so leaving the box then adds nothing');
+  await opened.mounted.unmount();
+
+  opened = await mountCombobox(harness, { items, value: [], freeText: (text) => text });
+  await harness.input(opened.input, 'gamma');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.deepEqual(opened.changes, [], 'without commitOnBlur, leaving the box commits nothing');
+  await opened.mounted.unmount();
+});
