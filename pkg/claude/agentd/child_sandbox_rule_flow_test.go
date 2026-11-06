@@ -77,4 +77,7 @@ func TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated(t *te
 	})
 	require.Equalf(t, http.StatusConflict, child.Code, "spawn body=%s", child.Raw)
 	assert.Contains(t, string(child.Raw), "sandbox_profile_changed")
+	// The re-probe's own refusal, not the child's later snapshot revalidation,
+	// which answers with the same code.
+	assert.Contains(t, string(child.Raw), "recreate agent-owned directory for GOCACHE")
 }
