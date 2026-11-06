@@ -102,6 +102,11 @@ function fieldFor(doc, root, id) {
   return choice && root.contains(choice) ? choice : el;
 }
 
+// choiceDisabled is a choice the operator could not pick in either: disabled
+// itself, or its box disabled from outside (a remote spawn locks the box of a
+// field the peer decides, as it does a <select>).
+const choiceDisabled = (el) => el.classList.contains('disabled') || [...el.querySelectorAll('input')].some((box) => box.disabled);
+
 // choiceValue accepts a choice's key or its label ('' for none, where none is
 // one), as optionValue does an option's.
 function choiceValue(el, value) {
@@ -320,7 +325,7 @@ function refusal(form, watch, el, id) {
   if (!form.accepts(id) || (el && !isField(el))) return 'not_fillable';
   if (!el) return 'not_available';
   if (el.matches(MASKED) || el.closest('[data-capture-mask]')) return 'sensitive';
-  if (el.disabled || el.readOnly || (isChoice(el) && el.classList.contains('disabled'))) return 'disabled';
+  if (el.disabled || el.readOnly || (isChoice(el) && choiceDisabled(el))) return 'disabled';
   if (!form.showsAll && !el.getClientRects().length) return 'not_available';
   if (watch.owned.has(id) || form.resets(id).some((reset) => watch.owned.has(reset))) return 'operator_edited';
   return '';

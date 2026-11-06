@@ -136,6 +136,20 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
   assert.deepEqual(live, ['agent-spawn-cancel', 'agent-spawn-effort', 'agent-spawn-init-msg', 'agent-spawn-model-codex',
     'agent-spawn-model-custom', 'agent-spawn-model-input', 'agent-spawn-name', 'agent-spawn-role', 'agent-spawn-save-profile', 'agent-spawn-source-local', 'agent-spawn-source-target', 'agent-spawn-submit'], 'fail-closed: everything else is disabled (Save as profile saves on this node)');
 
+  // A type-to-filter choice the peer decides is locked to an agent's fill too,
+  // as its <select> was (tcl-alhauf): the lock disables its box.
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  try {
+    const before = q('#agent-spawn-worktree').dataset.value;
+    const result = await fills.applyFill({ win: harness.window, tick: () => flush(harness), request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-worktree', value: '__new__' }] } });
+    assert.equal(result.fields[0].status, 'disabled', 'the peer\'s worktree is not the agent\'s to fill');
+    assert.equal(q('#agent-spawn-worktree').dataset.value, before);
+  } finally {
+    if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects;
+  }
   const name = q('#agent-spawn-name'); setValue(name, 'parser'); await harness.act(() => harness.fireEvent(name, 'input'));
   const brief = q('#agent-spawn-init-msg'); setValue(brief, 'port the parser'); await harness.act(() => harness.fireEvent(brief, 'input'));
   await comboPick(harness, q('#agent-spawn-model'), 'opus');

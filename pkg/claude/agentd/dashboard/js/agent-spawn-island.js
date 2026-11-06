@@ -1338,7 +1338,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     : profileItems([
       { name: SANDBOX_PROFILE_NONE, descr: 'none omit' },
       ...(sandboxPolicy.profiles || []).map((profile) => ({ name: profile.name })),
-    ]).map((item) => (item.key === SANDBOX_PROFILE_NONE ? { ...item, label: '— none (omit all tclaude profile values) —', hint: '' } : item));
+    ]).map((item) => (item.key === SANDBOX_PROFILE_NONE ? { ...item, label: '— none (omit all tclaude profile values) —', hint: '' } : item))
+      // A seeded profile reads as itself, not as missing, while the policy that
+      // lists it is still loading.
+      .concat(!policyReady && draft.sandboxProfile && draft.sandboxProfile !== SANDBOX_PROFILE_NONE
+        && !(sandboxPolicy.profiles || []).some((profile) => profile.name === draft.sandboxProfile)
+        ? [{ key: draft.sandboxProfile, label: draft.sandboxProfile, hint: 'loading…' }] : []);
   const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model, Date.now(), draft.permissionOverrides);
   const usageChoice = usageChoices.find((o) => o.value === draft.usageFrom) || null;
   const subscriptionRow = !!subscription && (remote || target) && (draft.harness || 'claude') === 'claude';
