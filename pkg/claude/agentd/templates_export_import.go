@@ -483,6 +483,25 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid task-force JSON: "+err.Error())
 		return
 	}
+	if a := peerGrantFromRequest(r); a != nil {
+		// The embedded profiles and roles carry launch settings and grants
+		// for this node's spawns, which import judges against a local caller
+		// only: from a linked node they take unrestricted trust.
+		if len(env.Profiles) > 0 || len(env.Roles) > 0 {
+			writeError(w, http.StatusForbidden, "permission",
+				"a task force that embeds spawn profiles or roles takes unrestricted trust; export it without them")
+			return
+		}
+		if len(env.SavedPrompts) > 0 {
+			if _, ok := a.gate(w, r, PermPromptsManage, ActionContext{}); !ok {
+				return
+			}
+		}
+		if fail := peerTemplateEditFailure(r, nil, env.Template); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+	}
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
 

@@ -106,6 +106,9 @@ func (a *peerGrantAuthority) allowsDefaultProfile(name string) error {
 	if name == "" {
 		return nil
 	}
+	if a.group == nil {
+		return fmt.Errorf("a group's default profile takes a group grant")
+	}
 	return checkSelectableProfile(a.peer, a.group.ID, name)
 }
 
@@ -113,7 +116,7 @@ func (a *peerGrantAuthority) allowsDefaultProfile(name string) error {
 // saved prompts, which open every spawn's brief there: only with the grant
 // to choose a spawn's saved prompts.
 func (a *peerGrantAuthority) allowsDefaultPrompts() bool {
-	return peerSpawnFieldHeld(a.peer, a.group.ID, PermGroupsMembersSpawnPrompts)
+	return a.group != nil && peerSpawnFieldHeld(a.peer, a.group.ID, PermGroupsMembersSpawnPrompts)
 }
 
 // allowsParent reports whether a peer may nest the group under parent: one
@@ -130,6 +133,16 @@ func (a *peerGrantAuthority) allowsParent(parent string) bool {
 // one the peer's grants cover, and a gate naming a group must name the
 // route's own.
 func (a *peerGrantAuthority) gate(w http.ResponseWriter, r *http.Request, perm string, actx ActionContext) (string, bool) {
+	if a.group == nil {
+		// A library route's authority (peer_library.go) is node-wide: it
+		// answers no gate that names a group.
+		if !a.gates[perm] || actx.Group != "" || actx.structuralGroup != "" {
+			writeError(w, http.StatusForbidden, "permission", "this node does not grant you "+perm)
+			return "", false
+		}
+		recordAuthorizedPermission(r, perm, 0)
+		return "", true
+	}
 	other := func(name string) bool { return name != "" && name != a.group.Name }
 	if !a.gates[perm] || other(actx.Group) || other(actx.structuralGroup) {
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for group:%s", perm, a.group.Name))

@@ -132,7 +132,7 @@ func writeRedacted(w http.ResponseWriter, rec *httptest.ResponseRecorder, redact
 // operator's view later stays the operator's until it is listed here. Left
 // out: programAuthorizations, programBounds (directories and sandboxes), a
 // command's program argv and bound agent prompt (the template's own text,
-// which is not peer-readable), and a blocked branch's reason (it carries the
+// which only process.templates.read shows), and a blocked branch's reason (it carries the
 // observation's error, which can name host paths).
 var (
 	peerRunViewKeys = []string{"id", "templateRef", "params", "status", "stateVersion", "checkpoint", "action",

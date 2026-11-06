@@ -119,6 +119,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
 
 		if existing == nil {
+			if fail := peerTemplateEditFailure(r, nil, templateToJSON(t)); fail != nil {
+				writeSpawnFailure(w, fail)
+				return
+			}
 			id, err := db.CreateGroupTemplate(t)
 			if errors.Is(err, db.ErrGroupTemplateNameTaken) {
 				if body.Update && attempt == 0 {
@@ -223,6 +227,11 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		// the curated value when refreshing a template from its running group.
 		t.PerAgentWorktrees = existing.PerAgentWorktrees
 		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+		was := templateToJSON(existing)
+		if fail := peerTemplateEditFailure(r, &was, templateToJSON(t)); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
 		}

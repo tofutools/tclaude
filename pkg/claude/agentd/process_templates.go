@@ -457,7 +457,7 @@ func handleProcessTemplateCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_template_invalid_id", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "auth", err.Error())
 		return
@@ -569,7 +569,7 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	// raw YAML whose content canonicalization would silently drop, a model
 	// CanonicalYAML cannot represent, or a template identity the
 	// content-addressed store cannot safely key is blocked.
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "auth", err.Error())
 		return

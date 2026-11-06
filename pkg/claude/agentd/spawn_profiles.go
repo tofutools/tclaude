@@ -1407,6 +1407,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeSpawnFailure(w, fail)
 			return
 		}
+		if fail := peerProfileEditFailure(r, existing, p); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
 		p.ID = existing.ID
 		if err := db.UpdateSpawnProfile(p); errors.Is(err, db.ErrSpawnProfileNameTaken) {
 			writeError(w, http.StatusConflict, "exists", err.Error())
@@ -1435,6 +1439,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		if existing == nil {
 			writeError(w, http.StatusNotFound, "not_found", "no such profile")
+			return
+		}
+		if fail := peerProfileEditFailure(r, existing, nil); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		n, err := db.DeleteSpawnProfile(existing.Name)

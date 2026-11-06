@@ -87,6 +87,9 @@ var pinnedFedInstancePeerSlugs = map[string]bool{
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true,
 	// Usage sharing for fleet limits, and managing this node's usage rules.
 	PermUsageRead: true, PermUsageRulesManage: true,
+	// This node's libraries, authored from a peer's dashboard (peer_library.go).
+	PermPromptsManage: true, PermRolesManage: true, PermTemplatesManage: true, PermProfilesManage: true,
+	PermProcessTemplatesRead: true, PermProcessTemplatesManage: true,
 }
 
 func TestFederationPeerSlugTablesArePinned(t *testing.T) {
