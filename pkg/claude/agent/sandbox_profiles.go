@@ -650,11 +650,7 @@ func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdou
 	if err := DaemonRequest(http.MethodPatch, "/v1/sandbox-profiles/"+url.PathEscape(name), profile, &resp, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
 	}
-	if resp.Name == name {
-		fmt.Fprintf(stdout, "Updated sandbox profile %q\n", name)
-	} else {
-		fmt.Fprintf(stdout, "Updated sandbox profile %q → renamed to %q\n", name, resp.Name)
-	}
+	printLibraryUpdated(stdout, "sandbox profile", name, resp.Name)
 	echoSandboxAccessNotices(stdout, resp.AccessNotices)
 	return rcOK
 }

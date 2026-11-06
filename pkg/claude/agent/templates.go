@@ -499,7 +499,7 @@ func templatesCreateCmd() *cobra.Command {
 }
 
 func runTemplatesCreate(p *templatesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -552,7 +552,7 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: a template name is required")
 		return rcInvalidArg
 	}
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -567,32 +567,8 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated template %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated template %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "template", name, resp.Name)
 	return rcOK
-}
-
-// loadTemplateFile reads a template JSON file (or stdin for "-") and
-// unmarshals it. A missing --file, an unreadable path, or malformed
-// JSON each surface as a clear error with the matching rc.
-func loadTemplateFile(file string, stdin io.Reader, stderr io.Writer) (*templateJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a template JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var tmpl templateJSON
-	if err := json.Unmarshal([]byte(raw), &tmpl); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid template JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &tmpl, rcOK
 }
 
 // ---- rm ----

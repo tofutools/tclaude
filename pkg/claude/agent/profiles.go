@@ -332,7 +332,7 @@ func profilesCreateCmd() *cobra.Command {
 }
 
 func runProfilesCreate(p *profilesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	prof, rc := loadProfileFile(p.File, stdin, stderr)
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -387,7 +387,7 @@ func runProfilesEdit(p *profilesEditParams, stdin io.Reader, stdout, stderr io.W
 		fmt.Fprintln(stderr, "Error: a profile name is required")
 		return rcInvalidArg
 	}
-	prof, rc := loadProfileFile(p.File, stdin, stderr)
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -408,30 +408,8 @@ func runProfilesEdit(p *profilesEditParams, stdin io.Reader, stdout, stderr io.W
 	if rc := verifySubmittedDisabledState(prof, resp.Profile, resp.SupportsExplicitDisabled, stderr); rc != rcOK {
 		return rc
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated profile %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated profile %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "profile", name, resp.Name)
 	return rcOK
-}
-
-// loadProfileFile reads a profile JSON file (or stdin for "-") and unmarshals it.
-func loadProfileFile(file string, stdin io.Reader, stderr io.Writer) (*profileJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a profile JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var prof profileJSON
-	if err := json.Unmarshal([]byte(raw), &prof); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid profile JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &prof, rcOK
 }
 
 // ---- disable / enable ----
