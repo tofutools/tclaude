@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -89,7 +90,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	// shape as a real create so the client reads it identically.
 	if body.Preview {
 		t, _, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
-		if err := peerProjectFromGroupTemplate(r, g, t, len(members), true); err != nil {
+		if err := peerProjectFromGroupTemplate(r, g, t, len(members), true, &observedNotChosen); err != nil {
 			writeError(w, http.StatusForbidden, "permission", err.Error())
 			return
 		}
@@ -122,7 +123,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
-		if err := peerProjectFromGroupTemplate(r, g, t, len(members), false); err != nil {
+		if err := peerProjectFromGroupTemplate(r, g, t, len(members), false, &observedNotChosen); err != nil {
 			writeError(w, http.StatusForbidden, "permission", err.Error())
 			return
 		}
@@ -855,13 +856,14 @@ func sanitizeAgentName(s string) string {
 // peerProjectFromGroupTemplate holds a restricted peer's snapshot of g to
 // what g shows that peer (projectPeerGroupPermissions): its owners under
 // groups.owners.manage (an owner that is not a member, which the snapshot
-// adds after the members, is left out whole), the members' permission grants under
-// groups.settings.member-permissions, and its owner scopes under
-// groups.settings.owner-scopes. Leaving out an owner flag or a grant only
+// adds after the members, is left out whole) and its owner scopes under
+// groups.settings.owner-scopes. The members' own permission grants are
+// node-wide, not the group's member permission rows, and no peer surface
+// shows them yet, so a restricted peer gets none. Leaving out an owner flag or a grant only
 // narrows what a deploy confers. Leaving out the owner scopes would widen
 // what its owners hold, so only a preview drops them; a save from a group
 // with owner scopes the peer is not shown is refused.
-func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.GroupTemplate, memberCount int, preview bool) error {
+func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.GroupTemplate, memberCount int, preview bool, dropped *[]snapshotFieldDrop) error {
 	a := peerGrantFromRequest(r)
 	if a == nil {
 		return nil
@@ -875,16 +877,29 @@ func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.Group
 	}
 	if !slices.Contains(held, PermGroupsOwnersManage) && len(t.Agents) > memberCount {
 		t.Agents = t.Agents[:memberCount]
+		// The trace's notes name the agents they are about.
+		kept := map[string]bool{}
+		for _, ag := range t.Agents {
+			kept[ag.Name] = true
+		}
+		*dropped = slices.DeleteFunc(*dropped, func(d snapshotFieldDrop) bool { return !kept[d.Agent] })
 	}
 	for i := range t.Agents {
 		ag := &t.Agents[i]
 		if !slices.Contains(held, PermGroupsOwnersManage) {
 			ag.IsOwner = false
 		}
-		if !slices.Contains(held, PermGroupsSettingsMemberPermissions) {
-			ag.Permissions = []db.PermissionGrant{}
-			if ag.ProfileInline != nil {
-				ag.ProfileInline.PermissionOverrides = map[string]db.PermissionOverride{}
+		// TODO(tcl-6dgr88): follow S10a2's projection of per-agent overrides
+		// (permissions.grant in every group of the agent) once it lands.
+		ag.Permissions = []db.PermissionGrant{}
+		if ag.ProfileInline != nil {
+			ag.ProfileInline.PermissionOverrides = map[string]db.PermissionOverride{}
+			// A profile left holding nothing would still say the member has
+			// grants: one without them gets none.
+			rest := *ag.ProfileInline
+			rest.PermissionOverrides, rest.ContextFeatures = nil, nil
+			if len(ag.ProfileInline.ContextFeatures) == 0 && reflect.DeepEqual(rest, db.SpawnProfile{}) {
+				ag.ProfileInline = nil
 			}
 		}
 	}

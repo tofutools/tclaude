@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,8 @@ import (
 // scopes, which members own it and each member's permission grants. A
 // restricted peer is shown each only under the grant that shows it on the
 // group itself (peer_group_permissions.go), so a from-group preview or save
-// is no way around those grants.
+// is no way around those grants. A member's own grants are shown to no
+// restricted peer.
 
 // peerFromGroupFixture gives crew an owner scope, makes its member an owner
 // and grants the member a slug no other part of the fixture names. It also
@@ -26,6 +28,10 @@ func peerFromGroupFixture(t *testing.T) *peerProcessHarness {
 	require.NoError(t, err)
 	require.NoError(t, db.AddAgentGroupOwner(h.group.ID, "proc-crew-member", "human"))
 	require.NoError(t, db.GrantAgentPermission("proc-crew-member", agentd.PermGroupsMembersStop, "human"))
+	// A member with grants and nothing else its profile would record.
+	h.f.HaveConvWithTitle("crew-quiet", "quiet")
+	h.f.HaveMemberWithRole("crew", "crew-quiet", "quiet")
+	require.NoError(t, db.GrantAgentPermission("crew-quiet", agentd.PermGroupsMembersStop, "human"))
 	h.f.HaveConvWithTitle("crew-outside-owner", "outside-owner")
 	require.NoError(t, db.AddAgentGroupOwner(h.group.ID, "crew-outside-owner", "human"))
 	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
@@ -68,8 +74,22 @@ func TestPeerTemplateFromGroupPreviewWithholdsWhatTheGroupDoesNotShow(t *testing
 	require.Equal(t, 200, code, body)
 	assert.Contains(t, body, "narrow-profile")
 	assert.Contains(t, body, `"is_owner":true`)
-	assert.Contains(t, body, agentd.PermGroupsMembersStop)
 	assert.Contains(t, body, "outside-owner")
+	// A member's own grants are node-wide, not the group's rows that
+	// member-permissions shows: no restricted peer gets them (tcl-6dgr88).
+	assert.NotContains(t, body, agentd.PermGroupsMembersStop, "%s", body)
+	var tmpl struct {
+		Agents []struct {
+			Role          string          `json:"role"`
+			ProfileInline json.RawMessage `json:"profile_inline"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &tmpl))
+	for _, a := range tmpl.Agents {
+		if a.Role == "quiet" {
+			assert.Empty(t, a.ProfileInline, "a profile left empty would hint at grants: %s", body)
+		}
+	}
 }
 
 // A save cannot drop the owner scopes: a template without them deploys
