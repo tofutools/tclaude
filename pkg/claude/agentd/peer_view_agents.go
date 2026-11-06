@@ -78,6 +78,7 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"GET /api/groups":        {slugs: []string{PermAgentsStatusRead}, target: agentViewNode},
 	"GET /api/groups/{name}": {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
 	"GET /api/agents/{id}":   {slugs: []string{PermAgentsStatusRead}, target: agentViewAgent},
+	"GET /api/fleet":         {slugs: []string{PermFleetRead}, target: agentViewNode},
 	// Member lifecycle. A restart stops the session first, so it needs the
 	// stop grant too, as the receiver does.
 	"POST /api/agents/{id}/stop":    {slugs: []string{PermAgentStop}, target: agentViewAgent, destructive: true},
@@ -561,4 +562,76 @@ func agentPeerViewRefusal(instanceID, pattern string, r *http.Request, principal
 		}
 	}
 	return 0, "", ""
+}
+
+// agentPeerViewMetadataScope is the features and peer grants agent peer view
+// routes reach, which an agent principal's view metadata is limited to.
+func agentPeerViewMetadataScope() (features, slugs map[string]bool) {
+	features, slugs = map[string]bool{}, map[string]bool{}
+	rules := peerViewRules()
+	for pattern := range agentPeerViewRoutes {
+		if rule, ok := rules[pattern]; ok {
+			features[rule.feature] = true
+			slugs[rule.requires] = true
+		}
+	}
+	return features, slugs
+}
+
+// footprintGrantLists limits an agent principal's grant lists to the groups
+// its node checked its grants for and the agents in them: an agent learns
+// nothing of the groups outside its footprint. A node-wide route's footprint
+// has no groups, so it lists none.
+func footprintGrantLists(principal *proto.PeerViewAgent, groups []*db.AgentGroup, groupGrants, agentGrants map[string][]string) (map[string][]string, map[string][]string) {
+	if len(principal.Groups) == 0 {
+		return nil, nil
+	}
+	outGroups := map[string][]string{}
+	for name, held := range groupGrants {
+		if slices.Contains(principal.Groups, name) {
+			outGroups[name] = held
+		}
+	}
+	if len(agentGrants) == 0 {
+		return outGroups, agentGrants
+	}
+	var ids []int64
+	for _, g := range groups {
+		if !g.IsArchived() && slices.Contains(principal.Groups, g.Name) {
+			ids = append(ids, g.ID)
+		}
+	}
+	members, err := db.ListAgentGroupMembersBatch(ids)
+	if err != nil {
+		return outGroups, nil
+	}
+	outAgents := map[string][]string{}
+	for _, id := range ids {
+		for _, m := range members[id] {
+			if aid, err := db.AgentIDForConv(m.ConvID); err == nil && agentGrants[aid] != nil {
+				outAgents[aid] = agentGrants[aid]
+			}
+		}
+	}
+	return outGroups, outAgents
+}
+
+// filterGrantLists keeps, per key, only the grants in keep.
+func filterGrantLists(in map[string][]string, keep map[string]bool) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for k, held := range in {
+		var kept []string
+		for _, slug := range held {
+			if keep[slug] {
+				kept = append(kept, slug)
+			}
+		}
+		if len(kept) > 0 {
+			out[k] = kept
+		}
+	}
+	return out
 }

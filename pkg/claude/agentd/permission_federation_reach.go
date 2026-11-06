@@ -84,7 +84,7 @@ var slugFederationReach = map[string]FedReach{
 	PermDashboardFormsCapture:             {Kind: FedLocal, Why: "points at the local operator's own open dashboard"},
 	PermDashboardFormsFill:                {Kind: FedLocal, Why: "points at the local operator's own open dashboard"},
 	PermDashboardMark:                     {Kind: FedLocal, Why: "points at the local operator's own open dashboard"},
-	PermFleetRead:                         {Kind: FedPeerInstance, Pending: true},
+	PermFleetRead:                         {Kind: FedPeerInstance},
 	PermKnowledgeRead:                     {Kind: FedLocal, Why: "the docs and source of the build answering; a peer's agents read their own"},
 	PermBoardsRead:                        {Kind: FedPeerInstance, Pending: true},
 	PermBoardsWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},

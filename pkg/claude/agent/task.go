@@ -183,9 +183,12 @@ type taskRefResp struct {
 	Cleared       bool   `json:"cleared,omitempty"`
 	CallerConv    string `json:"caller_conv,omitempty"`
 	CallerAgentID string `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 func printTaskResult(stdout io.Writer, resp *taskRefResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

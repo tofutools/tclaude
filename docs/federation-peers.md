@@ -144,6 +144,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agent.move` | move a member agent to a peer, with `groups.members.retire` on the source |
 | `jobs.run` | one-shot remote jobs in that group, under a launch policy. See [Remote one-shot jobs](federation-work.md#remote-one-shot-jobs) |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `fleet.read` | the fleet brief: every active agent with its status, groups, task link and PRs, and what waits on the operator (unscoped only; read-only) |
 | `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see [The remote spawn dialog](federation-work.md#the-remote-spawn-dialog)) |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
 | `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
@@ -388,6 +389,7 @@ the dashboard. Two gates apply, and **both** must pass:
 | Route on the peer | Agent slug (`peer=` scope) |
 |---|---|
 | `GET snapshot`, `groups`, `groups/{name}`, `agents/{id}` | `agents.status.read` |
+| `GET fleet` | `fleet.read` (scope `peer=<peer>`; the peer grants `fleet.read`) |
 | `POST agents/{id}/stop` · `resume` · `restart` · `retire` · `clone` | `agent.stop` · `agent.resume` · both for restart · `agent.retire` · `agent.clone` |
 | `POST agents/{id}/rename` · `tags` · `task` · `notify` | `agent.rename` · `agent.tags` · `agent.task` (notify too) |
 | `PATCH groups/{name}/members/{conv}` | `groups.members.update` |
@@ -405,6 +407,40 @@ It refuses a grant the agent holds for local use, rather than replacing it.
 Both `peer-reach add` and `permissions grant --scope peer=…` warn for
 `agent.stop`, `agent.retire` and `groups.members.stop`, which end sessions
 on the peer, and for `agent.resume`, which a restart also needs.
+
+From the CLI, the member verbs take `member@peer`, where the member is an
+`agt_…` ID or a name the peer's catalog shows exactly once:
+
+```bash
+tclaude agent stop builder@bob
+tclaude agent resume agt_0123456789abcdef@bob
+tclaude agent retire builder@bob --no-shutdown
+tclaude agent rename "builder (night shift)" --target builder@bob
+tclaude agent task set https://example.com/t/42 --target builder@bob
+tclaude agent fleet --remote bob
+```
+
+The same commands work for the operator, through the operator's own peer
+view and the peer's grants. A local agent whose title is `builder@bob`
+always wins over the peer, and two of them are an ambiguous selector: the
+verb never falls through to the peer.
+
+Options that stay the peer operator's are refused locally:
+- `resume --recreate-dir` and `--send-keys`;
+- `rename --auto`;
+- `task show` (read the agent with `agent ls --node`).
+
+`retire` never deletes a peer's worktree or records a reason; the reply
+says so. Replies are marked as remote and untrusted: the CLI prints an
+untrusted-content line first, and `fleet --remote --json` carries
+`remote.untrusted`. Control characters are stripped from replies and errors.
+An agent's view metadata (`peer_view`) names `principal: agent` and lists
+only what agent views reach, for the groups its node checked its grants for.
+
+An agent that already holds `fleet.read` for this node, such as the Steward,
+keeps that grant: one grant per slug cannot hold both a local and a peer
+scope. Give it the peer reach through one of its groups instead:
+`tclaude agent permissions peer-reach add --group <its group> --peer bob --slug fleet.read`.
 
 Everything else on the peer view stays the operator's: moves and teleports,
 spawns (agents use the spawn request), sessions and shells, node management,

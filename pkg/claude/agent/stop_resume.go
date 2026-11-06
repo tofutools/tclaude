@@ -89,12 +89,15 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		Action        string `json:"action"`
 		Detail        string `json:"detail,omitempty"`
 		TmuxSession   string `json:"tmux_session,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.TmuxSession != "" {
 		fmt.Fprintf(stdout, "  tmux: %s\n", resp.TmuxSession)
 	}
@@ -180,12 +183,15 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Detail        string   `json:"detail,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
 		Changes       []string `json:"changes,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.Detail != "" {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
 	}
