@@ -28,9 +28,11 @@ const (
 	cacheTTL      = 5 * time.Minute
 )
 
-// fetchFunc, refreshTokenFunc, and credentialCandidatesFunc are swappable for testing.
+// fetchFunc, fetchRawFunc, refreshTokenFunc, and credentialCandidatesFunc are
+// swappable for testing.
 var (
 	fetchFunc        = Fetch
+	fetchRawFunc     = FetchRaw
 	refreshTokenFunc = RefreshAccessToken
 
 	// credentialCandidatesFunc enumerates login-token sources in priority
@@ -576,7 +578,7 @@ func FetchUsageRaw() ([]byte, error) {
 	}
 
 	slog.Info("FetchUsageRaw: retrying with new token")
-	body, retryErr := FetchRaw(newToken)
+	body, retryErr := fetchRawFunc(newToken)
 	if retryErr != nil {
 		slog.Warn("FetchUsageRaw: retry failed after token refresh", "error", retryErr)
 		return nil, retryErr
@@ -598,7 +600,7 @@ func fetchRawWithSources() ([]byte, error) {
 	}
 	var lastErr error
 	for i, c := range cands {
-		body, err := FetchRaw(c.token)
+		body, err := fetchRawFunc(c.token)
 		if err == nil {
 			return body, nil
 		}
