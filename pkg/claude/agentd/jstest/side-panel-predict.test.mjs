@@ -69,3 +69,39 @@ test('the debug overlay draws the last prediction: the landing dot, green when i
   assert.equal(predictDebugOn({ location: { search: '' }, localStorage: { getItem: () => '1' } }), true);
   assert.equal(predictDebugOn({ location: { search: '' }, localStorage: { getItem: () => null } }), false, 'off by default');
 });
+
+test('v2 helpers: the crossing must not brake at all, the peek grows towards the panel, and a stop near it reveals', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { crossingHolds, peekWidthFor, stopReveals, PREDICT } = await harness.importDashboardModule('js/side-panel-predict.js');
+  const ok = { peek: true, vx: 2 };
+  assert.equal(crossingHolds({ ...ok, px: 2.1 }), true, 'no braking');
+  assert.equal(crossingHolds({ ...ok, px: 2 * PREDICT.CROSS_BRAKE_RATIO }), true, 'at the ratio');
+  assert.equal(crossingHolds({ ...ok, px: 1.6 }), false, 'braking a little (0.8), which the peek itself allows');
+  assert.ok(1.6 >= 2 * PREDICT.BRAKE_RATIO, 'that braking still peeks');
+  assert.equal(crossingHolds({ peek: false, vx: 2, px: 2 }), false, 'only while the prediction holds');
+
+  const g = { startX: 500, fullLeft: 721, edgeX: 953, panelW: 264 };
+  assert.equal(peekWidthFor({ ...g, x: 500 }), PREDICT.PEEK_MIN_PX, 'starts at PEEK_MIN_PX');
+  assert.equal(peekWidthFor({ ...g, x: 721 }), 264, 'the panel’s width at its edge');
+  assert.equal(peekWidthFor({ ...g, x: 900 }), 264, 'and no wider');
+  assert.equal(peekWidthFor({ ...g, x: 600, prev: 200 }), 200, 'never shrinks while the prediction holds');
+  assert.equal(peekWidthFor({ ...g, startX: 800, x: 876 }), 155, 'from inside the panel’s area it grows towards the edge zone');
+
+  assert.equal(stopReveals(721, 721, 900), true, 'inside the full panel’s area');
+  assert.equal(stopReveals(700, 721, 700 + PREDICT.STOP_MARGIN_PX), true, 'within the margin of the peek');
+  assert.equal(stopReveals(700, 721, 701 + PREDICT.STOP_MARGIN_PX), false, 'beyond it');
+});
+
+test('the speed needed falls with the distance the motion started from, to a floor, and a start near the panel is never judged', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { predictEdgeLanding, PREDICT } = await harness.importDashboardModule('js/side-panel-predict.js');
+  const samples = line(560, 700, { n: 6, dt: 32 }); // 0.875 px/ms
+  const near = predictEdgeLanding(samples, EDGE, null, PREDICT, null, { x: 560, fullLeft: 721 });
+  const far = predictEdgeLanding(samples, EDGE, null, PREDICT, null, { x: 100, fullLeft: 721 });
+  assert.equal(near.reason, 'ok', `from 161px out (${near.minVx})`);
+  assert.equal(far.reason, 'slow', `from 621px out (${far.minVx})`);
+  assert.equal(far.minVx, PREDICT.MIN_VX);
+  const close = predictEdgeLanding(samples, EDGE, null, { ...PREDICT, NEAR_BAND_PX: 0 }, null, { x: 721, fullLeft: 721 });
+  assert.equal(close.minVx, PREDICT.MIN_VX_FLOOR, 'the floor at no distance');
+  assert.equal(predictEdgeLanding(samples, EDGE, null, PREDICT, null, { x: 640, fullLeft: 721 }).reason, 'near-band');
+});

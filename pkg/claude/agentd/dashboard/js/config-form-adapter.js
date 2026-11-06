@@ -1,4 +1,5 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
+import { SIDE_PANEL_TOGGLES, SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
 import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN, storedVoicePhrases, voiceClashProblem, voiceFormPhrase, voicePausesProblem } from './voice-config.js';
 import { syncVoiceSection } from './voice-config-section.js';
 import { $, $$ } from './helpers.js';
@@ -596,7 +597,12 @@ function populateConfigForm(cfg) {
   // its default (3) as a placeholder, so an absent key stays blank.
   $('#cfg-dashboard-always-show-open-prs').checked = !(cfg.dashboard && cfg.dashboard.always_show_open_prs === false);
   // Side panel edge reveal. Default on; only an explicit false unchecks it.
-  $('#cfg-dashboard-side-panel-edge-reveal').checked = !(cfg.dashboard && cfg.dashboard.side_panel_edge_reveal === false);
+  for (const { key, id } of SIDE_PANEL_TOGGLES) $('#' + id).checked = !(cfg.dashboard && cfg.dashboard[key] === false);
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
+    const v = cfg.dashboard && cfg.dashboard[`side_panel_${key}`];
+    $('#' + sidePanelTuningId(key)).value = v != null ? v : '';
+  }
+  syncCfgSidePanel();
   $('#cfg-dashboard-recent-pr-window-days').value = cfg.dashboard && cfg.dashboard.recent_pr_window_days != null
     ? cfg.dashboard.recent_pr_window_days : '';
 
@@ -1014,9 +1020,18 @@ function assembleConfig() {
   // resolver.
   if (!$('#cfg-dashboard-always-show-open-prs').checked) dashboard.always_show_open_prs = false;
   else delete dashboard.always_show_open_prs;
-  // side_panel_edge_reveal: on is the default, so store only the false.
-  if (!$('#cfg-dashboard-side-panel-edge-reveal').checked) dashboard.side_panel_edge_reveal = false;
-  else delete dashboard.side_panel_edge_reveal;
+  // The side panel's switches: on is the default, so store only the false.
+  // Its tuning values: blank is the default and stores nothing.
+  for (const { key, id } of SIDE_PANEL_TOGGLES) {
+    if (!$('#' + id).checked) dashboard[key] = false;
+    else delete dashboard[key];
+  }
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
+    const raw = $('#' + sidePanelTuningId(key)).value.trim();
+    const n = parseInt(raw, 10);
+    if (raw !== '' && Number.isFinite(n)) dashboard[`side_panel_${key}`] = n;
+    else delete dashboard[`side_panel_${key}`];
+  }
   // recent_pr_window_days: blank means "use the default" and drops the key; 0
   // is a meaningful value (filter off), so it is stored like any other number.
   // The daemon clamps out-of-range values, but keep the field honest here too.
@@ -1709,6 +1724,25 @@ function focusConfigSearch() {
   filterInput.select();
 }
 
+// syncCfgSidePanel greys out what the side panel's switches leave unused: the
+// peek needs the edge reveal, and its growth needs the peek.
+function syncCfgSidePanel() {
+  const reveal = $('#cfg-dashboard-side-panel-edge-reveal');
+  const predictive = $('#cfg-dashboard-side-panel-predictive-peek');
+  const growing = $('#cfg-dashboard-side-panel-growing-peek');
+  if (!reveal || !predictive || !growing) return;
+  predictive.disabled = !reveal.checked;
+  growing.disabled = !reveal.checked || !predictive.checked;
+}
+
+// resetCfgSidePanel puts the side panel's switches and tuning back to their
+// defaults in the form; Save writes it.
+function resetCfgSidePanel() {
+  for (const { id } of SIDE_PANEL_TOGGLES) $('#' + id).checked = true;
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) $('#' + sidePanelTuningId(key)).value = '';
+  syncCfgSidePanel();
+}
+
 function handleConfigEvent(event) {
   const target = event.target;
   const id = target.id;
@@ -1731,6 +1765,7 @@ function handleConfigEvent(event) {
     if (notifyType) setCfgNotifyType(notifyType, target.checked);
     if (id === 'ask-profile') applyAskProfileState();
     if (id === 'cfg-gitproxy-protected-mode') syncCfgGitProxy();
+    if (SIDE_PANEL_TOGGLES.some((toggle) => toggle.id === id)) syncCfgSidePanel();
     if (id === 'cfg-remote-host' || id === 'cfg-remote-port') syncCfgRemoteStatus();
     if (id === 'cfg-remote-enabled') {
       const portEl = $('#cfg-remote-port');
@@ -1749,6 +1784,7 @@ function handleConfigEvent(event) {
   }
   if (id === 'cfg-reload') { void loadConfigTab(); return; }
   if (id === 'cfg-save') { void saveConfig(); return; }
+  if (id === 'cfg-side-panel-reset') { resetCfgSidePanel(); return; }
   if (id === 'cfg-filter-clear') {
     const filterInput = $('#cfg-filter');
     if (filterInput) { filterInput.value = ''; filterInput.focus(); }

@@ -560,6 +560,11 @@ test('a dialog or popover drawn over the panel\'s band is not the panel', async 
 // are the risk, so most of these say when it must NOT peek.
 
 const FLING = { x0: 300, x1: 800 }; // 500px in ~96ms: a fling at the edge
+// With the panel's real box (withPageScrollbar), the open panel's left edge
+// would be at FULL_LEFT; SHORT_FLING stops short of it, so it peeks without
+// crossing into the full panel's area (which reveals).
+const FULL_LEFT = WIDTH - SCROLLBAR - PANEL_W;
+const SHORT_FLING = { x0: 300, x1: 700 };
 
 test('a fast, level fling at the edge peeks the panel before the pointer gets there', async (t) => {
   const s = await shell(t);
@@ -578,7 +583,7 @@ test('moving onto the peeking strip reveals at once; the page scrollbar beside i
 
   s = await shell(t);
   const { onScrollbar } = withPageScrollbar(s);
-  s.flick(FLING);
+  s.flick(SHORT_FLING);
   onScrollbar();
   assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, the dwell still decides');
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
@@ -721,7 +726,7 @@ test('a press, a drag, Escape, a tab switch or the setting going off takes a pee
 test('a fling to the page scrollbar peeks, and a press there takes it back with no reveal', async (t) => {
   const s = await shell(t);
   const { onScrollbar } = withPageScrollbar(s);
-  s.flick({ x0: 300, x1: 800 });
+  s.flick(SHORT_FLING);
   assert.equal(s.peeking(), true);
   onScrollbar();
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS / 2);
@@ -736,11 +741,235 @@ test('a peek is not a reveal: it runs no hover-out, so repeated short flings nev
   const { PEEK_RETRACT_MS } = (await s.harness.importDashboardModule('js/side-panel-predict.js')).PREDICT;
   withPageScrollbar(s);
   for (let i = 0; i < 6; i++) {
-    s.flick({ x0: 300, x1: 800, y0: 300 + i });
+    s.flick({ ...SHORT_FLING, y0: 300 + i });
     assert.equal(s.peeking(), true, `fling ${i + 1} peeks`);
-    s.move(s.content, 780, { clientY: 300 + i });
+    s.move(s.content, 680, { clientY: 300 + i });
     s.timers.advance(PEEK_RETRACT_MS + s.hoverClose);
     assert.equal(s.peeking(), false, `fling ${i + 1}: stopped short, it retracts`);
     assert.equal(s.revealed(), false, `fling ${i + 1}: never a reveal`);
   }
+});
+
+// v2 (tcl-wdwbm2): the peek grows, crossing into or stopping in the full
+// panel's area reveals, a cancel shrinks before it retracts, and a motion is
+// judged from where it started. All on the panel's real box: the open panel
+// would start at FULL_LEFT (721), the edge zone at 953, and the near-edge band
+// is the 100px left of FULL_LEFT.
+
+const peekW = (s) => parseFloat(s.doc.body.style.getPropertyValue('--dock-peek-w')) || 0;
+
+test('the peek grows as the pointer closes in on the open panel’s edge, up to the panel’s width', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  const widths = [];
+  const { x0, x1 } = SHORT_FLING;
+  s.move(s.content, x0);
+  for (let i = 1; i <= 6; i++) {
+    s.timers.advance(16);
+    s.move(s.content, x0 + ((x1 - x0) * i) / 6);
+    if (s.peeking()) widths.push(peekW(s));
+  }
+  assert.ok(widths.length >= 2, `it peeks mid-fling (${widths})`);
+  assert.equal(widths[0], 48, 'it starts at the peek’s start width');
+  assert.ok(widths.every((w, i) => i === 0 || w >= widths[i - 1]), `and only grows (${widths})`);
+  assert.ok(widths.at(-1) > 200 && widths.at(-1) <= PANEL_W, `nearly the panel’s width 21px out (${widths.at(-1)})`);
+});
+
+test('crossing where the open panel’s edge would be reveals the panel', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.flick(FLING);
+  assert.equal(s.revealed(), true, 'past FULL_LEFT with the prediction holding');
+  assert.equal(s.peeking(), false);
+  assert.equal(peekW(s), 0, 'the peek width is cleared');
+});
+
+test('a stop inside the full panel’s area, or just short of the peek, reveals; a stop well short does not', async (t) => {
+  const { STOP_MS, PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  let s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 300, x1: 715 });
+  assert.equal(s.peeking(), true, 'peeking, 6px short of FULL_LEFT');
+  s.timers.advance(STOP_MS - 1);
+  assert.equal(s.revealed(), false, 'not before STOP_MS');
+  s.timers.advance(1);
+  assert.equal(s.revealed(), true, 'stopped just short of the grown peek: a reveal, not a retract');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.reveal.setSidePanelTuning({ growing_peek: false }, s.doc);
+  t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
+  s.flick({ x0: 300, x1: 715 });
+  s.timers.advance(STOP_MS);
+  assert.equal(s.revealed(), false, 'with no growth, 6px short of the panel is far from the 48px peek');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 300, x1: 600 });
+  assert.equal(s.peeking(), true);
+  s.timers.advance(PEEK_RETRACT_MS + 10);
+  assert.equal(s.revealed(), false, 'a stop 121px short of the panel lets the peek go');
+  assert.equal(s.peeking(), false);
+});
+
+test('a braking stop on content under the would-be panel does not peek or reveal', async (t) => {
+  for (const [why, x1] of [['inside the full panel’s area', 820], ['just short of it', 715]]) {
+    const s = await shell(t);
+    withPageScrollbar(s);
+    s.flick({ x0: 300, x1, ease: 0.55, steps: 8 });
+    assert.equal(s.peeking(), false, `${why}: braking, no peek`);
+    s.timers.advance(2000);
+    assert.equal(s.revealed(), false, `${why}: and no reveal, by crossing or by the stop`);
+  }
+});
+
+test('the fold handle: a fling at its height neither peeks nor reveals by crossing', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  const handle = s.doc.getElementById('dock-toggle');
+  handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
+  s.flick(FLING);
+  assert.equal(s.peeking(), false);
+  assert.equal(s.revealed(), false, 'past FULL_LEFT, but aimed at the handle');
+  s.move(handle, WIDTH - 10);
+  handle.click();
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'the click still pins it open');
+});
+
+test('a prediction that stops holding shrinks the peek back before it retracts', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  const { PEEK_RETRACT_MS, PEEK_MIN_PX } = s.reveal.REVEAL_DEFAULTS;
+  s.flick(SHORT_FLING);
+  assert.ok(peekW(s) > 200, `grown (${peekW(s)})`);
+  s.timers.advance(16);
+  s.move(s.content, 690);
+  assert.equal(s.peeking(), true, 'still peeking');
+  assert.equal(peekW(s), PEEK_MIN_PX, 'shrunk back to the start width at once');
+  s.timers.advance(PEEK_RETRACT_MS);
+  assert.equal(s.peeking(), false, 'then it retracts');
+  assert.equal(peekW(s), 0);
+});
+
+test('a motion that starts near the panel is never predicted: wiggling, drifting, vertical moves or a fling there', async (t) => {
+  for (const [why, run] of [
+    ['wiggling', (s) => { for (let i = 0; i < 12; i++) { s.timers.advance(16); s.move(s.content, i % 2 ? 900 : 650); } }],
+    ['a slow drift', (s) => s.flick({ x0: 630, x1: 900, steps: 50, stepMs: 16 })],
+    ['a vertical move', (s) => s.flick({ x0: 700, x1: 700, y0: 120, y1: 580 })],
+    ['a fast flick from inside the band', (s) => s.flick({ x0: 640, x1: 920, steps: 5 })],
+  ]) {
+    const s = await shell(t);
+    withPageScrollbar(s);
+    run(s);
+    assert.equal(s.peeking(), false, `${why}: no peek`);
+    s.timers.advance(2000);
+    assert.equal(s.revealed(), false, `${why}: and no reveal`);
+  }
+});
+
+test('the closer to the panel a motion starts, the less speed it needs; a slow drift still never peeks', async (t) => {
+  // 0.875 px/ms from 161px out (just outside the band): well under the
+  // 1.2 px/ms a fling from across the page needs.
+  let s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 560, x1: 700, steps: 10, stepMs: 16 });
+  assert.equal(s.peeking(), true, 'a short-runway fling peeks');
+  // The same speed from across the page is not enough.
+  s = await shell(t);
+  withPageScrollbar(s);
+  // It is judged from where it started all the way in: its last few moves,
+  // near the panel, would pass on their own.
+  s.flick({ x0: 100, x1: 702, steps: 43, stepMs: 16 });
+  assert.equal(s.peeking(), false, 'the same speed from 600px+ out does not, even as it nears the panel');
+  // A slow drift from just outside the band, towards the edge.
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 560, x1: 940, steps: 60, stepMs: 16 });
+  assert.equal(s.peeking(), false, 'a slow drift near the edge does not');
+  s.timers.advance(2000);
+  assert.equal(s.revealed(), false);
+});
+
+test('the config switches and values take effect, and the form’s defaults are the dashboard’s', async (t) => {
+  let s = await shell(t);
+  withPageScrollbar(s);
+  t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
+  s.flick(SHORT_FLING);
+  assert.equal(s.peeking(), true);
+  s.reveal.setSidePanelTuning({ predictive_peek: false }, s.doc);
+  assert.equal(s.peeking(), false, 'turning the peek off takes it back');
+  s.flick({ ...SHORT_FLING, y0: 310 });
+  assert.equal(s.peeking(), false, 'and no more peeks');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.reveal.setSidePanelTuning({ near_edge_band_px: 500 }, s.doc);
+  s.flick(SHORT_FLING);
+  assert.equal(s.peeking(), false, 'a wider near-edge band takes in a motion from 421px out');
+  s.reveal.setSidePanelTuning({ peek_min_px: 80, growing_peek: false, edge_zone_px: 60, dwell_ms: 400 }, s.doc);
+  s.flick({ ...SHORT_FLING, y0: 320 });
+  assert.equal(peekW(s), 80, 'the peek’s width');
+  s.move(s.content, WIDTH - SCROLLBAR - 55);
+  s.timers.advance(399);
+  assert.equal(s.revealed(), false, 'the wider zone’s longer dwell');
+  s.timers.advance(1);
+  assert.equal(s.revealed(), true);
+
+  const { SIDE_PANEL_TUNING_FIELDS } = await s.harness.importDashboardModule('js/side-panel-tuning-fields.js');
+  const defaults = Object.fromEntries(SIDE_PANEL_TUNING_FIELDS.map((f) => [f.key, f.def]));
+  s.reveal.setSidePanelTuning({ ...defaults, predictive_peek: true, growing_peek: true }, s.doc);
+  const { REVEAL_DEFAULTS } = s.reveal;
+  const tuned = { ...REVEAL_DEFAULTS };
+  s.reveal.setSidePanelTuning(null, s.doc);
+  // setSidePanelTuning has no getter: check each field's default maps onto
+  // the constant it tunes.
+  const map = {
+    edge_zone_px: ['EDGE_PX', 1], dwell_ms: ['DWELL_MS', 1], retract_ms: ['PEEK_RETRACT_MS', 1],
+    predict_min_speed: ['MIN_VX', 1000], predict_speed_distance_px: ['RUNWAY_FULL_PX', 1],
+    predict_min_speed_floor: ['MIN_VX_FLOOR', 1000], predict_min_readings: ['MIN_SAMPLES', 1],
+    near_edge_band_px: ['NEAR_BAND_PX', 1], brake_percent: ['BRAKE_RATIO', 100], peek_min_px: ['PEEK_MIN_PX', 1],
+  };
+  assert.deepEqual(Object.keys(map).sort(), Object.keys(defaults).sort(), 'every field is mapped');
+  for (const [key, [constant, scale]] of Object.entries(map)) {
+    assert.equal(defaults[key] / scale, tuned[constant], `${key} defaults to ${constant}`);
+  }
+});
+
+test('a steady move that starts peeking and then brakes onto content under the would-be panel shrinks the peek back, with no reveal', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  const { PEEK_MIN_PX } = s.reveal.REVEAL_DEFAULTS;
+  s.flick({ x0: 300, x1: 660, steps: 6 });
+  assert.equal(s.peeking(), true, 'steady and aimed past FULL_LEFT: it peeks');
+  assert.ok(peekW(s) > PEEK_MIN_PX, `and has grown (${peekW(s)})`);
+  // Then it brakes into a button at about x=760, crossing FULL_LEFT on the way.
+  let x = 660;
+  for (const step of [36, 22, 14, 9, 6, 4, 2, 1]) {
+    s.timers.advance(16);
+    x += step;
+    s.move(s.content, x);
+    assert.equal(s.revealed(), false, `braking at ${x}: no reveal by crossing`);
+  }
+  assert.ok(x > FULL_LEFT, `it ended inside the would-be panel (${x})`);
+  assert.equal(peekW(s), s.peeking() ? PEEK_MIN_PX : 0, 'the peek shrank back');
+  s.timers.advance(2000);
+  assert.equal(s.revealed(), false, 'and the stop there is no reveal');
+  assert.equal(s.peeking(), false, 'the peek retracted');
+});
+
+test('a move crossing the open panel’s edge while braking a little keeps peeking rather than revealing', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  let x = 400;
+  s.move(s.content, x);
+  // Steady, then easing off to about 0.83 of its speed: enough to keep the
+  // peek, not enough to reveal by crossing.
+  for (const step of [60, 60, 60, 60, 45, 45]) {
+    s.timers.advance(16);
+    x += step;
+    s.move(s.content, x);
+  }
+  assert.ok(x > FULL_LEFT, `crossed (${x})`);
+  assert.equal(s.revealed(), false, 'no reveal by crossing');
+  assert.equal(s.peeking(), true, 'but the peek holds');
 });
