@@ -339,9 +339,16 @@ export function bindEdgeReveal(doc = globalThis.document, {
       return;
     }
     // The handle holds whatever state the panel is in: a pointer there is
-    // about to pin it, not asking it to open.
+    // about to pin it, not asking it to open. A peek stays while it rests
+    // there (the handle rides the peek, so a retract would slide it away),
+    // and no motion that reached the handle reveals later: moving off starts
+    // afresh, and a peek left behind runs out from there.
     if (onHandle) {
       cancelDwell();
+      cancelRetract();
+      cancelStop();
+      samples = [];
+      motion = null;
       return;
     }
     if (isSidePanelPeeking() && dock()?.contains(event.target)) {

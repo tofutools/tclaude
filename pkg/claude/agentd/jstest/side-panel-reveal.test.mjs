@@ -1073,6 +1073,45 @@ test('a three-frame snap from the left into the edge zone reveals the panel at o
   assert.equal(s.revealed(), false, 'nor does resting there');
 });
 
+// Cold review of #4109: the handle holds a peek, and what reached the handle
+// does not reveal once the pointer moves off it.
+test('a peek holds while the pointer rests on the handle, and nothing that reached the handle reveals later', async (t) => {
+  const { STOP_MS, PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  let s = await shell(t);
+  withPageScrollbar(s);
+  s.flick(SHORT_FLING);
+  assert.equal(s.peeking(), true);
+  s.move(s.doc.getElementById('dock-toggle'), 720);
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), true, 'the peek stays under a pointer resting on its handle');
+  s.move(s.content, 400);
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), false, 'moving off, the peek runs out');
+
+  s = await shell(t, { grow: true });
+  withPageScrollbar(s);
+  s.flick({ x0: 300, x1: 715 });
+  assert.equal(s.peeking(), true);
+  s.timers.advance(4);
+  s.move(s.doc.getElementById('dock-toggle'), 716);
+  s.timers.advance(STOP_MS * 2);
+  assert.equal(s.revealed(), false, 'a growing peek\'s stop does not reveal on the handle');
+
+  s = await shell(t);
+  snap(s, [420, 860]);
+  s.timers.advance(16);
+  s.move(s.doc.getElementById('dock-toggle'), 990);
+  s.timers.advance(16);
+  s.move(s.content, 990, { clientY: 340 });
+  assert.equal(s.revealed(), false, 'a snap blocked on the handle does not reveal at once off it');
+
+  s = await shell(t);
+  snap(s, [420, 860]);
+  s.move(s.doc.getElementById('dock-toggle'), 990);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
+  assert.equal(s.revealed(), false, 'nor does one leaving the window through the handle');
+});
+
 test('a snap that runs past the window’s edge reveals when its next frame would have reached the zone', async (t) => {
   let s = await shell(t);
   snap(s, [420, 860]);
