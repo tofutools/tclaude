@@ -33,8 +33,9 @@ import (
 //	2  ambiguous selector
 //	3  invalid argument
 //	4  I/O failure: the daemon is unreachable, or failed the request
-//	5  refused: a permission denial or any other 403 (before tcl-cezwhu a
-//	   permission denial exited 4)
+//	5  refused: a permission denial, or any 403 whose code is not one of
+//	   the above (a 403 "route_group" mismatch stays 3). Before tcl-cezwhu
+//	   a permission denial exited 4
 const (
 	rcOK         = 0
 	rcNotFound   = 1

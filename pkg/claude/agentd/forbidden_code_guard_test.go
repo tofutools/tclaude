@@ -24,6 +24,11 @@ import (
 //     model.js);
 //   - spawn failures carry their code into the outcome kind a managed worker's
 //     run records (managedIdentityFailureKind).
+//
+// The guard matches the one-line form a handler writes a 403 in
+// (writeError(w, http.StatusForbidden, "code", ...)). A 403 built another way
+// (a keyed spawnFailure literal, a code in a variable, a split argument list)
+// is not seen; it is a drift tripwire, not a proof.
 var forbiddenGenericCodeSites = map[string]int{
 	"federation_terminal.go":        4,
 	"federation_terminal_upload.go": 5,

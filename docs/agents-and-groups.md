@@ -119,7 +119,7 @@ can branch on:
 | 2 | Ambiguous: a selector matched more than one target. |
 | 3 | Invalid argument. |
 | 4 | I/O failure: the daemon is unreachable, or it failed for another reason. |
-| 5 | Refused: an identity failure or a permission denial (any HTTP 403 from the daemon). |
+| 5 | Refused: an identity failure, a permission denial, or any other HTTP 403 from the daemon whose code does not map to 1–3 above. |
 
 A permission denial exits 5. Earlier versions exited 4, the same as an
 I/O failure, so a script could not tell "you may not do this" from "the
