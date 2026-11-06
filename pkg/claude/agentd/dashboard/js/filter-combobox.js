@@ -274,7 +274,7 @@ export function FilterCombobox({
           <span class="filter-combobox-check" aria-hidden="true">${chosen.has(item.key) ? '✓' : ''}</span>
           ${item.lead || null}
           <span class="rowname">${item.label || item.key}</span>
-          <span class="id">${item.hint ?? item.key}</span>
+          <span class="id">${item.hint ?? (item.label && item.label !== item.key ? item.key : '')}</span>
           ${item.tail || null}
           ${item.disabled && item.reason ? html`<span class="descr">${item.reason}</span>` : null}
         </div>`)}</div>`)}
