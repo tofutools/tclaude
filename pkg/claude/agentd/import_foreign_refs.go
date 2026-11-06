@@ -81,8 +81,12 @@ func importOwnConvs(exp *groupexport.Export) map[string]bool {
 	return own
 }
 
-// remapImportForeignSenders gives every sender that is outside the file but a
-// conversation on this node (local reports that) a fresh id, one per sender so
+// remapImportForeignSenders gives every sender outside the file that is a
+// conversation on this node (local reports that), or is not a conversation id
+// at all, a fresh id. The second covers an agent id ("agt_…") and anything a
+// display path might resolve some other way: local checks conversation ids
+// only, while the mailbox resolves an agent id to its agent's current
+// conversation and name. Each sender gets one fresh id, one per sender so
 // its thread still reads as one, on its messages and on the head aliases it
 // created. Nothing else in a message names its sender: the stored agent id is
 // derived from the new id on insert, and every name shown for a sender is
@@ -98,7 +102,7 @@ func remapImportForeignSenders(exp *groupexport.Export, local func(string) bool)
 		if id, ok := fresh[conv]; ok {
 			return id, true
 		}
-		if !local(conv) {
+		if canonicalConvID(conv) && !local(conv) {
 			return conv, false
 		}
 		fresh[conv] = uuid.NewString()
@@ -127,12 +131,12 @@ func remapImportForeignSenders(exp *groupexport.Export, local func(string) bool)
 			noun = "archived message"
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"%d %s came from a conversation on this node outside the file; they land from an unknown sender instead (archived ids: %s)",
+			"%d %s came from a sender outside the file that is on this node or is not a conversation id; they land from an unknown sender instead (archived ids: %s)",
 			len(ids), noun, listBounded(ids)))
 	}
 	if aliases > 0 {
 		warnings = append(warnings, fmt.Sprintf(
-			"%d head alias(es) were created by a conversation on this node outside the file; they land as created by an unknown conversation", aliases))
+			"%d head alias(es) were created by a sender outside the file that is on this node or is not a conversation id; they land as created by an unknown conversation", aliases))
 	}
 	return warnings
 }
