@@ -261,35 +261,15 @@ func peerGroupImportGate(w http.ResponseWriter, sub *http.Request, v *peerView) 
 // an alias would take mail meant for one of them. A sender outside the file
 // reaches only the file's own agents.
 func peerImportForeignRefs(exp *groupexport.Export) error {
-	own := map[string]bool{"": true}
-	for _, c := range exp.Convs {
-		own[c.ConvID] = true
-	}
-	for _, s := range exp.Successions {
-		own[s.OldConvID], own[s.NewConvID] = true, true
-	}
-	for _, m := range exp.Messages {
-		refs := []string{m.ToConv, m.OriginalToConv}
-		for _, list := range []string{m.ToRecipients, m.CcRecipients} {
-			if strings.TrimSpace(list) == "" {
-				continue
-			}
-			var convs []string
-			if json.Unmarshal([]byte(list), &convs) != nil {
-				return errors.New("a peer import's messages must name their recipients as a list of the file's conversations")
-			}
-			refs = append(refs, convs...)
+	messages, aliases := importForeignRefs(exp)
+	if len(messages) > 0 {
+		if messages[0].malformed {
+			return errors.New("a peer import's messages must name their recipients as a list of the file's conversations")
 		}
-		for _, ref := range refs {
-			if !own[ref] {
-				return errors.New("the file's messages name an agent it does not carry: a peer import's mail stays among its own agents")
-			}
-		}
+		return errors.New("the file's messages name an agent it does not carry: a peer import's mail stays among its own agents")
 	}
-	for _, a := range exp.HeadAliases {
-		if !own[a.AnchorConvID] {
-			return errors.New("the file's head aliases name an agent it does not carry")
-		}
+	if len(aliases) > 0 {
+		return errors.New("the file's head aliases name an agent it does not carry")
 	}
 	return nil
 }

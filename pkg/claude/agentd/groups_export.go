@@ -563,6 +563,9 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	// Previewed as the import will run it: mail and head aliases for
+	// conversations outside the file drop (import_foreign_refs.go).
+	foreignWarnings := dropImportForeignRefs(exp)
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
@@ -583,7 +586,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
-	insp.FileWarnings = settled.warnings
+	insp.FileWarnings = append(append([]string(nil), settled.warnings...), foreignWarnings...)
 	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, settled.warnings)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
@@ -837,6 +840,10 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	// The importer remaps only the file's own conversations: mail and head
+	// aliases addressed to any other conversation drop, listed in the reply
+	// (import_foreign_refs.go). A peer import already refused them.
+	foreignWarnings := dropImportForeignRefs(exp)
 
 	targetName := asName
 	if targetName == "" {
@@ -907,7 +914,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
-	fileWarnings := settled.warnings
+	fileWarnings := append(append([]string(nil), settled.warnings...), foreignWarnings...)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
