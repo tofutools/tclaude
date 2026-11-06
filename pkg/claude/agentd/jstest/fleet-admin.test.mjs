@@ -1,7 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { comboKeys } from './combobox-helpers.mjs';
+import { comboKeys, comboChoose, comboLabels, comboPick } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
@@ -451,7 +450,11 @@ async function openAddGrant(s, { slugs = [], groups = [], allGroups = false } = 
   if (allGroups) await s.check(s.q('#fleet-grant-all-groups'));
 }
 async function pickOption(s, sel, value) {
-  const el = s.q(sel);
+  await chooseIn(s, s.q(sel), value);
+}
+// chooseIn sets a choice box (ChoiceCombobox) or a <select> to value.
+async function chooseIn(s, el, value) {
+  if (el.classList.contains('choice-combobox')) { await comboChoose(s.harness, el, value); return; }
   for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
   await s.harness.act(() => s.harness.fireEvent(el, 'change'));
 }
@@ -508,8 +511,7 @@ test('the grants page lists every peer under All and revokes all of one peer\'s 
   // All: every target is read; each gets a header row, its direct grants
   // carry its name, and pool-inherited grants are left to the pool.
   const sel = s.q('#fleet-grant-target');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === '*all') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await chooseIn(s, sel, '*all');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.ok(s.log.some((l) => l[0] === 'grants' && l[1] === 'inst_lab'));
   const table = s.q('#fleet-grants');
@@ -791,8 +793,7 @@ test('pools: adding a member names the grants it gains; deleting and removing co
   const row = s.q('#fleet-pools [data-pool="rigs"]');
   assert.match(row.textContent, /lab/);
   const pick = row.querySelector('[data-fa="member-pick"]');
-  for (const o of pick.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(pick, 'change'));
+  await chooseIn(s, pick, 'inst_forge');
   await s.click(row.querySelector('[data-fa="add-member"]'));
   assert.match(s.confirms.at(-1).body, /forge gains its 2 grant\(s\): routes\.consume \(EVERY group, including future ones\), message\.direct \(group ops\) — and any grant added to the pool later/);
   assert.deepEqual(s.log.find((l) => l[0] === 'addPoolMember'), ['addPoolMember', 'rigs', 'inst_forge']);
@@ -845,8 +846,7 @@ test('audit reads newest-first metadata by peer and time window, and pages up to
   await s.click(s.q('#fleet-audit-more'));
   assert.equal(s.log.filter((l) => l[0] === 'audit').at(-1)[1].limit, 400);
   const sel = s.q('#fleet-audit-peer');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await chooseIn(s, sel, 'inst_forge');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   const last = s.log.filter((l) => l[0] === 'audit').at(-1)[1];
   assert.equal(last.peer, 'inst_forge'); assert.equal(last.limit, 200, 'a new filter starts from the first page');
@@ -1149,8 +1149,7 @@ test('profile editor: create and edit confirm the effect, keep advanced fields, 
   assert.match(q('#fleet-profile-grants').textContent, /jobs\.run.*group #7/s);
   assert.match(q('#fleet-profile-advanced').value, /tasks\.read/);
   const lvl = q('#fleet-profile-level');
-  for (const o of lvl.querySelectorAll('option')) { if (o.value === 'unrestricted') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(lvl, 'change'));
+  await chooseIn(s, lvl, 'unrestricted');
   await s.click(q('#fleet-profile-save'));
   assert.match(s.confirms.at(-1).title, /revision 3 → 4/);
   assert.match(s.confirms.at(-1).body, /unrestricted trust.*created later.*applied to 1 peer\(s\); they keep their current settings until you apply it again.*Invites already issued for test-rig pin revision 3 and stop working/);
@@ -1212,9 +1211,8 @@ test('node settings: the fleet health policy reads per scope, validates, and con
   assert.equal(q('#fleet-health [data-signal="presence"]').hasAttribute('checked'), true);
   assert.equal(q('[data-num="debounce_seconds"]').value, '15');
   const sel = q('#fleet-health-peer');
-  assert.deepEqual([...sel.querySelectorAll('option')].map((o) => o.value), ['', 'inst_forge', 'inst_lab']);
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  assert.deepEqual(await comboKeys(s.harness, sel), ['inst_forge', 'inst_lab'], 'the defaults are the box\'s none');
+  await chooseIn(s, sel, 'inst_forge');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'healthPolicy'), ['healthPolicy', 'inst_forge']);
   assert.equal(q('#fleet-health [data-signal="presence"]').hasAttribute('checked'), false);
@@ -1592,9 +1590,8 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   await s.click(s.q('[data-gateway="claude"] [data-fa="unblock"]'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'claude', peer: 'inst_lab', disabled: false }]);
   const sel = s.q('[data-gateway="claude"] .fa-model-block');
-  assert.deepEqual([...sel.querySelectorAll('option')].map((o) => o.textContent), ['block a peer…', 'forge'], 'a blocked peer is not offered again');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  assert.deepEqual(await comboLabels(s.harness, sel), ['forge'], 'a blocked peer is not offered again');
+  await chooseIn(s, sel, 'inst_forge');
   await s.click(s.q('[data-gateway="claude"] [data-fa="block"]'));
   assert.match(s.confirms.at(-1).body, /forge can no longer use claude.*leases on claude are revoked/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'claude', peer: 'inst_forge', disabled: true }]);
@@ -2355,8 +2352,7 @@ test('an arriving agent shows where it will start and why, offers the other cand
 
   // Picking a candidate previews at once with it.
   const sel = q('#fleet-landing-choice');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'group_default') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change')); await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await chooseIn(s, sel, 'group_default'); await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.equal(s.log.findLast((l) => l[0] === 'import')[2].landing, 'group_default');
   assert.match(q('#fleet-landing-resolved').textContent, /Will start in \/work\/ops \(group default dir\)/);
 
@@ -2841,8 +2837,7 @@ test('picking whose grants Peer grants shows is a history entry; Back restores i
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   const pick = async (value) => {
     const sel = s.q('#fleet-grant-target');
-    for (const o of sel.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-    await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+    await chooseIn(s, sel, value);
   };
   await pick('inst_forge');
   assert.deepEqual(navigated.at(-1), { tab: 'fleet-admin', subtab: 'grants', selection: 'inst_forge' });

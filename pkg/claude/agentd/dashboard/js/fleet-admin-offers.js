@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { ProfileCombobox } from './profile-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
@@ -10,6 +10,7 @@ import { ImportConfirmList } from './paf-dialogs.js';
 import { keepParams } from './paf-model.js';
 import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLanding } from './fleet-admin-landing.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -250,8 +251,8 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFlags(e.body?.flags || []); setError('Some items look like credentials. Leave those sections out, or send them anyway.'); } else setError(errText(e)); });
   };
   return html`<${Dialog} id="fleet-offer-config" onClose=${onClose} title="Offer my config to a peer">
-    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-config-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${PeerCombobox} id="fleet-offer-config-peer" value=${peer} ariaLabel="Peer"
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setPeer} /></label>
     <div class="fa-cli-note">Sections (none ticked = all):</div>
     <div class="fa-grant-form">${CONFIG_SECTIONS.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${only.includes(s)} onChange=${toggle(s)} /> ${s}</label>`)}</div>
     ${flags && html`<div class="fa-plan"><ul>${flags.map((f) => html`<li class="fa-warn"><code>${f.item}</code> ${f.field}: ${f.hint}</li>`)}</ul></div>
@@ -288,8 +289,8 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
   return html`<${Dialog} id="fleet-share-agent" onClose=${onClose} title="Offer an agent to a peer">
     <div class="fa-of-row"><span class="fa-k">agent</span><${AgentCombobox} id="fleet-share-agent-agent" value=${form.agent} agents=${choiceAgents(agents)} ariaLabel="Agent"
       onChange=${(agent) => set('agent')({ currentTarget: { value: agent, type: 'text' } })} /></div>
-    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${PeerCombobox} id="fleet-share-agent-peer" value=${form.peer} ariaLabel="Peer"
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${(peer) => set('peer')({ currentTarget: { value: peer, type: 'text' } })} /></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
     <label class="fa-of-check"><input id="fleet-share-agent-history" type="checkbox" checked=${form.history} onChange=${set('history')} /> include a copy of the conversation history</label>
     <label class="fa-of-check"><input id="fleet-share-agent-carry" type="checkbox" checked=${form.carryPermissions} onChange=${set('carryPermissions')} /> request receiver-approved permission carry (ownership and sudo leases stay here)</label>
@@ -327,8 +328,8 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
   };
   return html`<${Dialog} id="fleet-offer-profile" onClose=${onClose} title="Offer a profile's config to a peer">
     <label class="fa-of-row"><span class="fa-k">profile</span><${ProfileCombobox} id="fleet-offer-profile-name" value=${profile} profiles=${profiles} ariaLabel="Profile" onChange=${setProfile} /></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${PeerCombobox} id="fleet-offer-profile-peer" value=${peer} ariaLabel="Peer"
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setPeer} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation profile offer NAME PEER</code></div>
     <div class="modal-buttons"><span class="spacer"></span>

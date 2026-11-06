@@ -11,6 +11,7 @@ import { relTime } from './helpers.js';
 import { LINK_COLS } from './sort.js';
 import { LINK_MODES, composeItems, composerSummary, modeText } from './proposals-model.js';
 import { GroupCombobox } from './group-picker.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -334,11 +335,10 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       ${remote ? html`
         <label class="cron-create-row">
           <span class="cron-create-label">Peer node</span>
-          <${Select} id="link-modal-peer" value=${peer?.peer || ''} disabled=${busy}
-            onChange=${(event) => { setPeerID(event.currentTarget.value); setPeerGroupID(''); }}>
-            ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer} disabled=${!candidate.link_capable}>
-              ${candidate.label || candidate.peer} · ${candidate.trust}${candidate.link_capable ? '' : ' · group links unsupported'}</option>`)}
-          <//>
+          <${PeerCombobox} id="link-modal-peer" value=${peer?.peer || ''} disabled=${busy} ariaLabel="Peer node"
+            items=${namedItems(peers.map((candidate) => ({ name: candidate.peer, label: candidate.label || candidate.peer, descr: candidate.trust,
+              unpickable: candidate.link_capable ? '' : 'group links unsupported' })))}
+            onChange=${(next) => { setPeerID(next); setPeerGroupID(''); }} />
         </label>
         <label class="cron-create-row">
           <span class="cron-create-label">Peer group</span>
@@ -445,10 +445,9 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         : html`
         <label class="cron-create-row">
           <span class="cron-create-label">Peer node</span>
-          <${Select} id="proposal-peer" value=${peer?.peer || ''} disabled=${busy}
-            onChange=${(event) => { setPeerID(event.currentTarget.value); setPairs([]); }}>
-            ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer}>${candidate.label || candidate.peer} · ${candidate.trust}</option>`)}
-          <//>
+          <${PeerCombobox} id="proposal-peer" value=${peer?.peer || ''} disabled=${busy} ariaLabel="Peer node"
+            items=${namedItems(peers.map((candidate) => ({ name: candidate.peer, label: candidate.label || candidate.peer, descr: candidate.trust })))}
+            onChange=${(next) => { setPeerID(next); setPairs([]); }} />
         </label>
         <div class="ui-eyebrow proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
         ${groups.map((group) => html`<div key=${group.name} class=${`proposal-item${shared(group.name) ? '' : ' off'}`} data-group=${group.name}>

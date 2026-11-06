@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -201,11 +202,11 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
   };
   return html`<${Dialog} id="fleet-spawn-send" onClose=${onClose} title="Request a worker on a peer">
     <label class="fa-spawn-opt">Node
-      <${Select} size="sm" id="fleet-spawn-target" value=${target} onChange=${(e) => setTarget(e.currentTarget.value)}>
-        ${peers.map((p) => html`<option key=${p.id} value=${`peer:${p.id}`}>${p.label}</option>`)}
-        <option value="auto">auto: best-placed trusted node</option>
-        ${(pools || []).map((p) => html`<option key=${p.name} value=${`group:${p.name}`}>auto within pool ${p.name}</option>`)}
-      <//></label>
+      <${PeerCombobox} id="fleet-spawn-target" value=${target} ariaLabel="Node" placeholder="Type to find a node or pool…"
+        items=${namedItems([...peers.map((p) => ({ name: `peer:${p.id}`, label: p.label })),
+          { name: 'auto', label: 'auto: best-placed trusted node' },
+          ...(pools || []).map((p) => ({ name: `group:${p.name}`, label: `auto within pool ${p.name}` }))])}
+        onChange=${setTarget} /></label>
     <label class="fa-spawn-opt">Group <input id="fleet-spawn-group" value=${f.group} onInput=${set('group')} placeholder=${auto ? 'optional with one authorized group' : 'a group the peer exports'} /></label>
     <label class="fa-spawn-opt fa-spawn-top">Brief <textarea id="fleet-spawn-brief" rows="4" maxlength=${BRIEF_MAX} value=${f.brief} onInput=${set('brief')}></textarea></label>
     <label class="fa-spawn-opt">Name <input value=${f.name} onInput=${set('name')} /></label>

@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, UNGRANTABLE_SLUGS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -153,10 +154,9 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       </div>
       <div class="fa-gd-side">
         <label class="fa-gd-row"><span class="fa-k">To</span>
-          <${Select} size="sm" id="fleet-grant-to" value=${to} onChange=${(e) => setTo(e.currentTarget.value)}>
-            <option value="">pick a peer or pool…</option>
-            ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-          <//></label>
+          <${PeerCombobox} id="fleet-grant-to" value=${to} noneLabel="pick a peer or pool…" ariaLabel="To" placeholder="Type to find a peer or pool…"
+            items=${namedItems(targets.map((t) => ({ name: t.id, label: t.label, descr: t.level === 'unrestricted' ? 'unrestricted' : '' })))}
+            onChange=${setTo} /></label>
         ${target?.level === 'unrestricted' && html`<div class="fa-warn fa-gd-note">Unrestricted: ${target.label} already holds every group permission on all groups; these matter once it is restricted.</div>`}
         ${groupKinds && html`<div class="fa-gd-row fa-gd-top"><span class="fa-k">Where</span><div>
           ${!scopedOnly || infos.some((i) => i.kind === 'group') ? html`<label class="fa-gd-radio"><input type="radio" name="fleet-grant-where" id="fleet-grant-all-groups" checked=${allGroups} onChange=${() => setAllGroups(true)} /> <span class="fa-warn">all groups, incl. future</span></label>` : ''}

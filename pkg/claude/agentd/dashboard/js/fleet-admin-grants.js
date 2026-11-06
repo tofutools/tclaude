@@ -4,7 +4,8 @@ import htm from 'htm';
 import { extraPolicy, grantExpiryText, grantRows } from './fleet-admin-model.js';
 import { AddGrantDialog } from './fleet-admin-grant-dialog.js';
 import { ALL_TARGETS } from './fleet-admin-page.js';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -173,10 +174,10 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
   return html`<div class="fa-grants">
     <div class="fa-grants-head">
       <label><span class="fa-k">Grants of</span>
-        <${Select} size="sm" id="fleet-grant-target" value=${all ? ALL_TARGETS : current.id} onChange=${(e) => setTarget(e.currentTarget.value)}>
-          <option value=${ALL_TARGETS}>All peers & pools</option>
-          ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        <//></label>
+        <${PeerCombobox} id="fleet-grant-target" value=${all ? ALL_TARGETS : current.id} ariaLabel="Grants of" placeholder="Type to find a peer or pool…"
+          items=${namedItems([{ name: ALL_TARGETS, label: 'All peers & pools' },
+            ...targets.map((t) => ({ name: t.id, label: t.label, descr: t.level === 'unrestricted' ? 'unrestricted' : '' }))])}
+          onChange=${setTarget} /></label>
       <input id="fleet-grant-filter" class="fa-grants-filter" type="search" placeholder="Filter: peer, permission, group, description…" value=${filter} autocomplete="off" spellcheck="false" onInput=${(e) => setFilter(e.currentTarget.value)} />
       ${count && html`<span class="muted">${count}</span>`}
       <${Button} size="sm" variant="primary" id="fleet-grant-add" class="fa-grants-add" onClick=${() => setAdding(current ? current.id : '')}>+ Add grant…<//>

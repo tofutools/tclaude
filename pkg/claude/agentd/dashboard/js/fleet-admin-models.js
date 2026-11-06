@@ -2,7 +2,8 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GatewayDialog } from './fleet-admin-model-gateway.js';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -238,10 +239,9 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td>${limitText(p.daily_requests, p.daily_tokens)} · ${limitText(p.peer_daily_requests, p.peer_daily_tokens)} · ${limitText(p.session_daily_requests, p.session_daily_tokens)}</td>
         <td class="muted">${[p.max_input_tokens ? `≤${num(p.max_input_tokens)} in` : '', p.max_output_tokens ? `≤${num(p.max_output_tokens)} out` : '', p.max_concurrent ? `${p.max_concurrent} at once` : '', p.requests_per_minute ? `${p.requests_per_minute}/min` : '', `leases idle out after ${p.lease_idle_hours || 24}h`].filter(Boolean).join(' · ')}</td>
         <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${label(b)} <${Button} size="sm" variant="link" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×<//></span> `)}
-          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<${Select} size="sm" class="fa-model-block" aria-label=${`Block a peer on ${name}`} value=${blocking[name] || ''} onChange=${(e) => setBlocking({ ...blocking, [name]: e.currentTarget.value })}>
-            <option value="">block a peer…</option>
-            ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-          <//>
+          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<${PeerCombobox} className="fa-model-block" ariaLabel=${`Block a peer on ${name}`} value=${blocking[name] || ''} noneLabel="block a peer…" floating=${false}
+            items=${namedItems(peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => ({ name: r.id, label: r.label })))}
+            onChange=${(next) => setBlocking({ ...blocking, [name]: next })} />
           ${blocking[name] && html`<${Button} size="sm" variant="ghost danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…<//>`}`}</td>
         <td class="fa-acts"><${Button} size="sm" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…<//>
           <${Button} size="sm" variant=${p.enabled ? 'ghost danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}<//>

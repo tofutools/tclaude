@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
-import { comboLabels, comboPick } from './combobox-helpers.mjs';
+import { comboLabels, comboPick, comboKeys } from './combobox-helpers.mjs';
 
 function deferred() {
   let resolve;
@@ -463,9 +463,11 @@ test('a cross-node link picks a shared peer group and says auto vs request', asy
   const { harness, calls } = view;
   const dialog = await openCreateDialog(view);
   await harness.act(() => dialog.querySelector('#link-modal-target-peer').click());
-  const peers = [...dialog.querySelectorAll('#link-modal-peer option')];
-  assert.deepEqual(peers.map((o) => o.hasAttribute('disabled')), [false, true], 'an older peer is listed but not selectable');
-  assert.match(peers[1].textContent, /group links unsupported/);
+  await comboKeys(harness, dialog.querySelector('#link-modal-peer'));
+  const peers = [...dialog.querySelectorAll('#link-modal-peer [role="option"]')];
+  assert.deepEqual(peers.map((o) => o.getAttribute('aria-disabled') === 'true'), [false, true], 'an older peer is listed but not selectable');
+  assert.match(peers[1].title, /group links unsupported/);
+  await harness.act(() => harness.fireEvent(dialog.querySelector('#link-modal-peer-input'), 'blur'));
   assert.deepEqual(await comboLabels(harness, dialog.querySelector('#link-modal-peer-group')), ['builders', 'docs']);
   assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /No prompt for bob's operator.*connecting/);
   assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Create link');
@@ -531,7 +533,8 @@ test('the link dialog hands a peer over to the proposal composer, which sends sh
   assert.ok(composer, 'composer replaced the link dialog');
   assertAbsent(host.querySelector('#link-modal'));
   assert.match(composer.querySelector('#proposal-modal-title').textContent, /Propose to bob/);
-  assert.deepEqual([...composer.querySelectorAll('#proposal-peer option')].map((o) => o.value), ['inst_bob'], 'only proposal-capable peers');
+  assert.deepEqual(await comboKeys(harness, composer.querySelector('#proposal-peer')), ['inst_bob'], 'only proposal-capable peers');
+  await harness.act(() => harness.fireEvent(composer.querySelector('#proposal-peer-input'), 'blur'));
   assert.equal(composer.querySelector('#proposal-submit').disabled, true, 'nothing to send yet');
   const alpha = composer.querySelector('[data-group="alpha"]');
   assert.match(alpha.textContent, /alpha · 2 members/);

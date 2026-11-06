@@ -1,4 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
+import { comboPick } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const TICKET = `${'a'.repeat(32)}.${'b'.repeat(32)}@inst_forge7`;
@@ -77,8 +78,7 @@ test('away: choose a cover with the consequence spelled out, return, and answer 
   await settle();
   assert.match(q('#fleet-away').textContent, /^away…$/);
   await harness.act(() => q('#fleet-away-open').click());
-  for (const o of q('#fleet-away-cover').querySelectorAll('option')) { if (o.value === 'inst_lab2') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await harness.act(() => harness.fireEvent(q('#fleet-away-cover'), 'change'));
+  await comboPick(harness, q('#fleet-away-cover'), 'inst_lab2');
   await harness.act(() => q('#fleet-away-go').click());
   await settle();
   assert.match(confirms[0].body, /lab's operator receives.*every access request.*first answer wins.*every message your agents send you.*Peer operators' access requests are never forwarded/);

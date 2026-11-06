@@ -11,6 +11,7 @@ import { findingsText, modelsFor, redactionText, spawnableHarnesses } from './pa
 import { downloadBlob } from './download.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { GroupCombobox } from './group-picker.js';
+import { BoardCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -188,8 +189,8 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-share">
     <div class="ui-eyebrow paf-sec">Share ${snap.name} on a Board</div>
     ${boards && !boards.length ? html`<div class="paf-hint ui-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
-    <${Field} label="Board"><${Select} id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
-      ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}<//></${Field}>
+    <${Field} label="Board"><${BoardCombobox} id="snapshot-share-board" value=${board} disabled=${!!busy} ariaLabel="Board"
+      items=${namedItems((boards || []).map((b) => ({ name: b.id, label: b.name || b.id })))} onChange=${(next) => { changed(); setBoard(next); }} /></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">
       ${members.length === 0 ? html`<span class="paf-hint ui-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
         <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />

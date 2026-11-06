@@ -6,6 +6,7 @@ import { ProfileCombobox } from './profile-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { fmtAge } from './fleet-model.js';
 import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
+import { GroupCombobox } from './group-picker.js';
 
 const html = htm.bind(h);
 
@@ -204,11 +205,9 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
       ${rows.map((r) => html`<div key=${r.slug} class="fa-become-perm" data-become-slug=${r.slug}>
         <input type="checkbox" checked=${r.slug in picked} disabled=${unrestricted} onChange=${() => toggle(r)} />
         <code>${r.slug}</code>
-        <span>${r.kind !== 'node' && r.slug in picked && html`<${Select} size="sm" data-become-group=${r.slug} value=${picked[r.slug]} onChange=${(e) => setPicked({ ...picked, [r.slug]: e.currentTarget.value })}>
-          <option value="">choose a group…</option>
-          ${r.kind !== 'scoped' && html`<option value=${EVERY_GROUP}>every group, including future ones</option>`}
-          ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
-        <//>`}${r.sensitive && html`<span class="fa-sensitive">Sensitive</span>`}</span>
+        <span>${r.kind !== 'node' && r.slug in picked && html`<${GroupCombobox} attrs=${{ 'data-become-group': r.slug }} value=${picked[r.slug]} noneLabel="choose a group…" floating=${false}
+          groups=${[...(r.kind !== 'scoped' ? [{ value: EVERY_GROUP, label: 'every group, including future ones' }] : []), ...groups]}
+          onChange=${(next) => setPicked({ ...picked, [r.slug]: next })} />`}${r.sensitive && html`<span class="fa-sensitive">Sensitive</span>`}</span>
         <span class="muted fa-become-what">${r.what}</span>
       </div>`)}
     </div>

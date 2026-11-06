@@ -1,7 +1,8 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -85,9 +86,8 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
 
   return html`<div id="fleet-health">
     <h4 class="fa-ns-h">Fleet health notices</h4>
-    <label class="fa-ns-row"><span class="fa-k">policy for</span><${Select} size="sm" id="fleet-health-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-      <option value="">defaults (peers without their own)</option>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
+    <label class="fa-ns-row"><span class="fa-k">policy for</span><${PeerCombobox} id="fleet-health-peer" value=${peer} noneLabel="defaults (peers without their own)" ariaLabel="Policy for"
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setPeer} /></label>
     ${form?.error ? html`<div class="fa-danger">${form.error}</div>` : !form ? html`<div class="muted">Loading…</div>` : html`
       <div class="fa-ns-check fa-hp-signals">${HEALTH_SIGNALS.map((s) => html`<label key=${s.key}><input type="checkbox" data-signal=${s.key} checked=${form[s.key]} onChange=${set(s.key)} /> ${s.label}</label>`)}</div>
       <div class="fa-hp-rows">
