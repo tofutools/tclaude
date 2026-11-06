@@ -174,7 +174,10 @@ const MODAL = `${OPEN_MODAL}, [aria-modal="true"]`;
 
 // modalOpen is whether a modal or dialog is open above the page.
 export function modalOpen(doc) {
-  return [...doc.querySelectorAll(MODAL)].some((el) => {
+  // It runs on every move: the cheap open signals first.
+  const open = doc.querySelector(OPEN_MODAL);
+  if (open && !open.hidden && !open.closest?.('[hidden]')) return true;
+  return [...doc.querySelectorAll('[aria-modal="true"]')].some((el) => {
     if (el.hidden || el.closest?.('[hidden]')) return false;
     return el.matches(OPEN_MODAL) || (el.getClientRects?.().length || 0) > 0;
   });
@@ -335,6 +338,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // Under a modal the reveal is frozen (as outside the window): nothing
     // pending acts, and no motion is measured. The first move after the last
     // modal closes resumes tracking from where the pointer is.
+    // The move Chrome sends at the same spot as a modal goes is no move: the
+    // next real one decides.
+    if (underModal && last && last.x === event.clientX && last.y === event.clientY) return;
     if (modalOpen(doc)) {
       underModal = true;
       cancelHide();
@@ -607,9 +613,12 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // Back in from outside straight over a frame, the page sees no move, only
   // the frame's over: the pointer is back, and away from the panel.
   doc.addEventListener('pointerover', (event) => {
-    if (!outside || !isFrame(event.target)) return;
+    // Or back from under a modal that closed while the pointer was on a frame.
+    if (!(outside || (underModal && !modalOpen(doc))) || !isFrame(event.target)) return;
     if (event.pointerType && event.pointerType !== 'mouse') return;
     outside = false;
+    underModal = false;
+    motion = null;
     if (isSidePanelRevealed()) {
       overPanel = false;
       scheduleHide();

@@ -1421,9 +1421,37 @@ test('a modal open above the page freezes the revealed panel until the next move
     offPanel(s);
     s.move(confirm.firstChild, WIDTH - 100);
     confirm.remove();
-    s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+    s.move(s.doc.getElementById('dock-body'), WIDTH - 120);
     s.timers.advance(s.hoverClose * 3);
     assert.equal(s.revealed(), true);
+  });
+
+  await t.test('the move at the same spot as the modal goes is no move; the next real one decides', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    const confirm = modal(s);
+    offPanel(s);
+    s.move(confirm.firstChild, 500);
+    confirm.remove();
+    s.move(s.content, 500);
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'a pointer resting where the confirm was decides nothing');
+    s.move(s.content, 505);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false);
+  });
+
+  await t.test('a modal closing over a frame: entering the frame resumes, away from the panel', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    const confirm = modal(s);
+    offPanel(s);
+    s.move(confirm.firstChild, 400);
+    confirm.remove();
+    const frame = s.doc.body.appendChild(s.doc.createElement('iframe'));
+    s.harness.fireEvent(frame, 'pointerover', { pointerType: 'mouse' });
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false);
   });
 
   await t.test('nested modals: frozen until the last one closes', async (t) => {
