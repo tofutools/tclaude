@@ -115,7 +115,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see [Launch settings a peer may choose](federation-work.md#launch-settings-a-peer-may-choose)) |
 | `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
 | `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
-| `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.sandbox` | add any of this node's sandbox profiles to the spawn, with `groups.members.spawn`, so its `harness_config` and other rules apply as they would to a local spawn: granting it trusts the peer with every profile you have |
 | `groups.members.spawn.permissions` | choose the approval, tool and harness sandbox modes, the auto-reviewer, question timeout, trust-folder answer and per-slug permissions, and launching with unenforceable sandbox rules or no sandbox profiles, with `groups.members.spawn` |
 | `groups.members.spawn.environment` | set environment overrides on the spawn, with `groups.members.spawn` |
 | `groups.members.spawn.owner` | make the spawn a group owner at birth, with `groups.members.spawn` |
