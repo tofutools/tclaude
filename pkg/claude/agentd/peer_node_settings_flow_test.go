@@ -169,6 +169,18 @@ func TestPeerSandboxProfilesOnlyNarrowTheirInclude(t *testing.T) {
 	_, err = db.SetAgentGroupSandboxProfile("crew", "")
 	require.NoError(t, err)
 
+	// An agent spawned under it resumes by its name once its ID is gone, so a
+	// delete and a recreate would move the agent onto whatever the new one
+	// includes.
+	agentID := havePerformerAgent(t, h.f, "crew", "boxed-conv", "boxed", "dev", "offline")
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &sandboxpolicy.Snapshot{
+		Version: sandboxpolicy.SnapshotVersion,
+		Applied: []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeExplicit, ID: mine.ID + 1000, Name: "mine2"}},
+	}))
+	code, body = h.call("DELETE", "/api/sandbox-profiles/mine2", nil)
+	require.Equal(t, 409, code, "an agent spawned under it: %s", body)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion}))
+
 	// Once your operator adds to it, it is theirs to change.
 	mine, err = db.GetSandboxProfile("mine2")
 	require.NoError(t, err)

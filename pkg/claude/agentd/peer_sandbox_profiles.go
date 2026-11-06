@@ -115,10 +115,11 @@ func servePeerSandboxProfileByName(w http.ResponseWriter, r *http.Request, v *pe
 		return
 	}
 	if r.Method == http.MethodDelete {
-		// A profile assigned to a group or as the default would leave them
-		// with none: deleting it is your operator's.
-		if assigned, err := db.SandboxProfileAssigned(existing.ID); err != nil || assigned {
-			writeError(w, http.StatusConflict, "assigned", "the profile is assigned to a group or as the default; only this node's operator may delete it")
+		// A profile assigned to a group or as the default, or named by an
+		// agent's spawn, would leave them with none, or with whatever is next
+		// created under its name: deleting it is your operator's.
+		if referenced, err := db.SandboxProfileReferenced(existing.ID, existing.Name); err != nil || referenced {
+			writeError(w, http.StatusConflict, "assigned", "the profile is assigned to a group or as the default, or an agent was spawned under it; only this node's operator may delete it")
 			return
 		}
 	}
