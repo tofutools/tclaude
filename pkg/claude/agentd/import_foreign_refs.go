@@ -141,6 +141,39 @@ func remapImportForeignSenders(exp *groupexport.Export, local func(string) bool)
 	return warnings
 }
 
+// remapImportOperatorMail gives the file's operator mail (from_conv "") one
+// fresh sender, for a restricted peer's import. An agent's inbox reads an
+// empty sender as "From: human operator", and agents take the operator's word
+// as authoritative, so a peer's file must not speak as this node's human
+// (tcl-mzx9jm). This node's human, and a peer with unrestricted trust, import
+// genuine operator history as it is. The fresh sender is no agent and has no
+// name. It returns a warning naming the messages by archived id.
+func remapImportOperatorMail(exp *groupexport.Export) []string {
+	sender := ""
+	var ids []string
+	for i := range exp.Messages {
+		m := &exp.Messages[i]
+		if m.FromConv != "" {
+			continue
+		}
+		if sender == "" {
+			sender = uuid.NewString()
+		}
+		m.FromConv = sender
+		ids = append(ids, fmt.Sprint(m.ID))
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	noun := "archived messages"
+	if len(ids) == 1 {
+		noun = "archived message"
+	}
+	return []string{fmt.Sprintf(
+		"%d %s from the source's operator land from an unknown sender, not as this node's operator: a peer's file does not speak for this node's human (archived ids: %s)",
+		len(ids), noun, listBounded(ids))}
+}
+
 // maxForeignListed bounds how many dropped entries a warning names.
 const maxForeignListed = 20
 

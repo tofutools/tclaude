@@ -153,6 +153,10 @@ type importKeep struct {
 	digest    string
 	// ignored is a selection from a caller who may not make one.
 	ignored bool
+	// restrictedPeer is a federation peer importing under its grants
+	// (peer_import.go): its file's operator mail must not land as this node's
+	// operator's (remapImportOperatorMail).
+	restrictedPeer bool
 }
 
 // importForwardedKey marks a request a federation peer forwarded through its
@@ -174,7 +178,9 @@ func importKeepCaller(r *http.Request) bool {
 
 // readImportKeep reads the selection off an import request.
 func readImportKeep(r *http.Request) importKeep {
-	return parseImportKeep(r.URL.Query(), importKeepCaller(r))
+	k := parseImportKeep(r.URL.Query(), importKeepCaller(r))
+	k.restrictedPeer = peerGrantFromRequest(r) != nil
+	return k
 }
 
 func parseImportKeep(q url.Values, human bool) importKeep {

@@ -567,6 +567,9 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	// conversations outside the file drop (import_foreign_refs.go).
 	foreignWarnings := dropImportForeignRefs(exp)
 	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
@@ -848,6 +851,9 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	// (import_foreign_refs.go). A peer import already refused them.
 	foreignWarnings := dropImportForeignRefs(exp)
 	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
 
 	targetName := asName
 	if targetName == "" {

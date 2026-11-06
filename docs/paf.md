@@ -188,6 +188,12 @@ nothing. A head alias the file says such a conversation created is credited the
 same way. Mail from a sender that is not on this node is kept as it is. The
 preview and the reply list the affected messages by archived id.
 
+Mail from the source's operator lands as this node's operator's only on an
+import by this node's human, or by a peer with unrestricted trust. On a
+restricted peer's import it lands from an unknown sender instead, because an
+agent reads operator mail as this node's human's word. The preview and the
+reply list it by archived id.
+
 ## How tclaude uses PAF
 
 | Operation | What PAF carries | Carrier in this release |
