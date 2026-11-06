@@ -191,7 +191,8 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // Its node's snapshot library and PAF export; the file downloads from
   // there (dashboard_peer_downloads.go).
   'snapshot-agent': ['feature:local_dashboard'],
-  'export-paf': ['agent.bundle.export'],
+  // Its export carries the transcript by default.
+  'export-paf': ['agent.bundle.export', 'sessions.files.read'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way

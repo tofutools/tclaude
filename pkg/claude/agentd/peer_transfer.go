@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -45,7 +46,10 @@ func peerAsLocalRequest(r *http.Request) *http.Request {
 	return r.Clone(context.WithValue(withImportForwarded(r.Context()), remoteAuthedCtxKey{}, true))
 }
 
-// servePeerStageable serves a download route directly through the peer view.
+// servePeerStageable serves a download route directly through the peer view
+// to unrestricted trust only. A restricted peer downloads through the staged
+// path, which is audited, counted against its jobs and rechecked per chunk;
+// its gate names what a refused staging lacks.
 func servePeerStageable(gate peerStageGate) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
 	return func(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
 		if !v.unrestricted() {
@@ -53,6 +57,8 @@ func servePeerStageable(gate peerStageGate) func(http.ResponseWriter, *http.Requ
 				writeError(w, status, code, msg)
 				return
 			}
+			writeError(w, http.StatusForbidden, "staged_only", "download this through /api/peer-downloads")
+			return
 		}
 		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
 	}
@@ -173,10 +179,44 @@ func peerAgentBundleExportGate(v *peerView, r *http.Request) (int, string, strin
 	if r.URL.Query().Get("history") == "true" {
 		need = append(need, PermSessionsFilesRead)
 	}
+	inline, profile := peerAgentBundleEnvironment(res.ConvID)
+	if inline || profile {
+		need = append(need, PermGroupsSettingsEnvironment)
+	}
 	for _, slug := range need {
 		if !peerAgentActionAllowed(v.peer.InstanceID, res.ConvID, slug) {
 			return http.StatusForbidden, "permission", fmt.Sprintf("requires %s in every group of the agent", slug)
 		}
 	}
+	if profile && !fedPeerHoldsUnscoped(v.peer.InstanceID, PermNodeSpawnRead) {
+		return http.StatusForbidden, "permission", "requires " + PermNodeSpawnRead + ": the archive carries the agent's spawn profile environment"
+	}
 	return 0, "", ""
+}
+
+// peerAgentBundleEnvironment reports whether an agent's archive would carry
+// environment values (collectAgentBundle): its spawn request's own, or its
+// spawn profile's. The peer view withholds both without their grants. An
+// unreadable record counts as carrying them.
+func peerAgentBundleEnvironment(conv string) (inline, profile bool) {
+	source, err := db.AgentInitialSpawnConfigForConv(conv)
+	if err != nil {
+		return true, true
+	}
+	if source == "" {
+		return false, false
+	}
+	var requested struct {
+		Profile     string          `json:"profile"`
+		Environment json.RawMessage `json:"environment"`
+	}
+	if json.Unmarshal([]byte(source), &requested) != nil {
+		return true, true
+	}
+	inline = len(requested.Environment) > 0 && !emptyJSONValue(requested.Environment)
+	if requested.Profile != "" {
+		p, err := db.ResolveSpawnProfile(requested.Profile)
+		profile = err != nil || p != nil && len(p.Environment) > 0
+	}
+	return inline, profile
 }

@@ -75,6 +75,9 @@ func TestPeerGroupExportStagesUnderItsGrants(t *testing.T) {
 	code, body = h.stage(t, export+"?carry_workflow=x")
 	require.Equal(t, 403, code, "carried workflows take unrestricted trust: %s", body)
 
+	code, body = h.call("GET", export, nil)
+	require.Equal(t, 403, code, "only the staged path serves a restricted peer: %s", body)
+	require.Contains(t, body, "staged_only")
 	code, body = h.stage(t, export)
 	require.Equal(t, 200, code, body)
 	id := stagedID(t, body)
@@ -140,4 +143,20 @@ func TestPeerAgentBundleExportStagesUnderItsGrants(t *testing.T) {
 	code, body = h.stage(t, export)
 	require.NotEqual(t, 403, code, body)
 	require.NotEqual(t, 404, code, body)
+
+	// The archive carries the agent's launch environment, whose values the
+	// peer view withholds without their grants.
+	require.NoError(t, db.SetAgentInitialSpawnConfig(h.member, `{"environment":[{"name":"A","value":"b"}]}`))
+	code, body = h.stage(t, export)
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsSettingsEnvironment)
+	h.grant(t, agentd.PermGroupsSettingsEnvironment, "group=crew")
+	code, body = h.stage(t, export)
+	require.NotEqual(t, 403, code, body)
+	rec := fedHuman(t, h.f, "POST", "/v1/spawn-profiles", map[string]any{"name": "envd", "environment": []any{map[string]any{"name": "K", "value": "v"}}})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	require.NoError(t, db.SetAgentInitialSpawnConfig(h.member, `{"profile":"envd"}`))
+	code, body = h.stage(t, export)
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermNodeSpawnRead)
 }

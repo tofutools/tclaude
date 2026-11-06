@@ -131,7 +131,7 @@ func TestPeerDownloadRoutesAreUnrestrictedLocalRoutes(t *testing.T) {
 		require.Nil(t, peerStageGates[pattern], pattern)
 	}
 	for pattern := range peerUploadRoutes {
-		require.True(t, rules["/api/peer-uploads/finish"].unrestrictedOnly, pattern)
+		require.True(t, rules[pattern].unrestrictedOnly, pattern)
 	}
 }
 
