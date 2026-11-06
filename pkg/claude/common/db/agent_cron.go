@@ -774,6 +774,14 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if !exists {
 		return 0, nil
 	}
+	var ownerPeer string
+	if err := tx.QueryRow(`SELECT owner_peer FROM agent_cron_jobs WHERE id = ?`, id).Scan(&ownerPeer); err != nil {
+		return 0, err
+	}
+	if ownerPeer != "" && (p.OwnerConv != nil || (p.OperatorAuthored != nil && *p.OperatorAuthored) ||
+		(p.ActionKind != nil && *p.ActionKind != CronActionMessage)) {
+		return 0, fmt.Errorf("UpdateAgentCronJobFields: a peer's job %d takes no local owner, operator attribution or spawn action", id)
+	}
 	sets := make([]string, 0, 9)
 	args := make([]any, 0, 10)
 	patchedOwnerAgent := ""
@@ -1013,4 +1021,20 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	j.CreatedAt = created.Time()
 	j.LastRunAt = lastRun.Time()
 	return &j, nil
+}
+
+// CountPeerCronJobs counts the cron jobs a linked peer scheduled here; with
+// agent set, only those that agent of it scheduled.
+func CountPeerCronJobs(peer, agent string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	q, args := `SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_peer = ?`, []any{peer}
+	if agent != "" {
+		q, args = q+` AND owner_peer_agent = ?`, append(args, agent)
+	}
+	var n int
+	err = d.QueryRow(q, args...).Scan(&n)
+	return n, err
 }

@@ -313,7 +313,8 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	// owner/target are agent-keyed (JOH-26 PR3a); resolve each back to its
 	// actor's CURRENT conv so the export stays conv-portable. LEFT JOIN +
 	// COALESCE keeps a group-target job (target_agent '') or an owner-less job
-	// rather than dropping it.
+	// rather than dropping it. A linked peer's jobs belong to the link, not the
+	// group: exported, they would come back as this node's own.
 	rows, err := d.Query(`
 		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
 		       j.interval_seconds, j.subject, j.body, j.action_kind,j.spawn_profile,j.spawn_role_refs_json,
@@ -323,7 +324,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 		FROM agent_cron_jobs j
 		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
-		WHERE j.group_id = ? ORDER BY j.id`, groupID)
+		WHERE j.group_id = ? AND j.owner_peer = '' ORDER BY j.id`, groupID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("collect cron jobs: %w", err)
 	}

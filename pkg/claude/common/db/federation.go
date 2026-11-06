@@ -79,11 +79,13 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	// The cron jobs it scheduled here go with it.
+	if err := deletePeerCronJobsTx(tx, instanceID); err != nil {
+		return false, err
+	}
 	for _, q := range []string{
 		`DELETE FROM federation_peer_grants WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
-		// The cron jobs it scheduled here go with it.
-		`DELETE FROM agent_cron_jobs WHERE owner_peer=?`,
 		`UPDATE model_proxy_leases SET revoked=1 WHERE peer=?`,
 	} {
 		if _, err := tx.Exec(q, instanceID); err != nil {
@@ -361,6 +363,21 @@ func FederationEnvelopeSeen(fromInstance, envelopeID string) (bool, error) {
 // (sender, envelope id) returns ErrFederationDuplicate and writes nothing;
 // a full backlog returns *AgentMessageQueueFullError and writes nothing.
 func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, attachments []AgentMessageAttachment) (int64, error) {
+	return insertFederationInboundMessage(m, in, expiresAt, limit, attachments, 0)
+}
+
+// InsertPeerCronMessage delivers one run of a linked peer's cron job as that
+// peer's inbound mail. Like local cron it keeps only the latest pending tick
+// per recipient: the run replaces the job's earlier still-unread one, so a
+// recurring job never fills the recipient's regular backlog by itself.
+func InsertPeerCronMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, cronJobID int64) (int64, error) {
+	if cronJobID <= 0 || m == nil || m.ToConv == "" {
+		return 0, fmt.Errorf("invalid peer cron message")
+	}
+	return insertFederationInboundMessage(m, in, expiresAt, limit, nil, cronJobID)
+}
+
+func insertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, attachments []AgentMessageAttachment, cronJobID int64) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -395,6 +412,18 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 		return 0, ErrFederationDuplicate
 	}
 	m.RegularSend = true
+	if cronJobID > 0 {
+		if _, err := tx.Exec(`DELETE FROM agent_messages
+			WHERE id IN (
+				SELECT am.id FROM agent_messages am
+				JOIN agent_cron_messages cm ON cm.message_id = am.id
+				WHERE cm.cron_job_id = ? AND am.to_conv = ?
+				  AND am.delivered_at IS NULL AND am.read_at IS NULL
+				  AND am.nudge_claimed_at IS NULL AND am.nudge_cancelled_at IS NULL
+			)`, cronJobID, m.ToConv); err != nil {
+			return 0, err
+		}
+	}
 	if limit > 0 {
 		pending, err := countUnprocessedRegularMessageBacklog(tx, m)
 		if err != nil {
@@ -419,6 +448,11 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	if _, err := tx.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
 		VALUES(?,?,?,?,?,?)`, id, in.EnvelopeID, in.FromInstance, in.FromAgent, in.FromName, dbTime(time.Now())); err != nil {
 		return 0, err
+	}
+	if cronJobID > 0 {
+		if _, err := tx.Exec(`INSERT INTO agent_cron_messages (message_id, cron_job_id) VALUES (?, ?)`, id, cronJobID); err != nil {
+			return 0, err
+		}
 	}
 	return id, tx.Commit()
 }
@@ -816,4 +850,14 @@ func MarkFederationEnvelopeSeen(fromInstance, envelopeID string, expiresAt time.
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// deletePeerCronJobsTx removes the cron jobs a linked peer scheduled here.
+// A sparse database with no cron subsystem has none.
+func deletePeerCronJobsTx(tx *sql.Tx, instanceID string) error {
+	if ok, err := txTableExists(tx, "agent_cron_jobs"); err != nil || !ok {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM agent_cron_jobs WHERE owner_peer=?`, instanceID)
+	return err
 }

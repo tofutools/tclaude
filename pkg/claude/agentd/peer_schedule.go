@@ -36,6 +36,10 @@ import (
 
 // peerCronJobInReach reports whether a restricted peer reaches job.
 func peerCronJobInReach(v *peerView, job *db.AgentCronJob) bool {
+	if job.OwnerPeer != "" && job.OwnerPeer != v.peer.InstanceID {
+		// Another linked peer's job is that peer's business, not this one's.
+		return false
+	}
 	if job.IsGroupTarget() {
 		return job.GroupID > 0 && fedPeerGroupVisible(v.peer.InstanceID, job.GroupID) &&
 			fedPeerAllows(v.peer.InstanceID, job.GroupID, PermGroupsMessagesSchedule)

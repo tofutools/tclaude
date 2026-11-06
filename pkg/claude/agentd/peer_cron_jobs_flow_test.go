@@ -93,6 +93,19 @@ func TestPeerOwnedCronJobs(t *testing.T) {
 	require.True(t, strings.HasPrefix(msgs[0].Body, "[remote message from operator@bob"), msgs[0].Body)
 	require.Contains(t, msgs[0].Body, "post your status")
 	require.Contains(t, msgs[0].Subject, "[cron:nudge] standup")
+	// Like local cron, a run replaces the job's still-pending earlier one.
+	code, body = h.call("POST", path+"/run-now", map[string]any{})
+	require.Equal(t, 200, code, body)
+	require.Len(t, peerCronMessages(t, "proc-crew-member"), 1, "the pending tick is coalesced")
+
+	// This node's operator changes when it runs, never what it says or as whom.
+	for _, patch := range []map[string]any{{"body": "forged"}, {"subject": "forged"}, {"owner": "proc-crew-member"}, {"action_kind": "spawn"}} {
+		rec := fedHuman(t, h.f, http.MethodPatch, path, patch)
+		require.NotEqual(t, 200, rec.Code, "%v: %s", patch, rec.Body.String())
+	}
+	rec := fedHuman(t, h.f, http.MethodPatch, path, map[string]any{"interval": "2h"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, "post your status", operatorJobs(t, h)[id]["body"])
 
 	// Its own job: changed, but never retargeted or turned into a spawn.
 	code, body = h.call("PATCH", path, map[string]any{"body": "post your status, briefly"})
@@ -164,6 +177,19 @@ func TestPeerOwnedCronJobsAsAgentPrincipal(t *testing.T) {
 	code, body = call("POST", "/v1/cron", map[string]any{"target": "group:crew", "interval": "1h", "body": "from bob's worker", "queue_when_offline": true})
 	require.Equal(t, 200, code, body)
 	mine := createdJobID(t, body)
+	// An agent of the peer keeps a bounded number of jobs here.
+	var extra []int64
+	for range 9 {
+		code, body = call("POST", "/v1/cron", map[string]any{"target": "group:crew", "interval": "1h", "body": "filler", "enabled": false})
+		require.Equal(t, 200, code, body)
+		extra = append(extra, createdJobID(t, body))
+	}
+	code, body = call("POST", "/v1/cron", map[string]any{"target": "group:crew", "interval": "1h", "body": "one too many", "enabled": false})
+	require.Equal(t, http.StatusConflict, code, body)
+	for _, e := range extra {
+		code, body = call("DELETE", "/v1/cron/"+strconv.FormatInt(e, 10), nil)
+		require.Equal(t, http.StatusNoContent, code, body)
+	}
 	require.Equal(t, worker.ID, operatorJobs(t, h)[mine]["owner_peer_agent"])
 	code, body = call("GET", "/v1/cron", nil)
 	require.Equal(t, 200, code, body)

@@ -181,6 +181,18 @@ func servePeerCronCreate(w http.ResponseWriter, r *http.Request, v *peerView, _ 
 	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
+	limit := peerCronJobLimit
+	if v.agent != nil {
+		limit = peerAgentCronJobLimit
+	}
+	if n, err := db.CountPeerCronJobs(job.OwnerPeer, job.OwnerPeerAgent); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "could not count the jobs")
+		return
+	} else if n >= limit {
+		writeError(w, http.StatusConflict, "cron_job_limit",
+			fmt.Sprintf("at most %d scheduled jobs here; delete one first", limit))
+		return
+	}
 	id, err := db.InsertAgentCronJob(job)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not save the job")
@@ -200,6 +212,14 @@ func servePeerCronCreate(w http.ResponseWriter, r *http.Request, v *peerView, _ 
 	}
 	writePeerCronJob(w, v, row)
 }
+
+// The jobs one linked peer may keep scheduled here, and one agent of it: each
+// is a durable load on this node's scheduler that the peer, not this node's
+// operator, decides on.
+const (
+	peerCronJobLimit      = 50
+	peerAgentCronJobLimit = 10
+)
 
 func deref(s *string) string {
 	if s == nil {
@@ -433,22 +453,26 @@ func firePeerCronJob(j *db.AgentCronJob, subject string) string {
 		return "no_target"
 	}
 	body := fedRemoteBanner(name, peerDisplay(p), p.InstanceID) + j.Body
-	delivered, skipped := 0, 0
+	delivered, skipped, failed := 0, 0, 0
 	for _, conv := range recipients {
 		if !j.QueueWhenOffline && !isConvOnlineIn(conv, alive) {
 			skipped++
 			continue
 		}
-		_, err := db.InsertFederationInboundMessage(&db.AgentMessage{GroupID: j.GroupID, ToConv: conv, Subject: subject, Body: body,
+		// One recipient's full backlog or failure leaves the others' runs.
+		_, err := db.InsertPeerCronMessage(&db.AgentMessage{GroupID: j.GroupID, ToConv: conv, Subject: subject, Body: body,
 			ToRecipients: []string{conv}}, db.FederationInbound{EnvelopeID: uuid.NewString(), FromInstance: p.InstanceID,
-			FromAgent: j.OwnerPeerAgent, FromName: name}, time.Now().Add(24*time.Hour), regularAgentMessageQueueLimit, nil)
+			FromAgent: j.OwnerPeerAgent, FromName: name}, time.Now().Add(24*time.Hour), regularAgentMessageQueueLimit, j.ID)
 		if err != nil {
-			return "send_failed"
+			failed++
+			continue
 		}
 		enqueueDeliveryForConv(conv)
 		delivered++
 	}
 	switch {
+	case failed > 0:
+		return "send_failed"
 	case delivered == 0:
 		return "skipped_offline"
 	case skipped > 0:

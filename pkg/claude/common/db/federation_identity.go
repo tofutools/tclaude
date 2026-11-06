@@ -421,6 +421,10 @@ func RevokeFederationIdentity(instance string, now time.Time) error {
 	if _, err = tx.Exec(`DELETE FROM federation_peers WHERE instance_id=?`, instance); err != nil {
 		return err
 	}
+	// The cron jobs it scheduled here go with it, as on unlinking.
+	if err = deletePeerCronJobsTx(tx, instance); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

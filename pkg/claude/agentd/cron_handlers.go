@@ -1120,6 +1120,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		if _, ok := authCronJob(w, authRequest, job); !ok {
 			return
 		}
+		if job.IsPeerOwned() && !peerOwnedCronPatchAllowed(patch, decoded) {
+			writeError(w, http.StatusConflict, "peer_owned",
+				"a linked peer's job: this node may change its schedule, enable, disable or delete it, never its content, target, owner or action")
+			return
+		}
 		if targetResolveErr != nil {
 			writeCronProposedTargetResolutionError(w, r, targetResolveErr)
 			return
@@ -1796,4 +1801,15 @@ func authCronJob(w http.ResponseWriter, r *http.Request, job *db.AgentCronJob) (
 		return authCronWriteGroup(w, r, job.GroupID)
 	}
 	return authCronWrite(w, r, job.TargetConv)
+}
+
+// peerOwnedCronPatchAllowed reports whether a local patch to a linked peer's
+// job leaves what it delivers, and as whom, alone. What it sends is delivered
+// as the peer's mail, so this node changes only when and whether it runs.
+func peerOwnedCronPatchAllowed(p db.UpdateCronPatch, d decodedCronPatch) bool {
+	if d.targetSelector != nil || d.owner != nil {
+		return false
+	}
+	p.Enabled, p.IntervalSeconds, p.CronExpr, p.QueueWhenOffline, p.RunImmediately = nil, nil, nil, nil, nil
+	return p.Empty() && p.OperatorAuthored == nil
 }
