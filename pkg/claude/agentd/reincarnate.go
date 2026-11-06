@@ -442,9 +442,37 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	successorHarness, _ := harness.Resolve(relaunch.Harness)
 	launchEnroll := successorHarness.SupportsLaunchEnrollment()
+	// A server-authoritative harness (OpenCode) cannot take a preset UUID: its
+	// conversation id is minted by the agentd-managed server the successor
+	// attaches to, so that server starts first and its ses_ id is the
+	// successor's preset conv-id. Until the fork succeeds the server is ours
+	// to stop.
+	var openCodeLaunch *openCodeLaunch
+	stopOpenCodeServer := func() {
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			openCodeLaunch = nil
+		}
+	}
+	presetConvID := ""
+	if successorHarness.UsesAuthoritativeServer() {
+		title := ""
+		if isValidRenameTitle(successorTitle) {
+			title = successorTitle
+		}
+		var startErr error
+		openCodeLaunch, startErr = startManagedOpenCodeServer(&spawnArgs, label, managedID, title, "", false)
+		if startErr != nil {
+			rollbackSandbox(true)
+			writeSpawnFailure(w, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"failed to start managed OpenCode server: " + startErr.Error()})
+			return
+		}
+		presetConvID = openCodeLaunch.ConvID
+	}
 	var handoff reincarnationHandoff
 	if launchEnroll {
-		handoff = enrollReincarnationHandoff(target, caller, followUp, successorTitle, &spawnArgs)
+		handoff = enrollReincarnationHandoff(target, caller, followUp, successorTitle, presetConvID, &spawnArgs)
 	}
 	preConvID, handoffMsgID := handoff.preConvID, handoff.msgID
 	// rollbackHandoff removes the pre-fork handoff row when the launch never
@@ -461,7 +489,20 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		handoffMsgID = 0
 	}
 	newConv, newTmux, fail := launchReincarnationSuccessor(label, spawnArgs, launchEnroll, preConvID, relaunch.CodexAppServer)
+	if fail == nil && openCodeLaunch != nil {
+		// OpenCode takes no launch prompt: its first turn goes through the
+		// managed server, as spawn's does. A successor that cannot receive its
+		// handoff is stopped, so the predecessor stays the live agent.
+		if err := sendOpenCodePromptForSpawn(openCodeLaunch, spawnArgs.Cwd,
+			spawnArgs.InitialPrompt, spawnArgs.Model, spawnArgs.Effort); err != nil {
+			stopReincarnationSuccessor(newTmux, label)
+			fail = &spawnFailure{http.StatusInternalServerError, "spawn",
+				"the successor started but its handoff could not be sent through OpenCode: " + err.Error() +
+					"; the successor was stopped and the target policy was restored"}
+		}
+	}
 	if fail != nil {
+		stopOpenCodeServer()
 		rollbackHandoff()
 		rollbackSandbox(true)
 		writeSpawnFailure(w, fail)
@@ -646,9 +687,16 @@ type reincarnationHandoff struct {
 // enrollReincarnationHandoff presets the successor's conv-id, writes its
 // handoff into the inbox before the fork, and puts the successor's launch name
 // and first prompt into spawnArgs.
-func enrollReincarnationHandoff(target, caller, followUp, successorTitle string, spawnArgs *clcommon.SpawnArgs) reincarnationHandoff {
+//
+// presetConvID is the id a server-authoritative harness's server already
+// minted; empty mints a fresh UUID for a harness that takes one at launch.
+func enrollReincarnationHandoff(target, caller, followUp, successorTitle, presetConvID string,
+	spawnArgs *clcommon.SpawnArgs) reincarnationHandoff {
 	var h reincarnationHandoff
-	h.preConvID = convops.GenerateUUID()
+	h.preConvID = presetConvID
+	if h.preConvID == "" {
+		h.preConvID = convops.GenerateUUID()
+	}
 	// Route the handoff through the first group the agent belongs to. Read
 	// off the PREDECESSOR: every identity-bearing table is agent-keyed, so
 	// the successor inherits exactly this set when RotateAgentConv links it
@@ -686,6 +734,18 @@ func enrollReincarnationHandoff(target, caller, followUp, successorTitle string,
 	spawnArgs.InitialPrompt = buildReincarnationLaunchPrompt(spawnArgs.Name,
 		reincarnationHandoffAuthor(caller, target), h.msgID, followUp, inlineCap)
 	return h
+}
+
+// stopReincarnationSuccessor kills a successor's tmux session (its label
+// when the session name is not known yet) after a failed launch.
+func stopReincarnationSuccessor(newTmux, label string) {
+	tmuxToKill := newTmux
+	if tmuxToKill == "" {
+		tmuxToKill = label
+	}
+	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+		slog.Warn("reincarnate: failed successor kill failed", "session", tmuxToKill, "error", err)
+	}
 }
 
 // launchReincarnationSuccessor forks the successor and waits until it is up,
@@ -782,13 +842,7 @@ func launchReincarnationSuccessor(label string, spawnArgs clcommon.SpawnArgs, la
 	default:
 	}
 	if newConv == "" {
-		tmuxToKill := newTmux
-		if tmuxToKill == "" {
-			tmuxToKill = label
-		}
-		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
-			slog.Warn("reincarnate: timed-out successor kill failed", "session", tmuxToKill, "error", err)
-		}
+		stopReincarnationSuccessor(newTmux, label)
 		missing := "conv-id"
 		if launchEnroll {
 			missing = "a live pane"

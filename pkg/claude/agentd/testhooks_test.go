@@ -92,6 +92,47 @@ func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string
 	}
 }
 
+// OpenCodePromptRecorder collects the prompts the daemon sends through a
+// managed OpenCode server's prompt API, keyed by the conversation they target.
+type OpenCodePromptRecorder struct {
+	mu      sync.Mutex
+	prompts map[string][]string
+}
+
+// RecordOpenCodePromptsForTest records every prompt sent to a managed OpenCode
+// server after a launch. Call it after SetOpenCodeRuntimeForTest (newFlow does).
+func RecordOpenCodePromptsForTest(t *testing.T) *OpenCodePromptRecorder {
+	t.Helper()
+	rec := &OpenCodePromptRecorder{prompts: map[string][]string{}}
+	previous := sendOpenCodePromptForSpawn
+	sendOpenCodePromptForSpawn = func(launch *openCodeLaunch, _, prompt, _, _ string) error {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.prompts[launch.ConvID] = append(rec.prompts[launch.ConvID], prompt)
+		return nil
+	}
+	t.Cleanup(func() { sendOpenCodePromptForSpawn = previous })
+	return rec
+}
+
+// WaitFor returns the first prompt sent to convID, failing after timeout.
+func (r *OpenCodePromptRecorder) WaitFor(t *testing.T, convID string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		r.mu.Lock()
+		got := r.prompts[convID]
+		r.mu.Unlock()
+		if len(got) > 0 {
+			return got[0]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no OpenCode prompt was sent to %s within %s", convID, timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // SetOpenCodePromptErrorForTest fails the first prompt, which a spawn sends after
 // its pane forked. Call it after SetOpenCodeRuntimeForTest.
 func SetOpenCodePromptErrorForTest(err error) func() {
