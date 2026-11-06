@@ -31,7 +31,8 @@ const (
 // peerAgentControlGrants are the grants behind an agent's peer-invoked
 // controls, which peer_view.agents names per agent: its settings, and its
 // lifecycle and move (peer_actions.go).
-var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
+var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove,
+	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
 // groups the agent owns (cloneAuthorizationGroups).
@@ -44,16 +45,29 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// A member's role and description belong to the one group.
 	pattern := "PATCH /api/groups/{name}/members/{conv}"
 	rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: "members.manage", requires: PermGroupsMembersManage, group: true, invoke: &peerInvokeSpec{param: "name"}})
+	// An agent's controls under their own grants, each held in every active
+	// group the agent is in: a turn interrupt, compaction, a request that it
+	// reincarnate itself, its context window and its presented PRs. No peer
+	// text is typed into the agent's pane (dashboardCompactAgent,
+	// dashboardReincarnateAgent); unrestricted trust runs this node's own
+	// handlers, every option included.
+	for pattern, slug := range peerAgentControlRoutes {
+		rule := peerViewRule{feature: "members." + strings.TrimPrefix(slug, "groups.members."), requires: slug, group: true}
+		if strings.HasPrefix(pattern, "GET ") {
+			rule.serve = servePeerAgentControl
+		} else {
+			rule.write = servePeerAgentControl
+		}
+		rules[pattern] = rule
+	}
 	// An agent's remote access and fast mode, its sandbox implementation, its
-	// compaction and reincarnation, its removal from a group and its permanent delete reach
+	// removal from a group and its permanent delete reach
 	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
 	// handlers. One feature names one slug, so the metadata is stable.
 	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
 	for _, pattern := range []string{
 		"POST /api/agents/{id}/remote-control",
 		"POST /api/agents/{id}/fast-mode/{direction}",
-		"POST /api/agents/{id}/compact",
-		"POST /api/agents/{id}/reincarnate",
 		"POST /api/agents/{id}/sandbox-impl",
 		"DELETE /api/agents/{id}",
 	} {
@@ -74,6 +88,33 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 		dashboardRemoveMember(w, g, r.PathValue("conv"))
 	}))
 	rules["DELETE /api/groups/{name}/members/{conv}"] = full
+}
+
+// peerAgentControlRoutes are an agent's controls a peer grant reaches, by
+// the group grant each needs.
+var peerAgentControlRoutes = map[string]string{
+	"POST /api/agents/{id}/interrupt":   PermGroupsMembersInterrupt,
+	"POST /api/agents/{id}/compact":     PermGroupsMembersCompact,
+	"POST /api/agents/{id}/reincarnate": PermGroupsMembersReincarnate,
+	"GET /api/agents/{id}/context-info": PermGroupsMembersContextInfo,
+	"GET /api/agents/{id}/prs":          PermGroupsMembersPR,
+	"POST /api/agents/{id}/prs":         PermGroupsMembersPR,
+}
+
+// servePeerAgentControl runs an agent control: as this node's operator would
+// for unrestricted trust, else under the peer's grant in every group of the
+// agent, as its own peer action (servePeerAgentInvoke).
+func servePeerAgentControl(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if v.unrestricted() {
+		target, err := db.GetAgent(r.PathValue("id"))
+		if err != nil || target == nil || target.CurrentConvID == "" {
+			writeError(w, http.StatusNotFound, "not_found", "object not found")
+			return
+		}
+		servePeerAgentAsLocal(w, r, v, target)
+		return
+	}
+	servePeerAgentInvoke(w, r, v, rule)
 }
 
 // servePeerFullAgent runs an agent route for unrestricted trust on exactly the

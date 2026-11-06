@@ -289,12 +289,15 @@ func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout
 		Action        string `json:"action"`
 		FollowUp      string `json:"follow_up,omitempty"`
 		Note          string `json:"note,omitempty"`
+		remoteReply
 	}
 	path := "/v1/agent/" + url.PathEscape(target) + "/" + label
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	if resp.FollowUp != "" {
 		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
@@ -355,6 +358,7 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 // /v1/agent/{selector}/context). CallerConv is only set on the
 // cross-agent path.
 type contextInfoResp struct {
+	remoteReply
 	ConvID              string  `json:"conv_id"`
 	SessionID           string  `json:"session_id,omitempty"`
 	ContextPct          float64 `json:"context_pct"`
@@ -417,6 +421,8 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	fmt.Fprintf(stdout, "conv:    %s\n", short(resp.ConvID))
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "caller:  %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))

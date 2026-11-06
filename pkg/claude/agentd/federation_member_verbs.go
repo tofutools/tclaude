@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -19,14 +20,32 @@ import (
 // with its peer= grants. Nothing here grants anything: it only translates
 // the local verb's request into the peer view request.
 
-// remoteMemberVerbs are the verbs that reach a peer's agent.
-var remoteMemberVerbs = map[string]bool{"stop": true, "resume": true, "retire": true, "rename": true, "task": true}
+// remoteMemberVerb is a verb that reaches a peer's agent: the methods it
+// takes and the peer's dashboard route it runs as (agents/{id}/<tail>).
+type remoteMemberVerb struct {
+	methods []string
+	tail    string
+}
+
+var remoteMemberVerbs = map[string]remoteMemberVerb{
+	"stop":        {methods: []string{http.MethodPost}, tail: "stop"},
+	"resume":      {methods: []string{http.MethodPost}, tail: "resume"},
+	"retire":      {methods: []string{http.MethodPost}, tail: "retire"},
+	"rename":      {methods: []string{http.MethodPost}, tail: "rename"},
+	"task":        {methods: []string{http.MethodPost}, tail: "task"},
+	"interrupt":   {methods: []string{http.MethodPost}, tail: "interrupt"},
+	"compact":     {methods: []string{http.MethodPost}, tail: "compact"},
+	"reincarnate": {methods: []string{http.MethodPost}, tail: "reincarnate"},
+	"context":     {methods: []string{http.MethodGet}, tail: "context-info"},
+	"prs":         {methods: []string{http.MethodGet, http.MethodPost}, tail: "prs"},
+}
 
 // serveRemoteMemberVerb runs verb on the peer agent selector names. It
 // reports false when selector is not a peer member, so the caller answers
 // as for any unresolved selector.
 func serveRemoteMemberVerb(w http.ResponseWriter, r *http.Request, selector, verb string) bool {
-	if !remoteMemberVerbs[verb] || !isFederatedAddress(selector) {
+	spec, ok := remoteMemberVerbs[verb]
+	if !ok || !isFederatedAddress(selector) {
 		return false
 	}
 	member, peerRef, _ := splitFederatedAddress(selector)
@@ -40,8 +59,8 @@ func serveRemoteMemberVerb(w http.ResponseWriter, r *http.Request, selector, ver
 		writeError(w, status, "not_found", msg)
 		return true
 	}
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "only changes reach a peer's agent; read it with tclaude agent ls --node "+peerRef)
+	if !slices.Contains(spec.methods, r.Method) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "this does not reach a peer's agent; read it with tclaude agent ls --node "+peerRef)
 		return true
 	}
 	body, note, refusal := remoteMemberVerbBody(r, verb)
@@ -49,7 +68,7 @@ func serveRemoteMemberVerb(w http.ResponseWriter, r *http.Request, selector, ver
 		writeError(w, http.StatusBadRequest, "invalid_arg", refusal)
 		return true
 	}
-	tail := "agents/" + agentID + "/" + verb
+	tail := "agents/" + agentID + "/" + spec.tail
 	if verb == "retire" && r.URL.Query().Get("shutdown") != "" {
 		tail += "?shutdown=" + boolQuery(r.URL.Query().Get("shutdown") != "0")
 	}
@@ -121,7 +140,61 @@ func remoteMemberVerbBody(r *http.Request, verb string) (body []byte, note, refu
 	if err != nil || len(raw) > fedPeerViewBodyLimit {
 		return nil, "", "request body exceeds the peer limit"
 	}
+	// No text of the caller's is typed into a peer's pane: a follow-up or
+	// focus hint never crosses.
+	var followUp struct {
+		FollowUp string `json:"follow_up"`
+	}
+	_ = json.Unmarshal(raw, &followUp)
 	switch verb {
+	case "interrupt":
+		if len(q) > 0 {
+			return nil, "", "remote interrupt takes no options"
+		}
+		return nil, "", ""
+	case "compact":
+		if len(q) > 0 || strings.TrimSpace(followUp.FollowUp) != "" {
+			return nil, "", "remote compact takes no follow-up: it would be typed into the peer's pane"
+		}
+		return nil, "", ""
+	case "reincarnate":
+		if len(q) > 0 {
+			return nil, "", "remote reincarnate takes no options"
+		}
+		if strings.TrimSpace(followUp.FollowUp) != "" {
+			note = "the agent was asked to reincarnate itself with its own handoff; your follow-up was not sent: a peer's agent takes no text into its pane"
+		}
+		out, _ := json.Marshal(map[string]string{"mode": "self"})
+		return out, note, ""
+	case "context":
+		for k := range q {
+			if k != "fresh" {
+				return nil, "", "remote context info does not take " + k
+			}
+		}
+		return nil, "", ""
+	case "prs":
+		if len(q) > 0 {
+			return nil, "", "remote PRs take no options"
+		}
+		if r.Method == http.MethodGet {
+			return nil, "", ""
+		}
+		var in struct {
+			URL     string `json:"url"`
+			Summary string `json:"summary"`
+			State   string `json:"state"`
+			Handled bool   `json:"handled"`
+			RepoDir string `json:"repo_dir"`
+		}
+		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.URL) == "" {
+			return nil, "", "expected a PR link"
+		}
+		if in.RepoDir != "" {
+			note = "the repository directory was not sent: it is a path on this node, not the peer's"
+		}
+		out, _ := json.Marshal(map[string]any{"url": in.URL, "summary": in.Summary, "state": in.State, "handled": in.Handled})
+		return out, note, ""
 	case "stop":
 		for k := range q {
 			if k != "force" {

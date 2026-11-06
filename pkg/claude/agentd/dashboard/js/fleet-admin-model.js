@@ -160,6 +160,11 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.resume', kind: 'group', sensitive: true, what: 'wake (resume) member agents; with groups.members.stop also restart them' },
   { slug: 'groups.members.retire', kind: 'group', sensitive: true, what: 'retire member agents (their sessions exit)' },
   { slug: 'groups.members.clone', kind: 'group', sensitive: true, what: 'clone member agents within the group' },
+  { slug: 'groups.members.interrupt', kind: 'group', sensitive: true, what: 'interrupt a member Codex agent\'s running turn (app-server drive)', warning: 'Stops the agent mid-turn: work in progress in that turn is cut off.' },
+  { slug: 'groups.members.compact', kind: 'group', sensitive: true, what: 'compact member agents\' context windows (no follow-up prompt)', warning: 'Compaction summarises and drops the agent\'s working context.' },
+  { slug: 'groups.members.reincarnate', kind: 'group', sensitive: true, what: 'ask member agents to reincarnate themselves at a clean point, with their own handoff', warning: 'The agent replaces itself with a fresh successor; the request names your node, and you choose no mode or focus.' },
+  { slug: 'groups.members.context-info', kind: 'group', what: 'read member agents\' context window usage' },
+  { slug: 'groups.members.pr', kind: 'group', sensitive: true, what: 'list and present pull requests for member agents on this node\'s dashboard' },
   { slug: 'agent.move', kind: 'group', sensitive: true, what: 'move or teleport member agents to its node (with groups.members.retire)' },
   { slug: 'agents.receive', kind: 'scoped', what: 'move or share agents into the group' },
   { slug: 'agents.teleport.receive', kind: 'scoped', what: 'teleport agents into the group' },
@@ -196,7 +201,7 @@ export function slugInfo(slug) {
 // order.
 export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
-const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
+const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
 const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
 
 export function slugCategory(slug) {

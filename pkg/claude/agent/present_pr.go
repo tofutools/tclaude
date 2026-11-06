@@ -91,6 +91,7 @@ type presentPRResp struct {
 	Handled       bool            `json:"handled"`
 	CallerConv    string          `json:"caller_conv,omitempty"`
 	CallerAgentID string          `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 type presentedPRWire struct {
@@ -101,6 +102,8 @@ type presentedPRWire struct {
 }
 
 func printPresentPRResult(stdout io.Writer, resp *presentPRResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

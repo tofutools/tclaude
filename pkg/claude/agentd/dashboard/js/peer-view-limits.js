@@ -156,16 +156,18 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],
-  // Remote access, fast mode, the sandbox implementation, the debug export,
-  // compaction, reincarnation and permanent delete reach what no peer grant hands out:
+  // Compaction, and a request that the agent reincarnate itself (a peer
+  // sends no follow-up, focus hint or forced mode).
+  'compact-agent': ['groups.members.compact'],
+  'reincarnate': ['groups.members.reincarnate'],
+  // Remote access, fast mode, the sandbox implementation, the debug export
+  // and permanent delete reach what no peer grant hands out:
   // unrestricted trust only (a feature no restricted peer shares).
   'toggle-remote-control': ['feature:agents.manage.full'],
   'sandbox-impl': ['feature:agents.manage.full'],
   'debug-export': ['feature:agents.manage.full'],
   'fast-mode-set': ['feature:agents.manage.full'],
   'fast-mode-disable': ['feature:agents.manage.full'],
-  'compact-agent': ['feature:agents.manage.full'],
-  'reincarnate': ['feature:agents.manage.full'],
   'delete-agent': ['feature:agents.manage.full'],
   // Its lifecycle, through the regular dialogs (peer_actions.go refuses
   // their local-only options). A restart stops the agent first.
