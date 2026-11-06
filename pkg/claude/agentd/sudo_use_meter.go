@@ -81,7 +81,7 @@ func sudoUseLimitRefusal(slug string) string {
 		return ""
 	case strings.HasPrefix(slug, PermGroupsMembersSpawn+"."):
 		return "It is a choice within a spawn. Limit agent.spawn or groups.members.spawn instead."
-	case slug == PermGroupsAdmin:
+	case slug == PermGroupsAdmin, slug == PermResourcesRead, slug == PermResourcesWrite:
 		return "It covers many actions at once. Limit the specific permissions instead."
 	case slices.Contains(laterWorkSudoSlugs, slug):
 		return "It sets up work that runs later, when there is no request to count."

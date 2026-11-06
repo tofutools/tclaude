@@ -160,11 +160,12 @@ func (e *processTemplateStoredValidationError) Error() string {
 
 func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	// A member without process.templates.read lists the templates pinned to
-	// its groups (groups.resources.read).
+	// its groups (groups.resources.read), and a scoped resources.read grant
+	// the templates its scope reaches.
 	memberOnly, limited := memberReadableProcessTemplates(r)
 	// An --ask-human caller asks for the whole library, so it gets the popup.
-	if !limited || len(memberOnly) == 0 || parseAskHumanHeader(r) > 0 {
-		memberOnly, limited = nil, false
+	if !limited || !memberOnly.any() || parseAskHumanHeader(r) > 0 {
+		memberOnly, limited = readableProcessTemplates{}, false
 		if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 			return
 		}
@@ -202,7 +203,7 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		if unlisted[record.ID] && !includeUnlisted {
 			continue
 		}
-		if limited && !memberOnly[record.ID] {
+		if limited && !memberOnly.reads(record.ID) {
 			continue
 		}
 		grouped[record.ID] = append(grouped[record.ID], record)

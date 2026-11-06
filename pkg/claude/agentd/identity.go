@@ -619,7 +619,7 @@ func resolvePermission(convID, slug string) permResolution {
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
 	cfg, _ := config.LoadShared()
 	v := resolveEffectivePermissionVerdict(convID, slug,
-		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(permissionUmbrellaFor(slug)))
 	return contextFreeResolution(v), v.SudoGrantID
 }
 
@@ -629,40 +629,42 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
 	src := sudoSourcesForRequest(r, localPermissionSources(loadPermSources(convID)))
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
+		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[permissionUmbrellaFor(slug)])
 	}
 	cfg, _ := config.Load()
 	return resolveEffectivePermissionVerdictFrom(src, slug,
-		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(permissionUmbrellaFor(slug)))
 }
 
-// resolveEffectivePermissionVerdict adds the groups.admin umbrella to the
-// ordinary exact-slug resolver. Exact decisions always go first: in
-// particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
-// does not suppress a separately granted dedicated capability; it only removes
-// the umbrella source.
+// resolveEffectivePermissionVerdict adds the umbrella slugs (groups.admin, and
+// resources.read/write: permissionUmbrellaFor) to the ordinary exact-slug
+// resolver. Exact decisions always go first: in particular, a dedicated deny
+// suppresses an umbrella grant. An umbrella deny does not suppress a
+// separately granted dedicated capability; it only removes the umbrella
+// source. umbrellaDefaultAllowed is whether slug's umbrella is a default.
 //
 // It has no request to count against, so a use-limited grant does not speak here.
-func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, umbrellaDefaultAllowed bool) permVerdict {
 	src := withoutLimitedSudo(localPermissionSources(loadPermSources(convID)))
-	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
+	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, umbrellaDefaultAllowed)
 }
 
-func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, umbrellaDefaultAllowed bool) permVerdict {
 	if !IsKnownPermSlug(slug) {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}
 	exact := resolvePermissionVerdictFrom(src, slug, defaultAllowed)
-	if exact.Resolution == permDeny || !IsGroupsAdminImpliedSlug(slug) {
+	umbrella := permissionUmbrellaFor(slug)
+	if exact.Resolution == permDeny || umbrella == "" {
 		return exact
 	}
-	admin := resolvePermissionVerdictFrom(src, PermGroupsAdmin, adminDefaultAllowed)
+	admin := resolvePermissionVerdictFrom(src, umbrella, umbrellaDefaultAllowed)
 	if exact.Resolution == permUndecided && admin.Resolution == permAllow {
 		return admin
 	}
 	// A scoped dedicated allow may not cover this particular action. An
 	// unscoped umbrella still does, so prefer it here; otherwise the gate would
-	// stop at the unsatisfied dedicated scope and never reach groups.admin.
+	// stop at the unsatisfied dedicated scope and never reach the umbrella.
 	if exact.Resolution == permAllow && contextFreeResolution(exact) == permUndecided &&
 		admin.Resolution == permAllow && contextFreeResolution(admin) == permAllow {
 		return admin
@@ -1319,7 +1321,7 @@ func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
 func permissionAllowedFrom(src permSources, convID, perm string, actx ActionContext) bool {
 	cfg, _ := config.Load()
 	verdict := resolveEffectivePermissionVerdictFrom(src, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
 	if actx.bulkGroupMemberCoverage {
 		allowed, _, err := permissionVerdictAllowsBulkGroupAction(verdict, convID, perm, actx)
 		return err == nil && allowed

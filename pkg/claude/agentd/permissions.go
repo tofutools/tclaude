@@ -165,6 +165,14 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermKnowledgeRead, Description: "Read the knowledge base: the docs and source of the build this daemon is running, through a read-only API. It holds only what ships with tclaude, so it gives no other access. Granted to the companion Steward at summon; not default-granted."},
 	{Slug: PermBoardsRead, Description: "Read collab boards: list them, show their elements and fetch the latest PNG snapshot. Granted to the companion Steward at summon; not default-granted."},
 	{Slug: PermBoardsWrite, Description: "Create collab boards, add, change or delete elements on them (authored as the calling agent, which joins the board), and open or close the agent's own board session. Granted to the companion Steward at summon; not default-granted."},
+	{
+		Slug: PermResourcesRead, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimResource},
+		Description: "Umbrella for reading every kind of resource: boards (boards.read), process templates (process.templates.read) and their runs (process.runs.read), for a manager agent. Scope with group=<name> for the resources linked to those groups, or resource=<kind>:<id> (board:<id>, process_template:<id>) for specific ones; no scope reaches every resource. Never member- or owner-implied and not default-granted. A dedicated deny of a per-kind slug still wins.",
+	},
+	{
+		Slug: PermResourcesWrite, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimResource},
+		Description: "Umbrella for changing every kind of resource: boards (boards.write) and process templates (process.templates.manage), for a manager agent. Scoped like resources.read; a resource in several groups needs every one of them in a group= scope. It does not pass an operator lock (only groups.resources.lock or the human unlocks), and run mutations stay on process.runs.manage. Never member- or owner-implied and not default-granted.",
+	},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
 	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
 	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
@@ -1556,7 +1564,7 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 	src := loadPermSources(convID)
 	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied, src) {
 		v := resolveEffectivePermissionVerdictFrom(src, slug,
-			defaults[slug], defaults[PermGroupsAdmin])
+			defaults[slug], defaults[permissionUmbrellaFor(slug)])
 		switch v.Resolution {
 		case permAllow:
 			effective = append(effective, slug)
@@ -1808,7 +1816,7 @@ func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64
 	withoutSudo := src
 	withoutSudo.sudo = map[string]sudoPermSource{}
 	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
 	if contextFreeResolution(standing) == permAllow {
 		return callerConvID
 	}
@@ -1816,7 +1824,7 @@ func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64
 	// exact operation slug or groups.admin; carrying SudoGrantID from that
 	// verdict preserves the umbrella elevation's forensic provenance.
 	effective := resolveEffectivePermissionVerdictFrom(src, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
 	if contextFreeResolution(effective) != permAllow || effective.SudoGrantID == 0 {
 		return callerConvID
 	}

@@ -98,14 +98,24 @@ func agentHoldsGroupResource(r *http.Request, convID, group string, write bool) 
 }
 
 // requireGroupResourceAccess gates an access to a resource that may be linked
-// to group ("" for none). It passes the operator, an agent holding the global
-// slug, and an agent holding the group slug in that group. Anything else gets
+// to group ("" for none); resource is its resource= value (kind:id, "" for an
+// access that names no one resource, such as a create or a group's listing).
+// It passes the operator, an agent holding the global slug (a scoped
+// resources.read/write grant included, when its scope reaches the resource),
+// and an agent holding the group slug in that group. Anything else gets
 // the shared gate's answer (a popup with --ask-human, else 403), asking for
 // the group slug when the resource has a group and the caller has no explicit
 // verdict on the global one, and for the global slug otherwise.
-func requireGroupResourceAccess(w http.ResponseWriter, r *http.Request, global, group string, write bool) (string, bool) {
+func requireGroupResourceAccess(w http.ResponseWriter, r *http.Request, global, group, resource string, write bool) (string, bool) {
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
+	var groups []string
+	if group != "" {
+		groups = []string{group}
+	}
+	if agentReachesThroughScopedUmbrella(r, conv, global, groups, resource, write) {
+		return conv, true
+	}
 	if conv == "" || group == "" {
 		return requireGlobalAndRecord(w, r, global)
 	}
@@ -145,7 +155,7 @@ func boardGroupName(id string) string {
 
 // requireBoardAccess gates a read (or a write) of one board.
 func requireBoardAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
-	return requireGroupResourceAccess(w, r, boardGlobalSlug(write), boardGroupName(id), write)
+	return requireGroupResourceAccess(w, r, boardGlobalSlug(write), boardGroupName(id), resourceRef(resourceScopeKindBoard, id), write)
 }
 
 // resourceLockContexts are the action contexts the lock slug must hold in for
@@ -289,17 +299,20 @@ func processTemplateGroups(id string) []string {
 
 // requireGroupsResourceAccess is requireGroupResourceAccess for a resource
 // in several groups: a read passes through any one of them, a write needs
-// every one.
-func requireGroupsResourceAccess(w http.ResponseWriter, r *http.Request, global string, groups []string, write bool) (string, bool) {
+// every one. A group= scoped umbrella follows the same rule.
+func requireGroupsResourceAccess(w http.ResponseWriter, r *http.Request, global string, groups []string, resource string, write bool) (string, bool) {
 	if len(groups) <= 1 {
 		group := ""
 		if len(groups) == 1 {
 			group = groups[0]
 		}
-		return requireGroupResourceAccess(w, r, global, group, write)
+		return requireGroupResourceAccess(w, r, global, group, resource, write)
 	}
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
+	if agentReachesThroughScopedUmbrella(r, conv, global, groups, resource, write) {
+		return conv, true
+	}
 	if conv == "" {
 		return requirePermissionEx(w, r, global)
 	}
@@ -338,39 +351,71 @@ func requireProcessTemplateAccess(w http.ResponseWriter, r *http.Request, id str
 	if write {
 		global = PermProcessTemplatesManage
 	}
-	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), write)
+	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), resourceRef(resourceScopeKindProcessTemplate, id), write)
+}
+
+// readableProcessTemplates is what an agent without the global read lists:
+// the templates it reads through its groups, and those a scoped
+// resources.read grant reaches.
+type readableProcessTemplates struct {
+	conv     string
+	member   map[string]bool
+	groups   map[string][]string
+	umbrella permVerdict
+	scoped   bool
+}
+
+// any reports whether the agent may list anything at all.
+func (t readableProcessTemplates) any() bool { return len(t.member) > 0 || t.scoped }
+
+// reads reports whether the agent lists template id.
+func (t readableProcessTemplates) reads(id string) bool {
+	if t.member[id] {
+		return true
+	}
+	if !t.scoped {
+		return false
+	}
+	ok, _ := umbrellaVerdictReaches(t.umbrella, t.conv, PermProcessTemplatesRead, t.groups[id],
+		resourceRef(resourceScopeKindProcessTemplate, id), false)
+	return ok
 }
 
 // memberReadableProcessTemplates is, for an agent without the global read,
-// the templates it reads through its groups; nil when it has the global read
-// or is not an agent the membership source applies to.
-func memberReadableProcessTemplates(r *http.Request) (map[string]bool, bool) {
+// the templates it lists; limited false when it has the global read or is not
+// an agent the membership source applies to.
+func memberReadableProcessTemplates(r *http.Request) (readableProcessTemplates, bool) {
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
 	if conv == "" || silentAgentAllows(r, conv, PermProcessTemplatesRead, ActionContext{}) {
-		return nil, false
+		return readableProcessTemplates{}, false
 	}
 	pinned, err := db.ProcessTemplatePinnedGroups()
 	if err != nil {
-		return nil, false
+		return readableProcessTemplates{}, false
 	}
-	readable := map[string]bool{}
+	out := readableProcessTemplates{conv: conv, member: map[string]bool{}, groups: map[string][]string{}}
+	out.umbrella, out.scoped = scopedResourceUmbrella(r, conv, PermProcessTemplatesRead)
 	held := map[string]bool{}
+	active := map[string]bool{}
 	for id, groups := range pinned {
 		for _, name := range groups {
 			ok, seen := held[name]
 			if !seen {
 				g, err := db.GetAgentGroupByName(name)
-				ok = err == nil && g != nil && !g.IsArchived() && agentHoldsGroupResource(r, conv, name, false)
+				active[name] = err == nil && g != nil && !g.IsArchived()
+				ok = active[name] && agentHoldsGroupResource(r, conv, name, false)
 				held[name] = ok
 			}
+			if active[name] {
+				out.groups[id] = append(out.groups[id], name)
+			}
 			if ok {
-				readable[id] = true
-				break
+				out.member[id] = true
 			}
 		}
 	}
-	return readable, true
+	return out, true
 }
 
 // requireProcessRunRead gates the read of one run: process.runs.read, or the
@@ -380,5 +425,10 @@ func requireProcessRunRead(w http.ResponseWriter, r *http.Request, runID string)
 	if scope, err := db.GetProcessRunScope(runID); err == nil && scope.Kind == db.ProcessRunScopeGroup {
 		group = scope.GroupName
 	}
-	return requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false)
+	// A run is read as part of its template (resource=process_template:<id>).
+	resource := ""
+	if run, err := db.GetProcessRun(runID); err == nil && run != nil {
+		resource = resourceRef(resourceScopeKindProcessTemplate, processRunTemplateID(run.TemplateRef))
+	}
+	return requireGroupResourceAccess(w, r, PermProcessRunsRead, group, resource, false)
 }
