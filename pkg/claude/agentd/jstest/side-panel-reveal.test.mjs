@@ -917,12 +917,7 @@ test('the config switches and values take effect, and the form’s defaults are 
 
   const { SIDE_PANEL_TUNING_FIELDS } = await s.harness.importDashboardModule('js/side-panel-tuning-fields.js');
   const defaults = Object.fromEntries(SIDE_PANEL_TUNING_FIELDS.map((f) => [f.key, f.def]));
-  s.reveal.setSidePanelTuning({ ...defaults, predictive_peek: true, growing_peek: true }, s.doc);
-  const { REVEAL_DEFAULTS } = s.reveal;
-  const tuned = { ...REVEAL_DEFAULTS };
-  s.reveal.setSidePanelTuning(null, s.doc);
-  // setSidePanelTuning has no getter: check each field's default maps onto
-  // the constant it tunes.
+  // Each field maps onto the constant it tunes, in that constant's unit.
   const map = {
     edge_zone_px: ['EDGE_PX', 1], dwell_ms: ['DWELL_MS', 1], retract_ms: ['PEEK_RETRACT_MS', 1],
     predict_min_speed: ['MIN_VX', 1000], predict_speed_distance_px: ['RUNWAY_FULL_PX', 1],
@@ -930,9 +925,17 @@ test('the config switches and values take effect, and the form’s defaults are 
     near_edge_band_px: ['NEAR_BAND_PX', 1], brake_percent: ['BRAKE_RATIO', 100], peek_min_px: ['PEEK_MIN_PX', 1],
   };
   assert.deepEqual(Object.keys(map).sort(), Object.keys(defaults).sort(), 'every field is mapped');
+  const { REVEAL_DEFAULTS } = s.reveal;
   for (const [key, [constant, scale]] of Object.entries(map)) {
-    assert.equal(defaults[key] / scale, tuned[constant], `${key} defaults to ${constant}`);
+    assert.equal(defaults[key] / scale, REVEAL_DEFAULTS[constant], `${key} defaults to ${constant}`);
+    s.reveal.setSidePanelTuning({ [key]: defaults[key] + 7 }, s.doc);
+    assert.equal(s.reveal.sidePanelTuning()[constant], (defaults[key] + 7) / scale, `${key} sets ${constant}`);
   }
+  s.reveal.setSidePanelTuning({ predictive_peek: false, growing_peek: false }, s.doc);
+  assert.equal(s.reveal.sidePanelTuning().PREDICTIVE, false);
+  assert.equal(s.reveal.sidePanelTuning().GROWING, false);
+  s.reveal.setSidePanelTuning(null, s.doc);
+  assert.deepEqual({ ...s.reveal.sidePanelTuning() }, { ...REVEAL_DEFAULTS }, 'no tuning is the defaults');
 });
 
 test('a steady move that starts peeking and then brakes onto content under the would-be panel shrinks the peek back, with no reveal', async (t) => {
@@ -972,4 +975,35 @@ test('a move crossing the open panel’s edge while braking a little keeps peeki
   assert.ok(x > FULL_LEFT, `crossed (${x})`);
   assert.equal(s.revealed(), false, 'no reveal by crossing');
   assert.equal(s.peeking(), true, 'but the peek holds');
+  s.timers.advance(s.reveal.REVEAL_DEFAULTS.STOP_MS + 10);
+  assert.equal(s.revealed(), false, 'nor by stopping there: the stop rule needs the same steady move');
+  s.timers.advance(2000);
+  assert.equal(s.revealed(), false);
+});
+
+test('with the growing peek off, the peek is v1’s: no growth, no reveal by crossing or stopping', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.reveal.setSidePanelTuning({ growing_peek: false }, s.doc);
+  t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
+  s.flick(FLING);
+  assert.equal(s.revealed(), false, 'crossing FULL_LEFT does not reveal');
+  assert.equal(s.peeking(), true);
+  assert.equal(peekW(s), 48, 'and the peek does not grow');
+  s.timers.advance(s.reveal.REVEAL_DEFAULTS.STOP_MS + 10);
+  assert.equal(s.revealed(), false, 'a stop inside the panel’s area does not reveal either');
+  s.move(s.dock, WIDTH - SCROLLBAR - 20);
+  assert.equal(s.revealed(), true, 'moving onto the strip still does');
+});
+
+test('the peek is never wider than the panel', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.reveal.setSidePanelTuning({ peek_min_px: 400 }, s.doc);
+  t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
+  s.flick(SHORT_FLING);
+  assert.equal(s.peeking(), true);
+  assert.equal(peekW(s), PANEL_W, 'clamped to the panel’s width');
+  s.reveal.setSidePanelTuning({ predictive_peek: false }, s.doc);
+  assert.equal(peekW(s), 0, 'turning the peek off clears its width');
 });

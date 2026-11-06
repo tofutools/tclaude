@@ -109,7 +109,15 @@ export function setSidePanelTuning(t, doc = globalThis.document) {
     PEEK_MIN_PX: pick('PEEK_MIN_PX', num(t?.peek_min_px)),
   };
   tuning = Object.freeze(next);
-  if (!tuning.PREDICTIVE && doc && isSidePanelPeeking()) unpeekSidePanel(doc);
+  if (!tuning.PREDICTIVE && doc && isSidePanelPeeking()) {
+    unpeekSidePanel(doc);
+    doc.body?.style?.removeProperty?.('--dock-peek-w');
+  }
+}
+
+// sidePanelTuning is the live tuning (setSidePanelTuning's result).
+export function sidePanelTuning() {
+  return tuning;
 }
 
 // setEdgeRevealEnabled follows config dashboard.side_panel_edge_reveal; off,
@@ -363,7 +371,11 @@ export function bindEdgeReveal(doc = globalThis.document, {
       return;
     }
     const inBand = !band || (y >= band.top && y <= band.bottom);
-    if (inBand && x >= fullLeft && crossingHolds(prediction, c)) {
+    // The growing peek's reveals (crossing, stopping) need a move that is not
+    // braking at all: content under the would-be panel is what a braking
+    // move there is aimed at.
+    const steady = c.GROWING && crossingHolds(prediction, c);
+    if (steady && inBand && x >= fullLeft) {
       revealFromPeek();
       return;
     }
@@ -371,16 +383,18 @@ export function bindEdgeReveal(doc = globalThis.document, {
       peekStartX = x;
       peekW = 0;
     }
-    setPeekWidth(c.GROWING ? peekWidthFor({ startX: peekStartX, x, fullLeft, edgeX, panelW, prev: peekW }, c) : c.PEEK_MIN_PX);
+    const width = c.GROWING ? peekWidthFor({ startX: peekStartX, x, fullLeft, edgeX, panelW, prev: peekW }, c) : c.PEEK_MIN_PX;
+    setPeekWidth(panelW ? Math.min(width, panelW) : width);
     peekSidePanel(doc);
     if (!isSidePanelPeeking()) {
       setPeekWidth(0);
       return;
     }
     armRetract();
-    // A stop while the prediction holds: one inside the full panel's area,
-    // or just short of the peek, means the pointer got where it was going.
+    // A stop right after a steady move: one inside the full panel's area, or
+    // just short of the peek, means the pointer got where it was going.
     cancelStop();
+    if (!steady) return;
     stop = timers.setTimeout(() => {
       stop = null;
       if (!isSidePanelPeeking() || !last) return;

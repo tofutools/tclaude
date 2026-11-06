@@ -9523,6 +9523,11 @@ label.cfg-label { cursor: pointer; }
 .cfg-terminal-attach-unit { color: var(--ui-muted-text); font-size: 11px; }
 .cfg-terminal-attach-note { display: block; color: var(--ui-muted-text); font-size: 10px; margin-top: 4px; }
 .cfg-terminal-attach-hint { margin-top: 2px; }
+/* The side panel's Advanced tuning (config dashboard.side_panel_*): the same
+   timing-override card, sized for ten short rows and wider units. */
+.cfg-terminal-attach-timings.cfg-side-panel-tuning { margin: 6px 0 0; max-width: 440px; }
+.cfg-side-panel-tuning > label { grid-template-columns: minmax(150px, 1fr) 84px 44px; min-height: 30px; }
+.cfg-side-panel-tuning #cfg-side-panel-reset { margin-top: 8px; }
 @media (max-width: 600px) {
   .cfg-terminal-attach-field > .cfg-label { flex-basis: 100%; }
   .cfg-terminal-attach-field > select { width: 100%; }
@@ -18635,6 +18640,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
    when it peeks), and the prediction's reason. It never takes the pointer. */
 #side-panel-predict-debug .spp-overlay { position: fixed; inset: 0; pointer-events: none; z-index: var(--z-toast); }
 #side-panel-predict-debug .spp-edge { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: rgba(240, 136, 62, .7); }
+#side-panel-predict-debug .spp-full { background: rgba(88, 166, 255, .7); }
 #side-panel-predict-debug .spp-dot {
   position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; border-radius: 50%;
   border: 2px solid #f85149; background: rgba(248, 81, 73, .25);
