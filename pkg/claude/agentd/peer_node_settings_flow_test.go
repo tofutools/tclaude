@@ -136,6 +136,11 @@ func TestPeerSandboxProfilesOnlyNarrowTheirInclude(t *testing.T) {
 	require.Equal(t, 200, code, "a rename keeps it the peer's: %s", body)
 	code, body = h.call("GET", "/api/sandbox-profiles/mine2", nil)
 	require.Equal(t, 200, code, body)
+	code, body = h.call("PATCH", "/api/sandbox-profiles/mine2", map[string]any{"name": "mine2", "network_access": "none"})
+	require.Equal(t, 200, code, "an edit that leaves the include out: %s", body)
+	kept, err := db.GetSandboxProfile("mine2")
+	require.NoError(t, err)
+	require.Equal(t, []string{"base"}, kept.Includes, "keeps it")
 	for _, method := range []string{"GET", "PATCH", "DELETE"} {
 		code, body = h.call(method, "/api/sandbox-profiles/base", map[string]any{"name": "base"})
 		require.Equal(t, 403, code, "%s your operator's profile: %s", method, body)
@@ -208,4 +213,12 @@ func TestPeerConfigExportCarriesOnlyReadableSections(t *testing.T) {
 	require.NotEmpty(t, sections["sandbox-profiles"])
 	require.Empty(t, sections["default-permissions"])
 	require.Empty(t, sections["config"])
+
+	// Revoking a section's grant stops a download that carries it.
+	code, body = h.stage(t, export)
+	require.Equal(t, 200, code, body)
+	id := stagedID(t, body)
+	h.revoke(t, agentd.PermNodeSpawnRead, "")
+	code, body = h.call("GET", "/api/peer-downloads/"+url.PathEscape(id)+"?offset=0", nil)
+	require.Equal(t, 403, code, body)
 }

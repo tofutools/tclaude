@@ -31,8 +31,8 @@ var peerStageGates = map[string]peerStageGate{
 	"GET /api/config-bundle/export": peerConfigExportGate,
 }
 
-// peerStageRewrites adjust a gated download's request once its gate passes,
-// before it is staged.
+// peerStageRewrites adjust a gated download's request before its gate judges
+// it and it is staged.
 var peerStageRewrites = map[string]func(v *peerView, sub *http.Request){
 	"GET /api/config-bundle/export": peerConfigExportSkips,
 }
@@ -99,14 +99,17 @@ func servePeerDownloadStage(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, http.StatusForbidden, "peer_view_local_only", "this download requires unrestricted trust")
 		return
 	}
+	if rewrite := peerStageRewrites[pattern]; rewrite != nil {
+		// Before the gate, which then judges (and every chunk rechecks)
+		// exactly what is staged.
+		rewrite(v, sub)
+		matched.URL.RawQuery = sub.URL.RawQuery
+	}
 	if status, code, msg := gate(v, matched); status != 0 {
 		writeError(w, status, code, msg)
 		return
 	}
 	v.groupName = matched.PathValue("name")
-	if rewrite := peerStageRewrites[pattern]; rewrite != nil {
-		rewrite(v, sub)
-	}
 	stagePeerDownloadFile(w, sub, mux, peer, func() bool {
 		p, err := db.GetFederationPeer(peer)
 		if err != nil || p == nil {

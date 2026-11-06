@@ -44,10 +44,19 @@ func peerConfigExportGate(v *peerView, r *http.Request) (int, string, string) {
 	if status, code, msg := peerQueryWithin(r, "only", "skip"); status != 0 {
 		return status, code, msg
 	}
-	for _, selector := range r.URL.Query()["only"] {
+	q := r.URL.Query()
+	for _, selector := range q["only"] {
 		section, _, _ := strings.Cut(selector, "/")
 		if !peerConfigExportReadable(peer, section) {
 			return http.StatusForbidden, "permission", fmt.Sprintf("the %s section of a config bundle is not yours to read here", section)
+		}
+	}
+	// Every section the bundle carries is readable: the stage skips the rest
+	// before this gate runs (peerConfigExportSkips), and each chunk rechecks
+	// it, so a section grant revoked mid-download stops the download.
+	for _, section := range configbundle.Sections {
+		if !slices.Contains(q["skip"], section) && !peerConfigExportReadable(peer, section) {
+			return http.StatusForbidden, "permission", fmt.Sprintf("the %s section of this bundle is not yours to read here", section)
 		}
 	}
 	return 0, "", ""

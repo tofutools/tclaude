@@ -179,10 +179,10 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // starts from the overrides the grant shows (peer_agent_permissions.go),
   // and its save refuses what the peer could not grant itself.
   'perm-edit': ['permissions.grant'],
-  // The sandbox implementation, under its own grant and the spawn sandbox
-  // grant; a restricted peer's move only adds confinement (the dialog's
-  // refused choices answer with why).
-  'sandbox-impl': ['agent.sandbox-impl', 'groups.members.spawn.sandbox'],
+  // The sandbox implementation, under its own grant: the dialog reads it,
+  // and a save also takes groups.members.spawn.sandbox (or .all), which the
+  // refused save names; a restricted peer's move only adds confinement.
+  'sandbox-impl': ['agent.sandbox-impl'],
   // Fast mode reaches what no peer grant hands out yet: unrestricted trust
   // only (a feature no restricted peer shares).
   'fast-mode-set': ['feature:agents.manage.full'],

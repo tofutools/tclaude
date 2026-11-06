@@ -143,6 +143,18 @@ func peerSandboxProfileBody(w http.ResponseWriter, r *http.Request, existing *db
 			writeError(w, http.StatusForbidden, "permission", "a peer's profile keeps the include it was created with")
 			return nil, false
 		}
+		// The edit replaces the whole profile: one that leaves the include
+		// out would drop it, so it is written back.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil || fields == nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "the body must be a JSON object")
+			return nil, false
+		}
+		fields["includes"], _ = json.Marshal(existing.Includes)
+		if raw, err = json.Marshal(fields); err != nil {
+			writeError(w, http.StatusInternalServerError, "encode", err.Error())
+			return nil, false
+		}
 	} else {
 		if len(body.Includes) != 1 {
 			writeError(w, http.StatusForbidden, "permission", "a peer's profile includes exactly one existing profile")

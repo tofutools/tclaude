@@ -34,7 +34,7 @@ const (
 var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
 	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR,
 	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl,
-	PermPermissionsGrant, PermPermissionsRevoke, PermAgentSandboxImplementation}
+	PermPermissionsGrant, PermPermissionsRevoke, PermAgentSandboxImplementation, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
 // groups the agent owns (cloneAuthorizationGroups). A delete purges the
