@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -223,7 +224,7 @@ func TestPeerProcessRunReadsAreRedacted(t *testing.T) {
 }
 
 // A peer's run tasks only the members in its scope, under a banner naming the
-// peer, and never spawns a performer.
+// peer, and never spawns a performer: an attempt that would need one fails.
 func TestPeerProcessRunDispatchIsAttributedAndSpawnsNothing(t *testing.T) {
 	h := newPeerProcessHarness(t)
 	root := filepath.Join(h.f.World.HomeDir, ".tclaude", "process-runtime-authoring")
@@ -268,10 +269,12 @@ func TestPeerProcessRunDispatchIsAttributedAndSpawnsNothing(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code, body)
 	runID := peerRunDoc(t, body)["id"].(string)
 	view := showPerformerRun(t, h.f, runID)
-	require.Len(t, view.Commands, 1)
-	require.NotNil(t, view.Commands[0].Performer, "%+v", view)
-	require.Empty(t, view.Commands[0].Performer.AgentID, "no performer was spawned")
-	require.Contains(t, view.Commands[0].Performer.WaitReason, "a run a linked node started cannot spawn performers")
+	// The attempt fails rather than wait (S6b): its owner can never spawn.
+	require.Equal(t, engine.RunFailed, view.Status, "%+v", view)
+	require.Len(t, view.Performers, 1)
+	require.Empty(t, view.Performers[0].AgentID, "no performer was spawned")
+	require.Equal(t, "failed", view.Performers[0].Outcome)
+	require.Contains(t, view.Performers[0].Note, "a run a linked node started cannot spawn performers")
 	members, err := db.ListAgentGroupMembers(h.group.ID)
 	require.NoError(t, err)
 	require.Len(t, members, 1, "the group gained no agent")

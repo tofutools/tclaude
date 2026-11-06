@@ -147,6 +147,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// The Pause / Resume control (T2/T3/G5) holds and releases a run.
 	mux.HandleFunc("POST /v1/process/runs/{id}/pause", dashboardProcessRoute(handleProcessRunPause))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resume", dashboardProcessRoute(handleProcessRunResume))
+	// The Blocked chip's retry / skip / cancel resolves a parked branch.
+	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", dashboardProcessRoute(handleProcessRunResolveBlocked))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)

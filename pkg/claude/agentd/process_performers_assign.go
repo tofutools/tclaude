@@ -55,7 +55,7 @@ func handleProcessRunAssign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "process_assign_request", "agent is required")
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return

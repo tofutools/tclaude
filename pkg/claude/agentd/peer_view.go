@@ -221,6 +221,17 @@ func peerViewRules() map[string]peerViewRule {
 	rules["POST /v1/process/runs"] = peerViewRule{feature: "process.runs.start", requires: PermProcessRunsStart, group: true, write: servePeerProcessRuns}
 	rules["GET /v1/process/runs/{id}"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
 	rules["GET /v1/process/runs/{id}/events"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
+	// Run manage verbs (process_peer_manage.go): on program-free runs only,
+	// pause excepted, with the peer recorded as the actor.
+	for _, pattern := range []string{
+		"POST /v1/process/runs/{id}/pause",
+		"POST /v1/process/runs/{id}/resume",
+		"POST /v1/process/runs/{id}/decide",
+		"POST /v1/process/runs/{id}/resolve-blocked",
+		"POST /v1/process/runs/{id}/nodes/{node}/assign",
+	} {
+		rules[pattern] = peerViewRule{feature: "process.runs.manage", requires: PermProcessRunsManage, write: servePeerProcessRunManage}
+	}
 	// A group's advisory process: read by any peer that sees the group,
 	// advanced under process.advance there.
 	rules["GET /api/groups/{name}/process"] = withPeerInvoke("GET /api/groups/{name}/process", peerViewRule{feature: "groups.process", requires: PermGroupsVisibilityRead, group: true, visible: true, invoke: &peerInvokeSpec{param: "name"}})

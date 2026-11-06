@@ -148,12 +148,18 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /api/groups/{name}/attachment": {slugs: []string{PermGroupsAttachment}, target: agentViewGroup},
 	// Process runs (process_peer_runs.go): reads node-wide and redacted; a
 	// start scoped to a group or one agent, owned by the agent's node.
-	"GET /v1/process/runs":                    {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
-	"GET /v1/process/runs/{id}":               {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
-	"GET /v1/process/runs/{id}/events":        {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
-	"POST /v1/process/runs":                   {slugs: []string{PermProcessRunsStart, PermAgentProcess}, runScope: true},
-	"GET /api/groups/{name}/process":          {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
-	"POST /api/groups/{name}/process/advance": {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
+	"GET /v1/process/runs":             {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"GET /v1/process/runs/{id}":        {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"GET /v1/process/runs/{id}/events": {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"POST /v1/process/runs":            {slugs: []string{PermProcessRunsStart, PermAgentProcess}, runScope: true},
+	// Manage verbs on program-free runs (process_peer_manage.go); an agent
+	// never decides, a decision being a human gate.
+	"POST /v1/process/runs/{id}/pause":               {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
+	"POST /v1/process/runs/{id}/resume":              {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
+	"POST /v1/process/runs/{id}/resolve-blocked":     {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
+	"POST /v1/process/runs/{id}/nodes/{node}/assign": {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
+	"GET /api/groups/{name}/process":                 {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
+	"POST /api/groups/{name}/process/advance":        {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
