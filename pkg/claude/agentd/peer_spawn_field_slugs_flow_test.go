@@ -180,8 +180,14 @@ func TestPeerSpawnLaunchSettingsUnderTheirGrants(t *testing.T) {
 		code, _, _ = peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "launch": bad})
 		require.Equal(t, 400, code, "%v is not a carried launch setting", bad)
 	}
-	code, _, _ = peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "launch": map[string]any{"approval": "plan"}})
-	require.Equal(t, 403, code, "the permission modes need groups.members.spawn.permissions")
+	// The permission modes, and the two settings that loosen a sandbox, take
+	// this node's own groups.members.spawn.permissions grant to a peer that is
+	// not trusted unrestricted, whatever else it holds.
+	for _, loosen := range []map[string]any{{"approval": "plan"}, {"omit_sandbox_profiles": true}, {"allow_unenforced_sandbox": true}} {
+		code, _, errCode = peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "launch": loosen})
+		require.Equal(t, 403, code, "%v needs groups.members.spawn.permissions", loosen)
+		require.Equal(t, "override_not_allowed", errCode, "%v", loosen)
+	}
 
 	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", body)
 	require.Equal(t, 202, code)
