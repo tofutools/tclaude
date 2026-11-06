@@ -30,9 +30,12 @@ func TestChildSandboxRuleAllowsAPreSnapshotParentAChildWithoutCapabilities(t *te
 	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
 }
 
-// The parent's own agent-owned directories are re-probed before its child is
-// judged against it. One that cannot be recreated at its frozen path refuses
-// the child as a changed profile, not as a widening.
+// A child naming a profile explicitly is still judged against the parent's
+// stored launch snapshot, with the parent's own agent-owned directories
+// re-probed first (until tcl-n4294s). One that cannot be recreated at its
+// frozen path refuses the child as a changed profile, not as a widening. A
+// child naming no profile inherits instead, and is not refused for it
+// (TestChildSandboxInheritsWithoutProbingTheParentsDirectories).
 func TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
@@ -73,7 +76,7 @@ func TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated(t *te
 	require.NoError(t, os.WriteFile(gocache, []byte("not a directory"), 0o600))
 
 	child := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
-		"name": "child", "harness": "codex", "sandbox": "tclaude-agent",
+		"name": "child", "harness": "codex", "sandbox": "tclaude-agent", "sandbox_profile": "parent-cache",
 	})
 	require.Equalf(t, http.StatusConflict, child.Code, "spawn body=%s", child.Raw)
 	assert.Contains(t, string(child.Raw), "sandbox_profile_changed")

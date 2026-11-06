@@ -829,7 +829,7 @@ a "Deny access to the Home directory" rule that inserts an ordinary editable
 
 Confinement is heritable, in one direction only. Resume, reincarnation, and
 agent-initiated child spawns can never weaken a deny or introduce a reopen the
-recorded parent lacked; both count as widening and are refused. The check is
+parent lacks; both count as widening and are refused. The check is
 specificity-aware — a broad parent read above a deny does not "cover" a child's
 reopen beneath it. A resume or reincarnation re-reads the agent's sandbox
 profiles and revalidates the result. If the re-read profiles cannot be
@@ -839,6 +839,27 @@ this launch), it relaunches under the policy stored at the agent's last launch
 and returns a warning saying why. It refuses only when the stored policy
 cannot be launched either (on resume, as `sandbox_profile_changed`). Humans are the trust
 root and bypass lineage.
+
+An agent's child gets its sandbox as follows:
+
+- **Into the parent's own group, naming no profile:** the child inherits the
+  parent's selected profiles, resolved the way the parent's own next relaunch
+  would resolve them. Under the relaunch policy's `sandbox_profile_contents`
+  row, re-resolve (the default) gives their current contents and reuse gives
+  the contents stored at the parent's last launch. An operator who edits the
+  parent's profiles while it runs, widening or narrowing them, edits its
+  children too. That edit is the operator's, not an escalation by the parent.
+- **Into another group, naming no profile:** the child takes that group's
+  assignment. It must fit inside the parent's configuration as resolved now,
+  and a group that assigns more than the parent has is refused
+  (`sandbox_profile_restricted`).
+- **Naming a profile explicitly:** the child gets that profile, which must
+  fit inside the parent's recorded launch snapshot.
+
+In every case the child's own `--harness-config` posture is applied last and
+checked with the profiles. A parent's own explicit posture is not inherited.
+Spawns by a peer, a federation request or an external steward have no parent
+sandbox here: they take the target group's assignment.
 
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a

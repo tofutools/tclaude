@@ -1293,6 +1293,7 @@ func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
 		harnessConfig:       body.HarnessConfig,
 		spawnerConvID:       spawnerConvID,
 		externalSpawn:       externalSpawn,
+		sandboxScopePinned:  req.sandboxScopePinned,
 	})
 	if fail != nil {
 		return fail
