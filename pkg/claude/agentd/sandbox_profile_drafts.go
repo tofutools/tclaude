@@ -62,7 +62,7 @@ func handleSandboxProfileDraftSubmit(w http.ResponseWriter, r *http.Request) {
 	// with the field quietly stripped would show them a profile the scribe did
 	// not write, and the agent a 202 for a document that was altered.
 	if fail := rejectBreakGlassPayload("draft", body.Profile); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	p, _, err := buildSandboxProfile(body.Profile)

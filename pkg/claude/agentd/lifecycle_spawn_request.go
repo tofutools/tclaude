@@ -133,19 +133,6 @@ type spawnRequest struct {
 	remoteControl bool
 }
 
-// errSpawnResponseWritten is the failure a step returns when a shared helper
-// it called has already written the response (a refusal, or an ask-human
-// approval in flight). writeSpawnFailure writes nothing more for it.
-var errSpawnResponseWritten = &spawnFailure{}
-
-// writeSpawnFailure writes a step's refusal as the HTTP error response.
-func writeSpawnFailure(w http.ResponseWriter, fail *spawnFailure) {
-	if fail == errSpawnResponseWritten {
-		return
-	}
-	writeError(w, fail.Status, fail.Kind, fail.Msg)
-}
-
 // decodeSpawnRequest reads the request body and refuses a non-interactive
 // spawn that carries settings only an interactive agent can use.
 //
@@ -1935,7 +1922,7 @@ func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p 
 	}
 	// One-shots bypass executeSpawn but spend just the same.
 	if failure := checkUsageSpawnBlock(g); failure != nil {
-		writeError(w, failure.Status, failure.Kind, failure.Msg)
+		writeSpawnFailure(w, failure)
 		return
 	}
 	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
@@ -1946,7 +1933,7 @@ func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p 
 	p.onLaunchAttempt = spawnUse.keep
 	result, runErr := runNonInteractiveSpawn(r.Context(), *p, body.RunTimeoutSeconds)
 	if runErr != nil {
-		writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
+		writeSpawnFailure(w, runErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

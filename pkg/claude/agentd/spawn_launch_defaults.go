@@ -201,7 +201,7 @@ func handleSpawnLaunchDefaults(w http.ResponseWriter, r *http.Request) {
 		query.Get("group"), query.Get("profile"), query.Get("harness"),
 	)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if err != nil {

@@ -104,12 +104,12 @@ func handleStandaloneRelaunchPrepare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if fail := sandboxImplementationPostureFailure(cfg.Harness, cfg.activeSandboxImplementation()); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	prepared, fail := prepareRelaunchSandbox(relaunchSandboxRequestFor(convID, cwd, generateSpawnLabel(), cfg))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	remoteControl, remoteControlChange, remoteControlNote := relaunchRemoteControl(convID, cfg.Harness, cfg.RemoteControl)

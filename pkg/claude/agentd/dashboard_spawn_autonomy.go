@@ -86,7 +86,7 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	harnessBuiltinMode, fail := resolveSandboxImplementationMode(
 		h, harnessBuiltinMode, sandboxImplementation)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	approval, err := harness.ResolveApprovalPolicy(h, query.Get("approval"))

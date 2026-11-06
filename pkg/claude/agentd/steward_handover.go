@@ -772,7 +772,7 @@ func handleStewardHandover(w http.ResponseWriter, r *http.Request) {
 	}
 	out, fail := handOverSteward(cfg, res, then, stewardActor(r), auditRequestEventID(r))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -812,7 +812,7 @@ func handleStewardStepDown(w http.ResponseWriter, r *http.Request) {
 	}
 	g, fail := ensureScribeGroup(stewardGroupName)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	then := body.Then

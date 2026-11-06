@@ -322,7 +322,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	defer spawnUse.release()
 	out, reused, fail := summonScribe(name, titleBase, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if !reused {

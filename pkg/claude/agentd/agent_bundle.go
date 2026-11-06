@@ -904,7 +904,7 @@ func (imp *agentBundleImport) applyReceiverPolicy(w http.ResponseWriter) bool {
 			}
 		}
 		if _, fail := buildProfileFromJSON(imp.profile); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return false
 		}
 	}

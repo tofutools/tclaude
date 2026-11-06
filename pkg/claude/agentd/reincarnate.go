@@ -218,7 +218,7 @@ var reincarnateReadyDelay = 1 * time.Second
 // for an offline agent to discover on some later resume.
 func writeReincarnateOfflineError(w http.ResponseWriter, target string) {
 	fail := reincarnateOfflineFailure(target)
-	writeError(w, fail.Status, fail.Kind, fail.Msg)
+	writeSpawnFailure(w, fail)
 }
 
 // reincarnateOfflineFailure is the refusal for a target with no live session.
@@ -351,7 +351,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 
 	src, fail := resolveReincarnationSource(target)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	oldSess, relaunch := src.oldSess, src.relaunch
@@ -364,7 +364,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	defer claimAgentLaunchIdentity(label)()
 	l, fail := prepareReincarnationLaunch(target, label, src)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	relaunchPolicy, effectiveSandbox := l.relaunchPolicy, l.effectiveSandbox
@@ -425,7 +425,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	managed, fail := prepareReincarnationManaged(target, relaunch.Harness)
 	if fail != nil {
 		rollbackSandbox(true)
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	managedID, previousManaged, managedParams, cleanupManaged := managed.id, managed.previous, managed.params, managed.cleanup
@@ -464,7 +464,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if fail != nil {
 		rollbackHandoff()
 		rollbackSandbox(true)
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Tag the successor row's best-known remote-control state ON (JOH-261). The

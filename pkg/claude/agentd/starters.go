@@ -223,11 +223,8 @@ func handleStarterInstall(w http.ResponseWriter, r *http.Request) {
 	// false. importTemplateEnvelope leaves an existing template untouched and
 	// reports the collision; we turn that into a friendly skip.
 	res, existed, fail := importTemplateEnvelope(caller, s.Envelope, asName, false, httpTemplateOwnerScopesGate(w, r))
-	if fail == errTemplateGateResponded {
-		return
-	}
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if existed {

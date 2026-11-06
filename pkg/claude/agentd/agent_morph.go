@@ -647,7 +647,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		var fail *spawnFailure
 		cm, fail = planCrossHarnessMorph(targetConv, dst, target, caller)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		target = cm.target
