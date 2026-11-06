@@ -269,11 +269,13 @@ CREATE TABLE "agent_cron_jobs" (
 			last_run_at      INTEGER,
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0, action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')), spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]', spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '', spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')), spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0), spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0)) STRICT;
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0, action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')), spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]', spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '', spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')), spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0), spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0), owner_peer TEXT NOT NULL DEFAULT '', owner_peer_agent TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 
 CREATE INDEX idx_agent_cron_jobs_target ON agent_cron_jobs(target_agent);
+
+CREATE INDEX idx_agent_cron_jobs_owner_peer ON agent_cron_jobs(owner_peer) WHERE owner_peer <> '';
 
 CREATE TABLE "agent_cron_runs" (
 			id        INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -115,7 +115,7 @@ func fireScheduledCronJob(jobID int64, now time.Time) {
 // anchor to now. Callers serialize it with cronAuthorityMu when it can race the
 // scheduler. Run-history is best-effort because delivery has already happened.
 func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
-	if j.ActionKind != db.CronActionSpawn {
+	if j.ActionKind != db.CronActionSpawn || j.IsPeerOwned() {
 		status := fireCronJob(j, now)
 		if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
 			return status, err
@@ -388,6 +388,11 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		subject = "[cron] " + subject
 	}
 
+	// A linked node's job: its authority is rechecked and it is delivered as
+	// the peer's mail (peer_cron_jobs.go).
+	if j.IsPeerOwned() {
+		return firePeerCronJob(j, subject)
+	}
 	if j.IsGroupTarget() {
 		var alive map[string]struct{}
 		if !j.QueueWhenOffline {

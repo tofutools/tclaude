@@ -474,6 +474,15 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 	if j.TargetConv != "" {
 		row.TargetLabel = labelForConv(j.TargetConv)
 	}
+	// A linked node's job is labelled as that node's (S7b).
+	if j.IsPeerOwned() {
+		row.OwnerPeer = j.OwnerPeer
+		owner := processOwnerPeerPrefix + j.OwnerPeer
+		if j.OwnerPeerAgent != "" {
+			owner += "/agent:" + j.OwnerPeerAgent
+		}
+		row.OwnerLabel = processPeerOwnerLabel(owner)
+	}
 	// Resolve group_name ONLY for a group-target job. A conv-target
 	// job routed through a shared group also carries a non-zero
 	// group_id, but it is not a multicast — leaving group_name empty

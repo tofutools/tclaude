@@ -237,6 +237,13 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /v1/cron"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronList}
 	rules["GET /v1/cron/{id}/logs"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronLogs}
 	rules["POST /v1/cron/{id}/disable"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronDisable}
+	// The peer's own jobs (peer_cron_jobs.go): messages only, rechecked at
+	// every fire.
+	rules["POST /v1/cron"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronCreate}
+	rules["PATCH /v1/cron/{id}"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronPatch}
+	rules["DELETE /v1/cron/{id}"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronDelete}
+	rules["POST /v1/cron/{id}/enable"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronEnable}
+	rules["POST /v1/cron/{id}/run-now"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronRunNow}
 	rules["GET /v1/triggers"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTriggers}
 	rules["GET /v1/triggers/{id}"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTrigger}
 	// A group's advisory process: read by any peer that sees the group,

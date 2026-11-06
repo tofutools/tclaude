@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // `tclaude agent cron` — recurring scheduled jobs.
@@ -47,6 +46,8 @@ type cronJobJSON struct {
 	Name                       string   `json:"name,omitempty"`
 	OwnerAgent                 string   `json:"owner_agent,omitempty"`
 	OwnerConv                  string   `json:"owner_conv"`
+	OwnerPeer                  string   `json:"owner_peer,omitempty"`
+	OwnerPeerAgent             string   `json:"owner_peer_agent,omitempty"`
 	TargetKind                 string   `json:"target_kind"`
 	TargetAgent                string   `json:"target_agent,omitempty"`
 	TargetConv                 string   `json:"target_conv"`
@@ -197,6 +198,7 @@ type cronAddParams struct {
 	Concurrency       string   `long:"concurrency" optional:"true" help:"Spawn overlap policy: Forbid (default), Replace, or Allow."`
 	MaxLiveWorkers    int      `long:"max-live-workers" optional:"true" help:"Maximum concurrent workers for Allow (default 1)."`
 	WorkerDeadline    string   `long:"worker-deadline" optional:"true" help:"Optional worker deadline as a Go duration (for example 2h)."`
+	Remote            string   `long:"remote" optional:"true" help:"Schedule it on a linked node instead, under the grants it gave this node (groups.messages.schedule for --target group:NAME, groups.members.schedule for an agent id there). The job is your node's there: it sends messages only, never spawns, and stops firing if the grants are taken back."`
 }
 
 func cronAddCmd() *cobra.Command {
@@ -262,6 +264,15 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		deadlineSeconds = int64(d.Seconds())
 	}
 	target := strings.TrimSpace(p.Target)
+	remote := strings.TrimSpace(p.Remote)
+	if remote != "" && action != "message" {
+		fmt.Fprintln(stderr, "Error: a job on a linked node sends messages only; it never spawns there")
+		return rcInvalidArg
+	}
+	if remote != "" && target == "" {
+		fmt.Fprintln(stderr, "Error: --remote needs --target group:NAME or an agent id on that node")
+		return rcInvalidArg
+	}
 	if target == "" {
 		// Self-targeted default — use the daemon-resolved canonical
 		// dot selector so the daemon picks our caller conv.
@@ -302,10 +313,11 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		body["role"] = role
 	}
 	var resp cronJobJSON
-	if err := DaemonRequest(http.MethodPost, "/v1/cron", body, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(remote, http.MethodPost, "/v1/cron", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	printRemoteScheduleBanner(stdout, remote, "cron job")
 	if resp.CronExpr != "" {
 		fmt.Fprintf(stdout, "Scheduled job #%d on cron %q → %s\n",
 			resp.ID, resp.CronExpr, cronTargetLabel(resp))
@@ -360,7 +372,8 @@ func CronJobAuth() string {
 }
 
 type cronRmParams struct {
-	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Remote string `long:"remote" optional:"true" help:"Act on a linked node instead, through its peer view under the grants it gave this node: the job is your node's there, sends messages only, and only you (or your operator) change, fire or delete it."`
 }
 
 func cronRmCmd() *cobra.Command {
@@ -385,25 +398,19 @@ func runCronRm(p *cronRmParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	path := "/v1/cron/" + strconv.FormatInt(id, 10)
-	if err := DaemonRequest(http.MethodDelete, path, nil, nil, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodDelete, path, nil, nil); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Deleted cron job #%d\n", id)
+	fmt.Fprintf(stdout, "Deleted cron job #%d%s\n", id, remoteSuffix(p.Remote))
 	return rcOK
 }
 
 // ---- enable / disable / run-now ----
 
 type cronIDOnlyParams struct {
-	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
-}
-
-// cronDisableParams is disable's: a linked node's job can be paused, the
-// one by-id verb a peer reaches.
-type cronDisableParams struct {
-	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls', with --remote for a linked node's)."`
-	Remote string `long:"remote" optional:"true" help:"Disable a linked node's cron job instead, under the grants it gave this node."`
+	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Remote string `long:"remote" optional:"true" help:"Act on a linked node instead, through its peer view under the grants it gave this node: the job is your node's there, sends messages only, and only you (or your operator) change, fire or delete it."`
 }
 
 func cronEnableCmd() *cobra.Command {
@@ -419,13 +426,13 @@ func cronEnableCmd() *cobra.Command {
 }
 
 func cronDisableCmd() *cobra.Command {
-	return boa.CmdT[cronDisableParams]{
+	return boa.CmdT[cronIDOnlyParams]{
 		Use:         "disable",
 		Short:       "Pause a cron job without deleting it",
 		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *cronDisableParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronSetEnabled(p.ID, p.Remote, false, cliStdout, cliStderr))
+		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronEnable(p, false, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -443,7 +450,7 @@ func cronRunNowCmd() *cobra.Command {
 }
 
 func runCronEnable(p *cronIDOnlyParams, enabled bool, stdout, stderr io.Writer) int {
-	return runCronSetEnabled(p.ID, "", enabled, stdout, stderr)
+	return runCronSetEnabled(p.ID, p.Remote, enabled, stdout, stderr)
 }
 
 func runCronSetEnabled(rawID, remote string, enabled bool, stdout, stderr io.Writer) int {
@@ -464,10 +471,7 @@ func runCronSetEnabled(rawID, remote string, enabled bool, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	on := ""
-	if remote = strings.TrimSpace(remote); remote != "" {
-		on = " on " + proto.SafeName(remote, false)
-	}
+	on := remoteSuffix(remote)
 	if enabled {
 		fmt.Fprintf(stdout, "Enabled cron job #%d%s\n", id, on)
 	} else {
@@ -489,11 +493,11 @@ func runCronRunNow(p *cronIDOnlyParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		Status string `json:"status"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodPost, path, nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Fired cron job #%d (status: %s)\n", id, resp.Status)
+	fmt.Fprintf(stdout, "Fired cron job #%d%s (status: %s)\n", id, remoteSuffix(p.Remote), resp.Status)
 	return rcOK
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,5 +62,57 @@ func TestRemoteScheduleVerbsGoThroughThePeerView(t *testing.T) {
 		http.MethodGet + " /v1/federation/peer/bob/v1/triggers",
 		http.MethodGet + " /v1/federation/peer/bob/v1/triggers",
 		http.MethodGet + " /v1/federation/peer/bob/v1/triggers/5",
+	}, calls)
+}
+
+// A job scheduled on a linked node is a message job, sent through its peer
+// view; its own verbs follow it there.
+func TestRemoteCronJobVerbs(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var calls []string
+	var sent map[string]any
+	DaemonRequestImpl = func(method, path string, body, out any, _ DaemonOpts) error {
+		calls = append(calls, method+" "+path)
+		if b, ok := body.(map[string]any); ok {
+			sent = b
+		}
+		switch {
+		case method == http.MethodPost && path == "/v1/federation/peer/bob/v1/cron":
+			return json.Unmarshal([]byte(`{"id":9,"target_kind":"group","group_name":"crew","interval_seconds":3600,"body":"ping","action_kind":"message","enabled":true,"owner_peer":"inst_x"}`), out)
+		case strings.HasSuffix(path, "/run-now"):
+			return json.Unmarshal([]byte(`{"status":"ok"}`), out)
+		}
+		return nil
+	}
+	var stdout, stderr bytes.Buffer
+	rc := runCronAdd(&cronAddParams{Target: "group:crew", Interval: "1h", Body: "ping", Remote: "bob"}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Contains(t, stdout.String(), "Remote cron job of bob")
+	assert.Contains(t, stdout.String(), "Scheduled job #9 every 1h0m0s")
+	assert.Equal(t, "message", sent["action_kind"])
+	assert.NotContains(t, sent, "spawn_profile")
+
+	stdout.Reset()
+	stderr.Reset()
+	rc = runCronAdd(&cronAddParams{Target: "group:crew", Interval: "1h", Action: "spawn", Instruction: "x", SpawnProfile: "p", Remote: "bob"}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "messages only")
+	stderr.Reset()
+	rc = runCronAdd(&cronAddParams{Interval: "1h", Body: "ping", Remote: "bob"}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc, "no self target on a peer")
+
+	stdout.Reset()
+	require.Equal(t, rcOK, runCronRunNow(&cronIDOnlyParams{ID: "9", Remote: "bob"}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Fired cron job #9 on bob (status: ok)")
+	require.Equal(t, rcOK, runCronEnable(&cronIDOnlyParams{ID: "9", Remote: "bob"}, true, &stdout, &stderr))
+	require.Equal(t, rcOK, runCronRm(&cronRmParams{ID: "9", Remote: "bob"}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Deleted cron job #9 on bob")
+	assert.Equal(t, []string{
+		"POST /v1/federation/peer/bob/v1/cron",
+		"POST /v1/federation/peer/bob/v1/cron/9/run-now",
+		"POST /v1/federation/peer/bob/v1/cron/9/enable",
+		"DELETE /v1/federation/peer/bob/v1/cron/9",
 	}, calls)
 }

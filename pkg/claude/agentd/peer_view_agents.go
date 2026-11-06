@@ -67,12 +67,36 @@ type agentPeerViewRoute struct {
 	// runScope marks a process run start, whose footprint and slug come
 	// from the body's scope (agentPeerViewRunScope); slugs lists both.
 	runScope bool
+	// cronScope marks a cron job create, whose footprint and slug come from
+	// the body's target: group:<name> (groups.messages.schedule there) or an
+	// agent (agent.schedule, in every group the agent is in).
+	cronScope bool
 }
 
 // agentPeerViewRunScope resolves a run start's route to the scope its body
 // names: a group (process.runs.start there) or one agent (agent.process, in
 // every group the agent is in). Any other route is returned as it is.
 func agentPeerViewRunScope(route agentPeerViewRoute, values map[string]string, body []byte) (agentPeerViewRoute, map[string]string, error) {
+	if route.cronScope {
+		var in struct {
+			Target string `json:"target"`
+		}
+		_ = json.Unmarshal(body, &in)
+		out := maps.Clone(values)
+		if out == nil {
+			out = map[string]string{}
+		}
+		target := strings.TrimSpace(in.Target)
+		if name, ok := strings.CutPrefix(target, "group:"); ok && strings.TrimSpace(name) != "" {
+			route.target, route.slugs, out["name"] = agentViewGroup, []string{PermGroupsMessagesSchedule}, strings.TrimSpace(name)
+			return route, out, nil
+		}
+		if target == "" || strings.HasPrefix(target, "group:") {
+			return route, values, fmt.Errorf("a job an agent schedules on a peer targets group:<name> or one agent")
+		}
+		route.target, route.slugs, out["id"] = agentViewAgent, []string{PermAgentSchedule}, target
+		return route, out, nil
+	}
 	if !route.runScope {
 		return route, values, nil
 	}
@@ -158,8 +182,19 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/process/runs/{id}/pause":           {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
 	"POST /v1/process/runs/{id}/resume":          {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
 	"POST /v1/process/runs/{id}/resolve-blocked": {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
-	"GET /api/groups/{name}/process":             {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
-	"POST /api/groups/{name}/process/advance":    {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
+	// Cron jobs (peer_cron_jobs.go): an agent schedules messages under its
+	// target's grant, and lists, changes, fires, stops and deletes only the
+	// jobs it scheduled, under self.schedule for the peer.
+	"POST /v1/cron":                           {slugs: []string{PermGroupsMessagesSchedule, PermAgentSchedule}, cronScope: true},
+	"GET /v1/cron":                            {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"GET /v1/cron/{id}/logs":                  {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"PATCH /v1/cron/{id}":                     {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"DELETE /v1/cron/{id}":                    {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"POST /v1/cron/{id}/enable":               {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"POST /v1/cron/{id}/disable":              {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"POST /v1/cron/{id}/run-now":              {slugs: []string{PermSelfSchedule}, target: agentViewNode},
+	"GET /api/groups/{name}/process":          {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
+	"POST /api/groups/{name}/process/advance": {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
@@ -639,6 +674,10 @@ func agentPeerViewMetadataScope() (features, slugs map[string]bool) {
 			if route.runScope {
 				// An agent-bound start is answered by the member grant.
 				slugs[PermGroupsMembersProcess] = true
+			}
+			if route.cronScope {
+				// An agent-targeted job is answered by the member grant.
+				slugs[PermGroupsMembersSchedule] = true
 			}
 		}
 	}
