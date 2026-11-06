@@ -21,6 +21,12 @@
 .mux-tabs {
   display: flex; flex-wrap: wrap; flex: none; gap: 4px;
   padding: 5px 6px 0; overflow: hidden auto; max-height: 40vh;
+  /* One tab row even with no tabs: the strip is where an overlay window's tab
+     is dropped, so it must not collapse to its padding. A row is the strip's
+     top padding and bottom border (6px) plus a tab: its top border and
+     vertical padding (11px) and one line of its text (1lh; the strip and its
+     tabs share a font). Keep it in step with .mux-tab below. */
+  min-height: calc(17px + 1lh);
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
 .mux-tab {
