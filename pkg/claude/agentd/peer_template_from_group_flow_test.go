@@ -17,7 +17,8 @@ import (
 // is no way around those grants.
 
 // peerFromGroupFixture gives crew an owner scope, makes its member an owner
-// and grants the member a slug no other part of the fixture names.
+// and grants the member a slug no other part of the fixture names. It also
+// has an owner that is not a member, which the snapshot adds as an agent.
 func peerFromGroupFixture(t *testing.T) *peerProcessHarness {
 	t.Helper()
 	h := newPeerProcessHarness(t)
@@ -25,6 +26,8 @@ func peerFromGroupFixture(t *testing.T) *peerProcessHarness {
 	require.NoError(t, err)
 	require.NoError(t, db.AddAgentGroupOwner(h.group.ID, "proc-crew-member", "human"))
 	require.NoError(t, db.GrantAgentPermission("proc-crew-member", agentd.PermGroupsMembersStop, "human"))
+	h.f.HaveConvWithTitle("crew-outside-owner", "outside-owner")
+	require.NoError(t, db.AddAgentGroupOwner(h.group.ID, "crew-outside-owner", "human"))
 	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
 	h.grant(t, agentd.PermTemplatesManage, "")
 	return h
@@ -48,6 +51,7 @@ func assertNoGroupPermissionSettings(t *testing.T, body string) {
 	assert.NotContains(t, body, `"is_owner":true`, "owner flags withheld: %s", body)
 	assert.NotContains(t, body, `"effective_is_owner":true`, "owner flags withheld: %s", body)
 	assert.NotContains(t, body, agentd.PermGroupsMembersStop, "member grants withheld: %s", body)
+	assert.NotContains(t, body, "outside-owner", "an owner outside the roster is withheld whole: %s", body)
 }
 
 func TestPeerTemplateFromGroupPreviewWithholdsWhatTheGroupDoesNotShow(t *testing.T) {
@@ -65,6 +69,7 @@ func TestPeerTemplateFromGroupPreviewWithholdsWhatTheGroupDoesNotShow(t *testing
 	assert.Contains(t, body, "narrow-profile")
 	assert.Contains(t, body, `"is_owner":true`)
 	assert.Contains(t, body, agentd.PermGroupsMembersStop)
+	assert.Contains(t, body, "outside-owner")
 }
 
 // A save cannot drop the owner scopes: a template without them deploys

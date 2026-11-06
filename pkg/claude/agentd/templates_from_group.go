@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -88,6 +89,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	// shape as a real create so the client reads it identically.
 	if body.Preview {
 		t, _, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
+		if err := peerProjectFromGroupTemplate(r, g, t, len(members), true); err != nil {
+			writeError(w, http.StatusForbidden, "permission", err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, fromGroupCreateJSON{
 			templateJSON: templateToJSON(t),
 			BlankBriefs:  countBlankBriefs(t),
@@ -117,6 +122,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
+		if err := peerProjectFromGroupTemplate(r, g, t, len(members), false); err != nil {
+			writeError(w, http.StatusForbidden, "permission", err.Error())
+			return
+		}
 
 		if existing == nil {
 			if fail := peerTemplateEditFailure(r, nil, templateToJSON(t)); fail != nil {
@@ -841,4 +850,49 @@ func sanitizeAgentName(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// peerProjectFromGroupTemplate holds a restricted peer's snapshot of g to
+// what g shows that peer (projectPeerGroupPermissions): its owners under
+// groups.owners.manage (an owner that is not a member, which the snapshot
+// adds after the members, is left out whole), the members' permission grants under
+// groups.settings.member-permissions, and its owner scopes under
+// groups.settings.owner-scopes. Leaving out an owner flag or a grant only
+// narrows what a deploy confers. Leaving out the owner scopes would widen
+// what its owners hold, so only a preview drops them; a save from a group
+// with owner scopes the peer is not shown is refused.
+func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.GroupTemplate, memberCount int, preview bool) error {
+	a := peerGrantFromRequest(r)
+	if a == nil {
+		return nil
+	}
+	held := peerGroupPermissionGrants(a.peer, g)
+	if !slices.Contains(held, PermGroupsSettingsOwnerScopes) && ownerScopesSet(t.OwnerScopesJSON) {
+		if !preview {
+			return fmt.Errorf("group:%s has owner scopes, which a template of it must carry; snapshotting it takes %s there", g.Name, PermGroupsSettingsOwnerScopes)
+		}
+		t.OwnerScopesJSON = ""
+	}
+	if !slices.Contains(held, PermGroupsOwnersManage) && len(t.Agents) > memberCount {
+		t.Agents = t.Agents[:memberCount]
+	}
+	for i := range t.Agents {
+		ag := &t.Agents[i]
+		if !slices.Contains(held, PermGroupsOwnersManage) {
+			ag.IsOwner = false
+		}
+		if !slices.Contains(held, PermGroupsSettingsMemberPermissions) {
+			ag.Permissions = []db.PermissionGrant{}
+			if ag.ProfileInline != nil {
+				ag.ProfileInline.PermissionOverrides = map[string]db.PermissionOverride{}
+			}
+		}
+	}
+	return nil
+}
+
+// ownerScopesSet reports whether stored owner scopes constrain anything.
+func ownerScopesSet(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return raw != "" && raw != "{}" && raw != "null"
 }
