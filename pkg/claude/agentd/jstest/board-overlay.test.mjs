@@ -1030,6 +1030,22 @@ function layOutCollab(harness, host, overlayHost) {
   for (const [index, tab] of tabs().entries()) tab.getBoundingClientRect = () => ({ left: index * 100, right: index * 100 + 100, width: 100, top: 100, bottom: 130, height: 30, x: index * 100, y: 100 });
 }
 
+// tcl-w313wy: with no tab open the strip keeps one row's height
+// (collab-strip-height.test.mjs) and is still a drop target.
+scenario('an overlay tab dropped on the empty Collab strip lands as its first tab', async ({ harness, host, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  assert.deepEqual(tabLabels(host), [], 'fixture: nothing on the strip');
+  layOutCollab(harness, host, overlayHost);
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'));
+  await drag.down(150, 15);
+  await drag.move(120, 115);
+  assert.ok(host.querySelector('[data-collab-strip]').classList.contains('overlay-landing'), 'the empty strip lights');
+  await drag.up(120, 115);
+  await harness.act(async () => { await wait(5); await wait(5); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
+  assert.deepEqual(tabLabels(host), ['Team map'], 'it lands on the strip');
+});
+
 scenario('an overlay tab dropped on the Collab strip lands beside the tab under the pointer', async ({ harness, host, overlayHost, overlayState, windows }) => {
   await twoInOne(harness, overlayState, windows);
   await harness.act(async () => { await overlayState.openBoardPane('third', 'Third'); await wait(); await wait(); });
