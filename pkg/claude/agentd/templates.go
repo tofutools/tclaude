@@ -825,6 +825,10 @@ func handleTemplates(w http.ResponseWriter, r *http.Request) {
 			writeSpawnFailure(w, fail)
 			return
 		}
+		if fail := peerTemplateEditFailure(r, nil, templateToJSON(t)); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
 		id, err := db.CreateGroupTemplate(t)
 		if errors.Is(err, db.ErrGroupTemplateNameTaken) {
 			writeError(w, http.StatusConflict, "exists", err.Error())
@@ -889,6 +893,11 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+		was := templateToJSON(existing)
+		if fail := peerTemplateEditFailure(r, &was, templateToJSON(t)); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
 		}

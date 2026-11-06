@@ -424,7 +424,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_actor", err.Error())
 		return

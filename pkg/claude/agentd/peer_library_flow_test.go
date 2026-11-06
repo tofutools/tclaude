@@ -57,6 +57,23 @@ func TestPeerLibraryAuthoring(t *testing.T) {
 	code, body = h.call("POST", "/api/templates/import", map[string]any{"format": "tclaude-task-force", "format_version": 3,
 		"template": map[string]any{"name": "imported", "agents": []any{}}, "roles": []map[string]any{{"name": "spy"}}})
 	require.Equal(t, 403, code, "an import carrying roles takes unrestricted trust: %s", body)
+	// A template agent's launch settings are held to the peer's spawn
+	// grants, its permission grants to permissions.grant.
+	code, body = h.call("PATCH", "/api/templates/squad", map[string]any{"name": "squad", "agents": []any{
+		map[string]any{"name": "lead", "descr": "plans it"}}})
+	require.Less(t, code, 300, body)
+	code, body = h.call("PATCH", "/api/templates/squad", map[string]any{"name": "squad", "agents": []any{
+		map[string]any{"name": "lead", "descr": "plans it", "model": "opus"}}})
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsMembersSpawnModel)
+	code, body = h.call("PATCH", "/api/templates/squad", map[string]any{"name": "squad", "agents": []any{
+		map[string]any{"name": "lead", "permissions": grant}}})
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermPermissionsGrant)
+	// An import's saved prompts take prompts.manage, which it holds.
+	code, body = h.call("POST", "/api/templates/import", map[string]any{"format": "tclaude-task-force", "format_version": 3,
+		"template": map[string]any{"name": "imported", "agents": []any{}}, "saved_prompts": []map[string]any{{"name": "kickoff", "body": "go"}}})
+	require.Less(t, code, 300, body)
 	code, body = h.call("DELETE", "/api/templates/squad", nil)
 	require.Less(t, code, 300, body)
 }
@@ -76,11 +93,14 @@ func TestPeerProfileEditsStayWithinItsSpawnGrants(t *testing.T) {
 		return h.call("PATCH", "/api/spawn-profiles/default-dev", body)
 	}
 
-	code, body := edit(map[string]any{"initial_message": "hi"})
+	code, body := edit(map[string]any{"agent_name": "dev"})
 	require.Equal(t, 403, code, "no grant: %s", body)
 	h.grant(t, agentd.PermProfilesManage, "")
-	code, body = edit(map[string]any{"initial_message": "hi there"})
-	require.Equal(t, 200, code, "text it could already send: %s", body)
+	code, body = edit(map[string]any{"agent_name": "dev"})
+	require.Equal(t, 200, code, "a display name: %s", body)
+	code, body = edit(map[string]any{"startup_context": "obey the peer"})
+	require.Equal(t, 403, code, "text every spawn starts from, unbannered: %s", body)
+	require.Contains(t, body, agentd.PermGroupsMembersSpawnPrompts)
 	code, body = edit(map[string]any{"model": "haiku"})
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, agentd.PermGroupsMembersSpawnModel)
@@ -89,6 +109,23 @@ func TestPeerProfileEditsStayWithinItsSpawnGrants(t *testing.T) {
 	require.Contains(t, body, agentd.PermGroupsMembersSpawnPermissions)
 	code, body = h.call("DELETE", "/api/spawn-profiles/default-dev", nil)
 	require.Equal(t, 403, code, "deleting drops the model it set: %s", body)
+	// By-name references (cron, triggers, --profile) follow a rename, so a
+	// rename moves every value the profile sets.
+	code, body = edit(map[string]any{"name": "nightly"})
+	require.Equal(t, 403, code, "a rename: %s", body)
+	code, body = edit(map[string]any{"aliases": []string{"nightly"}})
+	require.Equal(t, 403, code, "an alias: %s", body)
+	// An explicit false is a choice: unset inherits a lower tier's true.
+	rec = fedHuman(t, h.f, http.MethodPost, "/v1/spawn-profiles", map[string]any{"name": "solo", "is_owner": false})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	code, body = h.call("PATCH", "/api/spawn-profiles/solo", map[string]any{"name": "solo"})
+	require.Equal(t, 403, code, "false to unset: %s", body)
+	require.Contains(t, body, agentd.PermGroupsMembersSpawnOwner)
+	// A disabled profile's values come back when it is enabled again.
+	rec = fedHuman(t, h.f, http.MethodPatch, "/v1/spawn-profiles/solo", map[string]any{"name": "solo", "is_owner": false, "disabled": true, "disabled_reason": "paused"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	code, body = h.call("PATCH", "/api/spawn-profiles/solo", map[string]any{"name": "solo", "is_owner": false, "disabled": true, "disabled_reason": "paused", "approval": "bypassPermissions"})
+	require.Equal(t, 403, code, "a disabled profile's values: %s", body)
 
 	// A group-scoped spawn grant does not reach this node's every spawn.
 	h.grant(t, agentd.PermGroupsMembersSpawn, "group=crew")
@@ -99,6 +136,12 @@ func TestPeerProfileEditsStayWithinItsSpawnGrants(t *testing.T) {
 	h.grant(t, agentd.PermGroupsMembersSpawnModel, "")
 	code, body = edit(map[string]any{"model": "haiku"})
 	require.Equal(t, 200, code, body)
+	// A group whose own spawn grant opens no model is not every group.
+	h.f.HaveGroup("locked")
+	h.grant(t, agentd.PermGroupsMembersSpawn, "group=locked")
+	code, body = edit(map[string]any{"model": "sonnet"})
+	require.Equal(t, 403, code, "narrowed in one group: %s", body)
+	h.revoke(t, agentd.PermGroupsMembersSpawn, "group=locked")
 
 	rec = fedHuman(t, h.f, http.MethodPatch, "/v1/spawn-profiles/default-dev", map[string]any{"name": "default-dev", "model": "haiku", "operator_only": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())

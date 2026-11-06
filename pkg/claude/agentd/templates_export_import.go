@@ -497,6 +497,10 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if fail := peerTemplateEditFailure(r, nil, env.Template); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
 	}
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"

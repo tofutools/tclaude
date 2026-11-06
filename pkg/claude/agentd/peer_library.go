@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -50,11 +52,10 @@ var peerLibraryRoutes = map[string]string{
 	"PATCH /api/spawn-profiles/{name}":  PermProfilesManage,
 	"DELETE /api/spawn-profiles/{name}": PermProfilesManage,
 
-	"GET /v1/process/templates":             PermProcessTemplatesRead,
-	"GET /v1/process/templates/{id}":        PermProcessTemplatesRead,
-	"GET /v1/process/template-heads":        PermProcessTemplatesRead,
-	"GET /v1/process/templates/{id}/export": PermProcessTemplatesRead,
-	"POST /v1/process/validate":             PermProcessTemplatesRead,
+	"GET /v1/process/templates":      PermProcessTemplatesRead,
+	"GET /v1/process/templates/{id}": PermProcessTemplatesRead,
+	"GET /v1/process/template-heads": PermProcessTemplatesRead,
+	"POST /v1/process/validate":      PermProcessTemplatesRead,
 
 	"POST /v1/process/templates":              PermProcessTemplatesManage,
 	"POST /v1/process/templates/{id}":         PermProcessTemplatesManage,
@@ -68,6 +69,20 @@ var peerLibraryRoutes = map[string]string{
 // head it replaces.
 var peerLibraryImplied = map[string][]string{
 	PermProcessTemplatesManage: {PermProcessTemplatesRead},
+}
+
+// peerLibraryAlsoHeld are the gates a library route answers when the peer
+// also holds them: a template import's embedded saved prompts take
+// prompts.manage.
+var peerLibraryAlsoHeld = map[string][]string{
+	PermTemplatesManage: {PermPromptsManage},
+}
+
+// peerLibraryActor is who a peer's process-template versions are recorded
+// as: the operator of the linked node (agent principals reach no library
+// route), in the human: form the template store accepts.
+func peerLibraryActor(instance string) string {
+	return "human:operator@" + strings.ReplaceAll(instance, "_", "-")
 }
 
 func addPeerLibraryRules(rules map[string]peerViewRule) {
@@ -119,8 +134,14 @@ func servePeerLibrary(guard func(*http.Request, *peerView) bool) func(http.Respo
 		for _, slug := range peerLibraryImplied[rule.requires] {
 			gates[slug] = true
 		}
+		for _, slug := range peerLibraryAlsoHeld[rule.requires] {
+			if fedPeerHoldsUnscoped(v.peer.InstanceID, slug) {
+				gates[slug] = true
+			}
+		}
 		a := &peerGrantAuthority{peer: v.peer.InstanceID, gates: gates, author: peerFollowUpAuthor(v, v.peer.InstanceID)}
 		ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerGrantKey{}, a)
+		ctx = context.WithValue(ctx, processActorKey{}, peerLibraryActor(v.peer.InstanceID))
 		peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
 	}
 }
@@ -145,9 +166,9 @@ func peerTemplateFromGroupVisible(r *http.Request, v *peerView) bool {
 // is refused, so a new profile field stays closed until it is mapped.
 var peerProfileFields = map[string]string{
 	"harness": fedOverrideHarness,
-	"model":   fedOverrideModel, "model_proxy": fedOverrideModel,
-	"effort": fedOverrideEffort,
-	"role":   fedOverrideRoles, "role_ref": fedOverrideRoles, "role_refs": fedOverrideRoles,
+	"model":   fedOverrideModel,
+	"effort":  fedOverrideEffort,
+	"role":    fedOverrideRoles, "role_ref": fedOverrideRoles, "role_refs": fedOverrideRoles,
 	"sandbox": fedOverridePermissions, "sandbox_implementation": fedOverridePermissions,
 	"approval": fedOverridePermissions, "tools": fedOverridePermissions,
 	"ask_user_question_timeout": fedOverridePermissions, "auto_review": fedOverridePermissions,
@@ -161,12 +182,12 @@ var peerProfileFields = map[string]string{
 	"peer_messaging": fedOverrideFeatures, "ssh_workaround": fedOverrideFeatures,
 	"remote_control": fedOverrideFeatures, "context_features": fedOverrideFeatures,
 	"descr": fedOverrideFeatures, "include_group_default_context": fedOverrideFeatures,
-	"prompt_refs":   fedOverridePrompts,
+	"prompt_refs": fedOverridePrompts, "initial_message": fedOverridePrompts, "startup_context": fedOverridePrompts,
 	"sync_worktree": fedOverrideWorktree, "fetch_latest_worktree": fedOverrideWorktree,
 }
 
 var peerProfileFreeFields = map[string]bool{
-	"name": true, "aliases": true, "agent_name": true, "initial_message": true, "startup_context": true,
+	"name": true, "aliases": true, "agent_name": true,
 	"auto_focus": true, "disabled": true, "disabled_reason": true, "operator_only": true,
 	"created_at": true, "updated_at": true,
 }
@@ -175,10 +196,11 @@ var peerProfileFreeFields = map[string]bool{
 // (after nil: its delete) to what that node could launch itself: every
 // launch value the edit changes, the operator's default profile's included,
 // takes the matching remote spawn grant for every group of this node. A
-// disabled profile backs no spawn, so disabling or deleting one changes
-// every value it set, and enabling one sets them all. Making a profile
-// selectable by agents (clearing operator_only) takes unrestricted trust.
-// The local operator and unrestricted trust pass.
+// profile that starts or stops backing spawns (created, deleted, disabled,
+// enabled) or that spawns now reach under another name or alias (by-name
+// references in cron jobs, triggers and fallbacks) changes every value it
+// sets. Making a profile selectable by agents (clearing operator_only) takes
+// unrestricted trust. The local operator and unrestricted trust pass.
 func peerProfileEditFailure(r *http.Request, before, after *db.SpawnProfile) *spawnFailure {
 	a := peerGrantFromRequest(r)
 	if a == nil {
@@ -187,38 +209,68 @@ func peerProfileEditFailure(r *http.Request, before, after *db.SpawnProfile) *sp
 	if before != nil && after != nil && before.OperatorOnly && !after.OperatorOnly {
 		return &spawnFailure{http.StatusForbidden, "permission", "making a profile selectable by agents takes unrestricted trust"}
 	}
-	was, now := peerProfileLaunch(before), peerProfileLaunch(after)
+	whole := before == nil || after == nil || before.Disabled != after.Disabled || peerProfileRenamed(before, after)
+	return peerLaunchChangeFailure(a.peer, wireKeys(profileJSONOf(before)), wireKeys(profileJSONOf(after)), whole,
+		peerProfileFields, peerProfileFreeFields, "profile field")
+}
+
+func profileJSONOf(p *db.SpawnProfile) any {
+	if p == nil {
+		return nil
+	}
+	return profileToJSON(p)
+}
+
+func peerProfileRenamed(before, after *db.SpawnProfile) bool {
+	if before.Name != after.Name {
+		return true
+	}
+	x, y := slices.Clone(before.Aliases), slices.Clone(after.Aliases)
+	slices.Sort(x)
+	slices.Sort(y)
+	return !slices.Equal(x, y)
+}
+
+// peerLaunchChangeFailure judges a change from was to now, as wire keys:
+// each launch key that changes (with whole, each one either sets) takes its
+// remote spawn field's grant for every group; free keys pass, and any other
+// key is refused.
+func peerLaunchChangeFailure(peer string, was, now map[string]json.RawMessage, whole bool,
+	fields map[string]string, free map[string]bool, what string) *spawnFailure {
 	for key := range unionKeys(was, now) {
-		if peerProfileFreeFields[key] || sameJSONValue(was[key], now[key]) {
+		if free[key] {
 			continue
 		}
-		field, ok := peerProfileFields[key]
-		if !ok {
-			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("profile field %s takes unrestricted trust", key)}
+		if whole {
+			if absentJSONValue(was[key]) && absentJSONValue(now[key]) {
+				continue
+			}
+		} else if sameJSONValue(was[key], now[key]) {
+			continue
 		}
-		if !fedSpawnFieldGranted(a.peer, 0, field) {
+		field, ok := fields[key]
+		if !ok {
+			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("%s %s takes unrestricted trust", what, key)}
+		}
+		if !peerFieldGrantedEverywhere(peer, field) {
 			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
-				"profile field %s is a launch setting every spawn it backs uses: it takes %s and %s for every group",
-				key, PermGroupsMembersSpawn, fedSpawnFieldSlugs[field])}
+				"%s %s is a launch setting the spawns it backs use: it takes %s and %s for every group",
+				what, key, PermGroupsMembersSpawn, fedSpawnFieldSlugs[field])}
 		}
 	}
 	return nil
 }
 
-// peerProfileLaunch is what p sets for the spawns it backs, as wire keys:
-// nothing when there is no profile or it is disabled.
-func peerProfileLaunch(p *db.SpawnProfile) map[string]json.RawMessage {
+// wireKeys is v's JSON object, by key; nil for nothing. An unreadable value
+// reports a key no table knows, so any change to it is refused.
+func wireKeys(v any) map[string]json.RawMessage {
 	out := map[string]json.RawMessage{}
-	if p == nil || p.Disabled {
+	if v == nil {
 		return out
 	}
-	raw, err := json.Marshal(profileToJSON(p))
+	raw, err := json.Marshal(v)
 	if err != nil || json.Unmarshal(raw, &out) != nil {
-		// Unreadable: report every launch field as set, so any change is
-		// judged.
-		for key := range peerProfileFields {
-			out[key] = json.RawMessage(`"?"`)
-		}
+		return map[string]json.RawMessage{"unreadable": json.RawMessage(`true`)}
 	}
 	return out
 }
@@ -234,14 +286,22 @@ func unionKeys(a, b map[string]json.RawMessage) map[string]bool {
 	return out
 }
 
-// sameJSONValue compares two wire values, an absent one equal to an empty
-// one.
-func sameJSONValue(a, b json.RawMessage) bool {
-	if a == nil || emptyJSONValue(a) {
-		return b == nil || emptyJSONValue(b)
+// absentJSONValue reports a value that sets nothing: absent, null, "", []
+// or {}. false and 0 are values: a true/false setting that is unset
+// inherits from a lower tier, so false is a choice.
+func absentJSONValue(raw json.RawMessage) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "", "null", `""`, "[]", "{}":
+		return true
 	}
-	if b == nil || emptyJSONValue(b) {
-		return false
+	return false
+}
+
+// sameJSONValue compares two wire values, an absent one equal only to an
+// absent one.
+func sameJSONValue(a, b json.RawMessage) bool {
+	if absentJSONValue(a) || absentJSONValue(b) {
+		return absentJSONValue(a) && absentJSONValue(b)
 	}
 	var x, y any
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
@@ -262,4 +322,137 @@ func peekJSONBody(r *http.Request, limit int64) ([]byte, bool) {
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
 	return raw, true
+}
+
+// peerTemplateAgentFields maps each template agent key to the remote spawn
+// field whose grant opens it: an instantiation launches each agent with
+// these. A role's or agent's permission grants take permissions.grant
+// instead, and the inline profile is judged key by key as a profile is.
+var peerTemplateAgentFields = map[string]string{
+	"harness": fedOverrideHarness, "model": fedOverrideModel, "effort": fedOverrideEffort,
+	"role": fedOverrideRoles, "role_ref": fedOverrideRoles, "spawn_profile": fedOverrideProfile, "initial_message": fedOverridePrompts,
+	"sandbox": fedOverridePermissions, "approval": fedOverridePermissions, "is_owner": fedOverrideOwner,
+}
+
+var peerTemplateAgentFreeFields = map[string]bool{
+	"name": true, "descr": true, "wave": true, "effective_is_owner": true,
+	// Judged on their own below.
+	"permissions": true, "profile_inline": true,
+}
+
+var peerTemplateFields = map[string]string{"per_agent_worktrees": fedOverrideWorktree, "default_context": fedOverridePrompts}
+
+var peerTemplateFreeFields = map[string]bool{
+	"name": true, "descr": true, "work_pattern": true, "process": true,
+	"rhythms": true, "wave_max_wait": true, "created_at": true, "updated_at": true, "id": true,
+	// Owner scopes have their own gate; agents are judged one by one.
+	"owner_scopes": true, "agents": true,
+}
+
+// peerTemplateEditFailure holds a linked node's write of a group template
+// (before nil: a new one) to what that node could launch itself, as
+// peerProfileEditFailure does a profile: an instantiation here launches the
+// team the template describes. An agent the write removes launches nothing.
+func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templateJSON) *spawnFailure {
+	a := peerGrantFromRequest(r)
+	if a == nil {
+		return nil
+	}
+	var was map[string]json.RawMessage
+	if before != nil {
+		was = wireKeys(*before)
+	}
+	if fail := peerLaunchChangeFailure(a.peer, was, wireKeys(after), before == nil, peerTemplateFields, peerTemplateFreeFields, "template field"); fail != nil {
+		return fail
+	}
+	had := map[string]templateAgentJSON{}
+	if before != nil {
+		for _, ag := range before.Agents {
+			had[ag.Name] = ag
+		}
+	}
+	for _, ag := range after.Agents {
+		prev, existed := had[ag.Name]
+		var prevKeys map[string]json.RawMessage
+		if existed {
+			prevKeys = wireKeys(prev)
+		}
+		what := fmt.Sprintf("template agent %q field", ag.Name)
+		if fail := peerLaunchChangeFailure(a.peer, prevKeys, wireKeys(ag), !existed, peerTemplateAgentFields, peerTemplateAgentFreeFields, what); fail != nil {
+			return fail
+		}
+		if ag.SpawnProfile != "" && (!existed || prev.SpawnProfile != ag.SpawnProfile) && !peerProfileSelectableEverywhere(a.peer, ag.SpawnProfile) {
+			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
+				"template agent %q names a spawn profile it could not pick for a spawn into every group", ag.Name)}
+		}
+		if !sameJSONValue(prevKeys["permissions"], wireKeys(ag)["permissions"]) && !peerGrantsOnlyDropped(prev.Permissions, ag.Permissions) {
+			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
+				"template agent %q would be spawned with permission grants, which takes %s", ag.Name, PermPermissionsGrant)}
+		}
+		var prevInline any
+		if existed && prev.ProfileInline != nil {
+			prevInline = *prev.ProfileInline
+		}
+		var inline any
+		if ag.ProfileInline != nil {
+			inline = *ag.ProfileInline
+		}
+		if fail := peerLaunchChangeFailure(a.peer, wireKeys(prevInline), wireKeys(inline), !existed || prevInline == nil,
+			peerProfileFields, peerProfileFreeFields, fmt.Sprintf("template agent %q inline profile field", ag.Name)); fail != nil {
+			return fail
+		}
+	}
+	return nil
+}
+
+// peerGrantsOnlyDropped reports whether after holds no grant before did not.
+func peerGrantsOnlyDropped(before, after []db.PermissionGrant) bool {
+	for _, g := range after {
+		if !slices.ContainsFunc(before, func(b db.PermissionGrant) bool { return b.Slug == g.Slug && b.Scope == g.Scope }) {
+			return false
+		}
+	}
+	return true
+}
+
+// peerFieldGrantedEverywhere reports whether peer may choose field for a
+// spawn into every live group of this node, and any later one: a profile or
+// template applies its values wherever it is used, and a group-scoped spawn
+// grant can narrow a broader field grant for its own group.
+func peerFieldGrantedEverywhere(peer, field string) bool {
+	if !fedSpawnFieldGranted(peer, 0, field) {
+		return false
+	}
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if !g.IsArchived() && !fedSpawnFieldGranted(peer, g.ID, field) {
+			return false
+		}
+	}
+	return true
+}
+
+// peerProfileSelectableEverywhere reports whether peer may pick the profile
+// name for a spawn into every live group (checkSelectableProfile): the
+// .profile grant opens only profiles that are not operator-only.
+func peerProfileSelectableEverywhere(peer, name string) bool {
+	if name == "" {
+		return true
+	}
+	if checkSelectableProfile(peer, 0, name) != nil {
+		return false
+	}
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if !g.IsArchived() && checkSelectableProfile(peer, g.ID, name) != nil {
+			return false
+		}
+	}
+	return true
 }

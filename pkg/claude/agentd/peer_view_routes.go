@@ -303,6 +303,9 @@ var peerViewLocalRoutes = []string{
 	// A staged download (dashboard_peer_downloads.go); a restricted peer reads
 	// the template itself through node.spawn.read.
 	"GET /api/templates/{name}/export",
+	// A workflow file is signed with this node's federation identity key: it
+	// stays this node's to hand out.
+	"GET /v1/process/templates/{id}/export",
 	"PATCH /api/groups/{name}/links/{id}",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
