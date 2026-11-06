@@ -6,7 +6,7 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
-import { shortCwd } from './helpers.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { LaunchTargetDialog } from './launch-target-dialog.js';
 import { StewardHandoverDialog } from './steward-handover-dialog.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
@@ -90,31 +90,21 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
   const selectTitle = selectedWorktree
     ? `${selectedWorktree.branch || '(detached)'}${selectedWorktree.is_main ? ' [main]' : ''} — ${selectedWorktree.path}`
     : request.error || emptyLabel;
+  const usable = request.phase === 'ready' && isRepo;
 
   return html`
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <${Select}
+      <${WorktreeCombobox}
         id="clone-agent-worktree"
         value=${value}
-        disabled=${request.phase !== 'ready' || !isRepo}
-        title=${selectTitle}
-        onChange=${(event) => setValue(event.currentTarget.value)}
-      >
-        <option value="">${emptyLabel}</option>
-        ${(data.worktrees || []).map((worktree) => {
-          const displayBranch = worktree.branch || '(detached)';
-          const main = worktree.is_main ? ' [main]' : '';
-          return html`
-            <option
-              key=${worktree.path}
-              value=${`wt:${worktree.path}`}
-              title=${`${displayBranch}${main} — ${worktree.path}`}
-            >${displayBranch}${main} — ${shortCwd(worktree.path)}</option>
-          `;
-        })}
-        ${isRepo && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      <//>
+        worktrees=${data.worktrees || []}
+        newKey=${isRepo ? WT_NEW : ''}
+        noneLabel=${emptyLabel}
+        disabled=${!usable}
+        attrs=${{ title: selectTitle }}
+        onChange=${setValue}
+      />
     </label>
     ${value === WT_NEW && html`
       <label class="cron-create-row" id="clone-agent-wt-new-row">
@@ -132,9 +122,7 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
       ${hasCommits ? html`
         <label class="cron-create-row" id="clone-agent-wt-base-row">
           <span class="cron-create-label">Base branch</span>
-          <${Select} id="clone-agent-wt-base" value=${base} onChange=${(event) => setBase(event.currentTarget.value)}>
-            ${branches.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-          <//>
+          <${BranchCombobox} id="clone-agent-wt-base" value=${base} branches=${branches} onChange=${setBase} />
         </label>
       ` : html`
         <p class="wt-orphan-warn" id="clone-agent-wt-orphan-hint">

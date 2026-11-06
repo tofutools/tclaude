@@ -14,7 +14,8 @@
 //     "board:rel" or "group:infra rel" refine a long result.
 //
 // Props:
-//   items        [{ key, label, hint?, kind?, group?, keywords?, disabled?, reason? }]
+//   items        [{ key, label, hint?, kind?, group?, keywords?, disabled?, reason?, title? }]
+//                (title is the row's tooltip; the key when absent)
 //   value        key[] when multi, else one key ('' for none)
 //   multi        true (default): choosing toggles a key in value
 //   onChange     (next) → void — key[] when multi, else the key
@@ -279,7 +280,7 @@ export function FilterCombobox({
         ${section.rows.map(({ item, index }) => html`<div key=${item.key}
           ref=${index === bounded ? highlightedRef : null} id=${`${listID}-option-${index}`}
           role="option" aria-selected=${chosen.has(item.key) ? 'true' : 'false'}
-          aria-disabled=${item.disabled ? 'true' : undefined} title=${item.disabled ? item.reason || '' : item.key}
+          aria-disabled=${item.disabled ? 'true' : undefined} title=${item.disabled ? item.reason || '' : item.title || item.key}
           data-key=${item.key}
           class=${`add-member-row filter-combobox-option${index === bounded ? ' highlighted' : ''}${item.disabled ? ' disabled' : ''}`}
           onMouseMove=${() => { if (index !== bounded) setHighlightKey(item.key); }}

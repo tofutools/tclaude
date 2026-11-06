@@ -220,7 +220,10 @@ test("a failed sandbox preview says why on submit and loads again", async (t) =>
     assert.fail(`timed out waiting for ${what}`);
   };
   const preview = () => q('#agent-spawn-sandbox-profile-preview')?.textContent || '';
-  const worktreesLoading = () => /loading…/.test(q('#agent-spawn-worktree')?.textContent || 'loading…');
+  const worktreesLoading = () => {
+    const box = q('#agent-spawn-worktree-input');
+    return !box || /loading…/.test(box.value || box.getAttribute('placeholder') || '');
+  };
   await until(() => !worktreesLoading() && /Could not preview sandbox policy/.test(preview()), 'the worktrees and the failed preview');
   const name = q('#agent-spawn-name');
   Object.defineProperty(name, 'value', { configurable: true, writable: true, value: 'w' });

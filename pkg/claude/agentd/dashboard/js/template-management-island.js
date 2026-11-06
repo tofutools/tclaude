@@ -7,6 +7,7 @@ import { pickDirectory } from './helpers.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -1593,29 +1594,15 @@ export function TemplateDeployDialog({
       setBusy(false);
     }
   };
-  const options = wtData?.is_repo
-    ? [
-        { value: '', label: '(no worktree — use Default cwd above)' },
-        ...(wtData.worktrees || []).map((item) => ({
-          value: `wt:${item.path}`,
-          label: `${item.branch || '(detached)'}${item.is_main ? ' [main]' : ''} — ${item.path}`,
-          branch: item.branch || '',
-        })),
-        { value: WT_NEW, label: '+ create new worktree…' },
-      ]
-    : [
-        {
-          value: '',
-          label:
-            wtPhase === 'loading'
-              ? 'loading…'
-              : repo.trim()
-                ? wtData?.sub_repos?.length
-                  ? '(not a git repo — pick a sub-repo above)'
-                  : '(not a git repo — worktrees unavailable)'
-                : '(enter a CWD to enable worktrees)',
-        },
-      ];
+  const worktreeNoneLabel = wtData?.is_repo
+    ? '(no worktree — use Default cwd above)'
+    : wtPhase === 'loading'
+      ? 'loading…'
+      : repo.trim()
+        ? wtData?.sub_repos?.length
+          ? '(not a git repo — pick a sub-repo above)'
+          : '(not a git repo — worktrees unavailable)'
+        : '(enter a CWD to enable worktrees)';
   const showNew = !worktreesHidden && wtData?.is_repo && worktree === WT_NEW;
   const worktreeLoading =
     !reinforcing && wtPhase === 'loading' && !!(worktree || perAgent);
@@ -1803,19 +1790,15 @@ export function TemplateDeployDialog({
         <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree</span
-        ><${Select}
+        ><${WorktreeCombobox}
           id="template-deploy-worktree"
-          value=${worktree}
+          value=${wtData?.is_repo ? worktree : ''}
+          worktrees=${wtData?.is_repo ? wtData.worktrees || [] : []}
+          newKey=${wtData?.is_repo ? WT_NEW : ''}
+          noneLabel=${worktreeNoneLabel}
           disabled=${!wtData?.is_repo}
-          onChange=${(event) => setWorktree(event.currentTarget.value)}
-        >
-          ${options.map(
-            (item) =>
-              html`<option key=${item.value} value=${item.value}>
-                ${item.label}
-              </option>`,
-          )}
-        <//></label
+          onChange=${setWorktree}
+        /></label
       ><label
         class=${`cron-create-enabled cron-check-aligned${!wtData?.is_repo ? ' disabled' : ''}`}
         id="template-deploy-wt-sync-row"
@@ -1861,16 +1844,12 @@ export function TemplateDeployDialog({
         id="template-deploy-wt-base-row"
         hidden=${!showNew || wtData?.has_commits === false}
         ><span class="cron-create-label">Base branch</span
-        ><${Select}
+        ><${BranchCombobox}
           id="template-deploy-wt-base"
           value=${base}
-          onChange=${(event) => setBase(event.currentTarget.value)}
-        >
-          ${(wtData?.branches || []).map(
-            (value) =>
-              html`<option key=${value} value=${value}>${value}</option>`,
-          )}
-        <//></label
+          branches=${wtData?.branches || []}
+          onChange=${setBase}
+        /></label
       >${showNew &&
       wtData?.has_commits === false &&
       html`<p class="wt-orphan-warn" id="template-deploy-wt-orphan-hint">

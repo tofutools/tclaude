@@ -315,8 +315,9 @@ func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
 // its full path, while clone also derives the closed select's controlled title.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
-		"title=${selectTitle}",                           // clone's closed select follows controlled selection
+		"title: `${label} — ${worktree.path}`",                                // worktree rows (git-picker.js) retain the full path
+		"title=${item.disabled ? item.reason || '' : item.title || item.key}", // FilterCombobox rows show it
+		"attrs=${{ title: selectTitle }}",                                     // clone's closed box follows controlled selection
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)

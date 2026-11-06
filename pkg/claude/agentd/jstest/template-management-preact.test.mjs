@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { comboPick } from './combobox-helpers.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 test('template model preserves the complete replace payload and stale references', async (t) => {
   const harness = await createPreactHarness(t);
@@ -465,16 +465,8 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     /group lore[\s\S]*template lore/,
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  const worktree = host.querySelector('#template-deploy-worktree');
-  const createWorktree = worktree.querySelector('option[value="__new__"]');
-  assert.ok(createWorktree);
-  createWorktree.selected = true;
-  worktree.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
-  const base = host.querySelector('#template-deploy-wt-base');
-  base.querySelector('option[value="release"]').selected = true;
-  base.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
+  await comboPick(harness, host.querySelector('#template-deploy-worktree'), '__new__');
+  await comboPick(harness, host.querySelector('#template-deploy-wt-base'), 'release');
   const reinforce = host.querySelector(
     'input[name="template-deploy-mode"][value="reinforce"]',
   );
@@ -499,11 +491,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(
-    Array.from(
-      host.querySelector('#template-deploy-wt-base').querySelectorAll('option'),
-    )
-      .find((option) => option.selected)
-      ?.getAttribute('value'),
+    host.querySelector('#template-deploy-wt-base').dataset.value,
     'release',
     'a reinforce round-trip preserves the manually selected base branch',
   );
@@ -513,14 +501,14 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   await harness.act(() => Promise.resolve());
   const staleBase = host.querySelector('#template-deploy-wt-base');
   assert.equal(staleBase.closest('[hidden]') !== null, true);
-  assertAbsent(staleBase.querySelector('option[value="release"]'), 'changing repositories immediately removes stale branch choices');
+  assert.equal((await comboKeys(harness, staleBase)).includes('release'), false,
+    'changing repositories immediately removes stale branch choices');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const reloadedBase = host.querySelector('#template-deploy-wt-base');
-  assert.ok(
-    reloadedBase.querySelector('option[value="main"]'),
-    'a changed repository loads its own default branch',
-  );
-  assertAbsent(reloadedBase.querySelector('option[value="release"]'), 'branches from the previous repository do not leak into the new picker');
+  const reloadedKeys = await comboKeys(harness, reloadedBase);
+  assert.ok(reloadedKeys.includes('main'), 'a changed repository loads its own default branch');
+  assert.equal(reloadedKeys.includes('release'), false,
+    'branches from the previous repository do not leak into the new picker');
   reinforce.checked = true;
   reinforce.dispatchEvent(
     new harness.window.Event('change', { bubbles: true }),
