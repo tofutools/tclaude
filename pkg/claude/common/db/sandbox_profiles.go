@@ -1417,3 +1417,30 @@ type sandboxProfileReadError struct{ err error }
 
 func (e sandboxProfileReadError) Error() string { return e.err.Error() }
 func (e sandboxProfileReadError) Unwrap() error { return e.err }
+
+// SetSandboxProfilePeerOwner records that a linked node created the profile
+// with this ID.
+func SetSandboxProfilePeerOwner(profileID int64, peer string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO sandbox_profile_peer_owners (profile_id, peer) VALUES (?, ?)
+		ON CONFLICT(profile_id) DO UPDATE SET peer = excluded.peer`, profileID, peer)
+	return err
+}
+
+// SandboxProfilePeerOwner names the linked node that created the profile with
+// this ID, "" for one this node's operator made.
+func SandboxProfilePeerOwner(profileID int64) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var peer string
+	err = d.QueryRow(`SELECT peer FROM sandbox_profile_peer_owners WHERE profile_id = ?`, profileID).Scan(&peer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return peer, err
+}

@@ -28,6 +28,13 @@ type peerStageGate func(v *peerView, r *http.Request) (int, string, string)
 var peerStageGates = map[string]peerStageGate{
 	"GET /api/groups/{name}/export": peerGroupExportGate,
 	"GET /api/agent-bundle/export":  peerAgentBundleExportGate,
+	"GET /api/config-bundle/export": peerConfigExportGate,
+}
+
+// peerStageRewrites adjust a gated download's request once its gate passes,
+// before it is staged.
+var peerStageRewrites = map[string]func(v *peerView, sub *http.Request){
+	"GET /api/config-bundle/export": peerConfigExportSkips,
 }
 
 func addPeerTransferRules(rules map[string]peerViewRule) {
@@ -37,6 +44,7 @@ func addPeerTransferRules(rules map[string]peerViewRule) {
 	rules["GET /api/peer-downloads/{id}"] = peerViewRule{feature: "transfer.downloads", publicRead: true, serve: servePeerDownloadChunk}
 	// A peer view job, read by the peer that started it (servePeerViewJob).
 	rules["GET /api/peer-view-jobs/{id}"] = peerViewRule{feature: "transfer.downloads", publicRead: true, serve: servePeerViewJob}
+	rules["GET /api/config-bundle/export"] = peerViewRule{feature: "config.export", requires: PermConfigExport, serve: servePeerStageable(peerConfigExportGate)}
 	rules["GET /api/groups/{name}/export"] = peerViewRule{feature: "groups.export", requires: PermGroupsExport, group: true, serve: servePeerStageable(peerGroupExportGate)}
 	rules["GET /api/agent-bundle/export"] = peerViewRule{feature: "agent.bundle.export", requires: PermAgentBundleExport, group: true, serve: servePeerStageable(peerAgentBundleExportGate)}
 }
@@ -96,6 +104,9 @@ func servePeerDownloadStage(w http.ResponseWriter, r *http.Request, v *peerView,
 		return
 	}
 	v.groupName = matched.PathValue("name")
+	if rewrite := peerStageRewrites[pattern]; rewrite != nil {
+		rewrite(v, sub)
+	}
 	stagePeerDownloadFile(w, sub, mux, peer, func() bool {
 		p, err := db.GetFederationPeer(peer)
 		if err != nil || p == nil {

@@ -2357,3 +2357,8 @@ CREATE TABLE federation_peer_agent_views (
 			policy TEXT NOT NULL CHECK (policy IN ('allow','deny')),
 			updated_at INTEGER NOT NULL
 		) STRICT;
+
+CREATE TABLE sandbox_profile_peer_owners (
+			profile_id INTEGER PRIMARY KEY REFERENCES sandbox_profiles(id) ON DELETE CASCADE,
+			peer       TEXT NOT NULL
+		);

@@ -97,6 +97,9 @@ var pinnedFederationPeerSlugs = map[string]string{
 	// An agent's own permission overrides, held in every group of the agent
 	// and within the peer ceiling (peer_agent_permissions.go).
 	PermPermissionsGrant: "permissions_grant", PermPermissionsRevoke: "permissions_revoke",
+	// An agent's sandbox implementation, only ever adding confinement
+	// (peer_agent_sandbox_impl.go).
+	PermAgentSandboxImplementation: "sandbox_impl",
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{
@@ -109,6 +112,9 @@ var pinnedFedInstancePeerSlugs = map[string]bool{
 	// This node's libraries, authored from a peer's dashboard (peer_library.go).
 	PermPromptsManage: true, PermRolesManage: true, PermTemplatesManage: true, PermProfilesManage: true,
 	PermProcessTemplatesRead: true, PermProcessTemplatesManage: true,
+	// Narrow-only peer sandbox profiles, and a config bundle of what the
+	// peer reads otherwise (peer_sandbox_profiles.go, peer_config_export.go).
+	PermSandboxProfilesManage: true, PermConfigExport: true,
 }
 
 func TestFederationPeerSlugTablesArePinned(t *testing.T) {

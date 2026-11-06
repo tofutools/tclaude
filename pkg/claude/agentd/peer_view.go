@@ -296,6 +296,7 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerMemberRules(rules)
 	addPeerSpawnCatalogRules(rules)
 	addPeerNodeManageRules(rules)
+	addPeerSandboxProfileRules(rules)
 	addPeerLibraryRules(rules)
 	addPeerGroupLaunchRules(rules)
 	addPeerTransferRules(rules)

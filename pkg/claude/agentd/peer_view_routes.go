@@ -245,7 +245,6 @@ var peerViewLocalRoutes = []string{
 	"/api/saved-prompts",
 	"/api/saved-prompts/{name}",
 	"POST /api/library/rename",
-	"GET /api/config-bundle/export",
 	"/api/roles",
 	"/api/roles/{name}",
 	"/api/sandbox-profile-default",
