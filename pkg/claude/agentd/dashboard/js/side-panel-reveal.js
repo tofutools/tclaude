@@ -224,6 +224,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   const endPeek = () => {
     cancelRetract();
     samples = [];
+    motion = null;
     unpeek();
   };
   // armRetract (re)starts the peek's retract: a prediction that still holds
@@ -309,7 +310,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const t = now();
     // The motion restarts at any leftward move (so a rightward one starts from
     // its low point) and after a pause (from where it rested, a frame before
-    // this move).
+    // this move). Anything that interrupts the moves the page sees (a press, a
+    // button held, a drag, a frame, Escape) drops it, so the next move starts
+    // a new one where it is: a gap the page did not see is no rest.
     if (!motion || !last || event.clientX < last.x) motion = { x: event.clientX, t };
     else if (t - lastT > C().WINDOW_MS) motion = { x: last.x, t: t - C().FRAME_MS };
     last = { x: event.clientX, y: event.clientY };
@@ -327,6 +330,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
       cancelDwell();
       if (isSidePanelPeeking()) endPeek();
       samples = [];
+      // A move with a button held (a selection, a drag) is no snap's start.
+      motion = null;
       return;
     }
     if (isSidePanelPeeking() && dock()?.contains(event.target)) {
@@ -450,6 +455,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.addEventListener('pointerdown', (event) => {
     cancelDwell();
     swallowClick = false;
+    motion = null;
     if (isSidePanelPeeking()) {
       if (dock()?.contains(event.target)) {
         event.preventDefault();
@@ -473,7 +479,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   }, true);
   doc.addEventListener('pointerup', pressOver, true);
   doc.addEventListener('pointercancel', pressOver, true);
-  doc.documentElement?.addEventListener('pointerleave', () => {
+  doc.documentElement?.addEventListener('pointerleave', (event) => {
     cancelDwell();
     cancelStop();
     // A snap that runs past the window's right edge, within the panel's
@@ -482,7 +488,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
-    if (motion && last && inBand && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
+    if (motion && last && inBand && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
@@ -501,11 +507,18 @@ export function bindEdgeReveal(doc = globalThis.document, {
   });
   doc.addEventListener('dragstart', (event) => {
     dragging = true;
+    motion = null;
     cancelDwell();
     if (isSidePanelPeeking()) endPeek();
     dragFromPanel = isSidePanelRevealed() && !!dock()?.contains(event.target);
   });
   doc.addEventListener('dragend', dragOver);
+  // A motion is only measured from a rest the page saw: no pointermove comes
+  // while the pointer is over a frame (a page or a board), so the gap after
+  // one is no rest, and the next move starts a new motion where it is.
+  doc.addEventListener('pointerout', (event) => {
+    if (/^(IFRAME|FRAME|OBJECT|EMBED)$/.test(event.relatedTarget?.tagName || '')) motion = null;
+  }, true);
   doc.addEventListener('drop', dragOver, true);
   // The pointer can leave the panel straight into a frame (a page or a board),
   // after which the page sees no pointermove: the panel's own leave says so.
