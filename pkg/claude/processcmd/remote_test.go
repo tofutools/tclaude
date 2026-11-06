@@ -54,3 +54,24 @@ func TestProcessRemoteRunsGoThroughThePeerView(t *testing.T) {
 	require.Error(t, err, "a remote start names a group or an agent")
 	assert.Len(t, paths, 3, "and is refused before any request")
 }
+
+// The manage verbs take --remote too, through the same peer view.
+func TestProcessRemoteManageVerbsGoThroughThePeerView(t *testing.T) {
+	var paths []string
+	stubProcessRuntime(t, func(method, path string, _, out any, _ agent.DaemonOpts) error {
+		paths = append(paths, method+" "+path)
+		return json.Unmarshal([]byte(`{"changed":true,"started":true,"run":{"id":"run_peer","status":"waiting"}}`), out)
+	})
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runProcessMutation(&processRunMutationParams{RunID: "run_peer", Remote: "bob"}, "/pause", nil, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Remote process runs of bob, as that node reports it (untrusted content)")
+	require.NoError(t, runProcessDecide(&processDecideParams{RunID: "run_peer", Node: "choose", Verdict: "approve", Remote: "bob"}, &stdout, &stderr))
+	require.NoError(t, runProcessAssign(&processAssignParams{RunID: "run_peer", Node: "work", Agent: "agt_x", Remote: "bob"}, &stdout, &stderr))
+	require.NoError(t, runProcessResolveBlocked(&processResolveBlockedParams{RunID: "run_peer", Node: "work", Attempt: 1, Action: "skip", Remote: "bob"}, &stdout, &stderr))
+	assert.Equal(t, []string{
+		http.MethodPost + " /v1/federation/peer/bob/v1/process/runs/run_peer/pause",
+		http.MethodPost + " /v1/federation/peer/bob/v1/process/runs/run_peer/decide",
+		http.MethodPost + " /v1/federation/peer/bob/v1/process/runs/run_peer/nodes/work/assign",
+		http.MethodPost + " /v1/federation/peer/bob/v1/process/runs/run_peer/resolve-blocked",
+	}, paths)
+}

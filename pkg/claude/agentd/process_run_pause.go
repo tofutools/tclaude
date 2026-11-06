@@ -94,7 +94,7 @@ func handleProcessRunPause(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return

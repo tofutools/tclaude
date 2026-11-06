@@ -218,7 +218,7 @@ var slugFederationReach = map[string]FedReach{
 	PermProcessTemplatesManage:            {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermProcessRunsRead:                   {Kind: FedPeerInstance, Sensitive: true},
 	PermProcessRunsStart:                  {Kind: FedPeerGroup, Cap: "process_runs_start", Sensitive: true},
-	PermProcessRunsManage:                 {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermProcessRunsManage:                 {Kind: FedPeerInstance, Sensitive: true},
 	PermTriggersRead:                      {Kind: FedPeerAlias, Via: []string{PermGroupsTriggersRead}, Pending: true},
 	PermTriggersManage:                    {Kind: FedPeerAlias, Via: []string{PermGroupsTriggersManage}, Pending: true},
 	PermGroupsTriggersRead:                {Kind: FedPeerGroup, Pending: true},

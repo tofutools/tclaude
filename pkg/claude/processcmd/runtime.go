@@ -578,6 +578,7 @@ func processReissueCmd() *cobra.Command {
 type processRunMutationParams struct {
 	RunID    string `pos:"true" help:"Process run id"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 type processReissueParams struct {
@@ -604,10 +605,11 @@ func runProcessMutation(p *processRunMutationParams, suffix string, request map[
 		Run      processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + suffix
-	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+	if err := processRequest(p.Remote, http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, p.Remote)
 	switch {
 	case suffix == "/pause" && response.Changed:
 		fmt.Fprintf(stdout, "Process run %s: paused\n", response.Run.ID)
@@ -686,6 +688,7 @@ type processDecideParams struct {
 	// attemptSet records that --attempt was given, so --attempt 0 pins a
 	// loop decision's first window instead of meaning "current".
 	attemptSet bool
+	Remote     string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processDecideCmd() *cobra.Command {
@@ -735,10 +738,11 @@ func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
 		Run     processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/decide"
-	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+	if err := processRequest(p.Remote, http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, p.Remote)
 	fmt.Fprintf(stdout, "Recorded decision %q for process run %s.\n", p.Verdict, response.Run.ID)
 	printProcessRun(stdout, &response.Run)
 	return nil
@@ -751,6 +755,7 @@ type processResolveBlockedParams struct {
 	Action   string `long:"action" help:"retry, skip, or cancel"`
 	Note     string `long:"note" optional:"true" help:"Human-facing note recorded with the resolution"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processResolveBlockedCmd() *cobra.Command {
@@ -811,10 +816,11 @@ func runProcessResolveBlocked(p *processResolveBlockedParams, stdout, stderr io.
 		Run     processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/resolve-blocked"
-	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+	if err := processRequest(p.Remote, http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, p.Remote)
 	fmt.Fprintf(stdout, "Resolved blocked node %s attempt %d with %s for process run %s.\n",
 		node, p.Attempt, action, response.Run.ID)
 	printProcessRun(stdout, &response.Run)
@@ -1034,6 +1040,7 @@ type processAssignParams struct {
 	Node     string `long:"node" help:"Agent node whose outstanding attempt to reassign"`
 	Agent    string `long:"agent" help:"New performer: agent name, agent id, or conv id"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processAssignCmd() *cobra.Command {
@@ -1107,10 +1114,11 @@ func runProcessAssign(p *processAssignParams, stdout, stderr io.Writer) error {
 		Run     processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/nodes/" + url.PathEscape(node) + "/assign"
-	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+	if err := processRequest(p.Remote, http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
+	printProcessRemoteBanner(stdout, p.Remote)
 	fmt.Fprintf(stdout, "Assigned node %s (attempt %d) of process run %s to %s.\n", node, response.Attempt, response.Run.ID, response.AgentID)
 	printProcessRun(stdout, &response.Run)
 	return nil

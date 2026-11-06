@@ -79,6 +79,10 @@ type processRunScope struct {
 	Paused bool
 }
 
+// processPeerSpawnRefused is the refusal kind of a performer spawn a
+// linked node's run asked for.
+const processPeerSpawnRefused = "peer_owner"
+
 // processOwnerOperator is the run owner for runs the operator started.
 const processOwnerOperator = "human:operator"
 
@@ -526,7 +530,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			return processPerformerChoice{candidate: &matching[0], resolution: resolution}
 		}
 		action, profile := spec.Fallback()
-		waitReason, refusal, refusalKind, refusalDetail := "", "", "", ""
+		waitReason, refusal, refusalKind, refusalDetail, peerRefusal := "", "", "", "", ""
 		if action == model.FallbackSpawn {
 			if profile == "" {
 				profile = group.DefaultProfile
@@ -546,10 +550,19 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 				if isManagedProfileRefusal(status) {
 					refusal, refusalKind, refusalDetail = waitReason, status, detail
 				}
+				// A linked node's run fails the attempt rather than wait:
+				// its owner can never spawn, and a waiting node would hold the
+				// run until this node's operator stepped in (S6b).
+				if status == processPeerSpawnRefused {
+					peerRefusal = detail
+				}
 			}
 		}
 		if reuse != nil {
 			return processPerformerChoice{candidate: reuse, resolution: resolution}
+		}
+		if peerRefusal != "" {
+			return processPerformerChoice{failReason: peerRefusal}
 		}
 		if refusal != "" {
 			// Announced only now: a node handed back to its previous
@@ -652,7 +665,7 @@ func planProcessPerformerSpawn(runID string, scope processRunScope, group *db.Ag
 	if processOwnerIsPeer(scope.Owner) {
 		// A linked node's run tasks only the members already in its scope:
 		// it borrows no spawn authority of this node's (S6 decision).
-		return nil, "permission_denied", "a run a linked node started cannot spawn performers"
+		return nil, processPeerSpawnRefused, "a run a linked node started cannot spawn performers"
 	}
 	ownerConv := ""
 	if agentID, ok := strings.CutPrefix(scope.Owner, "agent:"); ok {
