@@ -1,14 +1,17 @@
-// side-panel-reveal.js -- a folded side panel floats in when the pointer
-// reaches the right edge, and goes again when the pointer leaves it.
+// side-panel-reveal.js -- a folded side panel peeks in when the pointer
+// heads for the right edge, floats in when the pointer moves onto the peek,
+// and goes again when the pointer leaves it.
 //
 // Only for a panel that opted in (registerSidePanel's autoReveal: the Groups
 // palette and the Collab list) and only while it is folded: an unfolded panel
 // behaves as before, and the handle stays the way to unfold (pin) it, and the
 // keyboard and screen-reader way in. The reveal is a pointer convenience:
 //
-//  - It needs a fine, hovering pointer, no button held and no drag under way,
-//    and a short dwell in the edge zone, so a quick pass to the scrollbar or
-//    the end of a drag does not pop it.
+//  - It needs a fine, hovering pointer, no button held and no drag under way.
+//  - It opens only from a peek (tcl-bg5qm1): the edge zone alone opens
+//    nothing, so a pointer resting or moving slowly by the controls along the
+//    border never changes anything. A fling the prediction trusts, or a snap,
+//    peeks the panel; moving onto the peek opens it.
 //  - It floats over the content (body.dock-revealed); the page does not make
 //    room for it. The Groups toolbar's global controls move into its head
 //    while it is up, as they do when it is pinned (dock-actions.js).
@@ -26,8 +29,9 @@
 //    is at or past the edge zone, only the panel's leading edge slides in
 //    (body.dock-peeking). Moving onto that strip reveals the panel at once;
 //    the page scrollbar beside it, the one part of the edge zone the strip
-//    does not cover, takes the usual dwell, which a press still cancels, so a
-//    flick to grab the scrollbar is no worse than without the peek. A press on a strip
+//    does not cover, opens nothing, so a flick to grab the scrollbar is no
+//    worse than without the peek. A peek holds while the pointer stays in
+//    the edge zone. A press on a strip
 //    that is still only peeking means it slid under a still pointer, a wrong
 //    prediction: the press ends the peek and is swallowed, so it acts on
 //    nothing in the panel. Sustained motion keeps the peek; when the
@@ -50,13 +54,15 @@
 //    needs, and it has to have travelled MIN_TRAVEL_PX (side-panel-predict.js).
 //    No band near the edge refuses outright (tcl-bg5qm1).
 //  - A snap (tcl-bg5qm1): an arrival in the edge zone that travelled
-//    ARRIVAL_MIN_TRAVEL_PX or more at the speed its start needs reveals the
-//    panel at once, without the dwell; a snap is over in a few frames, too few
-//    for the prediction. One that runs past the window's right edge counts
-//    when its next frame would have reached the edge zone. A slow approach
-//    still takes the dwell.
+//    ARRIVAL_MIN_TRAVEL_PX or more at the speed its start needs peeks the
+//    panel, which then holds while the pointer stays in the zone: a snap is
+//    over in a few frames, too few for the prediction. One that runs past the
+//    window's right edge counts when its next frame would have reached the
+//    edge zone. Where the strip slides in under a pointer already at the
+//    edge, the next real move onto it opens the panel. A slow approach opens
+//    nothing.
 //  - On the handle (folded, or the revealed panel's), nothing opens or closes
-//    by itself (tcl-bg5qm1): no dwell, no snap and no reveal from a peek, and
+//    by itself (tcl-bg5qm1): no snap and no reveal from a peek, and
 //    a revealed panel does not go. A pointer there means to pin or unpin the
 //    panel. Moving off it resumes the rest; the prediction ignores it.
 //  - A debug overlay draws each prediction (side-panel-predict-debug.js):
@@ -82,8 +88,6 @@ import { mountPredictDebug, predictDebug, predictDebugOn } from './side-panel-pr
 // scrollbar strip always counts on top, and 32px is a target a fast flick can
 // land on without taking a wide band of the page's right-hand content.
 export const EDGE_REVEAL_PX = 32;
-// EDGE_REVEAL_DWELL_MS is how long it has to stay there.
-export const EDGE_REVEAL_DWELL_MS = 150;
 
 let enabled = true;
 
@@ -92,7 +96,6 @@ let enabled = true;
 export const REVEAL_DEFAULTS = Object.freeze({
   ...PREDICT,
   EDGE_PX: EDGE_REVEAL_PX,
-  DWELL_MS: EDGE_REVEAL_DWELL_MS,
   PREDICTIVE: true,
   GROWING: false,
 });
@@ -110,7 +113,6 @@ export function setSidePanelTuning(t, doc = globalThis.document) {
     PREDICTIVE: t?.predictive_peek !== false,
     GROWING: t?.growing_peek === true,
     EDGE_PX: pick('EDGE_PX', num(t?.edge_zone_px)),
-    DWELL_MS: pick('DWELL_MS', num(t?.dwell_ms)),
     PEEK_RETRACT_MS: pick('PEEK_RETRACT_MS', num(t?.retract_ms)),
     MIN_VX: pick('MIN_VX', num(t?.predict_min_speed, 1000)),
     RUNWAY_FULL_PX: pick('RUNWAY_FULL_PX', num(t?.predict_speed_distance_px)),
@@ -176,7 +178,6 @@ export function bindEdgeReveal(doc = globalThis.document, {
 } = {}) {
   const win = doc.defaultView || globalThis;
   const dock = () => doc.getElementById('agent-dock');
-  let dwell = null;
   let hide = null;
   let dragging = false; // an HTML5 drag anywhere
   let dragFromPanel = false;
@@ -198,10 +199,6 @@ export function bindEdgeReveal(doc = globalThis.document, {
   const debugOn = debug ?? predictDebugOn(win);
   if (debugOn) mountPredictDebug(doc);
 
-  const cancelDwell = () => {
-    if (dwell) timers.clearTimeout(dwell);
-    dwell = null;
-  };
   const cancelHide = () => {
     if (hide) timers.clearTimeout(hide);
     hide = null;
@@ -244,7 +241,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   };
   // revealFromPeek: the pointer reached the peeking strip, crossed into the
   // full panel's area or stopped there, so the prediction was right and the
-  // panel comes in whole, with no dwell.
+  // panel comes in whole.
   const revealFromPeek = () => {
     cancelRetract();
     cancelStop();
@@ -334,7 +331,6 @@ export function bindEdgeReveal(doc = globalThis.document, {
     }
     const allowed = enabled && !event.buttons && !dragging && finePointer() && canRevealSidePanel(doc);
     if (!allowed) {
-      cancelDwell();
       // A press held on the handle keeps the peek its click pins, through
       // the jitter of a real click; dragged off the handle, it lets go.
       if (isSidePanelPeeking() && !(pressOnHandle && onHandle)) endPeek();
@@ -349,7 +345,6 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // and no motion that reached the handle reveals later: moving off starts
     // afresh, and a peek left behind runs out from there.
     if (onHandle) {
-      cancelDwell();
       cancelRetract();
       cancelStop();
       samples = [];
@@ -357,32 +352,24 @@ export function bindEdgeReveal(doc = globalThis.document, {
       return;
     }
     if (isSidePanelPeeking() && dock()?.contains(event.target)) {
-      cancelDwell();
       if (moved) revealFromPeek();
       return;
     }
     if (!inEdgeZone(event)) {
-      cancelDwell();
       predict(event);
       return;
     }
-    // A snap arriving here reveals at once; otherwise the dwell decides,
-    // peeking or not, and a peek waits for it rather than running out under
-    // it, or stopping it short.
+    // In the edge zone nothing opens by itself (tcl-bg5qm1): a pointer
+    // resting or moving slowly here, by the controls along the border, never
+    // changes anything. A snap arriving here starts a peek, and a peek holds
+    // while the pointer stays here, so moving onto it opens the panel.
     if (snapArrived(event.clientX, t)) {
-      cancelDwell();
-      revealNow();
+      snapPeek();
       return;
     }
     if (isSidePanelPeeking()) {
       cancelRetract();
       cancelStop();
-    }
-    if (!dwell) {
-      dwell = timers.setTimeout(() => {
-        dwell = null;
-        if (enabled && !dragging) revealSidePanel(doc);
-      }, C().DWELL_MS);
     }
   });
   // fullLeftNow is where the open panel's left edge would be: the dock keeps
@@ -395,13 +382,20 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // snapArrived is whether the motion that brought the pointer to x at t is a
   // snap (arrivalReveals).
   const snapArrived = (x, t) => !!motion && arrivalReveals({ startX: motion.x, startT: motion.t, x, t, fullLeft: fullLeftNow() }, C());
-  const revealNow = () => {
+  // snapPeek starts the peek a snap earns: the strip at its narrowest, held
+  // while the pointer stays in the edge zone. Moving onto it opens the panel.
+  // It needs no prediction, so it comes with the predictive peek off too.
+  const snapPeek = () => {
     cancelRetract();
     cancelStop();
     samples = [];
     motion = null;
-    revealSidePanel(doc);
-    setPeekWidth(0);
+    if (!isSidePanelPeeking()) {
+      peekStartX = last?.x ?? 0;
+      setPeekWidth(C().PEEK_MIN_PX);
+      peekSidePanel(doc);
+      if (!isSidePanelPeeking()) setPeekWidth(0);
+    }
     if (debugOn) predictDebug.value = { prediction: { peek: true, reason: 'snap', vx: 0, px: 0, landingX: NaN }, edgeX: contentRight() - C().EDGE_PX, fullLeft: fullLeftNow() };
   };
   // predict records the move and peeks, grows, keeps or lets go of a peek.
@@ -469,14 +463,12 @@ export function bindEdgeReveal(doc = globalThis.document, {
     }, c.STOP_MS);
   };
 
-  // A press cancels a reveal still waiting out its dwell, and takes a peek
-  // back. One on the peeking strip is swallowed with its click: the strip
+  // A press takes a peek back. One on the peeking strip is swallowed with its click: the strip
   // slid under a still pointer, and the press was meant for what was there.
   // The handle is the exception: a press there pins or unpins.
   // It closes nothing else, so it is not the shared outside-press rule
   // (ui-popover-dismiss.test.mjs).
   doc.addEventListener('pointerdown', (event) => {
-    cancelDwell();
     swallowClick = false;
     motion = null;
     if (isSidePanelPeeking()) {
@@ -514,7 +506,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.addEventListener('pointerup', pressOver, true);
   doc.addEventListener('pointercancel', pressOver, true);
   // Leaving the window freezes the reveal: nothing opens or closes because
-  // the pointer went out, by any edge, and nothing pending (a dwell, a peek's
+  // the pointer went out, by any edge, and nothing pending (a peek's
   // retract or stop, the hover-out hide) acts while it is out. Tracking
   // resumes with the first move back in, under the normal rules: back on the
   // page by a revealed panel, its hover-out delay starts then. The panel's
@@ -535,10 +527,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
-      if (next >= edgeX && snapArrived(next, lastT + c.FRAME_MS)) revealNow();
+      if (next >= edgeX && snapArrived(next, lastT + c.FRAME_MS)) snapPeek();
     }
     outside = true;
-    cancelDwell();
     cancelStop();
     cancelRetract();
     cancelHide();
@@ -548,7 +539,6 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.addEventListener('dragstart', (event) => {
     dragging = true;
     motion = null;
-    cancelDwell();
     if (isSidePanelPeeking()) endPeek();
     dragFromPanel = isSidePanelRevealed() && !!dock()?.contains(event.target);
   });

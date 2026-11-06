@@ -8,6 +8,8 @@ import { createPreactHarness } from './preact-harness.mjs';
 // the hover-out delay are counted, not waited for.
 
 const WIDTH = 1000;
+// REST is a long rest: no edge dwell opens the panel any more (tcl-bg5qm1).
+const REST = 1000;
 
 // fakeTimers runs timeouts when the test advances the clock.
 function fakeTimers() {
@@ -102,21 +104,27 @@ async function shell(t, { fine = true, grow = false } = {}) {
       move(target, x, { clientY: y, ...init });
     }
   };
-  const restAtEdge = () => {
-    atEdge();
-    timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
+  // openAtEdge opens the folded panel the way a pointer does (tcl-bg5qm1):
+  // a snap to the edge peeks it, and a move onto the peek opens it.
+  const openAtEdge = (init = {}) => {
+    timers.advance(200);
+    move(content, 60, init);
+    timers.advance(16);
+    move(content, WIDTH - 4, init);
+    timers.advance(16);
+    move(dock, WIDTH - 10, init);
   };
-  return { harness, doc, dock, collapse, find, menuButton, content, side, reveal, timers, activate, move, atEdge, restAtEdge, revealed, peeking, flick,
+  return { harness, doc, dock, collapse, find, menuButton, content, side, reveal, timers, activate, move, atEdge, openAtEdge, revealed, peeking, flick,
     hoverClose: watch.HOVER_CLOSE_MS };
 }
 
-test('resting at the right edge floats a folded panel in, over the content', async (t) => {
+test('resting at the right edge opens nothing; a peek does, moved onto, over the content', async (t) => {
   const s = await shell(t);
   s.atEdge();
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS - 1);
-  assert.equal(s.revealed(), false, 'not before the dwell');
-  s.timers.advance(1);
-  assert.equal(s.revealed(), true, 'after the dwell');
+  s.timers.advance(REST);
+  assert.equal(s.revealed() || s.peeking(), false, 'the edge alone opens nothing, so the controls along it stay reachable (tcl-bg5qm1)');
+  s.openAtEdge();
+  assert.equal(s.revealed(), true, 'a snap peeks it, and a move onto the peek opens it');
   assert.equal(s.doc.body.classList.contains('dock-open'), false, 'it floats: dock-open, which reserves its width, stays off');
   assert.equal(s.side.isSidePanelOpen('groups'), false, 'and nothing is remembered');
 });
@@ -124,12 +132,12 @@ test('resting at the right edge floats a folded panel in, over the content', asy
 test('a pass through the edge zone that does not stay is not a reveal', async (t) => {
   const s = await shell(t);
   s.atEdge();
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS / 2);
+  s.timers.advance(REST / 2);
   s.move(s.content, WIDTH - 200);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  s.timers.advance(REST);
   assert.equal(s.revealed(), false);
   s.move(s.content, WIDTH - s.reveal.EDGE_REVEAL_PX - 1);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  s.timers.advance(REST);
   assert.equal(s.revealed(), false, 'just outside the zone is outside it');
 });
 
@@ -147,13 +155,13 @@ test('no reveal with a button held, during a drag, on a coarse pointer, or when 
     await t.test(why, async (t) => {
       const s = await shell(t);
       run(s);
-      s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+      s.timers.advance(REST);
       assert.equal(s.revealed(), false);
     });
   }
   await t.test('a pointer that cannot hover', async (t) => {
     const s = await shell(t, { fine: false });
-    s.restAtEdge();
+    s.openAtEdge();
     assert.equal(s.revealed(), false);
   });
 });
@@ -161,24 +169,24 @@ test('no reveal with a button held, during a drag, on a coarse pointer, or when 
 test('only the Groups and Collab panels reveal; a panel that did not opt in, like the notifications reader, never does', async (t) => {
   const s = await shell(t);
   s.activate('tab-terminals');
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), false, 'Collab offers no panel until its view is mounted');
   s.side.offerSidePanel('collab', true);
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true, 'the Collab panel reveals');
   assert.equal(s.doc.getElementById('dock-collab-body').hidden, false, 'showing its own body');
   s.activate('tab-other');
   assert.equal(s.revealed(), false, 'a tab switch ends the reveal');
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), false, 'a panel without autoReveal never floats in');
   s.activate('tab-groups');
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true, 'the Groups palette reveals');
 });
 
 test('leaving the panel sends it away after the standard hover-out delay, and coming back keeps it', async (t) => {
   const s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   s.move(s.content, 300);
   s.timers.advance(s.hoverClose - 1);
@@ -194,7 +202,7 @@ test('leaving the panel sends it away after the standard hover-out delay, and co
 test('it stays while it has focus, an open menu, or a drag that started in it', async (t) => {
   await t.test('focus', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     s.find.focus();
     s.move(s.content, 300);
     s.timers.advance(s.hoverClose);
@@ -206,7 +214,7 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
   });
   await t.test('but not the focus a click leaves on a button', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     s.menuButton.focus();
     s.move(s.content, 300);
     s.timers.advance(s.hoverClose);
@@ -214,7 +222,7 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
   });
   await t.test('an open menu', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     s.menuButton.setAttribute('aria-expanded', 'true');
     s.move(s.content, 300);
     s.timers.advance(s.hoverClose);
@@ -226,7 +234,7 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
   });
   await t.test('a context menu placed outside it', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     const menu = s.doc.body.appendChild(s.doc.createElement('div'));
     menu.setAttribute('role', 'menu');
     // On screen: a context menu is rendered only while open, so it lays out.
@@ -241,7 +249,7 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
   });
   await t.test('a drag from it', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
     // The card leaves the panel as it is dragged (the panel's leave), and the
     // page sees no pointer events until the drop.
@@ -257,16 +265,16 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
 
 test('Escape sends it away; its handle pins it open; its Hide button only sends it away', async (t) => {
   const s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.harness.fireEvent(s.doc.body, 'keydown', { key: 'Escape' });
   assert.equal(s.revealed(), false, 'Escape');
 
-  s.restAtEdge();
+  s.openAtEdge();
   s.harness.fireEvent(s.collapse, 'click');
   assert.equal(s.revealed(), false, 'Hide sends it away');
   assert.equal(s.side.isSidePanelOpen('groups'), false, 'without unfolding it');
 
-  s.restAtEdge();
+  s.openAtEdge();
   s.harness.fireEvent(s.doc.getElementById('dock-toggle'), 'click');
   assert.equal(s.side.isSidePanelOpen('groups'), true, 'the handle unfolds it');
   assert.equal(s.doc.body.classList.contains('dock-open'), true);
@@ -278,14 +286,14 @@ test('Escape sends it away; its handle pins it open; its Hide button only sends 
 
 test('the config switch turns it off, and off takes a floating panel away', async (t) => {
   const s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true);
   s.reveal.setEdgeRevealEnabled(false, s.doc);
   assert.equal(s.revealed(), false, 'off sends it away');
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), false, 'and none comes back');
   s.reveal.setEdgeRevealEnabled(true, s.doc);
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true);
 });
 
@@ -299,11 +307,11 @@ test('closed menus the page keeps in the DOM do not hold it', async (t) => {
   closed.className = 'ui-menu action-menu';
   closed.setAttribute('role', 'menu');
   closed.getClientRects = () => [];
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.content, 300);
   s.timers.advance(s.hoverClose);
   assert.equal(s.revealed(), false, 'it still goes');
-  s.restAtEdge();
+  s.openAtEdge();
   s.harness.fireEvent(s.doc.body, 'keydown', { key: 'Escape' });
   assert.equal(s.revealed(), false, 'and Escape still works');
 });
@@ -313,11 +321,11 @@ test('a drag whose dragend never arrives does not leave the reveal dead', async 
   // A drop that re-renders the dragged group header: no dragend reaches the
   // document. The next pointer move proves the drag is over.
   s.harness.fireEvent(s.content, 'dragstart');
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true, 'the next pointer move ends the drag, so resting at the edge reveals again');
   await t.test('nor holds a panel it was dragged from', async (t) => {
     const s = await shell(t);
-    s.restAtEdge();
+    s.openAtEdge();
     s.harness.fireEvent(s.doc.getElementById('dock-body'), 'dragstart');
     s.move(s.content, 300);
     s.timers.advance(s.hoverClose);
@@ -331,18 +339,16 @@ test('on the handle the panel neither opens nor closes by itself; its click pins
   let s = await shell(t);
   const handle = () => s.doc.getElementById('dock-toggle');
   s.move(handle(), WIDTH - 4);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  s.timers.advance(REST * 4);
   assert.equal(s.revealed(), false, 'no dwell reveal on the folded handle');
   s.harness.fireEvent(handle(), 'click');
   assert.equal(s.side.isSidePanelOpen('groups'), true, 'and its click pins the panel');
 
   s = await shell(t);
   s.move(handle(), WIDTH - 4);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  s.atEdge();
-  assert.equal(s.revealed(), false, 'off the handle, the dwell starts afresh');
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true, 'and reveals as anywhere in the edge zone');
+  s.timers.advance(REST);
+  s.openAtEdge();
+  assert.equal(s.revealed(), true, 'off the handle, the panel opens as anywhere');
   s.move(handle(), WIDTH - 4);
   s.move(s.content, 300);
   s.move(handle(), WIDTH - 4);
@@ -355,7 +361,7 @@ test('on the handle the panel neither opens nor closes by itself; its click pins
 test('a reveal does not carry over from one tab\'s panel to another\'s', async (t) => {
   const s = await shell(t);
   s.side.offerSidePanel('collab', true);
-  s.restAtEdge();
+  s.openAtEdge();
   assert.equal(s.revealed(), true);
   s.activate('tab-terminals');
   assert.equal(s.revealed(), false, 'the Collab panel does not appear already floating');
@@ -374,7 +380,7 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   };
 
   let s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   leaveWindow(s, { fromPanel: true });
   s.timers.advance(s.hoverClose * 4);
@@ -385,7 +391,7 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   assert.equal(s.revealed(), false, 'and then it goes');
 
   s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.content, 300);
   leaveWindow(s, { y: -5 });
   s.timers.advance(s.hoverClose * 4);
@@ -397,11 +403,10 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   s = await shell(t);
   s.atEdge();
   leaveWindow(s);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
-  assert.equal(s.revealed(), false, 'a dwell under way when the pointer left does not reveal');
-  s.atEdge();
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true, 'back at the edge, the dwell runs again');
+  s.timers.advance(REST);
+  assert.equal(s.revealed() || s.peeking(), false, 'resting at the edge and leaving opens nothing');
+  s.openAtEdge();
+  assert.equal(s.revealed(), true, 'back in, the usual rules: a peek moved onto opens it');
 
   s = await shell(t);
   withPageScrollbar(s);
@@ -422,7 +427,7 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   assert.equal(s.peeking(), false, 'Escape still takes a peek back while the pointer is out');
 
   s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   leaveWindow(s, { fromPanel: true });
   s.harness.fireEvent(s.dock, 'focusout');
@@ -433,7 +438,7 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   assert.equal(s.revealed(), false, 'but a focus move out of it, by keyboard, still does');
 
   s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   leaveWindow(s, { fromPanel: true });
   const frame = s.doc.body.appendChild(s.doc.createElement('iframe'));
@@ -442,7 +447,7 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   assert.equal(s.revealed(), false, 'back in straight over a frame, away from the panel, it goes after the delay');
 
   s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.content, 300);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { pointerType: 'touch' });
   s.timers.advance(s.hoverClose);
@@ -451,17 +456,18 @@ test('leaving the window freezes the panel: nothing opens or closes until the po
   s = await shell(t);
   snap(s, [420, 860]);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
-  assert.equal(s.revealed(), true, 'a snap running off the edge reveals on the way out');
-  s.timers.advance(s.hoverClose * 4);
-  assert.equal(s.revealed(), true, 'and stays while the pointer is out');
+  assert.equal(s.peeking(), true, 'a snap running off the edge peeks the panel on the way out');
+  assert.equal(s.revealed(), false, 'and opens nothing');
+  s.timers.advance(PEEK_RETRACT_MS * 4);
+  assert.equal(s.peeking(), true, 'the peek stays while the pointer is out');
   s.move(s.content, 300);
-  s.timers.advance(s.hoverClose);
-  assert.equal(s.revealed(), false, 'back on the page, it goes after the delay');
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), false, 'back on the page, it runs out');
 });
 
 test('leaving the panel straight into a frame still sends it away', async (t) => {
   const s = await shell(t);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   // Into an iframe: the page gets no further pointermove, only the panel's
   // leave, which does not bubble.
@@ -473,11 +479,9 @@ test('leaving the panel straight into a frame still sends it away', async (t) =>
 test('the edge zone is the panel\'s own height band', async (t) => {
   const s = await shell(t);
   s.dock.getBoundingClientRect = () => ({ top: 100, bottom: 600, left: WIDTH, right: WIDTH + 264, width: 264, height: 500 });
-  s.move(s.content, WIDTH - 4, { clientY: 50 });
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), false, 'above the panel (the top bar) is not the edge zone');
-  s.move(s.content, WIDTH - 4, { clientY: 300 });
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  s.openAtEdge({ clientY: 50 });
+  assert.equal(s.revealed() || s.peeking(), false, 'a snap above the panel (the top bar) is not into the edge zone');
+  s.openAtEdge({ clientY: 300 });
   assert.equal(s.revealed(), true);
 });
 
@@ -506,20 +510,27 @@ test('end to end over the real dashboard markup: the panel auto-hides', async (t
     titles: [['Hide', 'Hide'], ['Show', 'Show']] });
   const timers = fakeTimers();
   side.bindSidePanel(doc);
-  reveal.bindEdgeReveal(doc, { timers, finePointer: () => true });
+  reveal.bindEdgeReveal(doc, { timers, now: timers.now, finePointer: () => true });
   side.applySidePanel(doc);
   const main = doc.getElementById('tab-groups');
   const move = (target, clientX) => harness.fireEvent(target, 'pointermove', { clientX, clientY: 300, buttons: 0, pointerType: 'mouse' });
+  // A snap to the edge peeks the panel; a move onto the peek opens it.
+  const open = () => {
+    timers.advance(200);
+    move(main, 60);
+    timers.advance(16);
+    move(main, WIDTH - 4);
+    timers.advance(16);
+    move(doc.getElementById('dock-body'), WIDTH - 10);
+  };
 
-  move(main, WIDTH - 4);
-  timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
+  open();
   assert.ok(doc.body.classList.contains('dock-revealed'), 'it floats in');
   move(doc.getElementById('dock-body'), WIDTH - 100);
   move(main, 300);
   timers.advance(watch.HOVER_CLOSE_MS);
   assert.ok(!doc.body.classList.contains('dock-revealed'), 'and goes after the hover-out delay');
-  move(main, WIDTH - 4);
-  timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
+  open();
   harness.fireEvent(doc.body, 'keydown', { key: 'Escape' });
   assert.ok(!doc.body.classList.contains('dock-revealed'), 'Escape sends it away');
 });
@@ -556,12 +567,15 @@ function withPageScrollbar(s, width = SCROLLBAR) {
   return { right: contentRight(), onScrollbar, setWidth: (w) => { bar = w; } };
 }
 
-test('the pointer on the page scrollbar, under the edge zone, reveals the panel and does not flicker it', async (t) => {
+test('the pointer on the page scrollbar, under the edge zone, opens nothing, and does not flicker an open panel', async (t) => {
   const s = await shell(t);
   const { onScrollbar } = withPageScrollbar(s);
   onScrollbar();
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true, 'resting on the scrollbar strip is resting at the edge');
+  s.timers.advance(REST);
+  assert.equal(s.revealed() || s.peeking(), false, 'resting on the scrollbar strip opens nothing: it stays the page\'s to grab');
+  s.openAtEdge();
+  onScrollbar();
+  assert.equal(s.revealed(), true, 'an open panel stays with the pointer on the scrollbar beside it');
   // The loop was: on the scrollbar, not "over" the panel, so it went after the
   // hover-out delay, and the dwell brought it straight back.
   for (let i = 0; i < 10; i++) {
@@ -575,19 +589,18 @@ test('the edge zone is EDGE_REVEAL_PX wide from the content edge, plus the page 
   const s = await shell(t);
   const { right } = withPageScrollbar(s);
   assert.ok(s.reveal.EDGE_REVEAL_PX >= 24 && s.reveal.EDGE_REVEAL_PX <= 40, 'a zone a quick flick can hit');
-  s.move(s.content, right - s.reveal.EDGE_REVEAL_PX - 1);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), false, 'just outside');
-  s.move(s.content, right - s.reveal.EDGE_REVEAL_PX);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true, 'at the zone\'s inner edge');
+  const snapTo = (x) => { s.timers.advance(200); s.move(s.content, 60); s.timers.advance(16); s.move(s.content, x); };
+  snapTo(right - s.reveal.EDGE_REVEAL_PX - 1);
+  assert.equal(s.peeking(), false, 'a snap to just outside it peeks nothing');
+  snapTo(right - s.reveal.EDGE_REVEAL_PX);
+  assert.equal(s.peeking(), true, 'one to the zone\'s inner edge peeks the panel');
 });
 
 test('dragging the panel\'s own scrollbar, or the page scrollbar beside it, does not retract it', async (t) => {
   await t.test('its own scrollbar, dragged out past its left edge', async (t) => {
     const s = await shell(t);
     withPageScrollbar(s);
-    s.restAtEdge();
+    s.openAtEdge();
     const body = s.doc.getElementById('dock-body');
     s.move(body, WIDTH - 30);
     s.harness.fireEvent(body, 'pointerdown', { clientX: WIDTH - 30, clientY: 300, buttons: 1, pointerType: 'mouse' });
@@ -604,8 +617,8 @@ test('dragging the panel\'s own scrollbar, or the page scrollbar beside it, does
   await t.test('the page scrollbar, dragged below the panel', async (t) => {
     const s = await shell(t);
     const { onScrollbar } = withPageScrollbar(s);
+    s.openAtEdge();
     onScrollbar();
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
     s.harness.fireEvent(s.doc.documentElement, 'pointerdown', { clientX: WIDTH - 5, clientY: 300, buttons: 1, pointerType: 'mouse' });
     onScrollbar({ clientY: 700, buttons: 1 });
     s.timers.advance(s.hoverClose * 3);
@@ -621,7 +634,7 @@ test('dragging the panel\'s own scrollbar, or the page scrollbar beside it, does
 test('leaving the panel retracts it after exactly the popover hover-out delay', async (t) => {
   const s = await shell(t);
   withPageScrollbar(s);
-  s.restAtEdge();
+  s.openAtEdge();
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   s.move(s.content, 300);
   s.timers.advance(s.hoverClose - 1);
@@ -641,28 +654,23 @@ test('the zone and the no-flicker hold work the same with no scrollbar, an overl
   await t.test('no vertical scrollbar (clientWidth equals innerWidth)', async (t) => {
     const s = await shell(t);
     withPageScrollbar(s, 0);
-    s.move(s.content, WIDTH - s.reveal.EDGE_REVEAL_PX - 1);
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-    assert.equal(s.revealed(), false, 'just outside the zone');
-    s.move(s.content, WIDTH - 5);
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-    assert.equal(s.revealed(), true, 'the same zone reveals');
+    s.openAtEdge();
+    assert.equal(s.revealed(), true, 'the same peek opens it');
     // The panel now reaches the window edge, so the pointer is on it.
     await steady(s, (init) => s.move(s.doc.getElementById('dock-body'), WIDTH - 5, init), 'no scrollbar');
   });
   await t.test('an overlay scrollbar: no width, but a pointer on it targets <html>', async (t) => {
     const s = await shell(t);
     const { onScrollbar } = withPageScrollbar(s, 0);
+    s.openAtEdge();
     onScrollbar();
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
     assert.equal(s.revealed(), true);
     await steady(s, onScrollbar, 'overlay scrollbar');
   });
   await t.test('a scrollbar that appears, then goes, while the panel floats', async (t) => {
     const s = await shell(t);
     const { onScrollbar, setWidth } = withPageScrollbar(s, 0);
-    s.move(s.content, WIDTH - 5);
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    s.openAtEdge();
     assert.equal(s.revealed(), true);
     setWidth(SCROLLBAR); // the panel shifts left; the pointer is now on the new scrollbar
     await steady(s, onScrollbar, 'scrollbar appeared');
@@ -677,7 +685,7 @@ test('the zone and the no-flicker hold work the same with no scrollbar, an overl
 test('a dialog or popover drawn over the panel\'s band is not the panel', async (t) => {
   const s = await shell(t);
   withPageScrollbar(s);
-  s.restAtEdge();
+  s.openAtEdge();
   const dialog = s.doc.body.appendChild(s.doc.createElement('div'));
   s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
   s.move(dialog, WIDTH - 100);
@@ -704,7 +712,7 @@ test('a fast, level fling at the edge peeks the panel before the pointer gets th
   assert.equal(s.doc.body.classList.contains('dock-open'), false, 'and nothing reflows or is remembered');
 });
 
-test('moving onto the peeking strip reveals at once; the page scrollbar beside it takes the usual dwell', async (t) => {
+test('moving onto the peeking strip reveals at once; the page scrollbar beside it opens nothing', async (t) => {
   let s = await shell(t);
   s.flick(FLING);
   s.move(s.dock, WIDTH - 20);
@@ -713,13 +721,14 @@ test('moving onto the peeking strip reveals at once; the page scrollbar beside i
 
   s = await shell(t);
   const { onScrollbar } = withPageScrollbar(s);
-  s.move(s.content, 700);
-  s.timers.advance(500);
-  creep(s, 700, 980);
+  s.flick(FLING);
+  assert.equal(s.peeking(), true);
   onScrollbar();
-  assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, a slow approach takes the dwell');
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-  assert.equal(s.revealed(), true);
+  s.timers.advance(REST);
+  assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, nothing opens: it stays the page\'s to grab');
+  assert.equal(s.peeking(), true, 'and the peek holds while the pointer is by the edge');
+  s.move(s.dock, WIDTH - SCROLLBAR - 20);
+  assert.equal(s.revealed(), true, 'a move onto the peek opens it');
 });
 
 // No exception at the folded handle's height (tcl-bg5qm1): a fling there
@@ -894,10 +903,10 @@ test('a fling to the page scrollbar peeks, and a press there takes it back with 
   s.timers.advance(100);
   onScrollbar();
   assert.equal(s.peeking(), true, 'still peeking on the scrollbar');
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS / 2);
+  s.timers.advance(REST / 2);
   s.harness.fireEvent(s.doc.documentElement, 'pointerdown');
   assert.equal(s.peeking(), false, 'grabbing the scrollbar ends the peek');
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  s.timers.advance(REST * 4);
   assert.equal(s.revealed(), false, 'and is no reveal: the dwell it would have needed was cancelled, as without a peek');
 });
 
@@ -1069,20 +1078,25 @@ test('the config switches and values take effect, and the form’s defaults are 
   s.reveal.setSidePanelTuning({ min_travel_px: 500 }, s.doc);
   s.flick(SHORT_FLING);
   assert.equal(s.peeking(), false, 'a longer minimum travel refuses a 400px fling');
-  s.reveal.setSidePanelTuning({ peek_min_px: 80, growing_peek: false, edge_zone_px: 60, dwell_ms: 400 }, s.doc);
+  s.reveal.setSidePanelTuning({ peek_min_px: 80, growing_peek: false, edge_zone_px: 60 }, s.doc);
   s.flick({ ...SHORT_FLING, y0: 320 });
   assert.equal(peekW(s), 80, 'the peek’s width');
-  creep(s, SHORT_FLING.x1, WIDTH - SCROLLBAR - 55);
-  s.timers.advance(399);
-  assert.equal(s.revealed(), false, 'the wider zone’s longer dwell');
-  s.timers.advance(1);
-  assert.equal(s.revealed(), true);
+  s.timers.advance(16);
+  s.move(s.content, WIDTH - SCROLLBAR - 85);
+  s.timers.advance(REST);
+  assert.equal(s.revealed() || s.peeking(), false, 'outside the wider zone, the peek runs out');
+  s.flick({ ...SHORT_FLING, y0: 320 });
+  s.timers.advance(16);
+  s.move(s.content, WIDTH - SCROLLBAR - 55);
+  s.timers.advance(REST);
+  assert.equal(s.peeking(), true, 'inside the wider zone, it holds');
+  assert.equal(s.revealed(), false, 'and opens nothing by itself');
 
   const { SIDE_PANEL_TUNING_FIELDS } = await s.harness.importDashboardModule('js/side-panel-tuning-fields.js');
   const defaults = Object.fromEntries(SIDE_PANEL_TUNING_FIELDS.map((f) => [f.key, f.def]));
   // Each field maps onto the constant it tunes, in that constant's unit.
   const map = {
-    edge_zone_px: ['EDGE_PX', 1], dwell_ms: ['DWELL_MS', 1], retract_ms: ['PEEK_RETRACT_MS', 1],
+    edge_zone_px: ['EDGE_PX', 1], retract_ms: ['PEEK_RETRACT_MS', 1],
     predict_min_speed: ['MIN_VX', 1000], predict_speed_distance_px: ['RUNWAY_FULL_PX', 1],
     predict_min_speed_floor: ['MIN_VX_FLOOR', 1000], predict_min_readings: ['MIN_SAMPLES', 1],
     min_travel_px: ['MIN_TRAVEL_PX', 1], brake_percent: ['BRAKE_RATIO', 100], peek_min_px: ['PEEK_MIN_PX', 1],
@@ -1175,23 +1189,36 @@ test('the peek is never wider than the panel', async (t) => {
 // A snap (tcl-bg5qm1): the operator's fast move from the left is over in a
 // few frames, too few for the prediction's readings, and used to be left to
 // the dwell, which a snap that moves on or runs off the window never waits
-// out. An arrival that travelled far, fast, reveals at once.
+// out. An arrival that travelled far, fast, peeks the panel (it opens only
+// from a peek): moving onto the peek opens it.
 const snap = (s, xs, { from = 60, frameMs = 16, y = 300 } = {}) => {
   s.move(s.content, from, { clientY: y });
   s.timers.advance(500); // at rest
   for (const x of xs) { s.timers.advance(frameMs); s.move(s.content, x, { clientY: y }); }
 };
 
-test('a three-frame snap from the left into the edge zone reveals the panel at once', async (t) => {
+test('a three-frame snap from the left into the edge zone peeks the panel, and a move onto the peek opens it', async (t) => {
+  const { PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
   let s = await shell(t);
   snap(s, [420, 860, 990]);
-  assert.equal(s.revealed(), true, 'revealed on arrival, no dwell');
-  s.move(s.content, 900);
-  assert.equal(s.revealed(), true, 'and moving on after it does not undo that');
+  assert.equal(s.peeking(), true, 'peeked on arrival');
+  assert.equal(s.revealed(), false, 'not opened: the panel opens only from a peek');
+  s.timers.advance(REST);
+  assert.equal(s.peeking(), true, 'the peek holds while the pointer stays by the edge');
+  // The strip slid in under a pointer already at the edge: the move that
+  // comes with the layout change (same position) is no move onto it, the
+  // next real one is.
+  s.move(s.dock, 990);
+  assert.equal(s.revealed(), false, 'the strip sliding under a still pointer opens nothing');
+  s.move(s.dock, 993);
+  assert.equal(s.revealed(), true, 'the next move onto it opens the panel');
 
   s = await shell(t);
   snap(s, [600, 990]);
-  assert.equal(s.revealed(), true, 'a two-frame snap: the first frame counts from where the pointer rested');
+  assert.equal(s.peeking(), true, 'a two-frame snap: the first frame counts from where the pointer rested');
+  s.move(s.content, 900);
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking() || s.revealed(), false, 'moving away from the peek without opening it, it runs out');
 
   s = await shell(t);
   const handle = s.doc.getElementById('dock-toggle');
@@ -1199,9 +1226,9 @@ test('a three-frame snap from the left into the edge zone reveals the panel at o
   snap(s, [420, 860]);
   s.timers.advance(16);
   s.move(handle, 990);
-  assert.equal(s.revealed(), false, 'a snap onto the folded handle does not open it: the pointer is there to pin');
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
-  assert.equal(s.revealed(), false, 'nor does resting there');
+  assert.equal(s.revealed() || s.peeking(), false, 'a snap onto the folded handle does not peek or open it: the pointer is there to pin');
+  s.timers.advance(REST * 4);
+  assert.equal(s.revealed() || s.peeking(), false, 'nor does resting there');
 });
 
 // Cold review of #4109: the handle holds a peek, and what reached the handle
@@ -1234,20 +1261,20 @@ test('a peek holds while the pointer rests on the handle, and nothing that reach
   s.move(s.doc.getElementById('dock-toggle'), 990);
   s.timers.advance(16);
   s.move(s.content, 990, { clientY: 340 });
-  assert.equal(s.revealed(), false, 'a snap blocked on the handle does not reveal at once off it');
+  assert.equal(s.revealed() || s.peeking(), false, 'a snap blocked on the handle does not peek off it');
 
   s = await shell(t);
   snap(s, [420, 860]);
   s.move(s.doc.getElementById('dock-toggle'), 990);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
-  assert.equal(s.revealed(), false, 'nor does one leaving the window through the handle');
+  assert.equal(s.revealed() || s.peeking(), false, 'nor does one leaving the window through the handle');
 });
 
-test('a snap that runs past the window’s edge reveals when its next frame would have reached the zone', async (t) => {
+test('a snap that runs past the window’s edge peeks when its next frame would have reached the zone', async (t) => {
   let s = await shell(t);
   snap(s, [420, 860]);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
-  assert.equal(s.revealed(), true, 'heading off the right at snap speed');
+  assert.equal(s.peeking(), true, 'heading off the right at snap speed');
 
   s = await shell(t);
   snap(s, [600, 700, 800, 900, 960], { from: 500, frameMs: 120 });
@@ -1267,7 +1294,7 @@ test('a snap that runs past the window’s edge reveals when its next frame woul
 
 // Only a rest the page saw starts a snap (cold review of #4107): anything that
 // interrupts the moves it sees starts the next motion where the pointer is.
-test('a gap the page did not see is no rest: after a drag, a frame, a held button or Escape, the edge takes the dwell', async (t) => {
+test('a gap the page did not see is no rest: after a drag, a frame, a held button or Escape, a jump to the edge is no snap', async (t) => {
   for (const [why, run] of [
     ['an HTML5 drag dropped by the edge', (s) => {
       s.move(s.content, 300);
@@ -1295,22 +1322,22 @@ test('a gap the page did not see is no rest: after a drag, a frame, a held butto
     run(s);
     s.timers.advance(16);
     s.atEdge();
-    assert.equal(s.revealed(), false, `${why}: not at once`);
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-    assert.equal(s.revealed(), true, `${why}: after the dwell, as before`);
+    assert.equal(s.revealed() || s.peeking(), false, `${why}: no peek`);
+    s.timers.advance(REST);
+    assert.equal(s.revealed() || s.peeking(), false, `${why}: and resting there opens nothing`);
   }
 });
 
-test('a slow approach, or a short one from near the edge, still takes the dwell', async (t) => {
+test('a slow approach, or a short one from near the edge, opens nothing', async (t) => {
   for (const [why, run] of [
     ['a slow approach', (s) => snap(s, [300, 500, 700, 900, 990], { frameMs: 120 })],
     ['a short quick move from near the edge', (s) => snap(s, [880, 990], { from: 850 })],
   ]) {
     const s = await shell(t);
     run(s);
-    assert.equal(s.revealed(), false, `${why}: not at once`);
-    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
-    assert.equal(s.revealed(), true, `${why}: after the dwell`);
+    assert.equal(s.revealed() || s.peeking(), false, `${why}: no peek`);
+    s.timers.advance(REST);
+    assert.equal(s.revealed() || s.peeking(), false, `${why}: and resting there opens nothing (tcl-bg5qm1)`);
   }
 });
 

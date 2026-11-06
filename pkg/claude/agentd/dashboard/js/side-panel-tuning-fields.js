@@ -6,7 +6,6 @@
 
 export const SIDE_PANEL_TUNING_FIELDS = Object.freeze([
   { key: 'edge_zone_px', label: 'Edge zone width', unit: 'px', def: 32, min: 4, max: 200 },
-  { key: 'dwell_ms', label: 'Edge zone dwell', unit: 'ms', def: 150, min: 0, max: 2000 },
   { key: 'retract_ms', label: 'Peek retract delay', unit: 'ms', def: 500, min: 50, max: 5000 },
   { key: 'predict_min_speed', label: 'Fling minimum speed', unit: 'px/s', def: 1200, min: 100, max: 10000 },
   { key: 'predict_speed_distance_px', label: 'Full speed needed from', unit: 'px', def: 600, min: 1, max: 4000 },
