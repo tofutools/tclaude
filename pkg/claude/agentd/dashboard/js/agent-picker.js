@@ -45,9 +45,9 @@ const agentKey = (agent) => agent.agent_id || agent.key || agent.conv_id;
 // FilterCombobox item. It sits under its first group, and is found by its
 // title, ids, groups, roles and descriptions. identity 'conv' keys it by its
 // conversation id, else by its agent id; sudo marks active sudo grants.
-export function agentPickerItem(agent, { identity = 'agent', sudo = null } = {}) {
+export function agentPickerItem(agent, { identity = 'agent', sudo = null, group = '' } = {}) {
   const memberships = agent.memberships || [];
-  const groups = [...new Set([...memberships.map((item) => item.group), ...(agent.groups || [])].filter(Boolean))];
+  const groups = [...new Set([...memberships.map((item) => item.group), ...(agent.groups || []), group].filter(Boolean))];
   const key = identity === 'conv' ? agent.conv_id : agentKey(agent);
   const grants = sudo?.get(agentKey(agent))?.length || 0;
   return {
@@ -98,11 +98,15 @@ export function AgentPickerDialog({ descriptor, snapshot, onChoose, onClose, con
 
 // AgentCombobox is an in-form choice of one agent from agents (snapshot
 // agents or group members): the chosen one shows above the filter box, with
-// × to clear it. A value no agent has stays, marked missing.
-export function AgentCombobox({ id, value, onChange, agents, placeholder = 'Type to find an agent…', emptyHint = 'No agents.' }) {
-  const items = useMemo(() => agents.map((agent) => agentPickerItem(agent)), [agents]);
+// × to clear it. A value no agent has stays, marked missing. group names the
+// group agents are members of, when they do not say (a group's members).
+export function AgentCombobox({ id, value, onChange, agents, group = '', placeholder = 'Type to find an agent…', emptyHint = 'No agents.' }) {
+  const items = useMemo(() => agents.map((agent) => agentPickerItem(agent, { group })), [agents, group]);
   const chosen = value ? items.find((item) => item.key === value) : null;
-  return html`<div class="agent-combobox" id=${id} data-value=${value || ''}>
+  // A click on the chosen agent must not reach a <label> around the form
+  // row either: it would hand it to the row's first radio (a standing
+  // order's "Everyone"), changing the target.
+  return html`<div class="agent-combobox" id=${id} data-value=${value || ''} onClick=${(event) => event.preventDefault()}>
     ${value && html`<div class="agent-combobox-chosen">
       ${chosen ? html`${chosen.lead}<span class="rowname">${chosen.label}</span><span class="id">${chosen.hint}</span>`
         : html`<span class="rowname">${value}</span><span class="muted">(missing)</span>`}
@@ -147,7 +151,7 @@ export function TargetPicker({ prefix, value, onChange, snapshot, onPick, groupL
       <${Button} id=${`${prefix}-target-pick`} title="Pick from the agent / hero list" onClick=${onPick}>🔍<//>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-scoped`}>
-      <${AgentCombobox} id=${`${prefix}-scoped-member`} value=${value.target} agents=${members}
+      <${AgentCombobox} id=${`${prefix}-scoped-member`} value=${value.target} agents=${members} group=${scope}
         placeholder=${wizWord('Type to find a member…', 'Type to find a hero…')}
         emptyHint=${wizWord('No members in this group.', 'No heroes in this party.')}
         onChange=${(target) => onChange({ ...value, target })} />

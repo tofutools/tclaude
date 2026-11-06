@@ -172,8 +172,11 @@ export function FilterCombobox({
       // row is the one added. Taking a value away is the ✓ row's or the
       // chip's, never Enter's: a stray Enter must not empty a dimension.
       const typed = query.trim();
-      const exact = typed && items.find((item) => !item.disabled
-        && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase()));
+      // A label two rows share (two agents both titled "reviewer") names
+      // neither: the highlighted row is the one meant.
+      const exacts = typed ? items.filter((item) => !item.disabled
+        && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase())) : [];
+      const exact = exacts.find((item) => item.key === typed) || (exacts.length === 1 ? exacts[0] : null);
       if (exact) { event.preventDefault(); add(exact); }
       else if (typed && freeText && literal?.(typed)) { event.preventDefault(); commitFree(); }
       else if (open && visible[bounded]) { event.preventDefault(); add(visible[bounded]); }

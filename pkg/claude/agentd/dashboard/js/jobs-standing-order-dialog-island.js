@@ -70,7 +70,7 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
     ${value.mode === 'global' && html`<div class="muted">
       Applies to every active enrolled agent. This is explicit and remains inert until the order is enabled.
     </div>`}
-    ${value.mode === 'solo' && html`<${AgentCombobox} id="standing-order-target" value=${value.target} agents=${candidates}
+    ${value.mode === 'solo' && html`<${AgentCombobox} id="standing-order-target" value=${value.target} agents=${candidates} group=${scope}
       placeholder="Type to find an agent…" onChange=${(target) => onChange({ ...value, target })} />`}
     ${value.mode === 'group' && html`<${Select} id="standing-order-group" value=${value.groupName}
       disabled=${!!scope}

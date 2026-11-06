@@ -168,3 +168,13 @@ test('the keyboard walks the rows in the order they show, section by section', a
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Escape' }));
   assert.ok(host.querySelector('[role="listbox"]'), 'an always-open list leaves Escape to its dialog');
 });
+
+test('Enter on a label two rows share takes the highlighted one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const items = [{ key: 'agt_1', label: 'reviewer' }, { key: 'agt_2', label: 'reviewer' }];
+  const { input, changes } = await mountCombobox(harness, { items, value: '', multi: false, alwaysOpen: true });
+  await harness.input(input, 'reviewer');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'ArrowDown' }));
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(changes, ['agt_2']);
+});
