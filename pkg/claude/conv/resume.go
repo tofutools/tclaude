@@ -1,6 +1,7 @@
 package conv
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -176,6 +177,9 @@ func RunResume(params *ResumeParams, stdout, stderr io.Writer) int {
 
 	return runResumeWithSession(rc, !params.Detached, params.SendKeys, stdout, stderr)
 }
+
+// errResumeReported is a resume failure already printed to the operator.
+var errResumeReported = errors.New("resume failure already reported")
 
 func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr io.Writer) int {
 	// Check tmux is installed
@@ -357,14 +361,16 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		}
 
 		if err := session.SaveSessionStateAfterLaunch(state); err != nil {
-			return fmt.Errorf("failed to save session state: %w", err)
+			fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
+			return errResumeReported
 		}
 		return nil
 	})
 	if err != nil {
-		if !launched {
+		switch {
+		case !launched:
 			fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
-		} else {
+		case !errors.Is(err, errResumeReported):
 			fmt.Fprintf(stderr, "%v\n", err)
 		}
 		return 1
