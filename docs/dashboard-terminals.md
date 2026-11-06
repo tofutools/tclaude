@@ -24,26 +24,35 @@ The right side panel lists what you can open here, by group. It is the same
 panel and handle as the palette on the Groups tab. It starts folded: open it with the
 handle on the right edge. Each tab remembers its own panel's state.
 
-While a panel is folded, resting the pointer at the right edge for a moment
-(within about 32 pixels of the page's edge, or on the page's scrollbar; no
-button held) floats it in over the page, on this tab and on Groups. The
-scrollbar beside it counts as part of it. It goes again shortly after the
-pointer leaves it, after the same delay as a popover, but not while something
-in it has focus, one of its menus is open, or you are dragging its scrollbar;
-**Esc** sends it away. Its handle still
-unfolds it for good, and while the pointer is on the handle the panel neither
-opens nor closes by itself.
+While a panel is folded, it opens by itself only from a *peek*: its leading
+edge sliding in at the right edge, on this tab and on Groups. Moving onto the
+peek floats the panel in over the page. The edge alone opens nothing: a
+pointer resting or moving slowly by the right edge never changes anything, so
+the controls along it stay reachable.
 
-A pointer flung at the edge peeks the panel's leading edge in before it gets
-there. Moving onto it reveals the panel, so opening stays a choice you make. A
-motion that brakes, as one aimed at something on the page does, lets the peek
-go. With **growing peek** turned on (it is off by default), the peek widens as
-the pointer closes in, and crossing where the open panel's edge would be, or
-stopping there, reveals the panel too. Only the rightward part of a motion counts. The closer to
-the panel a motion starts, the less speed it needs, and a small move by the
-edge is too short to count. A fast snap into the edge zone from further out
-reveals the panel at once, without the short wait, even if it runs past the
-window's edge.
+Two motions peek the panel (no button held):
+
+- A pointer flung at the edge peeks it before it gets there. A motion that
+  brakes, as one aimed at something on the page does, lets the peek go. Only
+  the rightward part of a motion counts. The closer to the panel a motion
+  starts, the less speed it needs, and a small move by the edge is too short
+  to count.
+- A fast snap into the edge zone (within about 32 pixels of the page's edge,
+  or the page's scrollbar) from further out peeks it too, even if it runs
+  past the window's edge. Where the peek slides in under a pointer already at
+  the edge, the next move onto it opens the panel.
+
+A peek holds while the pointer stays by the edge, and goes shortly after the
+pointer moves away without opening it. With **growing peek** turned on (it is
+off by default), the peek widens as the pointer closes in, and crossing where
+the open panel's edge would be, or stopping there, opens the panel too.
+
+An open panel goes again shortly after the pointer leaves it, after the same
+delay as a popover. The page scrollbar beside it counts as part of it. It
+stays while something in it has focus, one of its menus is open, or you are
+dragging its scrollbar. **Esc** sends it away. Its handle still unfolds it for
+good, even while it peeks, and while the pointer is on the handle the panel
+neither opens nor closes by itself.
 
 Moving the pointer out of the browser window, by any edge, freezes all of this:
 a panel that is open stays open, a folded one stays folded, and a peek stays

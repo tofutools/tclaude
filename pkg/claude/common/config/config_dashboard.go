@@ -148,7 +148,6 @@ type DashboardConfig struct {
 	// and clamped into range (SidePanelTuningLimits): see
 	// (*Config).SidePanelTuning.
 	SidePanelEdgeZonePx             *int `json:"side_panel_edge_zone_px,omitempty"`
-	SidePanelDwellMs                *int `json:"side_panel_dwell_ms,omitempty"`
 	SidePanelRetractMs              *int `json:"side_panel_retract_ms,omitempty"`
 	SidePanelPredictMinSpeed        *int `json:"side_panel_predict_min_speed,omitempty"`
 	SidePanelPredictSpeedDistancePx *int `json:"side_panel_predict_speed_distance_px,omitempty"`
@@ -839,7 +838,6 @@ type SidePanelTuning struct {
 	PredictivePeek         bool `json:"predictive_peek"`
 	GrowingPeek            bool `json:"growing_peek"`
 	EdgeZonePx             int  `json:"edge_zone_px"`
-	DwellMs                int  `json:"dwell_ms"`
 	RetractMs              int  `json:"retract_ms"`
 	PredictMinSpeed        int  `json:"predict_min_speed"`
 	PredictSpeedDistancePx int  `json:"predict_speed_distance_px"`
@@ -859,7 +857,6 @@ type SidePanelTuningLimit struct{ Default, Min, Max int }
 // prefix. The Config tab's fields carry the same ranges.
 var SidePanelTuningLimits = map[string]SidePanelTuningLimit{
 	"edge_zone_px":              {32, 4, 200},
-	"dwell_ms":                  {150, 0, 2000},
 	"retract_ms":                {500, 50, 5000},
 	"predict_min_speed":         {1200, 100, 10000},
 	"predict_speed_distance_px": {600, 1, 4000},
@@ -891,7 +888,6 @@ func (c *Config) SidePanelTuning() SidePanelTuning {
 		PredictivePeek:         d.SidePanelPredictivePeek == nil || *d.SidePanelPredictivePeek,
 		GrowingPeek:            d.SidePanelGrowingPeek != nil && *d.SidePanelGrowingPeek,
 		EdgeZonePx:             sidePanelTuned("edge_zone_px", d.SidePanelEdgeZonePx),
-		DwellMs:                sidePanelTuned("dwell_ms", d.SidePanelDwellMs),
 		RetractMs:              sidePanelTuned("retract_ms", d.SidePanelRetractMs),
 		PredictMinSpeed:        sidePanelTuned("predict_min_speed", d.SidePanelPredictMinSpeed),
 		PredictSpeedDistancePx: sidePanelTuned("predict_speed_distance_px", d.SidePanelPredictSpeedDistancePx),

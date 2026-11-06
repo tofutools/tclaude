@@ -37,8 +37,8 @@ export const PREDICT = Object.freeze({
   // MIN_TRAVEL_PX: the motion has moved at least this far right since it
   // started, so a twitch near the edge is not a fling, wherever it is.
   MIN_TRAVEL_PX: 80,
-  // ARRIVAL_MIN_TRAVEL_PX: an arrival in the edge zone reveals at once,
-  // without the dwell, when the motion that brought it there travelled at
+  // ARRIVAL_MIN_TRAVEL_PX: an arrival in the edge zone peeks the panel (a
+  // snap, tcl-bg5qm1) when the motion that brought it there travelled at
   // least this far at the fling speed its start needs (arrivalReveals): a snap
   // from the left is over in a few frames, too few for the prediction.
   ARRIVAL_MIN_TRAVEL_PX: 200,
@@ -140,11 +140,12 @@ export function predictEdgeLanding(samples, edgeX, band = null, constants = PRED
 }
 
 // arrivalReveals is whether an arrival in the edge zone (the pointer is there,
-// within the panel's height) reveals the panel at once rather than after the
-// dwell: the motion that brought it there travelled ARRIVAL_MIN_TRAVEL_PX or
-// more, at no less than the speed its start needs (minSpeedFor), on average
-// from its start. A snap from the left qualifies in its few frames; a slow
-// approach, or a short one from near the edge, is left to the dwell.
+// within the panel's height) is a snap, which peeks the panel (the name is
+// from when it opened it): the motion that brought it there travelled
+// ARRIVAL_MIN_TRAVEL_PX or more, at no less than the speed its start needs
+// (minSpeedFor), on average from its start. A snap from the left qualifies in
+// its few frames; a slow approach, or a short one from near the edge, opens
+// nothing.
 export function arrivalReveals({ startX, startT, x, t, fullLeft }, constants = PREDICT) {
   const travel = x - startX;
   if (!(travel >= constants.ARRIVAL_MIN_TRAVEL_PX)) return false;
