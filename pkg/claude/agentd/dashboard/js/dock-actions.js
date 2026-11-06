@@ -15,7 +15,9 @@
 // and the profile chips' cross-feature action route all remain valid. The
 // toolbar filter bar + the dock head are both STATIC markup (Preact owns
 // #dock-body and #groups-list), so nothing re-creates or clobbers the moved
-// nodes. A focused control keeps its focus across the move.
+// nodes. A focused control keeps its focus across the move. One being typed
+// in or picked from (the profile chips' <select> editor, which closes on blur)
+// is not moved from under the user: the move waits for focus to leave it.
 //
 // The cog's .action-menu still anchors to .filter-bar-cog (position:relative
 // rides along) and opens downward INTO the dock body; at the header's top it
@@ -40,6 +42,13 @@ export function dockActionsHomed(doc = globalThis.document) {
 
 const state = new WeakMap(); // doc -> { homes, last }
 
+// entry is a control the user types in or picks from.
+function entry(el) {
+  const tag = el.tagName;
+  if (el.isContentEditable || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return tag === 'INPUT' && !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(el.type || '');
+}
+
 // syncDockActions moves the controls to match dockActionsHomed. It acts only
 // when that flipped: the class observer fires on every body-class mutation
 // (hscroll flags, dock-anim, wizard, …), so the guard keeps those to a cheap
@@ -50,7 +59,6 @@ export function syncDockActions(doc = globalThis.document) {
   if (!st) state.set(doc, st = { homes: null, last: null });
   const homed = dockActionsHomed(doc);
   if (homed === st.last) return;
-  st.last = homed;
   // Capture each control's ORIGINAL toolbar slot once, before the first move.
   // The nextSibling anchors are the inter-control whitespace text nodes, which
   // never move, so insertBefore restores the exact slot regardless of the
@@ -62,8 +70,11 @@ export function syncDockActions(doc = globalThis.document) {
       return { el, dock: doc.querySelector(s.dock), home: el.parentNode, next: el.nextSibling };
     });
   }
-  // Moving a node drops its focus; put it back where it went.
+  // Moving a node drops its focus; put it back where it went. A text entry or
+  // select would close or lose its draft, so wait for focusout instead.
   const focused = doc.activeElement;
+  if (focused && entry(focused) && st.homes.some((h) => h?.el?.contains(focused))) return;
+  st.last = homed;
   let refocus = null;
   for (const h of st.homes) {
     if (!h?.el) continue;
@@ -86,5 +97,7 @@ export function bindDockActions(doc = globalThis.document) {
   const MO = (doc.defaultView || globalThis).MutationObserver;
   if (!doc?.body || !MO) return;
   new MO(() => syncDockActions(doc)).observe(doc.body, { attributes: true, attributeFilter: ['class', 'data-dock-panel'] });
+  // A move that waited on a focused entry happens once focus has left it.
+  doc.addEventListener('focusout', () => queueMicrotask(() => syncDockActions(doc)));
   syncDockActions(doc);
 }

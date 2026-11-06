@@ -9,7 +9,9 @@
 //  - It needs a fine, hovering pointer, no button held and no drag under way,
 //    and a short dwell in the edge zone, so a quick pass to the scrollbar or
 //    the end of a drag does not pop it.
-//  - It floats over the content (body.dock-revealed); nothing reflows.
+//  - It floats over the content (body.dock-revealed); the page does not make
+//    room for it. The Groups toolbar's global controls move into its head
+//    while it is up, as they do when it is pinned (dock-actions.js).
 //  - It goes the standard hover-out delay after the pointer leaves it, but
 //    not while it holds focus, while one of its menus is open, or while a drag
 //    or a press (its scrollbar's) that started on it is under way. Escape, its
