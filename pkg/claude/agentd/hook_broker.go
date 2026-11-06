@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -142,180 +141,25 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	const endpoint = "/v1/whoami/hook"
-
-	p := peerFromContext(r.Context())
-	switch classify(p) {
-	case classAgent, classAgentUnknown, classUnconfirmed:
-		// Both are fine here, and classAgentUnknown deliberately so: a
-		// brokered SessionStart is often the event that first establishes
-		// the conv-id. classUnconfirmed is also provisional here: a
-		// version-named Claude process has no legacy harness-name match, but
-		// the generation-bound pane proof below can still authenticate it.
-		// No event is applied unless that proof or legacy identity succeeds.
-	case classUnidentified:
-		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
-			return
-		}
-		writeUnidentified(w)
-		return
-	default:
-		writeUnconfirmed(w, r)
-		return
-	}
-	if p.PID == 0 {
-		writeUnidentified(w)
-		return
-	}
-
-	// Resolve the ordinary candidate before parsing, but do not charge its
-	// per-agent bucket yet: a reused pid can make this row provisional until
-	// the request claim is checked against the live pane below. The shared,
-	// high-capacity guard bounds pre-proof body parsing; the final row is charged
-	// exactly once after identity settles.
-	// One process-table view for the whole request: the resolution walk
-	// here and the proof below read the same snapshot, so the proof cannot
-	// lose a race against a caller that exits mid-request (see
-	// broker_proc_table.go).
-	timing := newBrokerTiming(endpoint, p.PID)
-	defer timing.finish()
-	procs := newBrokerProcTable()
-	row, harnessPID := hookSessionRowForPIDIn(procs, p.PID)
-	timing.mark("resolve")
-	if row != nil {
-		timing.resolved = row.ID
-	}
-	preProofKey := brokerPreIdentityKey
-	if row != nil {
-		preProofKey = brokerPreIdentityKeyForRow(row.ID)
-	}
-	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
-		if row == nil {
-			brokerRefusals.refuseUnplaceable("hook: caller could not be placed",
-				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
-		}
-		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
-		return
-	}
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, brokerMaxBody+1))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "body", "could not read request body")
-		return
-	}
-	if len(body) > brokerMaxBody {
-		resolvedID := ""
-		if row != nil {
-			resolvedID = row.ID
-		}
-		logBrokerBodyOverCap(endpoint, resolvedID, len(body))
-		writeError(w, http.StatusRequestEntityTooLarge, "body", "hook payload too large")
-		return
-	}
 	var req session.BrokeredHookRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "body", "malformed hook payload")
+	caller := brokerAuthenticate(w, r, brokerKind{
+		endpoint:            "/v1/whoami/hook",
+		noun:                "hook",
+		omittedClaimMessage: "tclaude’s sandbox hook callback requires a proved session claim",
+		rateMessage:         "too many hook events",
+		decode: func(body []byte) (string, string, error) {
+			if err := json.Unmarshal(body, &req); err != nil {
+				return "", "", err
+			}
+			return req.ClaimedSessionID, req.Input.HookEventName, nil
+		},
+	})
+	if caller == nil {
 		return
 	}
-	claimed := strings.TrimSpace(req.ClaimedSessionID)
-	proofKey := ""
-	if row != nil {
-		proofKey = row.ID
-	}
-	if checkBrokerProofRate(endpoint, brokerProofKeyForRow(proofKey)).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-		return
-	}
-	refusal := brokerRefusalContext{
-		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Event: req.Input.HookEventName,
-		procs: procs, connAcceptedAt: connAcceptedAt(r.Context()), requestStartedAt: timing.start,
-	}
-	if row != nil {
-		refusal.Resolved = row.ID
-	}
-	if !procs.exists(p.PID) {
-		// The caller exited before the daemon got here — usually the
-		// harness abandoning it, occasionally the client's own timeout.
-		// Nothing can be delivered to it and a later callback takes its
-		// place, so this is logged rather than badged as a refusal — the
-		// badge means "this agent's telemetry is stuck", which a lost
-		// callback is not. See noteCallerGone.
-		brokerRefusals.noteCallerGone(refusal)
-		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
-		return
-	}
-	timing.mark("parse")
-	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
-	timing.proof = &proof
-	timing.mark("proof")
-	proofDetail := proof.detail
-	refusal.Detail = proofDetail
-	refusal.claimedTmux = proof.claimedTmux
-	layerClaim := proof.layerClaim
-	switch {
-	case proof.callerGone:
-		brokerRefusals.noteCallerGone(refusal)
-		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
-		return
-	case layerClaim && proof.row != nil:
-		row, harnessPID = proof.row, proof.harnessPID
-		timing.resolved = row.ID
-	case layerClaim && req.Input.HookEventName == "SessionEnd" &&
-		(proof.orphanTeardown || (sessionRecentlyShutDown(claimed) && !callerHasHarnessAncestor(procs, p.PID))):
-		// The harness's last hook, orphaned: the harness fired SessionEnd on
-		// its way out and exited without waiting, so the hook process was
-		// reparented away from the pane (or the pane is already gone) and
-		// cannot prove it. Recognised from the daemon's own record that the
-		// claimed session is shutting down (session_shutdown.go), or failing
-		// that from what the proof observed. Either way, only for a caller
-		// with no harness above it — a live process in another agent's pane
-		// has one. Still refused
-		// (an orphan proves nothing), but this is ordinary teardown — the
-		// pane exit observer records the exit itself — not a starved agent,
-		// so it is neither badged nor warned about.
-		brokerRefusals.noteOrphanedSessionEnd(refusal)
-		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
-		return
-	case layerClaim:
-		if row != nil {
-			brokerRefusals.refuseAttributed(
-				"hook: claimed tclaude’s sandbox session failed live-pane proof", refusal)
-		} else {
-			brokerRefusals.refuseUnplaceable("hook: tclaude’s sandbox caller failed live-pane proof", refusal)
-		}
-		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
-		return
-	case row == nil:
-		brokerRefusals.refuseUnplaceable(
-			brokerClaimReason("hook: caller could not be placed", claimed, proofDetail), refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its hook")
-		return
-	case isTclaudeLayerRow(row):
-		// The resolved row IS a layer row, so this is very likely the
-		// caller's own session; but a layer claim that did not PROVE is not
-		// trusted to attribute, so it stays unplaceable. The log line still
-		// carries the resolved row for the operator's correlation.
-		brokerRefusals.refuseUnplaceable(
-			brokerClaimReason("hook: tclaude’s sandbox callback omitted its session claim", claimed, proofDetail),
-			refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"tclaude’s sandbox hook callback requires a proved session claim")
-		return
-	case claimed != "" && claimed != row.ID:
-		// Identity DID resolve here, so the refusal is attributed to the
-		// row the DAEMON concluded — never to the claimed one, which is
-		// the caller's own string. See broker_refusals.go.
-		brokerRefusals.refuseAttributed("hook: claimed session id disagrees with the resolved row", refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"claimed session id does not match the session resolved for this caller")
-		return
-	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
-		return
-	}
+	timing := caller.timing
+	defer timing.finish()
+	row, harnessPID := caller.row, caller.harnessPID
 	if req.AckToken != "" {
 		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {
 			writeError(w, http.StatusConflict, "ack",

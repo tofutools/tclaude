@@ -128,6 +128,34 @@ type DashboardConfig struct {
 	// out. A *bool so absent (the default) is distinguishable from an
 	// explicit false. See (*Config).AlwaysShowOpenPRs.
 	AlwaysShowOpenPRs *bool `json:"always_show_open_prs,omitempty"`
+	// SidePanelEdgeReveal floats a folded right side panel (the Groups
+	// palette, the Collab list) in over the content when the pointer reaches
+	// the right edge, and takes it away when the pointer leaves it. Default
+	// true; an explicit false keeps a folded panel folded until its handle is
+	// clicked. A *bool so absent is distinguishable from an explicit false.
+	// See (*Config).SidePanelEdgeReveal.
+	SidePanelEdgeReveal *bool `json:"side_panel_edge_reveal,omitempty"`
+	// SidePanelPredictivePeek peeks a folded side panel's leading edge in
+	// when a pointer flung at the right edge is predicted to land there
+	// (tcl-o4nims), and SidePanelGrowingPeek grows that peek towards the
+	// panel's full width as the pointer closes in (tcl-wdwbm2). The peek
+	// defaults on, its growth off (tcl-bg5qm1: opening is then a move onto
+	// the peek); both need SidePanelEdgeReveal. *bool so absent differs from
+	// false.
+	SidePanelPredictivePeek *bool `json:"side_panel_predictive_peek,omitempty"`
+	SidePanelGrowingPeek    *bool `json:"side_panel_growing_peek,omitempty"`
+	// The edge reveal's and the peek's tuning, each absent for its default
+	// and clamped into range (SidePanelTuningLimits): see
+	// (*Config).SidePanelTuning.
+	SidePanelEdgeZonePx             *int `json:"side_panel_edge_zone_px,omitempty"`
+	SidePanelRetractMs              *int `json:"side_panel_retract_ms,omitempty"`
+	SidePanelPredictMinSpeed        *int `json:"side_panel_predict_min_speed,omitempty"`
+	SidePanelPredictSpeedDistancePx *int `json:"side_panel_predict_speed_distance_px,omitempty"`
+	SidePanelPredictMinSpeedFloor   *int `json:"side_panel_predict_min_speed_floor,omitempty"`
+	SidePanelPredictMinReadings     *int `json:"side_panel_predict_min_readings,omitempty"`
+	SidePanelMinTravelPx            *int `json:"side_panel_min_travel_px,omitempty"`
+	SidePanelBrakePercent           *int `json:"side_panel_brake_percent,omitempty"`
+	SidePanelPeekMinPx              *int `json:"side_panel_peek_min_px,omitempty"`
 	// RecentPRWindowDays bounds the footer popover's "Recently closed"
 	// filter: authored pull requests merged or closed within this many days
 	// back. Default 3 (absent / nil). 0 disables the filter entirely and the
@@ -790,6 +818,87 @@ func (c *Config) AlwaysShowOpenPRs() bool {
 		return true
 	}
 	return *c.Dashboard.AlwaysShowOpenPRs
+}
+
+// SidePanelEdgeReveal reports whether a folded right side panel floats in
+// when the pointer reaches the right edge — config
+// dashboard.side_panel_edge_reveal. Default true (absent block / nil
+// pointer); only an explicit false turns it off. Nil-safe on the receiver.
+func (c *Config) SidePanelEdgeReveal() bool {
+	if c == nil || c.Dashboard == nil || c.Dashboard.SidePanelEdgeReveal == nil {
+		return true
+	}
+	return *c.Dashboard.SidePanelEdgeReveal
+}
+
+// SidePanelTuning is the resolved edge reveal and predictive peek tuning the
+// dashboard runs with (side-panel-reveal.js setSidePanelTuning): every value
+// defaulted and clamped. Speeds are px/s, the braking threshold a percent.
+type SidePanelTuning struct {
+	PredictivePeek         bool `json:"predictive_peek"`
+	GrowingPeek            bool `json:"growing_peek"`
+	EdgeZonePx             int  `json:"edge_zone_px"`
+	RetractMs              int  `json:"retract_ms"`
+	PredictMinSpeed        int  `json:"predict_min_speed"`
+	PredictSpeedDistancePx int  `json:"predict_speed_distance_px"`
+	PredictMinSpeedFloor   int  `json:"predict_min_speed_floor"`
+	PredictMinReadings     int  `json:"predict_min_readings"`
+	MinTravelPx            int  `json:"min_travel_px"`
+	BrakePercent           int  `json:"brake_percent"`
+	PeekMinPx              int  `json:"peek_min_px"`
+}
+
+// SidePanelTuningLimit is one tuning value's default and range.
+type SidePanelTuningLimit struct{ Default, Min, Max int }
+
+// SidePanelTuningLimits holds each tuning value's default (the dashboard's
+// own, side-panel-reveal.js / side-panel-predict.js) and the range a value is
+// clamped to, keyed by its config key without the dashboard.side_panel_
+// prefix. The Config tab's fields carry the same ranges.
+var SidePanelTuningLimits = map[string]SidePanelTuningLimit{
+	"edge_zone_px":              {32, 4, 200},
+	"retract_ms":                {500, 50, 5000},
+	"predict_min_speed":         {1200, 100, 10000},
+	"predict_speed_distance_px": {600, 1, 4000},
+	"predict_min_speed_floor":   {600, 100, 10000},
+	"predict_min_readings":      {4, 2, 20},
+	"min_travel_px":             {80, 0, 1000},
+	"brake_percent":             {70, 0, 100},
+	"peek_min_px":               {48, 8, 400},
+}
+
+func sidePanelTuned(key string, v *int) int {
+	l := SidePanelTuningLimits[key]
+	if v == nil {
+		return l.Default
+	}
+	return min(l.Max, max(l.Min, *v))
+}
+
+// SidePanelTuning resolves config dashboard.side_panel_* into the tuning the
+// dashboard runs with: absent values take their defaults, out-of-range ones
+// are clamped (SidePanelTuningLimits), and the speed floor never exceeds the
+// full-distance minimum speed. Nil-safe on the receiver.
+func (c *Config) SidePanelTuning() SidePanelTuning {
+	d := &DashboardConfig{}
+	if c != nil && c.Dashboard != nil {
+		d = c.Dashboard
+	}
+	t := SidePanelTuning{
+		PredictivePeek:         d.SidePanelPredictivePeek == nil || *d.SidePanelPredictivePeek,
+		GrowingPeek:            d.SidePanelGrowingPeek != nil && *d.SidePanelGrowingPeek,
+		EdgeZonePx:             sidePanelTuned("edge_zone_px", d.SidePanelEdgeZonePx),
+		RetractMs:              sidePanelTuned("retract_ms", d.SidePanelRetractMs),
+		PredictMinSpeed:        sidePanelTuned("predict_min_speed", d.SidePanelPredictMinSpeed),
+		PredictSpeedDistancePx: sidePanelTuned("predict_speed_distance_px", d.SidePanelPredictSpeedDistancePx),
+		PredictMinSpeedFloor:   sidePanelTuned("predict_min_speed_floor", d.SidePanelPredictMinSpeedFloor),
+		PredictMinReadings:     sidePanelTuned("predict_min_readings", d.SidePanelPredictMinReadings),
+		MinTravelPx:            sidePanelTuned("min_travel_px", d.SidePanelMinTravelPx),
+		BrakePercent:           sidePanelTuned("brake_percent", d.SidePanelBrakePercent),
+		PeekMinPx:              sidePanelTuned("peek_min_px", d.SidePanelPeekMinPx),
+	}
+	t.PredictMinSpeedFloor = min(t.PredictMinSpeedFloor, t.PredictMinSpeed)
+	return t
 }
 
 // RecentPRWindowDays reports the lookback, in days, for the footer popover's

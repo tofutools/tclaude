@@ -68,7 +68,7 @@ func exportShowCmd() *cobra.Command {
 			"and deliver them with `tclaude agent export submit <id> <files…>`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *exportShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExportShow(p, os.Stdout, os.Stderr))
+			os.Exit(runExportShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -151,7 +151,7 @@ func exportSubmitCmd() *cobra.Command {
 			"the result. Use --name to choose the download filename.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *exportSubmitParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExportSubmit(p, os.Stdout, os.Stderr))
+			os.Exit(runExportSubmit(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

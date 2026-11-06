@@ -13,6 +13,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/harnessops"
 )
@@ -33,10 +34,10 @@ type harnessOperationParams struct {
 
 func harnessOperationCommands() []*cobra.Command {
 	install := boa.CmdT[harnessOperationParams]{Use: "install", Short: "Install a harness with its official package (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *harnessOperationParams, _ *cobra.Command, _ []string) {
-		os.Exit(runHarnessOperation("install", p, os.Stdout, os.Stderr))
+		os.Exit(runHarnessOperation("install", p, cliStdout, cliStderr))
 	}}.ToCobra()
 	update := boa.CmdT[harnessOperationParams]{Use: "update", Short: "Update a harness locally or across trusted nodes (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *harnessOperationParams, _ *cobra.Command, _ []string) {
-		os.Exit(runHarnessOperation("update", p, os.Stdout, os.Stderr))
+		os.Exit(runHarnessOperation("update", p, cliStdout, cliStderr))
 	}}.ToCobra()
 	return []*cobra.Command{install, update}
 }
@@ -130,14 +131,14 @@ func runHarnessOperation(action string, p *harnessOperationParams, stdout, stder
 			continue
 		}
 		for _, warning := range job.Warnings {
-			fmt.Fprintln(stderr, "Warning:", updateCell(warning))
+			fmt.Fprintln(stderr, "Warning:", termtext.Cell(warning))
 		}
 		if !p.NoWait && p.Job == "" {
 			deadline := time.Now().Add(31 * time.Minute)
 			phase := ""
 			for time.Now().Before(deadline) && (job.State == "running" || job.State == "waiting_idle") {
 				if job.Phase != phase {
-					fmt.Fprintf(stderr, "Harness job %s: %s\n", job.ID, updateCell(job.Phase))
+					fmt.Fprintf(stderr, "Harness job %s: %s\n", job.ID, termtext.Cell(job.Phase))
 					phase = job.Phase
 				}
 				time.Sleep(time.Second)
@@ -169,17 +170,17 @@ func runHarnessOperation(action string, p *harnessOperationParams, stdout, stder
 			if label == "" {
 				label = "local"
 			}
-			fmt.Fprintf(stdout, "%s %s: %s (%s)\n", updateCell(label), action, updateCell(job.State), job.ID)
+			fmt.Fprintf(stdout, "%s %s: %s (%s)\n", termtext.Cell(label), action, termtext.Cell(job.State), job.ID)
 			for _, r := range job.Results {
-				fmt.Fprintf(stdout, "  %s: %s\n", updateCell(r.Harness), updateCell(r.State))
+				fmt.Fprintf(stdout, "  %s: %s\n", termtext.Cell(r.Harness), termtext.Cell(r.State))
 				if r.Error != "" {
-					fmt.Fprintln(stderr, updateCell(r.Error))
+					fmt.Fprintln(stderr, termtext.Cell(r.Error))
 				}
 				if r.ManualCommand != "" {
-					fmt.Fprintln(stdout, "  Manual:", updateCell(r.ManualCommand))
+					fmt.Fprintln(stdout, "  Manual:", termtext.Cell(r.ManualCommand))
 				}
 				if r.Credentials != nil {
-					fmt.Fprintln(stdout, "  Credential backup:", updateCell(r.Credentials.BackupLocation))
+					fmt.Fprintln(stdout, "  Credential backup:", termtext.Cell(r.Credentials.BackupLocation))
 				}
 			}
 		}

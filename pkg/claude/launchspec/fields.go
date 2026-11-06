@@ -110,6 +110,9 @@ var Fields = []Field{
 		Why:           "The harness keys the conversation to its directory; only an explicit move changes it."},
 
 	// --- the spawn profile's own values, copied at first spawn ---
+	{Key: "sandbox_deny_overlay", Label: "Sandbox deny overlay", Layer: LayerFixed,
+		RequestFields: []string{"SandboxDeny"},
+		Why:           "Stored with the agent and reapplied at every relaunch over whatever its profiles resolve to; its children inherit it with their own denies added."},
 	{Key: "spawn_profile", Label: "Spawn profiles used (named, group default, global default)", Layer: LayerSpawnCopy,
 		GroupFields: []string{"DefaultProfile"}, RequestFields: []string{"Profile"},
 		Why: "A spawn profile is copied at spawn; editing it, or changing a group's default, affects new spawns only."},

@@ -12,9 +12,8 @@ import (
 // whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
 	// A one-step move between this node's groups, for an unrestricted peer.
-	// A restricted peer's fused view falls back to the member add and remove
-	// it is granted, which always applies the new group's defaults.
-	"POST /api/groups/{name}/members/{conv}/move",
+	// A restricted peer cannot move a member between groups: no peer grant
+	// opens the member add and remove either, which take unrestricted trust.
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",
@@ -29,27 +28,16 @@ var peerViewLocalRoutes = []string{
 	"GET /api/profiles/{id}/archive",
 	"POST /api/profiles/{id}/share",
 	"/api/profiles/{id}/ui/{kind}/",
-	// Process runs are this node's own; a peer view never serves them.
+	// Process runs are this node's own; a peer view never serves them
+	// (template authoring is peer_library.go's).
 	"GET /v1/process/context",
 	"POST /v1/process/resolve-preview",
-	"POST /v1/process/templates/{id}/listing",
-	"POST /v1/process/groups/{group}/processes",
-	"DELETE /v1/process/groups/{group}/processes/{templateId}",
-	// Workflow files leave and enter this node's own template store.
-	"GET /v1/process/templates/{id}/export",
-	"POST /v1/process/import",
-	"POST /v1/process/runs/{id}/decide",
+	// Re-binding a run's scope is this node's human's: it is human-only
+	// locally too, whatever an agent is granted.
 	"POST /v1/process/runs/{id}/rescope",
-	"POST /v1/process/runs/{id}/pause",
-	"POST /v1/process/runs/{id}/resume",
 	"GET /api/federation/hub/boards", "PATCH /api/federation/hub/boards/{board}", "DELETE /api/federation/hub/boards/{board}",
 	"GET /api/federation/boards/{board}/items", "POST /api/federation/boards/{board}/items", "GET /api/federation/boards/{board}/items/{item}/versions", "PUT /api/federation/boards/{board}/items/{item}/pin", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/fetch", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/contents", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/download", "HEAD /api/federation/boards/{board}/items/{item}/versions/{version}/download", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/preview", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/import", "GET /api/federation/boards/updates", "PUT /api/federation/boards/updates", "GET /api/federation/boards", "POST /api/federation/boards", "POST /api/federation/boards/join", "GET /api/federation/boards/{board}", "DELETE /api/federation/boards/{board}/membership", "GET /api/federation/boards/{board}/members", "PUT /api/federation/boards/{board}/members/{instance}", "DELETE /api/federation/boards/{board}/members/{instance}", "GET /api/federation/boards/{board}/invites", "POST /api/federation/boards/{board}/invites", "DELETE /api/federation/boards/{board}/invites/{token_id}", "POST /api/federation/boards/{board}/rotate-key",
-	"GET /api/agent-bundle/export", "POST /api/agent-bundle/import", "POST /api/paf/redact",
-	// A download staged for the peer to read chunk by chunk
-	// (dashboard_peer_downloads.go).
-	"/api/peer-downloads", "GET /api/peer-downloads/{id}",
-	// An upload staged in chunks (dashboard_peer_uploads.go).
-	"POST /api/peer-uploads", "POST /api/peer-uploads/chunk", "/api/peer-uploads/finish",
+	"POST /api/agent-bundle/import", "POST /api/paf/redact",
 	"POST /api/paf/publish", "GET /api/snapshots", "POST /api/snapshots", "POST /api/snapshots/prune", "GET /api/snapshots/{name}", "DELETE /api/snapshots/{name}", "GET /api/snapshots/{name}/export", "POST /api/snapshots/{name}/spawn", "GET /api/resilience/policies",
 	"GET /api/federation/hub/run",
 	"POST /api/federation/hub/run",
@@ -188,6 +176,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/enrollments",
 	"POST /api/federation/enroll/preview",
 	"POST /api/federation/enroll",
+	"POST /api/federation/become-node",
 	"POST /api/federation/peers/trust",
 	"POST /api/federation/peers/untrust",
 	"POST /api/federation/peers/trust-request",
@@ -242,7 +231,9 @@ var peerViewLocalRoutes = []string{
 	"POST /api/plugins/{name}/deactivate",
 	"POST /api/plugins/{name}/steps/{idx}/run",
 	"POST /api/plugins/{name}/steps/{idx}/stop",
-	"/api/permissions",
+	// The resource catalogue the permission editor's resource= picker
+	// searches: every board and template with its groups, like the editor.
+	"GET /api/permissions/scope-values",
 	"/api/power-on",
 	"/api/pr-checks",
 	"/api/pr-details",
@@ -255,7 +246,6 @@ var peerViewLocalRoutes = []string{
 	"/api/saved-prompts",
 	"/api/saved-prompts/{name}",
 	"POST /api/library/rename",
-	"GET /api/config-bundle/export",
 	"/api/roles",
 	"/api/roles/{name}",
 	"/api/sandbox-profile-default",
@@ -292,12 +282,7 @@ var peerViewLocalRoutes = []string{
 	"/api/worktrees",
 	"/api/worktrees/cleanup",
 	"/api/worktrees/progress",
-	"DELETE /api/groups/{name}/links/{id}",
-	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
-	"DELETE /v1/process/templates/{id}",
-	"GET /api/groups/{name}/export",
-	"GET /api/groups/{name}/process",
 	"GET /api/groups/{name}/standing-orders",
 	"GET /api/groups/{name}/worktrees",
 	"GET /api/sandbox-profiles/export",
@@ -305,24 +290,15 @@ var peerViewLocalRoutes = []string{
 	"GET /api/spawn-profiles/{name}/running-agents",
 	"GET /api/starters",
 	"GET /api/starters/{name}",
+	// A staged download (dashboard_peer_downloads.go); a restricted peer reads
+	// the template itself through node.spawn.read.
 	"GET /api/templates/{name}/export",
-	"GET /v1/process/runs",
-	"GET /v1/process/runs/{id}",
-	"GET /v1/process/runs/{id}/events",
-	"GET /v1/process/template-heads",
-	"GET /v1/process/templates",
-	"GET /v1/process/templates/{id}",
-	"PATCH /api/groups/{name}/links/{id}",
+	// A workflow file is signed with this node's federation identity key: it
+	// stays this node's to hand out.
+	"GET /v1/process/templates/{id}/export",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",
-	"POST /api/groups/import",
-	"POST /api/groups/import/inspect",
-	"POST /api/groups/{name}/links",
-	"POST /api/groups/{name}/members",
-	"POST /api/groups/{name}/owners",
-	"POST /api/groups/{name}/process/advance",
-	"POST /api/groups/{name}/rebrief",
 	"POST /api/groups/{name}/spawn",
 	// Resolves a spawn without spawning, through the spawn handler.
 	"POST /api/groups/{name}/spawn-preview",
@@ -347,17 +323,6 @@ var peerViewLocalRoutes = []string{
 	"POST /api/spawn-profiles/import/inspect",
 	"POST /api/spawn-profiles/{name}/reapply",
 	"POST /api/starters/{name}/install",
-	"POST /api/templates/from-group",
-	"POST /api/templates/import",
-	"POST /api/templates/{name}/deploy",
-	"POST /api/templates/{name}/instantiate",
-	"POST /api/templates/{name}/reinforce",
-	"POST /v1/process/runs",
-	"POST /v1/process/runs/{id}/decide",
-	"POST /v1/process/runs/{id}/nodes/{node}/assign",
-	"POST /v1/process/templates",
-	"POST /v1/process/templates/{id}",
-	"POST /v1/process/validate",
 }
 
 // peerViewOwnNodeRoutes stay with this node even for unrestricted trust: its
@@ -395,11 +360,14 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
-	// Collab boards are this node's operator workspace with its own agents.
-	"GET /api/boards", "POST /api/boards", "GET /api/boards/{id}", "PATCH /api/boards/{id}", "DELETE /api/boards/{id}",
+	// A collab board's live socket and presence, the operator's activity mail
+	// and undo, its rendered snapshot, inviting agents, ending their sessions
+	// and deleting it stay this node's own dashboard's; reading and editing
+	// one have peer routes (peer_boards.go).
+	"DELETE /api/boards/{id}",
 	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",
-	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view", "POST /api/boards/{id}/group",
-	"POST /api/boards/{id}/title", "DELETE /api/boards/{id}/sessions",
+	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view",
+	"DELETE /api/boards/{id}/sessions",
 	// Live pages are this node's own agents' stage origins.
 	"POST /api/pages", "DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
 	"POST /api/pages/{id}/reopen", "POST /api/pages/{id}/delete", "POST /api/pages/{id}/reload",

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -143,7 +142,7 @@ func explicitSoloOnlyFlags(explicit explicitLaunchFields) []string {
 var soloLaunchHookForTest func(params *NewParams) error
 
 // autoJoinNoticeOut receives the "kept solo" notice; a variable for tests.
-var autoJoinNoticeOut io.Writer = os.Stderr
+var autoJoinNoticeOut io.Writer = cliStderr
 
 // AutomaticGroupMatcher names the active group whose default directory
 // matches this launch's directory ("" when none). Set by the agent package,
@@ -279,7 +278,7 @@ func pluralVerb(flags []string, one, many string) string {
 // Two consequences for programmatic callers: a resume whose recorded posture
 // cannot be READ fails here rather than launching on defaults (launching would
 // overwrite the record with those defaults, which is not recoverable), and a
-// carried posture that changes the launch is disclosed on os.Stderr.
+// carried posture that changes the launch is disclosed on cliStderr.
 func RunNew(params *NewParams) error {
 	// Capture caller intent before resume carryover fills an omitted field.
 	params.sandboxImplExplicit = strings.TrimSpace(params.SandboxImpl) != ""

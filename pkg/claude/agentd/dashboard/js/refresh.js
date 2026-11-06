@@ -47,6 +47,7 @@ import { setToolbarFixedNode } from './toolbar-node.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
 import { matchesShortcut } from './keybindings.js';
+import { setEdgeRevealEnabled, setSidePanelTuning } from './side-panel-reveal.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -300,6 +301,10 @@ export async function refresh(options) {
     // the 📝 chip in each group header is hidden unless body.show-group-description
     // is present, brought back only by an explicit opt-in. Plain class toggle.
     document.body.classList.toggle('show-group-description', !!data.show_group_description);
+    // A folded side panel floating in at the right edge (config
+    // dashboard.side_panel_edge_reveal, default on; side-panel-reveal.js).
+    setEdgeRevealEnabled(data.side_panel_edge_reveal !== false);
+    setSidePanelTuning(data.side_panel_tuning);
     document.documentElement.dataset.overlayBackdrop = data.overlay_backdrop || 'dim';
     // CI pill on merged/closed PRs (config dashboard.show_final_pr_checks,
     // default off). PRChecksBadge tags a terminal PR's non-failing pill

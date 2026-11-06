@@ -58,7 +58,7 @@ func taskSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskSet(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -91,7 +91,7 @@ func taskClearCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskClearParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskClear(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskClear(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -111,13 +111,9 @@ func taskWrite(target, askHuman string, body map[string]any, stdout, stderr io.W
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/whoami/task"
 	if target != "" {
@@ -148,7 +144,7 @@ func taskShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -183,9 +179,12 @@ type taskRefResp struct {
 	Cleared       bool   `json:"cleared,omitempty"`
 	CallerConv    string `json:"caller_conv,omitempty"`
 	CallerAgentID string `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 func printTaskResult(stdout io.Writer, resp *taskRefResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

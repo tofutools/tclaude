@@ -2,6 +2,7 @@ import { readReviewer, reviewerValue } from './approval-controls.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { shareOptions, shareSpawnFields } from './usage-share-model.js';
 import { openCodeToolsBase } from './opencode-tools-model.js';
+import { sandboxDenyPaths } from './spawn-deny-paths-model.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -34,20 +35,6 @@ export function findSpawnProfile(profiles, handle) {
   const name = text(handle).trim();
   return (profiles || []).find((profile) =>
     profile?.name === name || (profile?.aliases || []).includes(name)) || null;
-}
-
-export function spawnProfileChoices(profiles) {
-  const choices = [];
-  for (const profile of profiles || []) {
-    const status = profile.disabled
-      ? ` [🚫 disabled: ${text(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]`
-      : profile.operator_only ? ' [👤 operator only]' : '';
-    choices.push({ value: profile.name, label: profile.name + status });
-    for (const alias of profile.aliases || []) {
-      choices.push({ value: alias, label: `${alias} → ${profile.name}${status}` });
-    }
-  }
-  return choices;
 }
 
 export function defaultSpawnHarness(harnesses) {
@@ -538,7 +525,20 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     contextWindowMaxMax: Number(harness?.context_window_max_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
+    sandboxDenyBlockedReason: sandboxDenyBlockedReason(effectiveSandboxImpl, sandboxProfilesDisabled, draft),
   };
+}
+
+// sandboxDenyBlockedReason says why this launch cannot enforce a deny
+// overlay, or '': the daemon's denyOverlayLaunchFailure and omit refusal,
+// asked of the effective implementation as sandboxProfilesDisabled is.
+function sandboxDenyBlockedReason(effectiveSandboxImpl, sandboxProfilesDisabled, draft) {
+  if (effectiveSandboxImpl === SANDBOX_IMPL_OFF || effectiveSandboxImpl === SANDBOX_IMPL_RESOURCE_ONLY) {
+    return `Sandbox ${effectiveSandboxImpl} does not confine the filesystem, so it cannot enforce a deny.`;
+  }
+  if (sandboxProfilesDisabled) return 'This sandbox mode carries no sandbox profiles, so it cannot enforce a deny.';
+  if (draft.sandboxProfile === SANDBOX_PROFILE_NONE) return 'Sandbox profile “none” omits the profiles a deny is laid over.';
+  return '';
 }
 
 // harnessBuiltinModeControlLabel names the nested control after the harness that owns
@@ -734,6 +734,10 @@ export function createSpawnDraft({
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     promptRefs: groupDefaultPrompts(groups, group?.name),
 		environment: [],
+    // The deny overlay (--sandbox-deny): paths, plus one still being typed.
+    // Operator intent, so a group or spawn-profile switch keeps it.
+    sandboxDeny: [],
+    sandboxDenyDraft: '',
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
@@ -1222,6 +1226,7 @@ export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
   if (JSON.stringify(draft.permissionOverrides || {})
     !== JSON.stringify(baseline.permissionOverrides || {})) return true;
   if (JSON.stringify(draft.roleRefs || []) !== JSON.stringify(baseline.roleRefs || [])) return true;
+  if (JSON.stringify(sandboxDenyPaths(draft)) !== JSON.stringify(sandboxDenyPaths(baseline))) return true;
   if (JSON.stringify(draft.promptRefs || []) !== JSON.stringify(baseline.promptRefs || [])) return true;
   if (JSON.stringify(draft.relaunchPolicy || {}) !== JSON.stringify(baseline.relaunchPolicy || {})) return true;
   return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
@@ -1323,6 +1328,12 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   } else if (draft.sandboxProfile) {
     body.sandbox_profile = draft.sandboxProfile;
   }
+  // The deny overlay is sent whenever it is set, even on a launch that cannot
+  // enforce it: the daemon then refuses the spawn, where dropping the paths
+  // here would launch the agent without the denies it was asked for. A remote
+  // spawn cannot carry it, and the dialog does not offer it there.
+  const sandboxDeny = sandboxDenyPaths(draft);
+  if (sandboxDeny.length && !context.remoteSpawn) body.sandbox_deny = sandboxDeny;
   // A usage profile picked here replaces the inherited ones (human-only;
   // a remote spawn cannot carry it).
   if (draft.usageProfile && !context.remoteSpawn) body.usage_profiles = [draft.usageProfile];

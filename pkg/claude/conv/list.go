@@ -3,6 +3,7 @@ package conv
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,7 +45,7 @@ func ListCmd() *cobra.Command {
 		Short:       "List Claude conversations in a directory",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *ListParams, cmd *cobra.Command, args []string) {
-			exitCode := RunList(params, os.Stdout, os.Stderr)
+			exitCode := RunList(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -67,14 +68,14 @@ func WatchCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *WatchParams, cmd *cobra.Command, args []string) {
 			if err := RunConvWatchMode(params.Global, params.Since, params.Before); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
 	}.ToCobra()
 }
 
-func RunList(params *ListParams, stdout, stderr *os.File) int {
+func RunList(params *ListParams, stdout, stderr io.Writer) int {
 	SetDebugLog(params.Verbose)
 
 	// Watch mode
@@ -261,7 +262,7 @@ func getTerminalWidth() int {
 // pendingByConv is optional - it supplies the spawn-time agent name used as a
 // title fallback when a conv has no real custom title (see convDisplayTitle);
 // pass nil to skip the fallback.
-func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool, matchCounts []int, groupsByConv map[string][]string, pendingByConv map[string]string) {
+func RenderTable(stdout io.Writer, entries []SessionEntry, showProject, long bool, matchCounts []int, groupsByConv map[string][]string, pendingByConv map[string]string) {
 	showGroups := false
 	for _, e := range entries {
 		if len(groupsByConv[e.SessionID]) > 0 {

@@ -704,6 +704,97 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 	return out, nil
 }
 
+// A template's owner scopes narrow what the owners of every group later
+// deployed from it may do (templates_instantiate stamps them onto the new
+// group). Changing a live group's owner scopes needs
+// groups.settings.owner-scopes plus permissions.grant and permissions.revoke,
+// so a write that changes or removes an existing template's owner scopes needs
+// the same (awb tcl-yjjbfh); without them
+// a templates.manage holder could loosen the narrowing a blueprint's author
+// declared, and nothing on the deployed group would show it.
+//
+// A create changes nothing: there was no blueprint to loosen, and owner
+// scopes only take reach away: a new template without them gives no more than
+// default ownership. Deleting a scoped template removes its narrowing, so it
+// is gated too. A rename keeps the template's scopes (renameTemplate carries
+// them verbatim) and stays ungated, so rename-and-recreate under the old name
+// is still possible: the gate protects a template's scopes, not its name.
+
+// templateOwnerScopesSlugs are the slugs a group's owner-scope change needs
+// (groups_handlers); a template's needs the same, unscoped, as a template has
+// no group.
+var templateOwnerScopesSlugs = []string{PermGroupsSettingsOwnerScopes, PermPermissionsGrant, PermPermissionsRevoke}
+
+// templateOwnerScopesChange reports whether writing next over existing changes
+// or removes existing's owner scopes. A nil existing (a create) is no change.
+func templateOwnerScopesChange(existing *db.GroupTemplate, next string) bool {
+	if existing == nil {
+		return false
+	}
+	before, errBefore := canonicalOwnerScopes(existing.OwnerScopesJSON)
+	after, errAfter := canonicalOwnerScopes(next)
+	if errBefore != nil || errAfter != nil {
+		return existing.OwnerScopesJSON != next
+	}
+	return before != after
+}
+
+// templateOwnerScopesGate authorizes a template write that changes an
+// existing template's owner scopes. It returns nil to allow the write.
+type templateOwnerScopesGate func() *spawnFailure
+
+// httpTemplateOwnerScopesGate gates on the request's caller through
+// requirePermission, so an agent can still ask the human; a refusal is written
+// to w and reported as errSpawnResponseWritten.
+func httpTemplateOwnerScopesGate(w http.ResponseWriter, r *http.Request) templateOwnerScopesGate {
+	return func() *spawnFailure {
+		for _, slug := range templateOwnerScopesSlugs {
+			if _, ok := requirePermission(w, r, slug); !ok {
+				return errSpawnResponseWritten
+			}
+		}
+		return nil
+	}
+}
+
+// callerTemplateOwnerScopesGate gates on caller ("" is the human operator)
+// without writing a response, for a write judged inside a larger operation
+// such as a config bundle import. With no response to answer, it cannot spend
+// a use of a use-limited sudo grant, so it refuses one rather than let it
+// authorize without counting; the template endpoints spend it.
+func callerTemplateOwnerScopesGate(r *http.Request, caller string) templateOwnerScopesGate {
+	return func() *spawnFailure {
+		if caller == "" {
+			return nil
+		}
+		for _, slug := range templateOwnerScopesSlugs {
+			allowed, matched, err := permissionAllowsAction(r, caller, slug, ActionContext{})
+			if err != nil {
+				return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			}
+			if !allowed {
+				return &spawnFailure{http.StatusForbidden, "permission",
+					"changing or removing a template's owner scopes requires permission " + slug}
+			}
+			if _, limited := limitedSudoSource(r, caller, slug, ActionContext{}); limited {
+				return &spawnFailure{http.StatusForbidden, "permission",
+					"a use-limited grant of " + slug + " cannot change a template's owner scopes from a bundle; edit or import the template itself"}
+			}
+			recordAuditPermissionScope(r, slug, matched)
+		}
+		return nil
+	}
+}
+
+// checkTemplateOwnerScopes runs gate when writing next over existing changes
+// its owner scopes.
+func checkTemplateOwnerScopes(gate templateOwnerScopesGate, existing *db.GroupTemplate, next string) *spawnFailure {
+	if !templateOwnerScopesChange(existing, next) {
+		return nil
+	}
+	return gate()
+}
+
 // handleTemplates dispatches the collection endpoint /v1/templates:
 // GET lists every template (open, read-only), POST creates one (gated
 // on templates.manage).
@@ -731,7 +822,11 @@ func handleTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		t, fail := buildTemplateFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := peerTemplateEditFailure(r, nil, templateToJSON(t)); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateGroupTemplate(t)
@@ -794,7 +889,16 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 		}
 		t, fail := buildTemplateFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+		was := templateToJSON(existing)
+		if fail := peerTemplateEditFailure(r, &was, templateToJSON(t)); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		t.ID = existing.ID
@@ -808,6 +912,15 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"id": t.ID, "name": t.Name})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+			return
+		}
+		existing, err := db.GetGroupTemplate(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, ""); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		n, err := db.DeleteGroupTemplate(name)

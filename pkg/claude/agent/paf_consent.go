@@ -44,7 +44,7 @@ func PAFConsentCmd() *cobra.Command {
 			"agents are refused.\n\n" +
 			"  tclaude paf consent reviewer.paf --audience recipients --recipient inst_7c21 -o reviewer.paf",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafConsentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPAFConsent(p, os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))
+			os.Exit(runPAFConsent(p, os.Stdin, cliStdout, cliStderr, term.IsTerminal(int(os.Stdin.Fd()))))
 		}}.ToCobra()
 }
 
@@ -176,11 +176,11 @@ func exchangePAF(path string, f *os.File) ([]byte, error) {
 	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", paf.MediaType)
 	client := httpClientWithTimeout(bundletransfer.DefaultTTL)
-	policy, err := retryPolicyForRequest(client, req, os.Stderr)
+	policy, err := retryPolicyForRequest(client, req, cliStderr)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := doDaemonRequest(client, req, os.Stderr, policy)
+	resp, err := doDaemonRequest(client, req, cliStderr, policy)
 	if err != nil {
 		return nil, err
 	}

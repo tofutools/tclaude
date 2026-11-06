@@ -53,8 +53,15 @@ The hub routes; it is never the authority over what an agent may do.
   what your operator granted it.
 - **Remote content is untrusted.** Every inbound remote body starts with a
   banner naming its origin, and the sender shows as `name@peer (remote)`.
-- **Approvals stay local.** Permission prompts, `--ask-human`, sudo and
-  grants are never actionable by a remote party.
+- **Approvals and grants stay with your operator.** A restricted peer never
+  answers tclaude access requests or `--ask-human` requests, and never edits
+  grants or sudo, except answering an access request once while it is your
+  away cover (`approvals.answer`). Two peer grants come close, so grant them
+  knowingly: terminal attach answers harness prompts as a keyboard at the
+  pane does, and spawn with `groups.members.spawn.permissions` (or `.owner`)
+  chooses a new worker's permissions. A peer you trust **unrestricted** acts
+  as your own operator does on most of the dashboard, permissions, sudo and
+  the human inbox included (see [Connect and share](federation-peers.md)).
 
 Three layers decide what is allowed, and each one can only narrow:
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const harnesses = [{
@@ -124,7 +125,7 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
     ['agent-spawn-owner', /older tclaude that does not take the group ownership/],
     ['agent-spawn-descr', /older tclaude that does not take the harness features/],
   ]) {
-    const el = q(`#${id}`);
+    const el = q(`#${id}-input`) || q(`#${id}`);
     assert.ok(el, id);
     assert.equal(el.disabled, true, `${id} is the peer's to decide`);
     assert.match(el.title, reason, id);
@@ -197,7 +198,10 @@ test('a remote spawn sends only the launch settings the operator set, not harnes
     assert.equal(q('#agent-spawn-error')?.textContent || '', '');
   };
   const pick = async (sel, value, event = 'change') => {
-    const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+    const el = q(sel);
+    if (el.classList.contains('choice-combobox')) await comboChoose(harness, el, value);
+    else { setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); }
+    await flush(harness);
   };
   // Loading a profile and clearing it again resets the harness to its
   // default (claude), even one the operator picked: none of that is sent.
@@ -291,9 +295,12 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   };
   await open();
   const q = (sel) => host.querySelector(sel);
-  const val = (sel) => q(sel).value ?? q(sel).getAttribute('value');
+  const val = (sel) => (q(sel).classList.contains('choice-combobox') ? q(sel).dataset.value : q(sel).value ?? q(sel).getAttribute('value'));
   const pick = async (sel, value, event = 'change') => {
-    const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+    const el = q(sel);
+    if (el.classList.contains('choice-combobox')) await comboChoose(harness, el, value);
+    else { setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); }
+    await flush(harness);
   };
   const submit = async () => {
     await harness.act(() => q('#agent-spawn-submit').click());
@@ -311,10 +318,12 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   assert.deepEqual(chip.map((c) => c.querySelector('.role-chip-inspect').textContent), ['house-rules']);
   assert.equal(chip[0].querySelector('.role-chip-remove').disabled, true, 'a prompt the peer applies itself is locked');
   assert.match(chip[0].querySelector('.role-chip-remove').title, /forge applies this prompt itself/);
-  const profileOptions = [...q('#agent-spawn-load-profile').querySelectorAll('option')];
-  assert.equal(profileOptions.find((o) => o.getAttribute('value') === 'house').hasAttribute('disabled'), true, 'a peer profile the grant does not list cannot be picked');
-  assert.equal(profileOptions.find((o) => o.getAttribute('value') === 'reviewer').hasAttribute('disabled'), false);
-  assert.ok(profileOptions.find((o) => o.getAttribute('value') === 'local:mine'), 'this node\'s profiles are offered too');
+  await comboKeys(harness, q('#agent-spawn-load-profile'));
+  const profileRow = (key) => q(`#agent-spawn-load-profile [role="option"][data-key="${key}"]`);
+  assert.equal(profileRow('house').getAttribute('aria-disabled'), 'true', 'a peer profile the grant does not list cannot be picked');
+  assert.equal(profileRow('reviewer').hasAttribute('aria-disabled'), false);
+  assert.ok(profileRow('local:mine'), 'this node\'s profiles are offered too');
+  await harness.act(() => harness.fireEvent(q('#agent-spawn-load-profile-input'), 'blur'));
   assert.equal(q('#agent-spawn-role-add').disabled, true, 'adding roles waits for a per-field grant');
   assert.ok([...q('#agent-spawn-role-add').querySelectorAll('option')].some((o) => o.getAttribute('value') === 'builder'), 'the peer\'s roles are listed');
 
@@ -457,7 +466,10 @@ test('an unrestricted peer opens the dialog like a local spawn', async (t) => {
   }
 
   const set = async (sel, value, event = 'input') => {
-    const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+    const el = q(sel);
+    if (el.classList.contains('choice-combobox')) await comboChoose(harness, el, value);
+    else { setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); }
+    await flush(harness);
   };
   await set('#agent-spawn-name', 'w');
   await set('#agent-spawn-init-msg', 'go');

@@ -133,19 +133,6 @@ type spawnRequest struct {
 	remoteControl bool
 }
 
-// errSpawnResponseWritten is the failure a step returns when a shared helper
-// it called has already written the response (a refusal, or an ask-human
-// approval in flight). writeSpawnFailure writes nothing more for it.
-var errSpawnResponseWritten = &spawnFailure{}
-
-// writeSpawnFailure writes a step's refusal as the HTTP error response.
-func writeSpawnFailure(w http.ResponseWriter, fail *spawnFailure) {
-	if fail == errSpawnResponseWritten {
-		return
-	}
-	writeError(w, fail.Status, fail.Kind, fail.Msg)
-}
-
 // decodeSpawnRequest reads the request body and refuses a non-interactive
 // spawn that carries settings only an interactive agent can use.
 //
@@ -276,6 +263,10 @@ func (req *spawnRequest) authorize(w http.ResponseWriter, r *http.Request) *spaw
 		return fail
 	}
 	body.SandboxProfile = strings.TrimSpace(body.SandboxProfile)
+	if body.OmitSandboxProfiles && len(body.SandboxDeny) > 0 {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny",
+			"sandbox_deny needs the sandbox profiles omit_sandbox_profiles leaves out"}
+	}
 	if body.OmitSandboxProfiles && body.SandboxProfile != "" {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
 			"sandbox_profile and omit_sandbox_profiles are mutually exclusive"}
@@ -1296,50 +1287,24 @@ func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
 	resolvedLaunch := req.resolvedLaunch
 	spawnerConvID := req.spawnerConvID
 	sshWorkaround := req.sshWorkaround
-	// An omission the caller asked for is kept by every relaunch; one the
-	// launch mode forces is re-judged when the mode changes (derived).
-	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
-	if !body.OmitSandboxProfiles {
-		effectiveSandbox = sandboxpolicy.DerivedOmittedProfilesSnapshot()
-	}
-	var policyErr error
-	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
-		!body.OmitSandboxProfiles {
-		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
-	}
-	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
-		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
-			fmt.Sprintf("sandbox profile %q does not exist", body.SandboxProfile)}
-	}
-	if policyErr != nil {
-		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error()}
-	}
-	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
+	effectiveSandbox, fail := resolveChildSandbox(childSandboxInput{
+		group:               g,
+		harnessName:         h.Name,
+		harnessBuiltinMode:  harnessBuiltinMode,
+		implementation:      body.SandboxImplementation,
+		sandboxProfile:      body.SandboxProfile,
+		omitSandboxProfiles: body.OmitSandboxProfiles,
+		harnessConfig:       body.HarnessConfig,
+		spawnerConvID:       spawnerConvID,
+		externalSpawn:       externalSpawn,
+		sandboxScopePinned:  req.sandboxScopePinned,
+		denies:              body.SandboxDeny,
+	})
+	if fail != nil {
 		return fail
-	} else {
-		effectiveSandbox = applied
 	}
-	// A principal has no sandbox to contain the child. Its pinned profile is the
-	// bound, and sandboxScopePinned above refused a launch that wouldn't enforce it.
-	if spawnerConvID != "" && !externalSpawn {
-		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)
-		if err != nil {
-			return &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
-		}
-		if parentSnapshot == nil {
-			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
-				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
-					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child"}
-			}
-		} else {
-			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
-			if err != nil {
-				return &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
-			}
-			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
-				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
-			}
-		}
+	if fail := denyOverlayLaunchFailure(&effectiveSandbox, cwd, h.Name, harnessBuiltinMode, body.SandboxImplementation); fail != nil {
+		return fail
 	}
 	launchEnvironment, launchEnvironmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, profileTiers, body.Environment)
 	if envErr != nil {
@@ -1966,7 +1931,7 @@ func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p 
 	}
 	// One-shots bypass executeSpawn but spend just the same.
 	if failure := checkUsageSpawnBlock(g); failure != nil {
-		writeError(w, failure.Status, failure.Kind, failure.Msg)
+		writeSpawnFailure(w, failure)
 		return
 	}
 	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
@@ -1977,7 +1942,7 @@ func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p 
 	p.onLaunchAttempt = spawnUse.keep
 	result, runErr := runNonInteractiveSpawn(r.Context(), *p, body.RunTimeoutSeconds)
 	if runErr != nil {
-		writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
+		writeSpawnFailure(w, runErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

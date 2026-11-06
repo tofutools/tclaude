@@ -36,11 +36,11 @@ func teleportCmd() *cobra.Command {
 	return boa.CmdT[teleportParams]{Use: "teleport", Short: "Move or clone yourself to a peer, continuing your history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{teleportReportCmd(), teleportRecoverCmd(), boa.CmdT[struct{}]{Use: "status", Short: "Inspect your incoming and outgoing teleport records", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 		var out any
 		if err := DaemonGet("/v1/whoami/teleports", &out); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(cliStderr, err)
 			os.Exit(MapDaemonErrorToRC(err))
 		}
-		_ = json.NewEncoder(os.Stdout).Encode(out)
-	}}.ToCobra()}, RunFunc: func(p *teleportParams, _ *cobra.Command, _ []string) { os.Exit(runTeleport(p, os.Stdout, os.Stderr)) }}.ToCobra()
+		_ = json.NewEncoder(cliStdout).Encode(out)
+	}}.ToCobra()}, RunFunc: func(p *teleportParams, _ *cobra.Command, _ []string) { os.Exit(runTeleport(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runTeleport(p *teleportParams, stdout, stderr io.Writer) int {
 	if p.Clone && p.KeepPausedBackup {
@@ -129,7 +129,7 @@ type teleportReportParams struct {
 
 func teleportReportCmd() *cobra.Command {
 	return boa.CmdT[teleportReportParams]{Use: "report", Short: "Report findings and return to your paused backup", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *teleportReportParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTeleportControl("/v1/whoami/teleport/report", map[string]any{"findings": p.Findings}, os.Stdout, os.Stderr))
+		os.Exit(runTeleportControl("/v1/whoami/teleport/report", map[string]any{"findings": p.Findings}, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 
@@ -139,7 +139,7 @@ type teleportRecoverParams struct {
 
 func teleportRecoverCmd() *cobra.Command {
 	return boa.CmdT[teleportRecoverParams]{Use: "recover", Short: "Recover a paused backup after its online lease observation period", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *teleportRecoverParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTeleportControl("/v1/teleport/recover", map[string]any{"agent": p.Agent}, os.Stdout, os.Stderr))
+		os.Exit(runTeleportControl("/v1/teleport/recover", map[string]any{"agent": p.Agent}, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runTeleportControl(path string, input any, stdout, stderr io.Writer) int {

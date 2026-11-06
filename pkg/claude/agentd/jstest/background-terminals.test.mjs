@@ -6,7 +6,7 @@ const ROWS = [
   { kind: 'agent', tmux_session: 'tmux-a', key: 'window:agt_bg', label: 'old-name', agent_id: 'agt_bg', conv_id: 'conv-bg', last_activity: 1000 },
   { kind: 'shell', tmux_session: 'tclaude-term-x-current', key: 'term:agt_bg:current:', label: 'old-name', agent_id: 'agt_bg', conv_id: 'conv-bg', which: 'current' },
   { kind: 'agent', tmux_session: 'tmux-open', key: 'one', label: 'builder-1', agent_id: 'agt_one' },
-  { kind: 'other', tmux_session: 'stray', label: 'stray' },
+  { kind: 'other', tmux_session: 'stray', label: 'stray', killable: true },
 ];
 
 async function mountTabs(t) {
@@ -40,7 +40,15 @@ async function mountTabs(t) {
   return { harness, host, badgeHost, state, actions, background };
 }
 
-test('background terminals keep the tab, show a neutral counter and attach from the popover', async (t) => {
+// The strip's old background counter moved into the Collab panel
+// (tcl-ievs1w): the Filter counts what runs with no terminal, the rows
+// attach, and what cannot be attached lists under Other sessions.
+const railItem = (host, key) => host.querySelector(`[data-rail-item="${key}"]`);
+const railTitles = (host, group) => [...host.querySelectorAll(`[data-rail-group="${group}"] [data-rail-bucket="background"] .cr-title`)].map((node) => node.textContent);
+const bgCount = (host) => host.querySelector('#collab-filter-btn [data-collab-bg-count]')?.textContent || '';
+const tick = (s) => s.harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+test('background terminals keep the tab, are counted on the panel\'s Filter and attach from its rows', async (t) => {
   const s = await mountTabs(t);
   const { document } = s.harness;
   await s.harness.act(async () => {
@@ -49,47 +57,52 @@ test('background terminals keep the tab, show a neutral counter and attach from 
   });
   await s.harness.act(() => { s.background.backgroundTerminals.value = ROWS; });
 
-  const trigger = s.host.querySelector('.mux-bg-trigger');
-  assert.ok(trigger, 'the counter renders beside the strip');
-  assert.ok(trigger.closest('.mux-bg-slot'), 'outside the scrolling tab strip');
-  assert.equal(trigger.querySelector('.mux-bg-count').textContent, '3', 'a row whose pane is already open is not counted');
-  assert.equal(trigger.textContent.trim(), '3', 'icon and count only, no label');
+  assert.equal(s.host.querySelector('.mux-bg-trigger'), null, 'the strip no longer carries a counter');
+  assert.equal(bgCount(s.host), '3', 'the Filter button counts them; a row whose pane is already open is not counted');
+  await s.harness.act(() => s.host.querySelector('#collab-filter-btn').click());
+  assert.match(s.host.querySelector('#collab-filter-menu').textContent, /Background \(3\)/, 'the Background box counts them too');
+  await s.harness.act(() => s.host.querySelector('#collab-filter-btn').click());
 
-  await s.harness.act(() => trigger.click());
-  const pop = s.host.querySelector('.mux-bg-pop');
-  assert.ok(pop, 'a click pins the breakdown open');
-  const names = [...pop.querySelectorAll('.mux-bg-name')].map((node) => node.textContent);
-  assert.deepEqual(names, ['renamed-worker', 'shell · renamed-worker', 'stray'], 'live roster titles, grouped by kind');
-  assert.equal(pop.querySelectorAll('.mux-bg-attach').length, 2, 'an unrecognised session cannot be attached');
-  assert.equal(pop.querySelectorAll('button.mux-bg-name').length, 2, 'attachable titles are clickable; the stray is not');
+  assert.deepEqual(railTitles(s.host, 'Not in a group'), ['renamed-worker', 'shell · renamed-worker'], 'live roster titles');
+  assert.deepEqual(railTitles(s.host, 'Other sessions'), ['stray'], 'an unrecognised session lists under Other sessions');
+  const stray = railItem(s.host, 'bg::stray');
+  assert.notEqual(stray.getAttribute('draggable'), 'true', 'it cannot be dragged out to a tab');
+  assert.match(stray.querySelector('.cr-name').title, /not a tclaude terminal\. Attach from a shell: tmux -L tclaude attach -t 'stray'/);
 
   await s.harness.act(async () => {
-    pop.querySelector('.mux-bg-attach').click();
+    s.harness.fireEvent(railItem(s.host, 'bg::tmux-a').querySelector('.cr-name'), 'click');
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  assert.ok(s.state.panes.value.some((pane) => pane.key === 'window:agt_bg'), 'attach opens the agent as a normal tab');
-  assert.equal(s.host.querySelector('.mux-bg-count').textContent, '2', 'the attached row leaves the count at once');
+  assert.ok(s.state.panes.value.some((pane) => pane.key === 'window:agt_bg'), 'a click on the row opens the agent as a normal tab');
+  assert.equal(bgCount(s.host), '2', 'the attached row leaves the count at once');
 
+  const shellRow = railItem(s.host, 'bg::tclaude-term-x-current');
+  await s.harness.act(() => shellRow.querySelector('.cr-more').click());
+  assert.equal(shellRow.querySelector('[data-rail-action="open"]').textContent, 'Attach');
   await s.harness.act(async () => {
-    s.host.querySelector('.mux-bg-pop button.mux-bg-name').click();
+    shellRow.querySelector('[data-rail-action="open"]').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  assert.ok(s.state.panes.value.some((pane) => pane.key === 'term:agt_bg:current:'), 'clicking a title attaches it too');
-  assert.equal(s.host.querySelector('.mux-bg-count').textContent, '1');
+  assert.ok(s.state.panes.value.some((pane) => pane.key === 'term:agt_bg:current:'), 'the row menu\'s Attach attaches it too');
+  assert.equal(bgCount(s.host), '1');
 
-  await s.harness.act(() => s.harness.fireEvent(document, 'keydown', { key: 'Escape' }));
-  assert.equal(s.host.querySelector('.mux-bg-pop'), null, 'Escape closes the popover');
+  await s.harness.act(() => s.harness.fireEvent(stray.querySelector('.cr-name'), 'click'));
+  assert.ok(stray.querySelector('.cr-row-menu'), 'a click on a session that cannot attach opens its menu');
+  assert.equal(stray.querySelector('[data-rail-action="open"]'), null, 'with nothing to attach');
+  assert.equal(stray.querySelector('[data-rail-action="kill"]').textContent, 'Kill session…', 'but it can be killed');
 
   await s.harness.act(async () => {
     await s.actions.closeAllPanes();
     s.background.backgroundTerminals.value = ROWS.filter((row) => row.kind === 'other');
   });
   assert.equal(document.body.classList.contains('hide-terminals'), false, 'the Terminals tab never auto-hides');
-  assert.match(s.host.querySelector('.mux-bg-empty').textContent, /1 tclaude session is still running/);
+  assert.ok(s.host.querySelector('[data-collab-home]'), 'a session still running keeps the home view up, as the panel lists it');
+  assert.equal(bgCount(s.host), '1');
 
   await s.harness.act(() => { s.background.backgroundTerminals.value = []; });
   assert.equal(document.body.classList.contains('hide-terminals'), false, 'not even with nothing open or in the background');
   assert.match(s.host.querySelector('.mux-bg-empty').textContent, /No terminals open/);
+  assert.equal(bgCount(s.host), '', 'no count with nothing in the background');
 });
 
 test('background terminal helpers', async (t) => {
@@ -120,28 +133,28 @@ const BOARD_ROW = {
   agents: [{ agent_id: 'agt_bg', title: 'old-name' }, { agent_id: 'agt_gone', title: 'stored-name' }],
 };
 
-test('a board with a session lists under Boards, opens as a board tab and leaves the menu while open', async (t) => {
+test('a board with a session no group lists shows on the panel, opens as a board tab and stays while its tab closes', async (t) => {
   const s = await mountTabs(t);
   await s.harness.act(() => { s.background.backgroundTerminals.value = [BOARD_ROW]; });
-  await s.harness.act(() => s.host.querySelector('.mux-bg-trigger').click());
-  const pop = s.host.querySelector('.mux-bg-pop');
-  assert.deepEqual([...pop.querySelectorAll('.mux-bg-sec-head')].map((node) => node.textContent), ['Boards · 1']);
-  assert.equal(pop.querySelector('.mux-bg-name').textContent, 'Release plan · renamed-worker, stored-name',
+  const row = () => railItem(s.host, 'board:plan');
+  assert.ok(row(), 'listed, under Not in a group');
+  assert.equal(row().querySelector('.cr-title').textContent, 'Release plan · renamed-worker, stored-name',
     'the title and who is on it, by live roster title where there is one');
-  assert.equal(pop.querySelector('.mux-bg-attach').textContent, 'Open');
-  assert.equal(pop.querySelector('.mux-bg-kill').textContent.trim(), 'End');
-
+  await s.harness.act(() => row().querySelector('.cr-more').click());
+  assert.deepEqual([...row().querySelectorAll('[data-rail-action]')].map((node) => node.dataset.railAction),
+    ['open', 'download', 'end-sessions', 'delete-board']);
+  assert.equal(row().querySelector('[data-rail-action="open"]').textContent, 'Open');
   await s.harness.act(async () => {
-    pop.querySelector('.mux-bg-attach').click();
+    row().querySelector('[data-rail-action="open"]').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   const pane = s.state.panes.value.find((candidate) => candidate.key === 'board:plan');
   assert.ok(pane, 'the row opens under the board\'s pane key');
   assert.equal(pane.seed.board, 'plan');
   assert.equal(pane.seed.label, 'Release plan', 'the tab is named after the board alone');
-  assert.equal(s.host.querySelector('.mux-bg-trigger'), null, 'the row hides while the pane is open here');
+  assert.equal(bgCount(s.host), '', 'the row leaves the count while the pane is open here');
   await s.harness.act(async () => { await s.actions.closeAllPanes(); });
-  assert.ok(s.host.querySelector('.mux-bg-trigger'), 'closing the tab does not end the session');
+  assert.equal(bgCount(s.host), '1', 'closing the tab does not end the session');
 });
 
 test('a board row hides while its board floats, and is left out of a peer\'s page', async (t) => {
@@ -268,14 +281,19 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   assert.deepEqual(opened.map(({ instance, agent, peerLabel, label }) => ({ instance, agent, peerLabel, label })),
     [{ instance: 'inst_forge', agent: 'agt_scout', peerLabel: 'forge', label: 'scout' }]);
 
-  const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const mounted = await harness.mount(harness.html`<${bg.BackgroundTerminalsChip} rows=${bg.backgroundTerminals.value} />`, host);
-  await harness.act(() => host.querySelector('.mux-bg-trigger').click());
-  const heads = [...host.querySelectorAll('.mux-bg-sec-head')].map((head) => head.textContent);
-  assert.deepEqual(heads, ['Agents · 1', 'forgeAgents · 1', 'forgeGroup shells · 1'], "the peer's rows sit under its node pill, by kind");
-  const shellRow = [...host.querySelectorAll('.mux-bg-sec')].at(-1).querySelector('.mux-bg-row');
-  assert.equal(shellRow.querySelector('.mux-bg-attach').disabled, false, "a peer's group shell attaches from here");
-  assert.equal(shellRow.querySelector('.lock-why'), null);
-  assert.ok(shellRow.querySelector('.mux-bg-kill'), 'it can be ended from here');
-  await mounted.unmount();
+  // The panel lists the peer's rows: its agent and its group shell attach,
+  // and the shell can be ended from its row menu.
+  const { railItems } = await harness.importDashboardModule('js/collab-rail-model.js');
+  const { railRowActions } = await harness.importDashboardModule('js/collab-rail-menu.js');
+  const { sections } = railItems({ background: bg.backgroundTerminals.value, titleOf: (row) => row.label || row.group || row.tmux_session });
+  const listed = sections.flatMap((section) => section.items.map((item) => [section.name, item.key, item.row.node?.name || '']));
+  assert.deepEqual(listed, [
+    ['Not in a group', 'bg::tmux-a', ''],
+    ['Not in a group', 'bg:inst_forge:a', 'forge'],
+    ['Not in a group', 'bg:inst_forge:g', 'forge'],
+  ], "the peer's rows list beside this node's, a peer's group shell as a terminal");
+  const peerShell = sections[0].items.find((item) => item.key === 'bg:inst_forge:g');
+  const shellActions = railRowActions(peerShell);
+  assert.deepEqual([...shellActions.open, ...shellActions.end].map((action) => [action.id, !!action.disabled]),
+    [['open', false], ['kill', false]], "a peer's group shell attaches from here, and can be ended from here");
 });

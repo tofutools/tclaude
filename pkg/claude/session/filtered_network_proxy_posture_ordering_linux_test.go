@@ -56,12 +56,12 @@ func TestProxyPostureInjectedVariablesNeverReachTheInspectedSet(t *testing.T) {
 	injected := proxyPostureEnvironmentMap(
 		proxyNetworkSandboxEnv(os.Environ(), port))
 	for name, want := range map[string]string{
-		"HTTP_PROXY":   "http://127.0.0.1:39217",
-		"http_proxy":   "http://127.0.0.1:39217",
-		"HTTPS_PROXY":  "http://127.0.0.1:39217",
-		"https_proxy":  "http://127.0.0.1:39217",
-		"ALL_PROXY":    "socks5h://127.0.0.1:39217",
-		"all_proxy":    "socks5h://127.0.0.1:39217",
+		"HTTP_PROXY":  "http://127.0.0.1:39217",
+		"http_proxy":  "http://127.0.0.1:39217",
+		"HTTPS_PROXY": "http://127.0.0.1:39217",
+		"https_proxy": "http://127.0.0.1:39217",
+		"ALL_PROXY":   "socks5h://127.0.0.1:39217",
+		"all_proxy":   "socks5h://127.0.0.1:39217",
 		// Empty rather than absent: empty exempts nothing, while absent lets a
 		// harness fall back to its own default exemption list.
 		"NO_PROXY": "",

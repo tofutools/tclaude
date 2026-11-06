@@ -2,16 +2,16 @@ package conv
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -36,7 +36,7 @@ func CpCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveDefault
 		},
 		RunFunc: func(params *CpParams, cmd *cobra.Command, args []string) {
-			exitCode := RunCp(params, os.Stdout, os.Stderr, os.Stdin)
+			exitCode := RunCp(params, cliStdout, cliStderr, os.Stdin)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -44,57 +44,16 @@ func CpCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
+func RunCp(params *CpParams, stdout, stderr io.Writer, stdin *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
-	var srcEntry *SessionEntry
-	var srcProjectPath string
-	dstProjectPath := GetClaudeProjectPath(params.DestPath)
-
-	if params.Global {
-		// Search all projects
-		projectsDir := ClaudeProjectsDir()
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
-			return 1
-		}
-
-		for _, dirEntry := range entries {
-			if !dirEntry.IsDir() {
-				continue
-			}
-			projPath := projectsDir + "/" + dirEntry.Name()
-			index, err := LoadSessionsIndex(projPath)
-			if err != nil {
-				continue
-			}
-			if found, _ := FindSessionByID(index, convID); found != nil {
-				srcEntry = found
-				srcProjectPath = projPath
-				break
-			}
-		}
-	} else {
-		// Search current directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
-			return 1
-		}
-
-		srcProjectPath = GetClaudeProjectPath(cwd)
-		srcIndex, err := LoadSessionsIndex(srcProjectPath)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error loading source sessions index: %v\n", err)
-			return 1
-		}
-
-		srcEntry, _ = FindSessionByID(srcIndex, convID)
+	src, err := FindSessionInProjects(convID, params.Global)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error %v\n", err)
+		return 1
 	}
-
-	if srcEntry == nil {
+	if src.Entry == nil {
 		fmt.Fprintf(stderr, "Conversation %s not found\n", convID)
 		if !params.Global {
 			fmt.Fprintf(stderr, "Hint: use -g to search all projects\n")
@@ -102,78 +61,30 @@ func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
 		return 1
 	}
 
-	// Check if destination project directory exists, create if not
-	if _, err := os.Stat(dstProjectPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(dstProjectPath, 0700); err != nil {
-			fmt.Fprintf(stderr, "Error creating destination project directory: %v\n", err)
-			return 1
-		}
-	}
-
-	// Generate new UUID for the copy
-	newConvID := uuid.New().String()
-	oldConvID := srcEntry.SessionID
-
-	// Source and destination files
-	srcConvFile := filepath.Join(srcProjectPath, oldConvID+".jsonl")
-	dstConvFile := filepath.Join(dstProjectPath, newConvID+".jsonl")
-
-	// Check if destination file already exists (shouldn't with new UUID, but be safe)
-	if _, err := os.Stat(dstConvFile); err == nil {
-		if !params.Force {
+	copied, err := convops.CopyFoundConversation(src, params.DestPath, convops.CopyOptions{
+		ConfirmOverwrite: func() bool {
+			if params.Force {
+				return true
+			}
 			fmt.Fprintf(stdout, "Destination file already exists (unlikely UUID collision!).\n")
 			fmt.Fprintf(stdout, "Overwrite? [y/N]: ")
-			reader := bufio.NewReader(stdin)
-			response, _ := reader.ReadString('\n')
+			response, _ := bufio.NewReader(stdin).ReadString('\n')
 			response = strings.TrimSpace(strings.ToLower(response))
-			if response != "y" && response != "yes" {
-				fmt.Fprintf(stdout, "Aborted.\n")
-				return 0
-			}
-		}
+			return response == "y" || response == "yes"
+		},
+		IndexWarning: func(dstProjectPath string, err error) {
+			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
+		},
+	})
+	if errors.Is(err, convops.ErrOverwriteDeclined) {
+		fmt.Fprintf(stdout, "Aborted.\n")
+		return 0
 	}
-
-	// Copy and transform conversation file (update sessionId references)
-	if err := CopyConversationFile(srcConvFile, dstConvFile, oldConvID, newConvID); err != nil {
-		fmt.Fprintf(stderr, "Error copying conversation file: %v\n", err)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error %v\n", err)
 		return 1
 	}
 
-	// Copy conversation directory if it exists (with new name)
-	srcConvDir := filepath.Join(srcProjectPath, oldConvID)
-	dstConvDir := filepath.Join(dstProjectPath, newConvID)
-	if info, err := os.Stat(srcConvDir); err == nil && info.IsDir() {
-		if err := CopyDir(srcConvDir, dstConvDir); err != nil {
-			fmt.Fprintf(stderr, "Error copying conversation directory: %v\n", err)
-			return 1
-		}
-	}
-
-	// Surgically add the new entry to the legacy sessions-index.json for
-	// external tooling that may still read it (no-op if the file doesn't exist).
-	dstInfo, err := os.Stat(dstConvFile)
-	if err == nil {
-		now := time.Now().UTC().Format(time.RFC3339)
-		newEntry := SessionEntry{
-			SessionID:        newConvID,
-			FullPath:         dstConvFile,
-			FileMtime:        dstInfo.ModTime().Round(0).UTC(),
-			FirstPrompt:      srcEntry.FirstPrompt,
-			Summary:          srcEntry.Summary,
-			CustomTitle:      srcEntry.CustomTitle,
-			MessageCount:     srcEntry.MessageCount,
-			Created:          now,
-			Modified:         now,
-			GitBranch:        srcEntry.GitBranch,
-			GitBranchStartup: srcEntry.GitBranchStartup,
-			ProjectPath:      params.DestPath,
-			IsSidechain:      srcEntry.IsSidechain,
-		}
-		if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
-		}
-	}
-
-	fmt.Fprintf(stdout, "Copied conversation %s -> %s in %s\n", oldConvID[:8], newConvID[:8], params.DestPath)
+	fmt.Fprintf(stdout, "Copied conversation %s -> %s in %s\n", copied.OldConvID[:8], copied.NewConvID[:8], params.DestPath)
 	return 0
 }

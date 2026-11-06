@@ -171,6 +171,29 @@ permissions stay under the carry policy rather than this list. A request that na
 group's owners land, for a human caller. Snapshot spawns and board imports are such
 requests.
 
+A group file's archived mail and head aliases land only among the file's own
+agents. The import gives fresh ids only to the file's own conversations, so an
+archived message addressed to another conversation on this node (by `to`, a
+recipient list or its original recipient), or a head alias pointing at one,
+would reach that agent unchanged, under the sender the file names. A human
+import drops those entries, and the preview and the reply list them by archived
+message id and alias handle. A peer import refuses the file.
+
+Mail the file says came from a conversation on this node that the file does not
+carry lands from an unknown sender instead, on every import, so the imported
+agents never see a message from a trusted local agent that it did not send. Its
+id is replaced by a fresh one (one per sender, so a thread still reads as one),
+which no agent and no name resolves to, and the local agent's history gains
+nothing. A head alias the file says such a conversation created is credited the
+same way. Mail from a sender that is not on this node is kept as it is. The
+preview and the reply list the affected messages by archived id.
+
+Mail from the source's operator lands as this node's operator's only on an
+import by this node's human, or by a peer with unrestricted trust. On a
+restricted peer's import it lands from an unknown sender instead, because an
+agent reads operator mail as this node's human's word. The preview and the
+reply list it by archived id.
+
 ## How tclaude uses PAF
 
 | Operation | What PAF carries | Carrier in this release |
@@ -1840,6 +1863,7 @@ own state that other systems are not expected to share:
 | Where | Field | Meaning |
 |---|---|---|
 | `agent.json` | `spawn_profile` | `name` (informational) and `profile`: tclaude's inline spawn profile, including launch posture. Receivers never look a profile up by name. |
+| `agent.json` | `pi_drive` | `true` when a pi agent is driven through tclaude's pi extension instead of tmux send-keys (`spawn --pi-drive`). A per-launch spawn field, so the spawn profile cannot carry it; the receiver's landing asks for the drive again. |
 | `agent.json` | `permissions` | Permission rows (`slug`, `effect`, `scope`, `source`) as advisory provenance. They never become grants unless the receiver's own policy approves them. |
 | `agent.json` | `teleport` | The teleport chain id and hops (`from_instance`, `from_agent`, `to_instance`, `to_group`, `at`). |
 | `agent.json` | `transfer` | Continuation state for move and teleport: the stable federation `identity`, the sender's `carry_permissions` opt-in, the `trigger` and source `warnings`. |

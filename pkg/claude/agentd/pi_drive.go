@@ -316,7 +316,7 @@ func handleWhoamiPiDrive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !piDrivePeerIsHarnessRoot(peerFromContext(r.Context()).PID) {
-		writeError(w, http.StatusForbidden, "forbidden",
+		writeError(w, http.StatusForbidden, "permission",
 			"the pi drive channel belongs to the pi process itself")
 		return
 	}

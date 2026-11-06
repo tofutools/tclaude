@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox, profileItems } from './profile-picker.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
@@ -14,6 +16,7 @@ import {
 } from './usage-rules-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -173,16 +176,14 @@ export function ProfileChips({ names, profiles, disabled, onChange, label, onNew
       <span class="role-chip-inspect">${name}</span>
       <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
         onClick=${() => onChange(names.filter((n) => n !== name))}>×</button></span>`)}
-    <${Select} size="sm" value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
-      onChange=${(e) => {
-        const next = e.currentTarget.value; e.currentTarget.value = '';
+    <${ProfileCombobox} className="usage-profile-add" action=${true} value="" floating=${true}
+      disabled=${disabled || (!free.length && !onNew)} ariaLabel=${`Add usage profile to ${label}`}
+      placeholder=${profiles.length ? '＋ add…' : 'no usage profiles yet'} emptyHint="No more usage profiles."
+      items=${[...profileItems(free), ...(onNew ? [{ key: NEW_PROFILE, label: '＋ new usage profile…', hint: '', keywords: 'new create' }] : [])]}
+      onChange=${(next) => {
         if (next === NEW_PROFILE) onNew();
         else if (next) onChange([...names, next]);
-      }}>
-      <option value="">${profiles.length ? '＋ add…' : 'no usage profiles yet'}</option>
-      ${free.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
-      ${onNew ? html`<option value=${NEW_PROFILE}>＋ new usage profile…</option>` : null}
-    <//>
+      }} />
   </span>`;
 }
 
@@ -213,10 +214,8 @@ function AssignmentsTab({ overview, busy, onAssign }) {
     <h4 class="ui-eyebrow">Agents</h4>
     ${agentRows.map((id) => row('agent', id, agentTitle(overview, id) || id, agentTitle(overview, id) ? id : ''))}
     <div class="usage-assign-row">
-      <${Select} size="sm" aria-label="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} onChange=${(e) => setAgentPick(e.currentTarget.value)}>
-        <option value="">${pickable.length ? 'Pick an agent…' : 'No other agents'}</option>
-        ${pickable.map((a) => html`<option key=${a.id} value=${a.id}>${a.title || a.id}</option>`)}
-      <//>
+      <${AgentCombobox} ariaLabel="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} agents=${choiceAgents(pickable)}
+        placeholder=${pickable.length ? 'Pick an agent…' : 'No other agents'} onChange=${setAgentPick} />
       ${agentPick ? html`<${ProfileChips} names=${[]} profiles=${profiles} disabled=${busy} label=${agentTitle(overview, agentPick) || agentPick}
         onChange=${(next) => { setAgentPick(''); onAssign('agent', agentPick, next); }}/>` : null}
     </div>
@@ -310,8 +309,8 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
         <option value="global">Global (whole instance)</option>
         <option value="group" disabled=${!(overview.groups || []).length}>Group</option>
       <//></label>
-      ${scope === 'group' ? html`<label>Group <${Select} size="sm" aria-label="Limit group" value=${group} disabled=${busy || !!limit.id}
-        onChange=${(e) => touch(setGroup)(e.currentTarget.value)}>${(overview.groups || []).map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></label>` : null}
+      ${scope === 'group' ? html`<label>Group <${GroupCombobox} id="usage-limit-group" ariaLabel="Limit group" groups=${overview.groups || []}
+        value=${group} disabled=${busy || !!limit.id} onChange=${touch(setGroup)} /></label>` : null}
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}

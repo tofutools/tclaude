@@ -65,7 +65,7 @@ func rolesLsCmd() *cobra.Command {
 		Long:        "Returns every role with its permission count and one-line description.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesLs(os.Stdout, os.Stderr))
+			os.Exit(runRolesLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -114,7 +114,7 @@ func rolesShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runRolesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -182,13 +182,13 @@ func rolesCreateCmd() *cobra.Command {
 			"than via flags.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *rolesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runRolesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runRolesCreate(p *rolesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	rl, rc := loadRoleFile(p.File, stdin, stderr)
+	rl, rc := loadLibraryJSONFile[roleJSON]("role", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -225,7 +225,7 @@ func rolesEditCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runRolesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -236,7 +236,7 @@ func runRolesEdit(p *rolesEditParams, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "Error: a role name is required")
 		return rcInvalidArg
 	}
-	rl, rc := loadRoleFile(p.File, stdin, stderr)
+	rl, rc := loadLibraryJSONFile[roleJSON]("role", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -251,30 +251,8 @@ func runRolesEdit(p *rolesEditParams, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated role %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated role %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "role", name, resp.Name)
 	return rcOK
-}
-
-// loadRoleFile reads a role JSON file (or stdin for "-") and unmarshals it.
-func loadRoleFile(file string, stdin io.Reader, stderr io.Writer) (*roleJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a role JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var rl roleJSON
-	if err := json.Unmarshal([]byte(raw), &rl); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid role JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &rl, rcOK
 }
 
 // ---- rm ----
@@ -297,7 +275,7 @@ func rolesRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runRolesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

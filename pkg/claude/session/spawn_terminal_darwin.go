@@ -29,12 +29,12 @@ func openTerminalAttachingSession(sessionID string, debug bool) bool {
 
 	cmd := "exec " + clcommon.DetectAbsoluteCmd("session", "attach", sessionID)
 	if debug {
-		fmt.Printf("[debug] openTerminalAttachingSession: cmd=%q\n", cmd)
+		fmt.Fprintf(cliStdout, "[debug] openTerminalAttachingSession: cmd=%q\n", cmd)
 	}
 
 	if err := terminal.OpenWithCommand(cmd); err != nil {
 		if debug {
-			fmt.Printf("[debug] openTerminalAttachingSession: open failed: %v\n", err)
+			fmt.Fprintf(cliStdout, "[debug] openTerminalAttachingSession: open failed: %v\n", err)
 		}
 		return false
 	}

@@ -254,6 +254,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	if err := checkSpawnDirProofMarker(args); err != nil {
 		return err
 	}
+	if err := checkOpenCodeManagedLaunch(args); err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
 	}
@@ -519,6 +522,24 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
+	return nil
+}
+
+// checkOpenCodeManagedLaunch refuses an OpenCode launch the way the real
+// `tclaude session new` does: OpenCode attaches only to an agentd-managed
+// server, and a preset conversation id must be the ses_ id that server
+// minted. Without it a launch path that skips the managed-server start (the
+// tcl-yt3lyh reincarnate bug) would pass every flow test.
+func checkOpenCodeManagedLaunch(args clcommon.SpawnArgs) error {
+	if args.Harness != harness.OpenCodeName {
+		return nil
+	}
+	if args.OpenCodeServerURL == "" || args.OpenCodeServerPassword == "" {
+		return fmt.Errorf("OpenCode requires an authenticated agentd-managed server; launch it through `tclaude agent spawn`")
+	}
+	if args.SessionID != "" && !strings.HasPrefix(args.SessionID, "ses_") {
+		return fmt.Errorf("--session-id for OpenCode is an internal agentd-minted ses_ id")
+	}
 	return nil
 }
 

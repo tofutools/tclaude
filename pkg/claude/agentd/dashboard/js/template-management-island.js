@@ -6,6 +6,9 @@ import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoi
 import { pickDirectory } from './helpers.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -1268,6 +1271,7 @@ export function TemplateDeployDialog({
 }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const groups = current.templateGroups;
+  const groupNames = useMemo(() => (groups || []).map((group) => group?.name), [groups]);
   const initialTemplate =
     current.templates.find((item) => item.name === descriptor.presetName) ||
     current.templates[0];
@@ -1591,29 +1595,15 @@ export function TemplateDeployDialog({
       setBusy(false);
     }
   };
-  const options = wtData?.is_repo
-    ? [
-        { value: '', label: '(no worktree — use Default cwd above)' },
-        ...(wtData.worktrees || []).map((item) => ({
-          value: `wt:${item.path}`,
-          label: `${item.branch || '(detached)'}${item.is_main ? ' [main]' : ''} — ${item.path}`,
-          branch: item.branch || '',
-        })),
-        { value: WT_NEW, label: '+ create new worktree…' },
-      ]
-    : [
-        {
-          value: '',
-          label:
-            wtPhase === 'loading'
-              ? 'loading…'
-              : repo.trim()
-                ? wtData?.sub_repos?.length
-                  ? '(not a git repo — pick a sub-repo above)'
-                  : '(not a git repo — worktrees unavailable)'
-                : '(enter a CWD to enable worktrees)',
-        },
-      ];
+  const worktreeNoneLabel = wtData?.is_repo
+    ? '(no worktree — use Default cwd above)'
+    : wtPhase === 'loading'
+      ? 'loading…'
+      : repo.trim()
+        ? wtData?.sub_repos?.length
+          ? '(not a git repo — pick a sub-repo above)'
+          : '(not a git repo — worktrees unavailable)'
+        : '(enter a CWD to enable worktrees)';
   const showNew = !worktreesHidden && wtData?.is_repo && worktree === WT_NEW;
   const worktreeLoading =
     !reinforcing && wtPhase === 'loading' && !!(worktree || perAgent);
@@ -1717,19 +1707,14 @@ export function TemplateDeployDialog({
         id="template-deploy-source-row"
         hidden=${!!dropGroup}
         ><span class="cron-create-label">Mirror settings</span
-        ><${Select}
+        ><${GroupCombobox}
           id="template-deploy-source"
           value=${source}
-          onChange=${(event) => chooseSource(event.currentTarget.value)}
-        >
-          <option value="">template defaults (top-level)</option>
-          ${groups.map(
-            (group) =>
-              html`<option key=${group.name} value=${group.name}>
-                ${group.name}
-              </option>`,
-          )}
-        <//></label
+          groups=${groupNames}
+          noneLabel="template defaults (top-level)"
+          ariaLabel="Mirror settings from group"
+          onChange=${chooseSource}
+        /></label
       ><label
         class="cron-create-enabled"
         id="template-deploy-parent-row"
@@ -1806,19 +1791,15 @@ export function TemplateDeployDialog({
         <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree</span
-        ><${Select}
+        ><${WorktreeCombobox}
           id="template-deploy-worktree"
-          value=${worktree}
+          value=${wtData?.is_repo ? worktree : ''}
+          worktrees=${wtData?.is_repo ? wtData.worktrees || [] : []}
+          newKey=${wtData?.is_repo ? WT_NEW : ''}
+          noneLabel=${worktreeNoneLabel}
           disabled=${!wtData?.is_repo}
-          onChange=${(event) => setWorktree(event.currentTarget.value)}
-        >
-          ${options.map(
-            (item) =>
-              html`<option key=${item.value} value=${item.value}>
-                ${item.label}
-              </option>`,
-          )}
-        <//></label
+          onChange=${setWorktree}
+        /></label
       ><label
         class=${`cron-create-enabled cron-check-aligned${!wtData?.is_repo ? ' disabled' : ''}`}
         id="template-deploy-wt-sync-row"
@@ -1864,16 +1845,12 @@ export function TemplateDeployDialog({
         id="template-deploy-wt-base-row"
         hidden=${!showNew || wtData?.has_commits === false}
         ><span class="cron-create-label">Base branch</span
-        ><${Select}
+        ><${BranchCombobox}
           id="template-deploy-wt-base"
           value=${base}
-          onChange=${(event) => setBase(event.currentTarget.value)}
-        >
-          ${(wtData?.branches || []).map(
-            (value) =>
-              html`<option key=${value} value=${value}>${value}</option>`,
-          )}
-        <//></label
+          branches=${wtData?.branches || []}
+          onChange=${setBase}
+        /></label
       >${showNew &&
       wtData?.has_commits === false &&
       html`<p class="wt-orphan-warn" id="template-deploy-wt-orphan-hint">
@@ -1896,24 +1873,20 @@ export function TemplateDeployDialog({
         /></label
       ><label class="cron-create-row" id="template-deploy-default-profile-row"
         ><span class="cron-create-label">Default profile</span
-        ><${Select}
+        ><${ProfileCombobox}
           id="template-deploy-default-profile"
           value=${findProfileByHandle(current.profiles, defaultProfile)
             ? defaultProfile
             : ''}
-          onChange=${(event) => {
-            setDefaultProfile(event.currentTarget.value);
+          profiles=${current.profiles}
+          aliases=${true}
+          noneLabel="(none — harness default)"
+          ariaLabel="Default profile"
+          onChange=${(name) => {
+            setDefaultProfile(name);
             setProfileEdited(true);
           }}
-        >
-          <option value="">(none — harness default)</option>
-          ${profileChoices(current.profiles).map(
-            (choice) =>
-              html`<option key=${choice.value} value=${choice.value}>
-                ${choice.label}
-              </option>`,
-          )}
-        <//></label
+        /></label
       >
       <div class="cron-create-row">
         <span class="cron-create-label">Preview</span>
@@ -2005,22 +1978,14 @@ function RoleInspect({ roleName, roles }) {
   </div>`;
 }
 
-function profileOptions(agent, profiles) {
-  const choices = profileChoices(profiles);
-  const names = choices.map((choice) => choice.value);
-  const selected = agent.spawn_profile || '';
+// launchNoneLabel is what an agent row's blank launch profile means: the
+// deploy's default profile, when the agent inherits it, else none.
+function launchNoneLabel(agent, profiles) {
+  const names = profileChoices(profiles).map((choice) => choice.value);
   const preferred = getDashDefaultProfile();
-  const blank =
-    preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
-      ? `(default → ${preferred})`
-      : '(none)';
-  return [
-    ['', blank],
-    ...choices.map((choice) => [choice.value, choice.label]),
-    ...(selected && !names.includes(selected)
-      ? [[selected, `⚠ ${selected} (missing)`]]
-      : []),
-  ];
+  return preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
+    ? `(default → ${preferred})`
+    : '(none)';
 }
 
 function ProfileReadback({ agent, profiles }) {
@@ -2254,17 +2219,15 @@ function AgentRow({
         class="template-agent-roleref ta-launch-pick"
         title="Launch profile: the agent's harness, model, effort, sandbox/approval and birth-time permissions come from the picked spawn profile."
         ><span>Launch profile</span
-        ><${Select}
-          class="ta-profile-select"
+        ><${ProfileCombobox}
+          className="ta-profile-select"
           value=${agent.spawn_profile}
-          onChange=${(event) =>
-            update({ spawn_profile: event.currentTarget.value })}
-        >
-          ${profileOptions(agent, profiles).map(
-            ([value, label]) =>
-              html`<option key=${value} value=${value}>${label}</option>`,
-          )}
-        <//></label
+          profiles=${profiles}
+          aliases=${true}
+          noneLabel=${launchNoneLabel(agent, profiles)}
+          ariaLabel="Launch profile"
+          onChange=${(name) => update({ spawn_profile: name })}
+        /></label
       >
       <div class="ta-launch-actions">
         <${Button} class="ta-custom-launch" onClick=${custom}>

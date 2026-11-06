@@ -15,6 +15,8 @@ description: >-
 Treat a process template as untrusted, declarative YAML. Authoring and saving
 never starts a run, spawns an agent, or executes a program. Use only the
 agentd-backed commands below; do not write directly into the process store.
+To start, watch, unblock or report on runs of a saved template, use the
+process-runs skill.
 
 ## Permissions
 

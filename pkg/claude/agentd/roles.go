@@ -128,6 +128,42 @@ func roleConferralFailure(caller string, before, after *db.Role) *spawnFailure {
 	if caller == "" || after == nil {
 		return nil
 	}
+	grants, fail := roleNewGrants(before, after)
+	if fail != nil {
+		return fail
+	}
+	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
+		{grants: grants, ambient: true}}); fail != nil {
+		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
+			"role %q confers permissions on every spawn that names it: %s (default profiles reach unattended workers too)",
+			after.Name, fail.Msg)}
+	}
+	return nil
+}
+
+// roleConferralFailureFor is roleConferralFailure for a request: a linked
+// node's operator (peer_library.go) writes a role's name, description and
+// brief, never a grant the role would confer that it did not already: that
+// takes permissions.grant, which no peer grant hands out.
+func roleConferralFailureFor(r *http.Request, caller string, before, after *db.Role) *spawnFailure {
+	if peerGrantFromRequest(r) == nil {
+		return roleConferralFailure(caller, before, after)
+	}
+	grants, fail := roleNewGrants(before, after)
+	if fail != nil {
+		return fail
+	}
+	if len(grants) > 0 {
+		return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
+			"role %q would confer permissions on every spawn that names it, which takes %s", after.Name, PermPermissionsGrant)}
+	}
+	return nil
+}
+
+// roleNewGrants are the grants after confers that before did not: all of
+// them for a new role, or for a rename onto a name profiles already
+// reference.
+func roleNewGrants(before, after *db.Role) (map[string]db.PermissionOverride, *spawnFailure) {
 	grants := map[string]db.PermissionOverride{}
 	for _, g := range after.Permissions {
 		grants[g.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: g.Scope}
@@ -138,7 +174,7 @@ func roleConferralFailure(caller string, before, after *db.Role) *spawnFailure {
 		// Those profiles gain all of the role's grants, so judge them all.
 		named, err := db.SpawnProfilesReferencingRole(after.Name)
 		if err != nil {
-			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
 		if len(named) > 0 {
 			before = nil
@@ -151,13 +187,7 @@ func roleConferralFailure(caller string, before, after *db.Role) *spawnFailure {
 		}
 		grants = grantsNotIn(grants, had)
 	}
-	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
-		{grants: grants, ambient: true}}); fail != nil {
-		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
-			"role %q confers permissions on every spawn that names it: %s (default profiles reach unattended workers too)",
-			after.Name, fail.Msg)}
-	}
-	return nil
+	return grants, nil
 }
 
 // handleRoles dispatches the collection endpoint /v1/roles: GET lists every
@@ -187,11 +217,11 @@ func handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
-		if fail := roleConferralFailure(caller, nil, rl); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+		if fail := roleConferralFailureFor(r, caller, nil, rl); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateRole(rl)
@@ -252,11 +282,11 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
-		if fail := roleConferralFailure(caller, existing, rl); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+		if fail := roleConferralFailureFor(r, caller, existing, rl); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		rl.ID = existing.ID

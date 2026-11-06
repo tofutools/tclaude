@@ -35,6 +35,7 @@ jobs:
       mode: ${{ steps.diff.outputs.mode }}
       expected: ${{ steps.diff.outputs.expected }}
       test_matrix: ${{ steps.diff.outputs.test_matrix }}
+      macos_runner: ${{ steps.diff.outputs.macos_runner }}
       run_lint: ${{ steps.diff.outputs.run_lint }}
       run_sandbox_v2_smoke: ${{ steps.diff.outputs.run_sandbox_v2_smoke }}
       run_sandbox_v2_seatbelt_smoke: ${{ steps.diff.outputs.run_sandbox_v2_seatbelt_smoke }}
@@ -62,6 +63,11 @@ jobs:
           # message carries the per-commit `CI-macOS: true` opt-in.
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The fork guard. The opt-in trailer is fork-controlled, so only a
+          # PR whose head branch lives in this repository may reach the
+          # self-hosted macOS runner; a fork (or a deleted head repository,
+          # which reads as empty) stays on hosted macos-latest.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -74,8 +80,14 @@ jobs:
             echo "::warning::could not read the PR's labels; the ci:macos label is ignored for this run"
             labels=""
           fi
+          runner_args=()
+          # The runner exists only in tofutools/tclaude: in a fork's own CI
+          # the opted-in macOS jobs stay on hosted macOS as well.
+          if [ "$GITHUB_REPOSITORY" = "tofutools/tclaude" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            runner_args=(--self-hosted-macos)
+          fi
           python3 scripts/ci/classify-changes.py "$BASE_SHA" HEAD \
-            --labels "$labels" --pr-head "$HEAD_SHA" > "$RUNNER_TEMP/classify.out"
+            --labels "$labels" --pr-head "$HEAD_SHA" "${runner_args[@]}" > "$RUNNER_TEMP/classify.out"
           cat "$RUNNER_TEMP/classify.out" >> "$GITHUB_OUTPUT"
           {
             echo '### CI change classification'
@@ -121,11 +133,14 @@ jobs:
     uses: ./.github/workflows/reusable-sandbox-v2-smoke.yml
 
   # macOS jobs run only when the PR opts in; see "macOS CI" in CONTRIBUTING.md.
+  # A same-repository PR runs them on the self-hosted macOS runner, a fork PR
+  # on hosted macos-latest (the classifier's macos_runner); release.yml keeps
+  # hosted macOS for main.
   sandbox-v2-seatbelt-smoke:
     needs: changes
     if: needs.changes.outputs.run_sandbox_v2_seatbelt_smoke == 'true'
     name: Sandbox v2 Seatbelt smoke
-    runs-on: macos-latest
+    runs-on: ${{ fromJSON(needs.changes.outputs.macos_runner) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -153,7 +168,10 @@ jobs:
       # darwin is measured by release.yml's single `macos` job on every merge
       # to main (build, agentd + rest-all tests, Seatbelt smoke). A PR opts
       # into macOS agentd + rest-all here (and the Seatbelt smoke above) with
-      # the ci:macos label or a `CI-macOS: true` trailer on its head commit;
+      # the ci:macos label or a `CI-macOS: true` trailer on its head commit.
+      # Those entries run on the self-hosted macOS runner for a
+      # same-repository PR and on hosted macos-latest for a fork (their `os`
+      # is the classifier's macos_runner, a label list or a label);
       # macOS never runs jstest, which is browser JS under Node + LinkeDOM and
       # does not vary by OS. See "macOS CI" in CONTRIBUTING.md, including for
       # self-hosted runners.

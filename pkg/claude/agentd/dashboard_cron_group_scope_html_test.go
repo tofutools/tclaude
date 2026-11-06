@@ -13,7 +13,8 @@ import (
 // "⏰ schedule…" button, the shared solo/group target picker is scoped
 // to that group — its selection cannot leave the group. The group
 // dropdown locks to the one group; Solo mode swaps the all-agents
-// free-text input for a <select> of only that group's members. Both
+// free-text input for a type-to-find choice (AgentCombobox) of only that
+// group's members. Both
 // modes (whole-group multicast AND a single member) stay available.
 // Non-group entry points (the global "+ new cron job", a per-member
 // ⏰, editing an existing job) pass no scopeGroup and are unchanged.
@@ -27,8 +28,10 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 
 	must("const scope = value.scopeGroup || ''",
 		"the Jobs target root derives its group scope from component state")
-	must("const members = scope ? groupMembers(snapshot, scope) : []",
+	must("const members = useMemo(() => (scope ? groupMembers(snapshot, scope) : []), [snapshot, scope])",
 		"scoped solo options come only from the scoped group's live members")
+	must("agents=${members} group=${scope}",
+		"the scoped member choice lists exactly those members")
 	must("disabled=${!!scope}",
 		"the group dropdown is locked while scoped")
 	must("value=${value.target}",

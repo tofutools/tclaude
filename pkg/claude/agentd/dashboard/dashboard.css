@@ -6527,25 +6527,54 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .perm-scope-dim-label code { color: #d2a8ff; }
 .perm-scope-dim-body { flex: 1; min-width: 0; }
 .perm-scope-hint { margin-top: 3px; }
-.perm-scope-add, .perm-scope-free {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
-  font-size: 10px; font-family: inherit; padding: 2px 5px;
+/* The shared type-to-filter dropdown (filter-combobox.js): the agent
+   picker's add-member rows, rendered in place under the box. */
+.filter-combobox { margin-top: 3px; max-width: 460px; }
+.filter-combobox .filter-combobox-input {
+  width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #d4d4d4; padding: 3px 8px; font: inherit; font-size: 12px;
 }
-.perm-scope-free { width: 130px; }
-.perm-scope-free:focus, .perm-scope-add:focus { outline: none; border-color: #58a6ff; }
-/* The dimensions with no catalogue (remote, process_template, target_agent)
-   have only the free-text box, so the commit gesture needs to be visible
-   rather than a remembered Enter. Inert until something is typed, so an empty
-   box never looks like it has an action pending — via aria-disabled rather
-   than the disabled attribute, which would drop keyboard focus to <body> at
-   the moment the value commits. */
-.perm-scope-free-add {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
-  font-size: 10px; font-family: inherit; line-height: 1; padding: 3px 6px; cursor: pointer;
+.filter-combobox .filter-combobox-input:focus { outline: none; border-color: #58a6ff; }
+/* In the flow, under the box: the editor's list scrolls, and a popup laid
+   over it would be clipped by that scroll box. */
+.filter-combobox .filter-combobox-list {
+  min-height: 0; max-height: 320px; margin-top: 2px; border-color: #58a6ff;
 }
-.perm-scope-free-add:hover { color: #f0f6fc; }
-.perm-scope-free-add[aria-disabled="true"] { opacity: 0.4; cursor: default; }
-.perm-scope-free-add[aria-disabled="true"]:hover { color: #c9d1d9; }
+.filter-combobox .add-member-row { padding: 3px 10px 3px 14px; }
+.filter-combobox .add-member-row.disabled { cursor: not-allowed; opacity: 0.55; }
+.filter-combobox-check { flex: 0 0 10px; color: #3fb950; }
+.filter-combobox .ui-eyebrow { padding: 5px 10px 1px; }
+.filter-combobox-group { padding: 2px 10px 0; color: #a9b1c0; font-size: 11px; }
+.filter-combobox-tip { padding: 4px 10px; color: var(--ui-muted-text); font-size: 11px; }
+.filter-combobox-foot { border-top: 1px solid #2a3340; padding: 4px 10px; color: #e3b341; font-size: 11px; }
+/* An in-form choice (choice-combobox.js), sized like the <select> it
+   replaced: the box shows the chosen value, × follows it, and the list opens
+   over what is below. */
+.choice-combobox { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.choice-combobox .filter-combobox { margin-top: 0; flex: 1 1 auto; min-width: 0; max-width: none; }
+.choice-combobox.missing .filter-combobox-input { color: #d29922; }
+.filter-combobox-floating { position: relative; }
+.filter-combobox-floating .filter-combobox-list {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 9; min-width: 220px;
+  background: #0d1117; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+/* The agent picker (agent-picker.js): in its dialog the list fills the
+   dialog, under a full-size box; in a form, the chosen agent sits above it. */
+.agent-picker { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.agent-picker .filter-combobox { max-width: none; margin-top: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.agent-picker .filter-combobox .filter-combobox-input { padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
+.agent-picker .filter-combobox .filter-combobox-list { flex: 1 1 auto; min-height: 80px; max-height: 50vh; margin-top: 0; border-color: #2a3340; }
+.agent-picker .filter-combobox .add-member-row { padding: 6px 10px; }
+.perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font-family: inherit; }
+.perm-scope-sheet {
+  margin-top: 4px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 4px 8px; max-width: 460px;
+}
+.perm-scope-sheet-head { display: flex; justify-content: space-between; gap: 8px; color: #8b949e; font-size: 11px; margin-bottom: 3px; }
+.perm-scope-sheet-filter { background: #161b22; border: 1px solid #2a3340; border-radius: 3px; color: #d4d4d4; font: inherit; font-size: 11px; padding: 1px 6px; }
+.perm-scope-sheet-row { display: flex; gap: 6px; align-items: center; padding: 1px 0; }
+.perm-scope-sheet-pager { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
+.perm-row-covered { color: #8b949e; }
+.perm-row-covered b { color: #c9d1d9; font-weight: 600; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
@@ -7490,7 +7519,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    authored rows use the wider three-state grid below. */
 .sbx-global-row .sbx-access { flex: 0 0 7em; }
 .sbx-row .sbx-inc-name {
-  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;
+  flex: 1 1 14em; min-width: 0; max-width: 32em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .sbx-filesystem-row {
@@ -9493,6 +9522,11 @@ label.cfg-label { cursor: pointer; }
 .cfg-terminal-attach-unit { color: var(--ui-muted-text); font-size: 11px; }
 .cfg-terminal-attach-note { display: block; color: var(--ui-muted-text); font-size: 10px; margin-top: 4px; }
 .cfg-terminal-attach-hint { margin-top: 2px; }
+/* The side panel's Advanced tuning (config dashboard.side_panel_*): the same
+   timing-override card, sized for ten short rows and wider units. */
+.cfg-terminal-attach-timings.cfg-side-panel-tuning { margin: 6px 0 0; max-width: 440px; }
+.cfg-side-panel-tuning > label { grid-template-columns: minmax(150px, 1fr) 84px 44px; min-height: 30px; }
+.cfg-side-panel-tuning #cfg-side-panel-reset { margin-top: 8px; }
 @media (max-width: 600px) {
   .cfg-terminal-attach-field > .cfg-label { flex-basis: 100%; }
   .cfg-terminal-attach-field > select { width: 100%; }
@@ -13107,8 +13141,7 @@ body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) opti
    already read parchment-muted, so only the control itself needs skinning.
    Options render on the OS layer: dark ink on parchment for legibility, same
    as tw-sendto. */
-body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option,
-body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
 /* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
    variants read muted-parchment (missing = gilt-warning); the legacy notice
@@ -14789,6 +14822,19 @@ body:not(.dock-tab) #agent-dock { display: none; }
    since the CSS default (no .dock-open) is the translated-off state. dock.js
    adds .dock-anim on the frame after the first applyDockOpen. */
 body.dock-anim #agent-dock { transition: transform .2s ease; }
+/* A folded panel floating in because the pointer reached the right edge
+   (js/side-panel-reveal.js). It slides in over the content without dock-open,
+   so none of the reservation rules below apply and nothing reflows; the
+   shadow says it floats. The handle keeps its folded chevron: clicking it is
+   what pins the panel open. */
+body.dock-revealed:not(.dock-open) #agent-dock { transform: none; }
+body.dock-revealed:not(.dock-open) #agent-dock .dock-inner { box-shadow: -8px 0 24px rgba(0, 0, 0, .45); }
+/* A peek (the predictive reveal, js/side-panel-reveal.js): only the folded
+   panel's leading edge slides in, because the pointer is heading for the edge
+   fast. A wrong prediction covers just this strip; reaching the edge zone or
+   the strip reveals the whole panel. */
+body.dock-peeking:not(.dock-open):not(.dock-revealed) #agent-dock { transform: translateX(calc(100% - var(--dock-peek-w, 48px))); }
+body.dock-peeking:not(.dock-open):not(.dock-revealed) #agent-dock .dock-inner { box-shadow: -4px 0 12px rgba(0, 0, 0, .35); }
 
 /* When open, reserve the dock's width so in-flow content lays out clear of the
    dock (the "reclaim the space, don't overlay dead area" rule): content that
@@ -16593,6 +16639,7 @@ body.wizard .usage-history-note {
 .route-map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
 .route-map-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-toolbar select:where(:not(.ui-select)) { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
+.route-map-toolbar .choice-combobox { width: 260px; }
 .route-map-count { color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-disclosure { margin: 0 0 10px; padding: 8px 10px; border: 1px solid #8b6b2e; border-radius: 5px; color: #e3b341; background: rgba(187, 128, 9, .10); font-size: 12px; }
 .route-map-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 12px; align-items: start; }
@@ -16651,7 +16698,7 @@ body.wizard .usage-history-note {
 
 @media (max-width: 560px) {
   .route-map-toolbar { align-items: stretch; flex-direction: column; }
-  .route-map-toolbar label, .route-map-toolbar select { width: 100%; }
+  .route-map-toolbar label, .route-map-toolbar select, .route-map-toolbar .choice-combobox { width: 100%; }
   .route-map-toolbar select { box-sizing: border-box; }
   .route-map-mode { width: 100%; }
   .route-map-mode .ui-btn { flex: 1; }
@@ -17089,6 +17136,7 @@ html.remote-node body::before {
 .peer-access-reason { align-items: flex-start; }
 .access-peer-consequence { font-size: 12px; color: #c9d1d9; }
 .access-peer-ttl, .access-peer-group { font-size: 12px; }
+.choice-combobox.access-peer-group { flex: 0 1 260px; }
 /* Peer view limits (js/peer-view-limits.js): what the peer does not offer
    stays in place, greyed, with the reason on hover and on click. Refused
    data-act controls are greyed by a rule generated from the peer's peer_view,
@@ -17238,6 +17286,17 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-wrap { overflow-wrap: anywhere; }
 .fa-fp-full { font-size: 14px; color: #f0f6fc; }
 .fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fa-become-filter { width: 100%; margin: 4px 0 6px; }
+.fa-become-perms { max-height: 260px; overflow-y: auto; border: 1px solid var(--border, #30363d); border-radius: 6px; }
+.fa-become-perms.off { opacity: .45; }
+.fa-become-perm { display: grid; grid-template-columns: 18px 1fr auto; gap: 2px 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #21262d; }
+.fa-become-perm:last-child { border-bottom: 0; }
+.fa-become-what { grid-column: 2 / 4; font-size: 12px; }
+.fa-become-unrestricted { padding: 6px 8px; border: 1px dashed #f85149; border-radius: 6px; }
+.fa-become-warn { margin: 10px 0; padding: 10px 12px; border: 2px solid #f85149; border-radius: 6px; background: #f8514922; color: #ffa198; }
+.fa-become-warn > b:first-child { display: block; color: #ff7b72; font-size: 14px; margin-bottom: 4px; }
+.fa-become-warn ul { margin: 6px 0; padding-left: 18px; }
+.fa-request { margin: 8px 0; padding: 8px 10px; border: 1px solid #58a6ff55; border-radius: 6px; background: #58a6ff14; color: #a5d6ff; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
@@ -17261,6 +17320,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-gd-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; padding: 6px 10px; border-bottom: 1px solid #21262d; cursor: pointer; }
 .fa-gd-item:hover { background: rgba(110, 118, 129, 0.08); }
 .fa-gd-item.on { background: rgba(56, 139, 253, 0.12); }
+.fa-gd-item.fa-gd-ungrantable { cursor: default; opacity: 0.6; }
+.fa-gd-item.fa-gd-ungrantable:hover { background: none; }
 .fa-gd-item > code { overflow-wrap: anywhere; }
 .fa-gd-what { grid-column: 2 / 4; font-size: 12px; }
 .fa-gd-badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
@@ -17373,6 +17434,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fs-pre { margin: 6px 0; padding: 6px 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; overflow-x: auto; font-size: 12px; }
 .fs-share { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 10px; }
 .fs-share label { display: inline-flex; align-items: center; gap: 6px; }
+.fs-share .choice-combobox { width: 240px; }
 .fs-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-width: 900px; }
 .fs-preset { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; }
 .fs-preset.on { border-color: #1f6feb; background: #1f6feb14; }
@@ -17557,7 +17619,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-opt-body > .muted { font-size: 12px; }
 .fa-cb-sub { display: block; font-size: 12px; }
 .fa-cb-path { font-size: 12px; color: #7ee2b8; overflow-wrap: anywhere; }
-.fa-cb-input, #fleet-cb-group:where(:not(.ui-select)) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; font-size: 12px; }
+.fa-cb-input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; font-size: 12px; }
 .fa-cb-input { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .fa-cb-check { display: block; margin: 6px 0; font-size: 12.5px; }
 .fa-cb-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -18383,13 +18445,12 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .dpp-graph { overflow-x: auto; margin: 4px 0 8px; }
 .dpp-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dpp-acts select:where(:not(.ui-select)) { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
-/* Start in… is the preview's main action, so its picker keeps the primary fill. */
-.dpp-acts .dpp-start { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+/* The Start in… and Pin to group… choices share the row with the buttons. */
+.dpp-acts .choice-combobox { flex: 1 1 140px; }
 .dpp-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; font-size: 11px; color: #6e7681; }
 .dpp-unpin { background: none; border: 0; padding: 0 0 0 4px; color: inherit; cursor: pointer; font: inherit; }
 .dpp-unpin:hover:not(:disabled), .dpp-unpin:focus-visible { color: #ff7b72; outline: none; }
 body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; color: #f3e6c0; }
-body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
 /* Auto-close terminal tabs: event rows × terminal-kind columns of checkboxes. */
 .cfg-close-tabs { border-collapse: collapse; font-size: 12px; }
@@ -18549,6 +18610,9 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-spacer { flex: 1; }
 .gr-lock { cursor: pointer; white-space: nowrap; background: none; }
 .gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
+/* The small lock icon on a locked resource's tab name and Collab panel row
+   (resource-lock.js LockBadge); its tooltip explains it. */
+.res-lock-badge { font-size: 10px; line-height: 1; margin-left: 4px; opacity: 0.85; cursor: help; flex: none; }
 /* A peer's resource is named, not opened: its board or page is that node's own. */
 .gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A group resource's state pill (resource-pill.js): one look per state. */
@@ -18573,3 +18637,35 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }
 .gr-row .gr-rename { min-width: 12em; font: inherit; font-weight: 600; padding: 1px 6px; }
 .gr-add-menu.gr-new-menu { left: 0; right: auto; top: calc(100% + 2px); min-width: 260px; }
+
+/* Spawn dialog "Deny paths" (spawn-deny-paths.js): perm-scope chips in red,
+   since each is a denial, in the monospace a path reads best in. */
+.spawn-deny-paths { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.spawn-deny-paths .spawn-deny-chip {
+  background: #2d1416; border-color: #7a2a2a; color: #ffb3b1;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
+}
+.spawn-deny-paths .spawn-deny-chip.covers-cwd { border-style: dashed; color: #e3b341; border-color: #4d3a17; }
+
+/* The predictive peek's debug overlay (js/side-panel-predict-debug.js, behind
+   ?side_panel_predict_debug=1 or localStorage tclaude.dash.sidePanelPredictDebug):
+   the edge zone's start as a line, the projected landing point as a dot (green
+   when it peeks), and the prediction's reason. It never takes the pointer. */
+#side-panel-predict-debug .spp-overlay { position: fixed; inset: 0; pointer-events: none; z-index: var(--z-toast); }
+#side-panel-predict-debug .spp-edge { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: rgba(240, 136, 62, .7); }
+#side-panel-predict-debug .spp-full { background: rgba(88, 166, 255, .7); }
+#side-panel-predict-debug .spp-dot {
+  position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid #f85149; background: rgba(248, 81, 73, .25);
+}
+#side-panel-predict-debug .spp-overlay.peek .spp-dot { border-color: #3fb950; background: rgba(63, 185, 80, .35); }
+#side-panel-predict-debug .spp-label {
+  position: absolute; left: 8px; bottom: 8px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(13, 17, 23, .85); color: #e6edf3; font: 11px ui-monospace, monospace;
+}
+
+/* A peer's board: what this node may do with it (peer-boards-ui.js,
+   tcl-ug8bb8), in its Collab panel row and its group's Boards. */
+.ui-tag.peer-board-badge { flex: none; white-space: nowrap; }
+.ui-tag.peer-board-badge.write { color: #3fb950; border-color: #2e6b3a; }
+.peer-group-boards .peer-board-add { margin-top: 4px; }

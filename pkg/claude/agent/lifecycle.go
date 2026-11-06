@@ -57,7 +57,7 @@ func compactCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *compactParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -83,7 +83,7 @@ func interruptCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *interruptParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -114,7 +114,7 @@ func contextInfoCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *contextInfoParams, _ *cobra.Command, _ []string) {
-			os.Exit(runContextInfo(p, os.Stdout, os.Stderr))
+			os.Exit(runContextInfo(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -289,12 +289,15 @@ func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout
 		Action        string `json:"action"`
 		FollowUp      string `json:"follow_up,omitempty"`
 		Note          string `json:"note,omitempty"`
+		remoteReply
 	}
 	path := "/v1/agent/" + url.PathEscape(target) + "/" + label
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	if resp.FollowUp != "" {
 		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
@@ -317,13 +320,9 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	body := map[string]string{}
 	if followUp != "" {
@@ -355,6 +354,7 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 // /v1/agent/{selector}/context). CallerConv is only set on the
 // cross-agent path.
 type contextInfoResp struct {
+	remoteReply
 	ConvID              string  `json:"conv_id"`
 	SessionID           string  `json:"session_id,omitempty"`
 	ContextPct          float64 `json:"context_pct"`
@@ -417,6 +417,8 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	fmt.Fprintf(stdout, "conv:    %s\n", short(resp.ConvID))
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "caller:  %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))

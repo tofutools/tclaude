@@ -21,6 +21,7 @@ const ALLOWED = {
   'process-editor-place.js': 'tracks which process editor the operator touched last',
   'overlay-snap-assist.js': 'window snapping (overlay-window area): the press picks or ends a snap',
   'row-actions.js': 'a new gesture makes a context-menu activation stale',
+  'side-panel-reveal.js': 'a press takes a side-panel peek back, so a click on the scrollbar does not slide the panel in under the drag; it closes nothing',
   'vegas.js': 'the first press unmutes audio',
 };
 

@@ -27,7 +27,7 @@ func presentPRCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *presentPRParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPresentPR(p, os.Stdout, os.Stderr))
+			os.Exit(runPresentPR(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -55,13 +55,9 @@ func runPresentPR(p *presentPRParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/whoami/prs"
 	if target != "" {
@@ -91,6 +87,7 @@ type presentPRResp struct {
 	Handled       bool            `json:"handled"`
 	CallerConv    string          `json:"caller_conv,omitempty"`
 	CallerAgentID string          `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 type presentedPRWire struct {
@@ -101,6 +98,8 @@ type presentedPRWire struct {
 }
 
 func printPresentPRResult(stdout io.Writer, resp *presentPRResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

@@ -56,7 +56,7 @@ func stopCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *stopParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStop(p, os.Stdout, os.Stderr))
+			os.Exit(runStop(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -70,13 +70,9 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/stop"
 	if p.Force {
@@ -89,12 +85,15 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		Action        string `json:"action"`
 		Detail        string `json:"detail,omitempty"`
 		TmuxSession   string `json:"tmux_session,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.TmuxSession != "" {
 		fmt.Fprintf(stdout, "  tmux: %s\n", resp.TmuxSession)
 	}
@@ -142,7 +141,7 @@ func resumeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *resumeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runResume(p, os.Stdout, os.Stderr))
+			os.Exit(runResume(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -180,12 +179,15 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Detail        string   `json:"detail,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
 		Changes       []string `json:"changes,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.Detail != "" {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
 	}
@@ -250,7 +252,7 @@ func deleteCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *deleteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDelete(p, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runDelete(p, cliStdout, cliStderr, os.Stdin))
 		},
 	}.ToCobra()
 }

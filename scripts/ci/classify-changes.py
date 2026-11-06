@@ -2,12 +2,14 @@
 """Decide which PR CI jobs a change needs. Every doubt resolves to running more.
 
 Usage: classify-changes.py <base> [<head>] [--labels L1,L2] [--pr-head SHA]
+                           [--self-hosted-macos]
 
 Prints `key=value` lines for $GITHUB_OUTPUT (and the reasons to stderr):
 
   mode            docs | ui | code | full
   run_<job>       true | false, one per gated ci.yml job (see JOBS)
   test_matrix     JSON {"include": [{"os": ..., "shard": ...}, ...]}
+  macos_runner    JSON runs-on value of the macOS jobs (a label or a list)
   expected        JSON {job: true|false}; ci-complete checks every gated job
                   against it, so a job may only be skipped when this said so
 
@@ -38,6 +40,11 @@ agentd + rest-all test shards and the Seatbelt smoke wherever the test job
 runs (ui, code and full; a docs-only change runs no tests), and `expected`
 then requires them. A trailer on any other commit of the PR counts for
 nothing: the opt-in is per head commit.
+
+macOS runner: the opted-in jobs run on the hosted `macos-latest` unless
+--self-hosted-macos is given, which ci.yml passes only when the PR's head
+repository is this repository. A fork PR (whose trailer anyone can write)
+therefore never reaches the self-hosted runner through this script.
 """
 import json
 import re
@@ -103,6 +110,9 @@ HARNESS_SMOKES = {
 
 LINUX = "ubuntu-latest"
 MACOS = "macos-latest"
+# The self-hosted runner's default label set. Only same-repository PRs get it
+# (--self-hosted-macos); forks and release.yml stay on the hosted MACOS.
+MACOS_SELF_HOSTED = ["self-hosted", "macOS", "ARM64"]
 LINUX_SHARDS = ("agentd", "jstest", "process", "sandbox", "rest")
 UI_SHARDS = ("agentd", "jstest", "rest")
 # An opted-in PR's macOS jobs: the same pair release.yml's macOS job runs.
@@ -174,13 +184,21 @@ def basename(path):
     return path.rsplit("/", 1)[-1]
 
 
-def classify(paths, affected, macos=False):
-    """classify_paths, plus the macOS jobs when the PR opted in (macos)."""
+def macos_runner(self_hosted):
+    """The runs-on value of the opted-in macOS jobs."""
+    return list(MACOS_SELF_HOSTED) if self_hosted else MACOS
+
+
+def classify(paths, affected, macos=False, self_hosted=False):
+    """classify_paths, plus the macOS jobs when the PR opted in (macos), on
+    the self-hosted runner only when self_hosted (a same-repository PR)."""
     mode, run, matrix, reasons = classify_paths(paths, affected)
     run["sandbox-v2-seatbelt-smoke"] = bool(macos and run["test"])
     if run["sandbox-v2-seatbelt-smoke"]:
-        matrix = matrix + [{"os": MACOS, "shard": s} for s in MACOS_SHARDS]
-        reasons.append("macOS: opted in; the macOS test shards and the Seatbelt smoke run")
+        runner = macos_runner(self_hosted)
+        matrix = matrix + [{"os": runner, "shard": s} for s in MACOS_SHARDS]
+        reasons.append("macOS: opted in; the macOS test shards and the Seatbelt smoke run on "
+                       + ("the self-hosted runner" if self_hosted else MACOS))
     elif macos:
         reasons.append("macOS: opted in, but no test job runs for this change")
     else:
@@ -283,10 +301,12 @@ def head_trailers(sha):
 
 
 def parse_args(argv):
-    positional, labels, pr_head = [], [], None
+    positional, labels, pr_head, self_hosted = [], [], None, False
     args = iter(argv[1:])
     for arg in args:
-        if arg in ("--labels", "--pr-head"):
+        if arg == "--self-hosted-macos":
+            self_hosted = True
+        elif arg in ("--labels", "--pr-head"):
             value = next(args, None)
             if value is None:
                 sys.exit(__doc__)
@@ -298,11 +318,12 @@ def parse_args(argv):
             positional.append(arg)
     if len(positional) not in (1, 2):
         sys.exit(__doc__)
-    return positional[0], positional[1] if len(positional) > 1 else "HEAD", labels, pr_head
+    return (positional[0], positional[1] if len(positional) > 1 else "HEAD",
+            labels, pr_head, self_hosted)
 
 
 def main(argv):
-    base, head, labels, pr_head = parse_args(argv)
+    base, head, labels, pr_head, self_hosted = parse_args(argv)
     try:
         # Resolve both ends first: a missing base must fail, not look empty.
         git("rev-parse", "--verify", f"{base}^{{commit}}")
@@ -311,7 +332,8 @@ def main(argv):
         paths = changed_paths(base, head)
         trailers = head_trailers(pr_head) if pr_head else []
         mode, run, matrix, reasons = classify(paths, make_affected(base, head),
-                                              macos=macos_opt_in(labels, trailers))
+                                              macos=macos_opt_in(labels, trailers),
+                                              self_hosted=self_hosted)
     except subprocess.CalledProcessError as err:
         sys.stderr.write(f"classify-changes: {err} {err.stderr!r}\n")
         sys.exit(1)
@@ -321,6 +343,7 @@ def main(argv):
     for job in JOBS:
         print(f"run_{job.replace('-', '_')}={'true' if run[job] else 'false'}")
     print("test_matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
+    print("macos_runner=" + json.dumps(macos_runner(self_hosted), separators=(",", ":")))
     print("expected=" + json.dumps(run, separators=(",", ":"), sort_keys=True))
 
 

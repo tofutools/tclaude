@@ -51,7 +51,7 @@ func stewardLsCmd() *cobra.Command {
 		Long:        stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *stewardLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStewardLs(p, os.Stdout, os.Stderr))
+			os.Exit(runStewardLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -104,7 +104,7 @@ func stewardSetCmd() *cobra.Command {
 		Long:        "Shows what changes, and with --yes makes the change. The agent keeps its conversation, harness, working directory and what it already held, and gets the Steward's access and brief. The current Steward loses what the role gave it.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *stewardSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStewardSet(p, os.Stdout, os.Stderr))
+			os.Exit(runStewardSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -205,7 +205,7 @@ func stewardStepDownCmd() *cobra.Command {
 		Long:        "The agent loses what the role gave it, and keeps what you granted it separately. It keeps running.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *stewardStepDownParams, _ *cobra.Command, _ []string) {
-			os.Exit(stewardPost("/v1/steward/step-down", map[string]any{"agent": p.Agent, "then": p.Then}, "Stood down.", os.Stdout, os.Stderr))
+			os.Exit(stewardPost("/v1/steward/step-down", map[string]any{"agent": p.Agent, "then": p.Then}, "Stood down.", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -221,7 +221,7 @@ func stewardRemoveCmd() *cobra.Command {
 		Long:        "It stays a normal agent.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *stewardRemoveParams, _ *cobra.Command, _ []string) {
-			os.Exit(stewardPost("/v1/steward/roster/remove", map[string]any{"agent": p.Agent}, "Removed from the roster.", os.Stdout, os.Stderr))
+			os.Exit(stewardPost("/v1/steward/roster/remove", map[string]any{"agent": p.Agent}, "Removed from the roster.", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

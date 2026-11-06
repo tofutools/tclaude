@@ -23,7 +23,7 @@ import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
-  BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
+  backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
 } from './background-terminals.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
@@ -34,12 +34,15 @@ import {
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
-import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
-import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
+import { BoardEditor, BoardPaneGate, BoardsGate } from './board-island.js';
+import { peerBoardsShared } from './peer-boards.js';
+import { BoardDeleteHost, askDeleteBoard, onBoardDeleted } from './board-manage.js';
+import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
-import { droppedAt } from './overlay-window-model.js';
+import { droppedAt, viewportOf } from './overlay-window-model.js';
+import { collabSnapAim, collabSnapsAt } from './overlay-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
@@ -56,18 +59,14 @@ import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
 import { agentRunBounds } from './process-agent-stepper.js';
-import { useDismissablePopover } from './hover-popover.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere, paneShellAgent } from './terminal-here.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
 import {
   dockProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, stripProcesses,
 } from './process-editor-place.js';
 import { ProcessPane } from './process-pane.js';
-import { ProcessMenuList } from './process-collab-menu.js';
-import { isWizardActive } from './slop.js';
 import { PagePane } from './page-view.js';
 import { pagePaneKey, registerPageStrip, revealPageWindow, unseenPages, watchLivePages } from './page-place.js';
 import { processesAvailable } from './feature-availability.js';
@@ -133,6 +132,52 @@ function composeAgent(pane) {
   return pane?.seed?.agent || (SAFE_REMOTE_AGENT.test(pane?.seed?.remote?.agent || '') ? pane.seed.remote.agent : '');
 }
 const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
+
+// useCollabSnapAim tells the overlay where a tab that can float is while it is
+// dragged clear of the strip, so the overlay shows what it would snap to there
+// (collabSnapAim). Inside the strip, a reorder shows none; over a window's strip
+// it joins that window, so it shows none there either; and leaving the browser
+// takes the aim away. It listens in the capture phase, ahead of the strip's tabs
+// and the windows' strips, which stop the drag's events going further, and a
+// window's strip taking the tab clears it at once.
+function useCollabSnapAim(active, regionRef) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const joins = effect(() => {
+      if (tabDropTarget.value) collabSnapAim.value = null;
+    });
+    const onDragOver = (event) => {
+      const off = !!collabDrag.peek()?.floats && !tabDropTarget.peek() && dragLeftRegion(event, regionRef.current);
+      const aim = off ? { x: event.clientX, y: event.clientY } : null;
+      const was = collabSnapAim.peek();
+      if (aim?.x !== was?.x || aim?.y !== was?.y) collabSnapAim.value = aim;
+    };
+    // Leaving the page reports a point on or past its edge (Chrome reports 0, 0).
+    const onDragLeave = (event) => {
+      const view = event.view || globalThis.window;
+      const { clientX: x, clientY: y } = event;
+      if (x <= 0 || y <= 0 || x >= (view?.innerWidth ?? Infinity) || y >= (view?.innerHeight ?? Infinity)) collabSnapAim.value = null;
+    };
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('dragleave', onDragLeave, true);
+    return () => {
+      joins();
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('dragleave', onDragLeave, true);
+      collabSnapAim.value = null;
+    };
+  }, [active]);
+}
+
+// snapPointOf is where a drag that showed snap targets was let go, if a drop
+// there snaps: never past the page's edge, which a release outside the browser
+// reports, nor at 0, 0, which a cancelled drag does.
+function snapPointOf({ clientX: x, clientY: y }, win = globalThis.window) {
+  const { width, height } = viewportOf(win);
+  const inside = Number.isFinite(x) && Number.isFinite(y) && (x > 0 || y > 0) && x >= 0 && y >= 0 && x < width && y < height;
+  const at = inside ? { x, y } : null;
+  return at && collabSnapsAt(at, win) ? at : null;
+}
 
 // While a terminal drag is in flight, follow the pointer so the surface can say
 // "release here and this terminal leaves" before the user commits. The same
@@ -559,62 +604,16 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     headActions=${solo
       ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
         ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
-      : html`
+      // A peer's board stays a tab: the overlay windows and a pop-out's
+      // page are this node's own, and would open its board of the same id.
+      : onPeerPage() ? null : html`
         <${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
         <${Button} size="sm" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
   return html`<div
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
     role=${solo ? null : 'tabpanel'}
-  >${solo ? editor : html`<${BoardsGate}>${editor}<//>`}</div>`;
-}
-
-// BoardMenu is the strip's ＋ button: open a board or, with Processes on, a
-// process template as a tab, or make a new one. It reads the snapshot itself so
-// the strip does not re-render on each poll.
-const ADD_MENU_SECTION_PREF = 'tclaude.dash.collabAdd.section';
-
-function readAddMenuSection() {
-  try { return globalThis.localStorage?.getItem(ADD_MENU_SECTION_PREF) === 'processes' ? 'processes' : 'boards'; } catch { return 'boards'; }
-}
-
-function BoardMenu({ state, snapshot }) {
-  const [open, setOpen] = useState(false);
-  const [picking, setPicking] = useState(false);
-  const [section, setSection] = useState(readAddMenuSection);
-  const rootRef = useRef(null);
-  const request = state.boardMenuRequest.value;
-  useEffect(() => {
-    if (!request) return;
-    if (state.boardMenuSection?.peek()) setSection(state.boardMenuSection.peek());
-    setOpen(true);
-  }, [request]);
-  // The delete dialog and the file picker are outside the menu, and the menu is
-  // waiting for them.
-  useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
-  if (onPeerPage()) return null;
-  const processes = processesAvailable(snapshot?.value);
-  const shown = processes ? section : 'boards';
-  const wizard = isWizardActive();
-  const pick = (next) => {
-    setSection(next);
-    try { globalThis.localStorage?.setItem(ADD_MENU_SECTION_PREF, next); } catch { /* a convenience only */ }
-  };
-  return html`<div ref=${rootRef} class="mux-board-slot">
-    <button data-ui-exempt type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
-      title=${processes ? 'Open a board or a process in a tab, or create one' : 'Open a board in a tab, or create one'}
-      aria-label=${processes ? 'Open or create a board or a process' : 'Open or create a board'}
-      onClick=${() => setOpen((value) => !value)}>＋</button>
-    ${open ? html`<div class="mux-board-menu" role="dialog" aria-label=${shown === 'processes' ? 'Processes' : 'Boards'}>
-      ${processes ? html`<${Tabs} variant="seg" class="mux-add-sections" label="Open in a tab" value=${shown} onSelect=${pick}
-        items=${[{ key: 'boards', label: 'Boards' }, { key: 'processes', label: wizard ? 'Rites' : 'Processes' }]} />` : null}
-      ${shown === 'processes'
-        ? html`<${ProcessMenuList} fetchImpl=${fetchFromPage} notify=${shellToast} wizard=${wizard}
-          onOpen=${(id, label) => { setOpen(false); void openProcessTab(id, label); }} />`
-        : html`<${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
-          onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />`}
-    </div>` : null}
-  </div>`;
+  >${solo ? editor : html`<${BoardPaneGate}>${editor}<//>`}</div>`;
 }
 
 // PaneProcessOverlay reads the snapshot signal itself so only this small
@@ -965,6 +964,8 @@ function PaneTab({
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${paneTitle(pane)}</span>
+      ${(board || process || page) && html`<${LockBadge} kind=${board ? 'board' : process ? 'process' : 'page'}
+        locked=${resourceLocked(snapshot?.value, board ? 'board' : process ? 'process' : 'page', pane.seed.board || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${processesAvailable(snapshot?.value)} />` : null}
@@ -1142,7 +1143,7 @@ function StripGap({ active, armed, grow = false, onDragOver, onDragLeave, onDrop
 }
 
 function PaneContextMenu({
-  menu, actions, groups, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
+  menu, actions, groups, snapshot = null, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
 }) {
   return html`<${TabContextMenu} menu=${menu} closeMenu=${closeMenu} focusAfterAction=${focusAfterAction} focusAfterDismiss=${focusAfterDismiss}
     items=${({ item, separator }) => {
@@ -1169,7 +1170,16 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
+        // A peer's board (tcl-ug8bb8) is locked and deleted on its own node.
+        ...(menu.board && !onPeerPage() && resourceLockState(snapshot?.value, 'board', menu.boardId) !== undefined ? [(() => {
+          const locked = resourceLockState(snapshot?.value, 'board', menu.boardId);
+          return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
+            setResourceLock('board', menu.boardId, !locked).then(
+              () => shellToast(locked ? `Agents can edit ${menu.label} again` : `${menu.label} is read-only for agents`),
+              (cause) => shellToast(`Could not change the lock on ${menu.label}: ${cause.message}`, true));
+          });
+        })()] : []),
+        ...(menu.board && !onPeerPage() ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
         item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
@@ -1259,6 +1269,7 @@ function TerminalTabs({
   const [stripGap, setStripGap] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
+  useCollabSnapAim(Boolean(dragKey), tabsRef);
   // A window's strip about to take the tab in flight, and overlay tabs about to
   // land on this strip.
   const joining = !!dragKey && !!tabDropTarget.value;
@@ -1371,6 +1382,7 @@ function TerminalTabs({
     const key = dragKeyRef.current;
     // Dropped on a window's strip, it joins that window there.
     const into = !droppedRef.current && collabDrag.peek()?.floats ? tabDropTarget.peek() : null;
+    const aim = collabSnapAim.peek();
     aimFromCollab(null);
     const detach = !into && !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
@@ -1380,7 +1392,7 @@ function TerminalTabs({
     }
     if (!detach) return;
     if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
-      void actions.openPaneInOverlay(key, { at: droppedAt(event) });
+      void actions.openPaneInOverlay(key, { at: droppedAt(event), snapAt: aim ? snapPointOf(event) : null });
       return;
     }
     void actions.popOutPane(key, {
@@ -1396,7 +1408,13 @@ function TerminalTabs({
     const bounds = element.getBoundingClientRect();
     return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
   };
+  // A drag over the strip's own tabs, gaps and pills is a reorder: no snap
+  // targets. Those stop the event short of the page's listener, so they say so.
+  const overStrip = () => {
+    if (collabSnapAim.peek()) collabSnapAim.value = null;
+  };
   const tabDragOver = (event, targetKey) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // A stack cannot land on one of its own tabs.
@@ -1476,6 +1494,7 @@ function TerminalTabs({
   const groupMembers = (groupID) =>
     current.segments.find((segment) => segment.type === 'group' && segment.group.id === groupID)?.panes || [];
   const groupDragOver = (event, groupID) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // Dropping one stack on another places it beside that stack, never inside.
@@ -1523,6 +1542,7 @@ function TerminalTabs({
   // gaps at the group boundaries close that hole: a drop parks the tab there,
   // ungrouped, beside the stack. `gap` is `${groupID}:before|after`.
   const gapDragOver = (event, gap) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1572,6 +1592,7 @@ function TerminalTabs({
     return Boolean(key) && !(segment.type === 'pane' && segment.pane.key === key);
   };
   const endZoneDragOver = (event) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     if (!endZoneActive()) { if (stripGap === 'end') setStripGap(null); return; }
     event.preventDefault();
@@ -1784,14 +1805,15 @@ function TerminalTabs({
   ]);
 
   // The Collab panel lists what is live in the shared right side panel, on
-  // the dashboard's own Collab view only (collab-rail.js).
-  const rail = !solo && !!snapshot && !onPeerPage();
+  // the dashboard's own Collab view (collab-rail.js), and on a peer's that
+  // shares its boards (tcl-ug8bb8), where it lists them.
+  const rail = !solo && !!snapshot && (!onPeerPage() || peerBoardsShared(snapshot.value));
   const floatsOf = (key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value);
   const rootClass = 'terminal-shell-root';
   return html`
     <div ref=${shellRef} class=${rootClass}>
       ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}
-        floatsOf=${floatsOf} />` : null}
+        floatsOf=${floatsOf} menuRequest=${state.boardMenuRequest} menuSection=${state.boardMenuSection} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
@@ -1892,13 +1914,11 @@ function TerminalTabs({
               onDrop=${dropOnEnd}
             />` : null}
         </div><//>
-        <${BoardMenu} state=${state} snapshot=${snapshot} />
-        ${hasBackground ? html`<div class="mux-bg-slot"><${BackgroundTerminalsChip} rows=${backgroundRows} snapshot=${snapshot} /></div>` : null}
         </div>
         ${detachArmed && !joining ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${snapshot ? html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
-      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
+      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups} snapshot=${snapshot}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
       ${!solo && !hasPanes ? html`<${HomeOrHint} rail=${rail} panes=${current.panes} actions=${actions} snapshot=${snapshot}
@@ -1906,9 +1926,9 @@ function TerminalTabs({
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
           ${hasBackground
-            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
+            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. The panel's Filter counts them; tick Background to list and attach them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
+          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the panel's ＋ New.</div><//>` : null}
         </div><//>
       ` : null}
       ${hasPanes || !empty ? html`

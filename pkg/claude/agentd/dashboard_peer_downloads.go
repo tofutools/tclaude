@@ -27,11 +27,13 @@ import (
 //
 //	POST /api/peer-downloads {"path": "/api/snapshots/x/export"}
 //	    runs one downloadable GET (peerDownloadRoutes) into a staged file and
-//	    answers {id, size, filename}. Through the peer view it is held only
-//	    by unrestricted trust, and runs as a peer view job.
+//	    answers {id, size, filename}. Through the peer view it runs as a peer
+//	    view job, and holds the route's own peer rule (peer_transfer.go):
+//	    unrestricted trust, or the peer grant that route opens.
 //
 //	GET /api/peer-downloads/{id}?offset=O[&length=L]
-//	    one chunk of a staged file. A staged file goes away
+//	    one chunk of a staged file, read only by the peer that staged it,
+//	    which must still hold the route's peer rule. A staged file goes away
 //	    peerDownloadKeep after its last read.
 //
 //	GET /api/peer-download/{node}?path=P
@@ -41,13 +43,15 @@ import (
 // A download is at most federation.agent_transfer_max_bytes (2 GiB by
 // default), the cap agent archives already cross nodes under.
 
-// peerDownloadRoutes are the GETs a peer may stage: file downloads whose
-// route the peer view already serves under unrestricted trust.
+// peerDownloadRoutes are the GETs a peer may stage: file downloads the peer
+// view serves, under unrestricted trust or the route's own peer grant
+// (peerStageGates).
 var peerDownloadRoutes = map[string]bool{
 	"GET /api/snapshots/{name}/export": true,
 	"GET /api/agent-bundle/export":     true,
 	"GET /api/templates/{name}/export": true,
 	"GET /api/groups/{name}/export":    true,
+	"GET /api/config-bundle/export":    true,
 	// A daemon log export: Diagnostics › Logs of a fused view's peer.
 	"/api/logs/export": true,
 }
@@ -63,6 +67,11 @@ type peerDownload struct {
 	size     int64
 	filename string
 	read     time.Time
+	// owner is the peer that staged it ("" when this node's dashboard did).
+	owner string
+	// allowed rechecks the staged route's peer rule at every chunk read: a
+	// grant revoked since staging stops the download. nil for "".
+	allowed func() bool
 }
 
 var peerDownloads = struct {
@@ -144,33 +153,48 @@ func handleDashboardPeerDownloadStage(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	var body struct {
-		Path string `json:"path"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "path is required")
+	sub, ok := peerDownloadTarget(w, r)
+	if !ok {
 		return
 	}
-	target, err := url.ParseRequestURI(body.Path)
-	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !strings.HasPrefix(target.Path, "/api/") {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
-		return
-	}
-	sub := r.Clone(r.Context())
-	sub.Method, sub.URL, sub.RequestURI, sub.Body, sub.ContentLength = http.MethodGet, target, target.RequestURI(), http.NoBody, 0
-	sub.Header = http.Header{}
 	mux := peerDashboardMux()
 	if _, pattern := mux.Handler(sub); !peerDownloadRoutes[pattern] {
 		writeError(w, http.StatusForbidden, "not_downloadable", "that route is not a download")
 		return
 	}
+	stagePeerDownloadFile(w, sub, mux, "", nil)
+}
+
+// peerDownloadTarget reads a stage request's {"path"} into the GET it runs.
+func peerDownloadTarget(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "path is required")
+		return nil, false
+	}
+	target, err := url.ParseRequestURI(body.Path)
+	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !strings.HasPrefix(target.Path, "/api/") {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
+		return nil, false
+	}
+	sub := r.Clone(r.Context())
+	sub.Method, sub.URL, sub.RequestURI, sub.Body, sub.ContentLength = http.MethodGet, target, target.RequestURI(), http.NoBody, 0
+	sub.Header = http.Header{}
+	return sub, true
+}
+
+// stagePeerDownloadFile runs sub through serve into a staged file for owner,
+// which allowed (when not nil) rechecks at every chunk read.
+func stagePeerDownloadFile(w http.ResponseWriter, sub *http.Request, serve http.Handler, owner string, allowed func() bool) {
 	f, err := os.CreateTemp("", "tclaude-peer-download-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "stage download")
 		return
 	}
 	out := &peerDownloadFile{limit: agentTransferLimit(), header: make(http.Header), file: f}
-	mux.ServeHTTP(out, sub)
+	serve.ServeHTTP(out, sub)
 	closeErr := f.Close()
 	if out.status == 0 {
 		out.status = http.StatusOK
@@ -202,7 +226,7 @@ func handleDashboardPeerDownloadStage(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	peerDownloads.Lock()
 	sweepPeerDownloadsLocked(now)
-	peerDownloads.byID[id] = &peerDownload{file: f.Name(), size: out.size, filename: filename, read: now}
+	peerDownloads.byID[id] = &peerDownload{file: f.Name(), size: out.size, filename: filename, read: now, owner: owner, allowed: allowed}
 	peerDownloads.Unlock()
 	writeJSON(w, http.StatusOK, peerDownloadStaged{ID: id, Size: out.size, Filename: filename})
 }
@@ -211,6 +235,11 @@ func handleDashboardPeerDownloadChunk(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	servePeerDownloadChunkFor(w, r, "")
+}
+
+// servePeerDownloadChunkFor serves one chunk of a download owner staged.
+func servePeerDownloadChunkFor(w http.ResponseWriter, r *http.Request, owner string) {
 	offset, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 	if err != nil || offset < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "offset is required")
@@ -228,12 +257,25 @@ func handleDashboardPeerDownloadChunk(w http.ResponseWriter, r *http.Request) {
 	peerDownloads.Lock()
 	sweepPeerDownloadsLocked(time.Now())
 	d := peerDownloads.byID[r.PathValue("id")]
+	if d != nil && d.owner != owner {
+		d = nil
+	}
 	if d != nil {
 		d.read = time.Now()
 	}
 	peerDownloads.Unlock()
 	if d == nil {
 		writeError(w, http.StatusNotFound, "not_found", "no such download")
+		return
+	}
+	if d.allowed != nil && !d.allowed() {
+		peerDownloads.Lock()
+		if peerDownloads.byID[r.PathValue("id")] == d {
+			delete(peerDownloads.byID, r.PathValue("id"))
+			_ = os.Remove(d.file)
+		}
+		peerDownloads.Unlock()
+		writeError(w, http.StatusForbidden, "permission", "the grant this download was staged under is no longer held")
 		return
 	}
 	defer func() {

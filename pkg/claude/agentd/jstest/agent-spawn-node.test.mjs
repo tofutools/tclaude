@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys } from './combobox-helpers.mjs';
 
 const NODE = 'inst_forge0001';
 const harnesses = [{
@@ -81,7 +82,7 @@ test("the spawn dialog on another node is the local dialog over that node's snap
   const q = (sel) => host.querySelector(sel);
   assert.match(q('#agent-spawn-title').textContent, /on forge/);
   assert.equal(q('#agent-spawn-remote-intro'), null, 'no request-mode banner');
-  assert.deepEqual([...q('#agent-spawn-group').querySelectorAll('option')].map((o) => o.value).filter(Boolean), ['build'], "the node's groups, not this node's");
+  assert.deepEqual(await comboKeys(harness, q('#agent-spawn-group')), ['build'], "the node's groups, not this node's");
   assert.ok(q('.saved-prompt-chip-manage'), 'Manage… saved prompts is there, as locally');
   assert.ok([...q('.saved-prompt-chip-add').querySelectorAll('option')].some((o) => o.value === 'house-rules'), "the node's prompt library");
   for (const id of ['agent-spawn-cwd-browse', 'agent-spawn-wt-repo-browse']) {
@@ -219,7 +220,10 @@ test("a failed sandbox preview says why on submit and loads again", async (t) =>
     assert.fail(`timed out waiting for ${what}`);
   };
   const preview = () => q('#agent-spawn-sandbox-profile-preview')?.textContent || '';
-  const worktreesLoading = () => /loading…/.test(q('#agent-spawn-worktree')?.textContent || 'loading…');
+  const worktreesLoading = () => {
+    const box = q('#agent-spawn-worktree-input');
+    return !box || /loading…/.test(box.value || box.getAttribute('placeholder') || '');
+  };
   await until(() => !worktreesLoading() && /Could not preview sandbox policy/.test(preview()), 'the worktrees and the failed preview');
   const name = q('#agent-spawn-name');
   Object.defineProperty(name, 'value', { configurable: true, writable: true, value: 'w' });

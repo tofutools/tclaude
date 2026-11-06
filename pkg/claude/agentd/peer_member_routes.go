@@ -31,11 +31,15 @@ const (
 // peerAgentControlGrants are the grants behind an agent's peer-invoked
 // controls, which peer_view.agents names per agent: its settings, and its
 // lifecycle and move (peer_actions.go).
-var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
+var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
+	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR,
+	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl,
+	PermPermissionsGrant, PermPermissionsRevoke, PermAgentSandboxImplementation, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
-// groups the agent owns (cloneAuthorizationGroups).
-var peerOwnerFootprintGrants = []string{PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
+// groups the agent owns (cloneAuthorizationGroups). A delete purges the
+// agent's owner seats, as a retire gives them up.
+var peerOwnerFootprintGrants = []string{PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermGroupsMembersDelete}
 
 func addPeerMemberRules(rules map[string]peerViewRule) {
 	for _, verb := range []string{"rename", "tags", "task", "notify"} {
@@ -44,36 +48,77 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// A member's role and description belong to the one group.
 	pattern := "PATCH /api/groups/{name}/members/{conv}"
 	rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: "members.manage", requires: PermGroupsMembersManage, group: true, invoke: &peerInvokeSpec{param: "name"}})
-	// An agent's remote access and fast mode, its sandbox implementation, its
-	// compaction and reincarnation, its removal from a group and its permanent delete reach
-	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
-	// handlers. One feature names one slug, so the metadata is stable.
-	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
-	for _, pattern := range []string{
-		"POST /api/agents/{id}/remote-control",
-		"POST /api/agents/{id}/fast-mode/{direction}",
-		"POST /api/agents/{id}/compact",
-		"POST /api/agents/{id}/reincarnate",
-		"POST /api/agents/{id}/sandbox-impl",
-		"DELETE /api/agents/{id}",
-	} {
-		rules[pattern] = full
+	// An agent's controls under their own grants, each held in every active
+	// group the agent is in: a turn interrupt, compaction, a request that it
+	// reincarnate itself, its context window and its presented PRs. No peer
+	// text is typed into the agent's pane (dashboardCompactAgent,
+	// dashboardReincarnateAgent); unrestricted trust runs this node's own
+	// handlers, every option included.
+	for pattern, slug := range peerAgentControlRoutes {
+		rule := peerViewRule{feature: "members." + strings.TrimPrefix(slug, "groups.members."), requires: slug, group: true}
+		if strings.HasPrefix(pattern, "GET ") {
+			rule.serve = servePeerAgentControl
+		} else {
+			rule.write = servePeerAgentControl
+		}
+		rules[pattern] = rule
 	}
-	// The delete dialog reads the agent's worktree first, the sandbox picker
-	// the recorded posture.
+	// An agent's own permission overrides, under permissions.grant and
+	// permissions.revoke held in every group of the agent, within the peer
+	// ceiling (peer_agent_permissions.go).
+	rules["/api/permissions"] = peerViewRule{feature: "permissions.agent", requires: PermPermissionsGrant, orGrants: []string{PermPermissionsRevoke}, group: true, write: servePeerAgentPermissions}
+	// An agent's permanent delete and its debug export, under their own
+	// grants held in every group of the agent (peer_agent_delete.go).
+	rules["DELETE /api/agents/{id}"] = peerViewRule{feature: "members.delete", requires: PermGroupsMembersDelete, group: true, write: servePeerAgentDelete}
+	rules["GET /api/agents/{id}/debug-export"] = peerViewRule{feature: "members.debug-export", requires: PermGroupsMembersDebugExport, group: true, serve: servePeerAgentDebugExport}
+	// An agent's sandbox implementation, under agent.sandbox-impl held in
+	// every group of the agent; a restricted peer only adds confinement
+	// (peer_agent_sandbox_impl.go).
+	impl := peerViewRule{feature: "members.sandbox-impl", requires: PermAgentSandboxImplementation, group: true}
+	impl.write = servePeerAgentSandboxImpl
+	rules["POST /api/agents/{id}/sandbox-impl"] = impl
+	impl.write, impl.serve = nil, servePeerAgentSandboxImpl
+	rules["GET /api/agents/{id}/sandbox-impl"] = impl
+	// An agent's fast mode reaches what no peer grant hands out yet: only
+	// unrestricted trust holds it, through this node's own handler. So does
+	// the delete dialog's worktree probe, which only a delete that takes the
+	// worktree too needs (unrestricted again); the dialog treats a refused
+	// probe as no worktree to offer.
+	full := peerViewRule{feature: "agents.manage.full", requires: PermAgentSandboxImplementation, unrestrictedOnly: true, write: servePeerFullAgent}
+	rules["POST /api/agents/{id}/fast-mode/{direction}"] = full
 	read := full
 	read.write, read.serve = nil, servePeerFullAgent
-	for _, pattern := range []string{
-		"GET /api/agents/{id}/worktree",
-		"GET /api/agents/{id}/sandbox-impl",
-		"GET /api/agents/{id}/debug-export",
-	} {
-		rules[pattern] = read
+	rules["GET /api/agents/{id}/worktree"] = read
+}
+
+// peerAgentControlRoutes are an agent's controls a peer grant reaches, by
+// the group grant each needs.
+var peerAgentControlRoutes = map[string]string{
+	"POST /api/agents/{id}/interrupt":   PermGroupsMembersInterrupt,
+	"POST /api/agents/{id}/compact":     PermGroupsMembersCompact,
+	"POST /api/agents/{id}/reincarnate": PermGroupsMembersReincarnate,
+	"GET /api/agents/{id}/context-info": PermGroupsMembersContextInfo,
+	"GET /api/agents/{id}/prs":          PermGroupsMembersPR,
+	"POST /api/agents/{id}/prs":         PermGroupsMembersPR,
+	// Turning the agent's Claude Code Remote Access on exposes its session
+	// to this node's operator's claude.ai account, never to the peer.
+	"POST /api/agents/{id}/remote-control": PermGroupsMembersRemoteControl,
+}
+
+// servePeerAgentControl runs an agent control: as this node's operator would
+// for unrestricted trust, else under the peer's grant in every group of the
+// agent, as its own peer action (servePeerAgentInvoke).
+func servePeerAgentControl(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if v.unrestricted() {
+		target, err := db.GetAgent(r.PathValue("id"))
+		if err != nil || target == nil || target.CurrentConvID == "" {
+			writeError(w, http.StatusNotFound, "not_found", "object not found")
+			return
+		}
+		servePeerAgentAsLocal(w, r, v, target)
+		return
 	}
-	full.write = servePeerFullGroup(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-		dashboardRemoveMember(w, g, r.PathValue("conv"))
-	}))
-	rules["DELETE /api/groups/{name}/members/{conv}"] = full
+	servePeerAgentInvoke(w, r, v, rule)
 }
 
 // servePeerFullAgent runs an agent route for unrestricted trust on exactly the

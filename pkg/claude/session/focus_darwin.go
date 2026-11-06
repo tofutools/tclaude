@@ -29,13 +29,13 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	debug := os.Getenv("TCLAUDE_DEBUG") != ""
 
 	if debug {
-		fmt.Printf("[debug] FocusTmuxSession: tmuxSession=%s sessionID=%s\n", tmuxSession, sessionID)
+		fmt.Fprintf(cliStdout, "[debug] FocusTmuxSession: tmuxSession=%s sessionID=%s\n", tmuxSession, sessionID)
 	}
 
 	// Get the client tty for the target session
 	tty := getTmuxClientTTY(tmuxSession)
 	if debug {
-		fmt.Printf("[debug] Target tty: %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Target tty: %s\n", tty)
 	}
 
 	raiseOnly := focusRaiseOnlyFn()
@@ -58,7 +58,7 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	// exists to suppress). Mirrors the Linux focusLinuxNoClients arm.
 	if raiseOnly && tty == "" {
 		if debug {
-			fmt.Println("[debug] raise_only and no attached client; nothing to raise")
+			fmt.Fprintln(cliStdout, "[debug] raise_only and no attached client; nothing to raise")
 		}
 		return false
 	}
@@ -69,19 +69,19 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 		termApp = terminalFromTTY(tty)
 	}
 	if debug {
-		fmt.Printf("[debug] Terminal app: %q\n", termApp)
+		fmt.Fprintf(cliStdout, "[debug] Terminal app: %q\n", termApp)
 	}
 
 	if termApp == "" {
 		termApp = detectAnyRunningTerminal()
 		if debug {
-			fmt.Printf("[debug] Fallback terminal: %q\n", termApp)
+			fmt.Fprintf(cliStdout, "[debug] Fallback terminal: %q\n", termApp)
 		}
 	}
 
 	if termApp == "" {
 		if debug {
-			fmt.Println("[debug] No terminal app found")
+			fmt.Fprintln(cliStdout, "[debug] No terminal app found")
 		}
 		return false
 	}
@@ -103,7 +103,7 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	// Fallback: just activate the app
 	script := `tell application "` + termApp + `" to activate`
 	if debug {
-		fmt.Printf("[debug] Fallback: activating app\n")
+		fmt.Fprintf(cliStdout, "[debug] Fallback: activating app\n")
 	}
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Run() == nil
@@ -145,13 +145,13 @@ end tell
 `, tty)
 
 	if debug {
-		fmt.Printf("[debug] Running iTerm2 AppleScript for tty %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Running iTerm2 AppleScript for tty %s\n", tty)
 	}
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
 	if debug {
-		fmt.Printf("[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
+		fmt.Fprintf(cliStdout, "[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
 	}
 	return err == nil && strings.TrimSpace(string(output)) == "true"
 }
@@ -176,13 +176,13 @@ end tell
 `, tty)
 
 	if debug {
-		fmt.Printf("[debug] Running Terminal.app AppleScript for tty %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Running Terminal.app AppleScript for tty %s\n", tty)
 	}
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
 	if debug {
-		fmt.Printf("[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
+		fmt.Fprintf(cliStdout, "[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
 	}
 	return err == nil && strings.TrimSpace(string(output)) == "true"
 }
@@ -221,20 +221,20 @@ func findTerminalFromPID(pid string) string {
 		output, err := cmd.Output()
 		if err != nil {
 			if debug {
-				fmt.Printf("[debug] ps comm= error for pid %s: %v\n", pid, err)
+				fmt.Fprintf(cliStdout, "[debug] ps comm= error for pid %s: %v\n", pid, err)
 			}
 			return ""
 		}
 		procName := strings.TrimSpace(string(output))
 
 		if debug {
-			fmt.Printf("[debug] PID %s -> %s\n", pid, procName)
+			fmt.Fprintf(cliStdout, "[debug] PID %s -> %s\n", pid, procName)
 		}
 
 		term := terminalFromProcName(procName)
 		if term != "" {
 			if debug {
-				fmt.Printf("[debug] Found terminal: %s\n", term)
+				fmt.Fprintf(cliStdout, "[debug] Found terminal: %s\n", term)
 			}
 			return term
 		}

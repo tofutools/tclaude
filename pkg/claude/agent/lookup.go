@@ -25,7 +25,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// Exit codes for lookup-shaped commands.
+// Exit codes of the agent commands (MapDaemonErrorToRC maps a daemon error
+// onto them):
+//
+//	0  success
+//	1  not found
+//	2  ambiguous selector
+//	3  invalid argument
+//	4  I/O failure: the daemon is unreachable, or failed the request
+//	5  refused: a permission denial, or any 403 whose code is not one of
+//	   the above (a 403 "route_group" mismatch stays 3). Before tcl-cezwhu
+//	   a permission denial exited 4
 const (
 	rcOK         = 0
 	rcNotFound   = 1
@@ -794,7 +804,7 @@ func whoamiCmd() *cobra.Command {
 		Short:       "Print the current conversation's ID and display name",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *whoamiParams, _ *cobra.Command, _ []string) {
-			os.Exit(runWhoami(os.Stdout, os.Stderr))
+			os.Exit(runWhoami(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -903,7 +913,7 @@ func lookupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lookupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLookup(p, os.Stdout, os.Stderr))
+			os.Exit(runLookup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -983,7 +993,7 @@ func lsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLs(p, os.Stdout, os.Stderr))
+			os.Exit(runLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

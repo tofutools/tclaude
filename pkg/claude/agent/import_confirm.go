@@ -102,7 +102,7 @@ func PAFRevealCmd() *cobra.Command {
 		Long: "An import preview names a file's environment variables and never shows their values. " +
 			"This prints one, so you can see what you would be keeping. Human only.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafRevealParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPAFReveal(p, os.Stdout, os.Stderr))
+			os.Exit(runPAFReveal(p, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 

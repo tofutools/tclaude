@@ -1,4 +1,4 @@
-import { claimField } from './form-fill.js';
+import { claimChange, claimField } from './form-fill.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -10,11 +10,14 @@ import { SpawnOnResumeRow } from './spawn-on-resume.js';
 import { Button, OptionalSelect, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
+import { GroupCombobox, snapshotGroups } from './group-picker.js';
 import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
-import { relTime, shortCwd } from './helpers.js';
+import { relTime } from './helpers.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
@@ -50,7 +53,6 @@ import {
   spawnNameHint,
   spawnContextFeatureIndicator,
   spawnPermissionIndicator,
-  spawnProfileChoices,
   spawnProfileSeed,
   syncSpawnWorktree,
   validateSpawnDraft,
@@ -69,6 +71,7 @@ import {
   SPAWN_HARNESS_FIELDS,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
+import { DenyPathChips } from './spawn-deny-paths.js';
 import {
   createRemoteSpawnActions, isLocalRef, remotePromptBodies, remotePromptSetOpen, remoteSpawnIntro, remoteSpawnPins,
   remoteSpawnPrompts, watchRemoteSpawnLocks,
@@ -252,21 +255,23 @@ function roleHoverText(role) {
     .filter(Boolean).join('\n\n');
 }
 
-// RemoteProfileOptions lists a remote spawn's profiles by library: the
-// target's (a profile the grant does not let this operator pick shows, but
-// cannot be chosen) and this node's. The selected one always shows.
-function RemoteProfileOptions({ profiles, remote, showFrom, selected }) {
+// remoteProfileItems are a remote spawn's profile choices, by library: the
+// target's (a profile its grant does not let you pick is listed, but cannot be
+// chosen; it may still be the target's default) and this node's, each shown
+// when its library is (showFrom) or it is the one chosen.
+function remoteProfileItems(profiles, remote, showFrom, selected) {
   const shown = (source) => profiles.filter((profile) => profile.remoteSource === source
     && (showFrom.includes(source) || profile.name === selected));
-  const label = (profile) => `${profile.localName || profile.name}${profile.disabled ? ' [🚫 disabled]' : ''}`;
-  const locked = (profile) => (profile.name === selected ? ` (${remote.node}'s default)` : ' (not in your grant)');
-  const target = shown('target');
-  const local = shown('local');
-  return html`
-    ${target.length ? html`<optgroup label=${`${remote.node}'s profiles`}>${target.map((profile) => html`<option key=${profile.name} value=${profile.name}
-      disabled=${!profile.remoteSelectable}
-      title=${profile.remoteSelectable ? '' : `${remote.node}'s grant does not let you pick this profile${profile.name === selected ? `; ${remote.node} applies it by default` : ''}`}>${label(profile)}${profile.remoteSelectable ? '' : locked(profile)}</option>`)}</optgroup>` : null}
-    ${local.length ? html`<optgroup label="This node's profiles (fills what the request carries)">${local.map((profile) => html`<option key=${profile.name} value=${profile.name}>${label(profile)}</option>`)}</optgroup>` : null}`;
+  const status = (profile) => (profile.disabled ? '🚫 disabled' : '');
+  const target = shown('target').map((profile) => ({
+    key: profile.name, label: profile.localName || profile.name, group: `${remote.node}'s profiles`, hint: status(profile),
+    disabled: !profile.remoteSelectable,
+    reason: profile.remoteSelectable ? '' : (profile.name === selected ? `${remote.node}'s default` : 'not in your grant'),
+  }));
+  const local = shown('local').map((profile) => ({
+    key: profile.name, label: profile.localName || profile.name, group: "This node's profiles (fills what the request carries)", hint: status(profile),
+  }));
+  return [...target, ...local];
 }
 
 // RemoteSourceFilter picks which libraries a remote spawn's profile and
@@ -765,6 +770,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // operatorProfile is the operator choosing a profile (or Clear): as a
+  // <select> change did, it claims the profile and every field it moves
+  // against agent form-fills. The picker sends no trusted change of its own.
+  const operatorProfile = (handle) => {
+    claimChange('spawn', 'agent-spawn-load-profile');
+    changeProfile(handle);
+  };
   // A remote spawn opened with a chosen profile (a palette or dock open on a
   // peer) picks it once the peer's profiles load, as the operator would: the
   // request then names it. One the grant does not let this operator pick
@@ -1395,16 +1407,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Loadout" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
-        <${Select} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
-          onChange=${(event) => changeProfile(event.currentTarget.value)}>
-          <option value="">${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'}</option>
-          ${remote
-            ? html`<${RemoteProfileOptions} profiles=${profiles} remote=${remote} showFrom=${showFrom} selected=${draft.profile} />`
-            : spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
-        <//>
+        <${ProfileCombobox} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
+          profiles=${profiles} aliases=${true} items=${remote ? remoteProfileItems(profiles, remote, showFrom, draft.profile) : null}
+          noneLabel=${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'} ariaLabel="Spawn profile"
+          attrs=${{ 'data-remote-spawn-field': 'profile' }}
+          onChange=${operatorProfile} />
         <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
-          onClick=${() => changeProfile('')}>Clear<//>
+          onClick=${() => operatorProfile('')}>Clear<//>
         <${Button} size="sm" id="agent-spawn-save-profile" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}
@@ -1413,10 +1423,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
-      <${Select} id="agent-spawn-group" value=${draft.group} disabled=${busy}
-        onChange=${(event) => changeGroup(event.currentTarget.value)}>
-        ${context.groups.filter((group) => group?.name).map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      <//>
+      <${GroupCombobox} id="agent-spawn-group" value=${draft.group} disabled=${busy}
+        groups=${snapshotGroups(context)} onChange=${(group) => { claimField('spawn', 'agent-spawn-group'); changeGroup(group); }} />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
@@ -1740,6 +1748,18 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>
       </div>
     </div>
+    ${!context.remoteSpawn ? html`<div class="cron-create-row" id="agent-spawn-sandbox-deny-row">
+      <label class="cron-create-label" for="agent-spawn-sandbox-deny-input"
+        title="Paths this agent, and every agent it spawns, may never reach, whatever its sandbox profiles grant (--sandbox-deny).">Deny paths</label>
+      <div class="cron-create-target">
+        <${DenyPathChips} id="agent-spawn-sandbox-deny" value=${draft.sandboxDeny || []}
+          draftText=${draft.sandboxDenyDraft || ''} cwd=${draft.cwd || ''} busy=${busy}
+          blockedReason=${view.sandboxDenyBlockedReason}
+          onChange=${(next) => update('sandboxDeny', next)}
+          onDraft=${(text) => setDraft((before) => ({ ...before, sandboxDenyDraft: text }))} />
+        <span class="spawn-field-description">Nothing under these paths stays reachable to this agent or the agents it spawns, whatever its sandbox profiles grant.</span>
+      </div>
+    </div>` : null}
     ${!context.remoteSpawn ? html`<${HelpField} id="agent-spawn-usage-profile" label="Usage profile"
       title="The budget and alerts this agent runs under. Inherited: the spawn profile's usage profiles on top of the group's (else the global default). A profile picked here replaces them."
       value=${draft.usageProfile || ''}
@@ -1852,21 +1872,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <${Select} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
-        onChange=${(event) => {
+      <${WorktreeCombobox} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
+        worktrees=${worktrees.worktrees || []} newKey=${worktreeUsable ? WT_NEW : ''} noneLabel=${worktreeEmptyLabel}
+        attrs=${{ 'data-remote-spawn-field': 'worktree' }}
+        onChange=${(value) => {
+          // A pick is a click on a row, which form-fill's watch does not see:
+          // claim the field, so an agent's fill of a field that resets it is refused.
+          claimField('spawn', 'agent-spawn-worktree');
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
-          setDraft((before) => selectSpawnWorktree(before, event.currentTarget.value));
-        }}>
-        <option value="">${worktreeEmptyLabel}</option>
-        ${(worktrees.worktrees || []).map((worktree) => {
-          const branch = worktree.branch || '(detached)';
-          const main = worktree.is_main ? ' [main]' : '';
-          return html`<option key=${worktree.path} value=${`wt:${worktree.path}`}
-            title=${`${branch}${main} — ${worktree.path}`}>${branch}${main} — ${shortCwd(worktree.path)}</option>`;
-        })}
-        ${worktreeUsable && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      <//>
+          setDraft((before) => selectSpawnWorktree(before, value));
+        }} />
     </label>
     <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-sync-row"
       title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
@@ -1903,10 +1919,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-wt-base-row"
       hidden=${draft.worktree !== WT_NEW || !worktrees.hasCommits}>
       <span class="cron-create-label">Base branch</span>
-      <${Select} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
-        onChange=${(event) => update('worktreeBase', event.currentTarget.value)}>
-        ${(worktrees.branches || []).map((branch) => html`<option key=${branch} value=${branch}>${branch}</option>`)}
-      <//>
+      <${BranchCombobox} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
+        branches=${worktrees.branches || []} attrs=${{ 'data-remote-spawn-field': 'worktree' }}
+        onChange=${(value) => { claimField('spawn', 'agent-spawn-wt-base'); update('worktreeBase', value); }} />
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>

@@ -66,7 +66,7 @@ func messageCmd() *cobra.Command {
 		},
 		RunFunc: func(p *messageParams, cmd *cobra.Command, _ []string) {
 			recordMessageTargetFlags(p, cmd)
-			os.Exit(runMessage(p, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runMessage(p, cliStdout, cliStderr, os.Stdin))
 		},
 	}.ToCobra()
 }

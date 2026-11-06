@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -92,10 +94,12 @@ func messageNudgeTextFor(m *db.AgentMessage) (text string, consumed bool) {
 	if db.IsOperatorAgentMessage(m.ID) {
 		return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d.]", m.ID, m.ID), false
 	}
-	if remote, _ := remoteSenderLabel(m.ID); remote != "" {
+	// The pointer is pasted too, so it names the sender only when the label
+	// is paste-safe.
+	if remote, _ := remoteSenderLabel(m.ID); remote != "" && pasteSafeLine(remote) {
 		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, remote, m.ID), false
 	}
-	if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
+	if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" && pasteSafeLine(sender) {
 		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, sender, m.ID), false
 	}
 	if m.Subject == "Morph handoff requested" {
@@ -112,10 +116,44 @@ func messageInlineMaxChars() int {
 	return *cfg.Agent.MessageInlineMaxChars
 }
 
+// pasteSafe reports whether s may be pasted into an agent's pane as is. The
+// inline nudge carries text another agent or a peer wrote into the
+// recipient's harness through tmux bracketed paste, so it must hold nothing a
+// terminal or that harness could interpret rather than show, and nothing that
+// reads differently from what it is: invalid UTF-8 (a raw 0x9b byte is an
+// 8-bit CSI), any control character except newline and tab (C0, DEL, C1), and
+// any format character (Unicode Cf: the bidi embedding, override, isolate and
+// mark controls, zero-width characters, the BOM). This is a strict superset of
+// termtext's terminal rule. Text that fails is not altered; the recipient gets
+// the inbox pointer and reads the message unchanged (awb tcl-dih161).
+func pasteSafe(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// pasteSafeLine is pasteSafe for a one-line field of the nudge header (the
+// subject, the sender, an attachment name), which may not break the line:
+// no newline or tab, and no Unicode line or paragraph separator, which some
+// renderers also break on.
+func pasteSafeLine(s string) bool {
+	return !strings.ContainsAny(s, "\n\t\u2028\u2029") && pasteSafe(s)
+}
+
 // messageInlineText returns a complete server-authored nudge only for bounded,
-// printable content. Newlines and tabs are safe here because
-// injectTextAndSubmit uses tmux bracketed paste for either one; other control
-// bytes still stay out of the pane injection path.
+// pasteSafe content. Newlines and tabs are safe in the body because
+// injectTextAndSubmit uses tmux bracketed paste for either one; everything
+// else pasteSafe rejects stays out of the pane injection path, and the
+// recipient gets the inbox pointer instead.
 func messageInlineText(m *db.AgentMessage) (string, bool) {
 	limit := messageInlineMaxChars()
 	// Startup briefing delivery is owned by the launch seed/welcome path. Its
@@ -125,28 +163,26 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	if limit <= 0 || m.Subject == db.StartupContextSubject || strings.TrimSpace(m.Body) == "" {
 		return "", false
 	}
-	for _, r := range m.Subject {
-		if r < 0x20 || r == 0x7f {
-			return "", false
-		}
-	}
-	for _, r := range m.Body {
-		if r == '\n' || r == '\t' {
-			continue
-		}
-		if r < 0x20 || r == 0x7f {
-			return "", false
-		}
+	if !pasteSafeLine(m.Subject) || !pasteSafe(m.Body) {
+		return "", false
 	}
 	attachments, err := db.ListAgentMessageAttachments(m.ID)
 	if err != nil {
 		return "", false
+	}
+	for _, a := range attachments {
+		if !pasteSafeLine(a.Filename) {
+			return "", false
+		}
 	}
 	var b strings.Builder
 	operatorAuthored := db.IsOperatorAgentMessage(m.ID)
 	sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent)
 	if remote, _ := remoteSenderLabel(m.ID); remote != "" {
 		sender = remote
+	}
+	if !pasteSafeLine(sender) {
+		return "", false
 	}
 	fmt.Fprintf(&b, "[system: new agent message #%d", m.ID)
 	switch {

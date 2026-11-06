@@ -37,24 +37,24 @@ func identityActionCommands() []*cobra.Command {
 			os.Exit(runIdentityAction("revoke", map[string]any{"old": p.Old, "apply": p.Apply}))
 		}}.ToCobra(),
 		boa.CmdT[struct{}]{Use: "rotations", Short: "Show pending, accepted and revoked identity transitions", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			var result any
 			if err := agent.DaemonGet("/v1/federation/identity/rotations", &result); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
-			os.Exit(printJSON(os.Stdout, result))
+			os.Exit(printJSON(cliStdout, result))
 		}}.ToCobra(),
 	}
 }
 func runIdentityAction(action string, request any) int {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		return rc
 	}
 	var result any
 	if err := agent.DaemonPost("/v1/federation/identity/"+action, request, &result); err != nil {
-		return fail(os.Stderr, err)
+		return fail(cliStderr, err)
 	}
-	return printJSON(os.Stdout, result)
+	return printJSON(cliStdout, result)
 }

@@ -189,7 +189,7 @@ func handleDashboardPageGroup(w http.ResponseWriter, r *http.Request) {
 	if isGroupPageOwner(owner) {
 		owner = groupPageOwner(groupID)
 	} else if fail := pageMoveFailure(id, owner, row.Name, groupID, group); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if _, err := db.MoveGroupPage(id, groupID, owner); err != nil {

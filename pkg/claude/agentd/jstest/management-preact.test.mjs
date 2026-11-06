@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { comboPick } from './combobox-helpers.mjs';
 import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -24,6 +25,7 @@ function choose(select, value) {
 }
 
 function selectedValue(select) {
+  if (select.classList?.contains('choice-combobox')) return select.dataset.value || '';
   return select.getAttribute('value')
     ?? Array.from(select.options).find((option) => option.selected)?.value
     ?? select.value
@@ -1456,7 +1458,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
   host.querySelector('.sbx-include-add').click(); host.querySelector('.sbx-agent-add').click(); await harness.act(() => Promise.resolve());
-  const access = host.querySelector('.sbx-access'); const include = host.querySelector('.sbx-inc-name'); assert.ok(access); assert.ok(include); assertDifferentNode(access, include, 'access and included-profile selects have distinct layout contracts'); include.querySelector('option[value="base"]').selected = true; include.dispatchEvent(new harness.window.Event('change', { bubbles: true })); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  const access = host.querySelector('.sbx-access'); const include = host.querySelector('.sbx-inc-name'); assert.ok(access); assert.ok(include); assertDifferentNode(access, include, 'access and included-profile selects have distinct layout contracts'); await comboPick(harness, include, 'base'); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve()); assert.equal(host.querySelector('#sandbox-profile-editor-modal .modal-buttons button').disabled, true);
   state.busy.value = ''; await harness.act(() => Promise.resolve());
   host.querySelector('.sbx-advanced-toggle').click(); await harness.act(() => Promise.resolve());
@@ -1570,7 +1572,7 @@ test('sandbox filesystem and socket rows reuse accessible segmented controls whi
   assert.equal(segment(socketControls[0], 'path_glob').classList.contains('is-selected'), true);
 
   const include = host.querySelector('.sbx-inc-name');
-  assert.equal(include.tagName, 'SELECT');
+  assert.ok(include.classList.contains('choice-combobox'), 'an include is a type-to-filter profile choice');
   assert.ok(include.closest('.sbx-include-row'), 'includes opt into the intrinsic-width row hook');
   const environmentRow = host.querySelector('.sbx-environment-row');
   assert.ok(environmentRow.querySelector('.sbx-env-name'));
@@ -1609,8 +1611,9 @@ test('sandbox editor discloses missing includes and preserves their authored nam
   assertAbsent(includes[0].closest('.sbx-include-row').querySelector('.sbx-include-warning'), 'a resolvable include remains an ordinary compact select');
   const missing = includes[1];
   assert.equal(selectedValue(missing), 'base-caches',
-    'the sentinel option keeps the authored value selected in the DOM');
-  assert.equal(missing.querySelector('option[value="base-caches"]').textContent, '— missing —');
+    'the box keeps the authored value chosen');
+  assert.equal(missing.querySelector('input').value, 'base-caches (not in the registry)');
+  assert.ok(missing.classList.contains('missing'));
   assert.equal(missing.getAttribute('aria-invalid'), 'true');
   const warning = missing.closest('.sbx-include-row').querySelector('.sbx-include-warning');
   assert.equal(warning.getAttribute('role'), 'alert');

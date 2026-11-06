@@ -58,9 +58,12 @@ func TestResourceLockRefusesAgentProcessChanges(t *testing.T) {
 	require.Equal(t, http.StatusCreated, save.Code, save.Body.String())
 	require.Equal(t, http.StatusOK, processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/webshop/processes", map[string]any{"templateId": "ship"}).Code)
 
-	// No agent route toggles the lock.
+	// The operator's lock route is not on the agent socket, and the agent's
+	// own route needs groups.resources.lock, which groups.admin does not cover.
 	rec := agent(http.MethodPost, "/api/resource-locks", map[string]any{"kind": "process", "id": "ship", "locked": false})
-	assert.NotEqual(t, http.StatusOK, rec.Code, "the agent socket has no lock route: %s", rec.Body.String())
+	assert.NotEqual(t, http.StatusOK, rec.Code, "the agent socket has no operator lock route: %s", rec.Body.String())
+	rec = agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "process", "id": "ship", "locked": true})
+	assert.Equal(t, http.StatusForbidden, rec.Code, "groups.admin does not lock: %s", rec.Body.String())
 
 	require.Equal(t, http.StatusOK, setResourceLock(t, "process", "ship", true).Code)
 

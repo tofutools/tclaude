@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 )
 
 // A peer's download reaches this node's dashboard staged on the peer and read
-// chunk by chunk over the peer view, only under unrestricted trust, and is
+// chunk by chunk over the peer view, under unrestricted trust here, and is
 // served as an opaque, sandboxed attachment. The "peer" here is this same
 // daemon answering through its real peer-view handler.
 func TestDashboardPeerDownloadStagesAndStreamsUnderUnrestrictedTrust(t *testing.T) {
@@ -107,12 +108,68 @@ func TestDashboardPeerDownloadStagesAndStreamsUnderUnrestrictedTrust(t *testing.
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }
 
-// Every stageable download is a route the peer view already serves only
-// under unrestricted trust, never one that stays with its own node.
+// Every stageable download is a route the peer view serves either only under
+// unrestricted trust or under its own peer grant, which then gates its
+// staging (peerStageGates). The snapshot, template and log exports stay
+// unrestricted only.
 func TestPeerDownloadRoutesAreUnrestrictedLocalRoutes(t *testing.T) {
 	rules := peerViewRules()
 	for pattern := range peerDownloadRoutes {
+		if peerStageGates[pattern] != nil {
+			require.False(t, rules[pattern].unrestrictedOnly, pattern)
+			require.NotEqual(t, "local_only", rules[pattern].requires, pattern)
+			continue
+		}
 		require.Equal(t, "local_dashboard", rules[pattern].feature, pattern)
 		require.True(t, rules[pattern].unrestrictedOnly, pattern)
 	}
+	for pattern := range peerStageGates {
+		require.True(t, peerDownloadRoutes[pattern], pattern)
+	}
+	unchanged := []string{"GET /api/snapshots/{name}/export", "GET /api/templates/{name}/export", "/api/logs/export"}
+	for _, pattern := range unchanged {
+		require.Nil(t, peerStageGates[pattern], pattern)
+	}
+	// Staged uploads: spawn attachments stay unrestricted only; a group
+	// import is gated by its own peer rule (peerUploadGates).
+	for pattern := range peerUploadRoutes {
+		if peerUploadGates[pattern] {
+			require.False(t, rules[pattern].unrestrictedOnly, pattern)
+			continue
+		}
+		require.True(t, rules[pattern].unrestrictedOnly, pattern)
+	}
+	for pattern := range peerUploadGates {
+		require.True(t, peerUploadRoutes[pattern], pattern)
+	}
+	require.False(t, peerUploadGates["/api/spawn-attachments"])
+}
+
+// A staged file is read only by the peer that staged it: another peer, or
+// this node's dashboard, finds no such download.
+func TestPeerDownloadIsReadOnlyByItsOwner(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "staged-*")
+	require.NoError(t, err)
+	_, err = f.WriteString("archive")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	id := peerDownloadPrefix + "owned"
+	peerDownloads.Lock()
+	peerDownloads.byID[id] = &peerDownload{file: f.Name(), size: 7, read: time.Now(), owner: "inst_alice"}
+	peerDownloads.Unlock()
+	t.Cleanup(func() {
+		peerDownloads.Lock()
+		delete(peerDownloads.byID, id)
+		peerDownloads.Unlock()
+	})
+	read := func(owner string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/peer-downloads/"+id+"?offset=0&length=1", nil)
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		servePeerDownloadChunkFor(rec, req, owner)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusNotFound, read("inst_mallory"))
+	require.Equal(t, http.StatusNotFound, read(""))
+	require.Equal(t, http.StatusOK, read("inst_alice"))
 }

@@ -398,7 +398,7 @@ func NewCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *NewParams, cmd *cobra.Command, args []string) {
 			if err := RunNewFromCommand(params, cmd); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -518,7 +518,7 @@ func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
-		harness.PrintContextFeatureCatalog(os.Stdout)
+		harness.PrintContextFeatureCatalog(cliStdout)
 		return nil
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
@@ -538,7 +538,7 @@ func runNew(params *NewParams) error {
 	// Freeze which filesystem rules are concrete once for this launch. Keep the
 	// original snapshot for persistence; launchSandbox is the consistent set
 	// used by capability checks, write proofs, and the harness handoff.
-	launchSandbox, err := sandboxSnapshotForLaunch(effectiveSandbox)
+	launchSandbox, err := SandboxSnapshotForLaunch(effectiveSandbox)
 	if err != nil {
 		return err
 	}
@@ -748,7 +748,7 @@ func runNew(params *NewParams) error {
 	})
 	sandboxChosenBy, launchOSSandbox := osSandbox.chosenBy, osSandbox.launch
 	bwrapBinary, bwrapCapabilityErr := osSandbox.bwrapBinary, osSandbox.bwrapCapabilityErr
-	if err := gateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
+	if err := GateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
 		return err
 	}
 	discloseUnconfinedAccessRules(sandboxImplementation, unconfined, launchSandbox, effectiveSandbox)
@@ -771,7 +771,7 @@ func runNew(params *NewParams) error {
 	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
-			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 
@@ -921,7 +921,8 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
-	extensionReadPaths, err := finishHarnessSpawnSpec(h, &spawnSpec, params, outerLayer, tclaudeLayerRoot, approvalPolicy)
+	extensionReadPaths, err := FinishHarnessSpawnSpec(
+		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, cliStderr)
 	if err != nil {
 		return err
 	}
@@ -1234,14 +1235,19 @@ func OneShotLaunchPosture(
 	launchWriteDirs := append(launchGitWriteDirs,
 		sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	if implementation.UsesTclaudeLayer() {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, CanonicalSandboxPath(cwd))
 		for _, mount := range sandboxSnapshotTmpfs(effectiveSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
+			launchWriteDirs = AppendUniqueDir(launchWriteDirs, mount.Path)
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	if effectiveSandbox != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(effectiveSandbox.DenyOverlay, []string{cwd}, launchReadDirs, launchWriteDirs); err != nil {
+			return harness.SpawnSpec{}, err
+		}
+	}
 	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode,
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 		return harness.SpawnSpec{}, err
@@ -1299,7 +1305,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	if params.ManagedInstructionsRoot != "" {
-		readDirs = appendUniqueDir(readDirs, params.ManagedInstructionsRoot)
+		readDirs = AppendUniqueDir(readDirs, params.ManagedInstructionsRoot)
 	}
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -1308,64 +1314,92 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		// outside a Git repository. The workspace is an invariant launch
 		// requirement rather than an optional grant, so reopen it explicitly.
 		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-			writeDirs = appendUniqueDir(writeDirs, workspace)
+			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
-	// Codex needs the verified split-policy backend for exactly the shape it
-	// cannot otherwise honor: a narrower reopen beneath a denied ancestor. The
-	// shape is read from the RENDERED rules, not the authored profile — the
-	// launch contract above adds reopens of its own, so `deny ~` on its own
-	// still emits a split policy and must still be probed and refused on macOS.
+	return EnsureCodexManagedLaunchProfile(CodexManagedProfileRules{
+		ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs,
+	}, effectiveSandbox, launchID)
+}
+
+// CodexManagedProfileRules are the rendered directory lists a managed Codex
+// launch's permission profile is built from.
+type CodexManagedProfileRules struct {
+	ReadDirs, WriteDirs, DenyDirs []string
+}
+
+// EnsureCodexManagedLaunchProfile is the managed-Codex profile step that
+// `session new` and the conv resume share. It first runs the reopen-under-deny
+// gate on the rules: a reopen beneath a deny is refused where Codex cannot
+// enforce it. The gate runs on the RENDERED rules, not the authored profile:
+// the launch contract adds reopens of its own, so `deny ~` on its own still
+// emits a split policy. It runs here, whatever the sandbox implementation,
+// because the profile is written whatever the implementation; an unconfined
+// resume skips the gate in planResumeDirs (awb tcl-jyd8zy).
+//
+// When the rules reopen a path beneath a denied ancestor, it then verifies
+// Codex's split-policy backend, the one that can honor that shape, and adds
+// the Codex executable to the reads when the backend needs it. It writes the
+// launch-unique profile with the snapshot's network posture and Unix-socket
+// allowlist.
+//
+// The caller removes path after the pane exits, and revalidates a non-nil
+// capability immediately before the exec boundary, pinning its
+// ExecutablePath.
+func EnsureCodexManagedLaunchProfile(
+	rules CodexManagedProfileRules,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+	launchID string,
+) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+		sandboxpolicy.GrantsFromDirs(rules.ReadDirs, rules.WriteDirs, rules.DenyDirs)); err != nil {
+		return "", "", nil, err
+	}
+	readDirs := append([]string(nil), rules.ReadDirs...)
 	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
-		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs))
-	var splitCapability *harness.CodexSplitPolicyCapability
+		sandboxpolicy.GrantsFromDirs(readDirs, rules.WriteDirs, rules.DenyDirs))
 	if requireSplitPolicy {
-		if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
-			sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
-			return "", "", nil, err
-		}
 		verified, err := harness.VerifyCodexHomeSplitPolicy()
 		if err != nil {
 			return "", "", nil, err
 		}
-		splitCapability = &verified
+		capability = &verified
 		if verified.RequiresExecutableReopen {
 			readDirs = append(readDirs, verified.ExecutablePath)
 		}
 	}
-	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
+	name, path, err = harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 		ReadDirs:    readDirs,
-		WriteDirs:   writeDirs,
-		DenyDirs:    denyDirs,
+		WriteDirs:   rules.WriteDirs,
+		DenyDirs:    rules.DenyDirs,
 		UnixSockets: sandboxSnapshotUnixSockets(effectiveSandbox),
 		MaterializedUnixSocketPaths: sandboxSnapshotMaterializedUnixSocketPaths(
 			effectiveSandbox),
 		RequireSplitPolicy: requireSplitPolicy,
-	}, networkAccess, launchID)
+	}, sandboxSnapshotNetworkAccess(effectiveSandbox), launchID)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+		return "", "", nil, fmt.Errorf("write managed Codex permission profile: %w", err)
 	}
-	return profileName, path, splitCapability, nil
+	return name, path, capability, nil
 }
 
 func denyNarrowedGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
 	var out []string
 	if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-		out = appendUniqueDir(out, workspace)
+		out = AppendUniqueDir(out, workspace)
 	}
 	common := filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if common == "." || !filepath.IsAbs(common) {
 		return out
 	}
-	out = appendUniqueDir(out, common)
+	out = AppendUniqueDir(out, common)
 	for _, candidate := range candidates {
 		candidate = filepath.Clean(strings.TrimSpace(candidate))
 		// A candidate at/below the verified common directory is an exact Git
 		// admin identity (for linked worktrees Codex needs the more-specific
 		// worktrees/<name> reopen). Ancestors such as ~/git are discarded.
 		if candidate != "." && filepath.IsAbs(candidate) && sandboxpolicy.PathContainsOrEqual(common, candidate) {
-			out = appendUniqueDir(out, candidate)
+			out = AppendUniqueDir(out, candidate)
 		}
 	}
 	return out
@@ -1387,7 +1421,8 @@ func canonicalLaunchWorkspace(cwd string) string {
 	return filepath.Clean(resolved)
 }
 
-func appendUniqueDir(dirs []string, dir string) []string {
+// AppendUniqueDir appends dir unless dirs already holds it.
+func AppendUniqueDir(dirs []string, dir string) []string {
 	for _, existing := range dirs {
 		if existing == dir {
 			return dirs
@@ -1475,14 +1510,14 @@ func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]str
 	return out
 }
 
-// canonicalSandboxPath symlink-resolves a launch-time path so it can be
+// CanonicalSandboxPath symlink-resolves a launch-time path so it can be
 // compared against effective grants, which normalization has already fully
 // resolved. Without this a cwd reached through a symlinked ancestor (macOS
 // /var → /private/var, or a symlinked home) would not appear to be covered by a
 // deny that does cover it, and the launch contract would silently skip the
 // reopens the agent needs. Falls back to the lexical form when the path cannot
 // be resolved; the ordinary cwd checks report that failure.
-func canonicalSandboxPath(path string) string {
+func CanonicalSandboxPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
 		return ""
@@ -1501,7 +1536,7 @@ func sandboxDenyCoversPath(snapshot *sandboxpolicy.Snapshot, path string) bool {
 	if snapshot == nil {
 		return false
 	}
-	path = canonicalSandboxPath(path)
+	path = CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -1555,11 +1590,11 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalSandboxPath(candidate)
+		candidate = CanonicalSandboxPath(candidate)
 		if candidate == "" || !sandboxDenyCoversPath(snapshot, candidate) {
 			continue
 		}
-		out = appendUniqueDir(out, candidate)
+		out = AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
@@ -1642,7 +1677,12 @@ func sandboxSnapshotTmpfs(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.Tmpf
 	return snapshot.Effective.Tmpfs
 }
 
-func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+// SandboxSnapshotForLaunch is the snapshot as a launch sees it: its
+// filesystem rules filtered by sandboxpolicy.FilesystemForLaunch, which drops
+// read and write rows whose paths do not exist yet. Gates that count or check
+// rules read this view, so a rule waiting for its path does not refuse the
+// launch.
+func SandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
 	if snapshot == nil {
 		return nil, nil
 	}
@@ -1661,7 +1701,7 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 // preparation: missing ordinary grants become inactive, while missing denies
 // fail closed.
 func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
-	return sandboxSnapshotForLaunch(snapshot)
+	return SandboxSnapshotForLaunch(snapshot)
 }
 
 func commandWithFileCleanup(cmd, path string) string {
@@ -1935,7 +1975,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// this process's terminal. `new-session -d` prints nothing on success (bar the -P id), and
 	// on failure ("bad session name", "can't create socket") the message is the
 	// whole explanation — attaching it to the error keeps it with the caller
-	// that can render it. Writing it to os.Stderr instead would land it
+	// that can render it. Writing it to cliStderr instead would land it
 	// wherever this process's stderr happens to point, which since
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
@@ -2093,15 +2133,15 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 // the harness-specific "Created …" headline (a coding session vs a shell
 // session). Shared launch tail of runNew and runNewShell.
 func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
-	fmt.Println(createdLine)
-	fmt.Printf("  Directory: %s\n", cwd)
+	fmt.Fprintln(cliStdout, createdLine)
+	fmt.Fprintf(cliStdout, "  Directory: %s\n", cwd)
 
 	if detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
+		fmt.Fprintf(cliStdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 

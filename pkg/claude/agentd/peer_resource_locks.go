@@ -24,17 +24,19 @@ import (
 //
 // Only the peer's operator reaches the peer view (its own dashboard, behind
 // its dashboard login); no agent on either node has a route to it, so a
-// federated agent never toggles a lock, whatever it is granted.
+// federated agent never toggles a lock this way. A local agent locks through
+// its own route, POST /v1/resource-locks, under its own groups.resources.lock
+// grant (group_resource_access.go).
 
 // PermGroupsResourcesLock is the federation peer grant (group-scoped) to lock
 // and unlock the group's resources against agent changes from the peer's
 // dashboard. Unrestricted trust holds it.
 const PermGroupsResourcesLock = "groups.resources.lock"
 
-// PermGroupsResourcesRead is the federation peer grant (group-scoped) to list
-// the group's resources (its saved processes, boards and live pages, with
-// their locks) on the peer's dashboard. Unrestricted trust holds it.
-const PermGroupsResourcesRead = "groups.resources.read"
+// PermGroupsResourcesRead (group_resource_access.go) is also the federation
+// peer grant (group-scoped) to list the group's resources (its saved
+// processes, boards and live pages, with their locks) on the peer's dashboard.
+// Unrestricted trust holds it.
 
 // resourceLockGroups returns the groups a resource belongs to: a board's
 // group, a page's group, or every group a process template is pinned to. It
@@ -66,8 +68,16 @@ func resourceLockGroups(kind, id string) ([]*db.AgentGroup, bool) {
 			owner, groupID = p.owner, p.groupID
 		}
 		livePages.mu.Unlock()
-		if p == nil || !pageOwnerInGroup(owner, groupID) {
-			return nil, p != nil
+		if p == nil {
+			// A page saved with its group, closed now, keeps its lock.
+			row, err := db.GetGroupPage(id)
+			if err != nil || row == nil {
+				return nil, false
+			}
+			return byID(row.GroupID), true
+		}
+		if !pageOwnerInGroup(owner, groupID) {
+			return nil, true
 		}
 		return byID(groupID), true
 	case resourceKindProcess:
@@ -144,6 +154,10 @@ type peerGroupProcess struct {
 	TemplateID   string `json:"templateId"`
 	Name         string `json:"name"`
 	AgentsLocked bool   `json:"agentsLocked,omitempty"`
+	// CanLock is whether the caller may lock and unlock this template. A
+	// template's lock reaches every group it is pinned to, so the list's own
+	// canLock (its group's) does not answer it.
+	CanLock bool `json:"canLock"`
 }
 
 // servePeerGroupResources is GET /api/groups/{name}/resources through the
@@ -174,7 +188,23 @@ func servePeerGroupResources(w http.ResponseWriter, r *http.Request, v *peerView
 		out.Pages = []processGroupPage{}
 	}
 	for _, p := range processSavedTemplates().groupProcesses(r.Context(), g.ID) {
-		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked})
+		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked,
+			CanLock: peerMayLockProcess(v.peer.InstanceID, p.TemplateID)})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// peerMayLockProcess is whether the peer's grants reach a template's lock: in
+// every group it is pinned to, as servePeerResourceLock requires.
+func peerMayLockProcess(peerID, templateID string) bool {
+	groups, _ := resourceLockGroups(resourceKindProcess, templateID)
+	if len(groups) == 0 {
+		return false
+	}
+	for _, g := range groups {
+		if !fedPeerAllows(peerID, g.ID, PermGroupsResourcesLock) {
+			return false
+		}
+	}
+	return true
 }

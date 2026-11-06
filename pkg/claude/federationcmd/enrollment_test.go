@@ -28,4 +28,12 @@ func TestEnrollmentBearerSourcesAndCLI(t *testing.T) {
 	require.NoError(t, e)
 	require.NotNil(t, cmd.Flags().Lookup("uses"))
 	require.NotNil(t, cmd.Flags().Lookup("trust-level"))
+	require.NotNil(t, cmd.Flags().Lookup("request-trust"))
+	require.Nil(t, enrollCmd().Flags().Lookup("give-permissions"), "plain enroll gives nothing")
+	require.Nil(t, enrollCmd().Flags().Lookup("yes-unrestricted"))
+	for _, flag := range []string{"give-permissions", "yes-unrestricted", "confirm-fingerprint", "token-file", "preview"} {
+		require.NotNil(t, becomeNodeCmd().Flags().Lookup(flag), flag)
+	}
+	require.Equal(t, []map[string]string{{"slug": "host.read", "scope": ""}, {"slug": "groups.members.spawn", "scope": "group=builders"}, {"slug": "agents.status.read", "scope": ""}},
+		becomeNodeGives([]string{"host.read, groups.members.spawn@group=builders", "agents.status.read"}))
 }

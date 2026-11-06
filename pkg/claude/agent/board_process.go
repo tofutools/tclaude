@@ -46,7 +46,7 @@ func boardFromProcessCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardFromProcessParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardFromProcess(p, args[0], args[1], os.Stdout, os.Stderr))
+			os.Exit(runBoardFromProcess(p, args[0], args[1], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -66,7 +66,7 @@ func runBoardFromProcess(p *boardFromProcessParams, boardID, templateID string, 
 		return rcInvalidArg
 	}
 	var shown processTemplateShowJSON
-	if err := DaemonRequest(http.MethodGet, "/v1/process/templates/"+url.PathEscape(templateID), nil, &shown, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/process/templates/"+url.PathEscape(templateID), nil, &shown, boardOpts()); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -85,7 +85,7 @@ func runBoardFromProcess(p *boardFromProcessParams, boardID, templateID string, 
 		if title == "" {
 			title = parsed.Template.ID
 		}
-		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": title}, &boardDoc{}, DaemonOpts{}); err != nil {
+		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": title}, &boardDoc{}, boardOpts()); err != nil {
 			return boardErr(stderr, err)
 		}
 		doc = &boardDoc{ID: boardID}

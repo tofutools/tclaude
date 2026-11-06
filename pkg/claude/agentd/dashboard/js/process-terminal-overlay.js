@@ -22,7 +22,8 @@ import {
   normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
 import { ProcessAgentStepper, isAgentScopedTo, namedScope } from './process-agent-stepper.js';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 export { reassignableNode };
 
@@ -280,10 +281,8 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
       onClick=${() => setOpen(true)}>↻ reassign node<//>`;
   }
   return html`<span class="pk-reassign" data-process-reassign=${node.id}>
-    <${Select} size="sm" class="pk-reassign-select" aria-label=${`New performer for ${node.label || node.id}`}
-      value=${chosen} onChange=${(event) => setTarget(event.currentTarget.value)}>
-      ${candidates.map((candidate) => html`<option key=${candidate.id} value=${candidate.id}>${candidate.label}</option>`)}
-    <//>
+    <${AgentCombobox} ariaLabel=${`New performer for ${node.label || node.id}`} value=${chosen} agents=${choiceAgents(candidates)}
+      onChange=${setTarget} />
     <${Button} size="sm" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign<//>
     <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel<//>
     ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}

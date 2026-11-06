@@ -1,5 +1,7 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
+import { comboKeys } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
@@ -103,6 +105,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeToken: async (id) => { log.push(['revokeToken', id]); return { ok: true }; },
     enrollPreview: async (o) => { log.push(['enrollPreview', o]); return { claims: { master: 'inst_carol', profile_name: 'worker', profile_id: 'prof_x', profile_revision: 2, trust_level: 'unrestricted', expires_at: '2099-01-01T00:00:00Z' }, preview_token: 'pv1', master_fingerprint: FP_NEW, node_fingerprint: 'self-fp-0000', consent: 'Running enroll trusts the pinned master.' }; },
     enroll: async (o) => { log.push(['enroll', o]); return { accepted: true }; },
+    becomeNode: async (o) => { log.push(['becomeNode', o]); return { accepted: true }; },
     moves: async () => { log.push(['moves']); return [
       { id: 'm1', direction: 'out', teleport: false, peer: 'inst_forge', source_agent: 'agt_aaaaaaaaaaaaaaaa', group: 'ops', state: 'awaiting_confirmation', expires_at: '2099-01-01T00:00:00Z' },
       { id: 'm2', direction: 'in', teleport: true, peer: 'inst_forge', source_agent: 'agt_bbbbbbbbbbbbbbbb', target_agent: 'agt_cccccccccccccccc', group: 'rigs', state: 'complete', expires_at: '2026-10-09T00:00:00Z' },
@@ -625,6 +628,20 @@ test('grants scoped by stable group ID label by group_name and keep deleted-grou
   assert.deepEqual(s.log.find((l) => l[0] === 'revoke')[1], { peer: 'inst_forge', slug: 'sessions.watch', scope: 'group_id=12' }, 'the scope goes back unchanged');
 });
 
+test('an unscoped grant the daemon marks inert shows as inert, not all groups', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  const [row] = m.grantRows([{ slug: 'agents.receive', scope: '', inert: 'needs a group scope: grant it per group' }]);
+  assert.equal(row.inert, 'needs a group scope: grant it per group');
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'agents.receive', scope: '', inert: 'needs a group scope: grant it per group' }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  assert.match(s.q('#fleet-grants').textContent, /inert: needs a group/);
+  assert.doesNotMatch(s.q('#fleet-grants').textContent, /all groups, incl\. future/);
+  await s.click(s.q('#fleet-grants [data-fa="revoke"]'));
+  assert.match(s.confirms.at(-1).body, /with no group \(it applies nowhere\)/);
+});
+
 test('an all-groups grant is new even when the peer holds the same permission on a deleted group', async (t) => {
   const s = await setup(t);
   s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'message.direct', scope: 'group_id=12', group_id: 12, group_deleted: true }];
@@ -663,14 +680,12 @@ test('an invite for an unrestricted profile repeats the consequence', async (t) 
   const s = await setup(t);
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
-  const sel = s.q('#fleet-invite-profile');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'ops-full') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await comboPick(s.harness, s.q('#fleet-invite-profile'), 'ops-full');
   await s.click(s.q('#fleet-invite-create'));
   assert.match(s.confirms.at(-1).body, /at unrestricted trust — .*created later/);
 });
 
-test('joining previews the master fingerprint and trust level, and needs the check before enrolling', async (t) => {
+test('joining previews the master fingerprint, gives restricted only, shows the requested trust as a request, and needs the check', async (t) => {
   const s = await setup(t);
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
@@ -680,12 +695,81 @@ test('joining previews the master fingerprint and trust level, and needs the che
   await s.click(s.q('#fleet-join-preview'));
   assert.deepEqual(s.log.find((l) => l[0] === 'enrollPreview')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL' });
   const modal = s.q('#fleet-join-modal').textContent;
-  assert.match(modal, new RegExp(FP_NEW)); assert.match(modal, /unrestricted trust on this node/); assert.match(modal, /created later/);
+  assert.match(modal, new RegExp(FP_NEW)); assert.match(modal, /restricted trust, no grants/); assert.match(modal, /unrestricted trust \(a request; Enroll gives it nothing\)/); assert.match(modal, /Become a worker node/);
   assert.equal(s.q('#fleet-join-submit').disabled, true);
   await s.check(s.q('#fleet-join-ack'));
   await s.click(s.q('#fleet-join-submit'));
   assert.deepEqual(s.log.find((l) => l[0] === 'enroll')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1' });
   assert.equal(s.q('#fleet-join-modal'), null);
+});
+
+test('become-node gives exactly what is ticked, preselects nothing, warns, and needs the fingerprint', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
+  await s.click(s.q('#fleet-become-open'));
+  const tok = s.q('#fleet-become-token'); tok.value = 'tcle1.FROMCAROL';
+  await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
+  await s.click(s.q('#fleet-become-preview'));
+  const modal = () => s.q('#fleet-become-modal').textContent;
+  assert.match(modal(), /unrestricted trust \(a request: only what you tick below is given\)/);
+  assert.equal([...s.q('#fleet-become-perms').querySelectorAll('input[type=checkbox]')].some((c) => c.checked), false, 'nothing is preselected');
+  assert.ok(!s.q('#fleet-become-unrestricted').checked, 'unrestricted is never preselected');
+  assert.equal(s.q('#fleet-become-warning'), null);
+  assert.equal(s.q('#fleet-become-submit').disabled, true);
+  assert.equal(s.q('[data-become-slug="models.proxy"]'), null, 'a gateway grant takes its own policy');
+
+  await s.check(s.q('[data-become-slug="host.read"] input[type=checkbox]'));
+  await s.check(s.q('[data-become-slug="groups.members.spawn"] input[type=checkbox]'));
+  await s.check(s.q('[data-become-slug="sessions.shell"] input[type=checkbox]'));
+  const fpEarly = s.q('#fleet-become-fp'); fpEarly.value = FP_NEW;
+  await s.harness.act(() => s.harness.fireEvent(fpEarly, 'input'));
+  assert.equal(s.q('#fleet-become-submit').disabled, true, 'a group permission needs its group chosen: never every group by default');
+  assert.doesNotMatch(s.q('#fleet-become-warning').textContent, /sessions\.shell/, 'an unchosen group permission is not given');
+  await pickOption(s, '[data-become-group="groups.members.spawn"]', 'build');
+  await pickOption(s, '[data-become-group="sessions.shell"]', '*');
+  fpEarly.value = '';
+  await s.harness.act(() => s.harness.fireEvent(fpEarly, 'input'));
+  const warning = s.q('#fleet-become-warning').textContent;
+  assert.match(warning, /You are handing this machine to/);
+  assert.match(warning, /host\.read \(this node\) Sensitive/);
+  assert.match(warning, /groups\.members\.spawn \(group build\)/);
+  assert.match(warning, /at most 2 live workers/);
+  assert.match(warning, /sessions\.shell \(every group, including future ones\) Sensitive/);
+  assert.match(warning, /A shell runs any command here/, 'a permission\'s own caution is in the warning');
+  assert.equal(s.q('#fleet-become-submit').disabled, true, 'no fingerprint yet');
+
+  const fp = s.q('#fleet-become-fp'); fp.value = 'not-it';
+  await s.harness.act(() => s.harness.fireEvent(fp, 'input'));
+  assert.equal(s.q('#fleet-become-submit').disabled, true, 'a wrong fingerprint');
+  fp.value = ` ${FP_NEW.toUpperCase()} `;
+  await s.harness.act(() => s.harness.fireEvent(fp, 'input'));
+  assert.equal(s.q('#fleet-become-submit').disabled, false);
+  await s.click(s.q('#fleet-become-submit'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'becomeNode')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1', confirmFingerprint: FP_NEW,
+    givePermissions: [{ slug: 'groups.members.spawn', scope: 'group=build' }, { slug: 'host.read', scope: '' }, { slug: 'sessions.shell', scope: '' }] });
+  assert.equal(s.q('#fleet-become-modal'), null);
+});
+
+test('become-node unrestricted disables the list and sends no permissions; a scoped grant needs its group', async (t) => {
+  const s = await setup(t);
+  const inv = await s.harness.importDashboardModule('js/fleet-admin-invites.js');
+  assert.deepEqual(inv.becomeNodeGives({ 'agents.receive': '', 'message.direct': '', 'sessions.read': '*', 'host.read': '' }), [{ slug: 'host.read', scope: '' }, { slug: 'sessions.read', scope: '' }], 'a group permission without its choice is not given; every group is chosen explicitly');
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
+  await s.click(s.q('#fleet-become-open'));
+  const tok = s.q('#fleet-become-token'); tok.value = 'tcle1.FROMCAROL';
+  await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
+  await s.click(s.q('#fleet-become-preview'));
+  await s.check(s.q('[data-become-slug="agents.receive"] input[type=checkbox]'));
+  const fp = s.q('#fleet-become-fp'); fp.value = FP_NEW;
+  await s.harness.act(() => s.harness.fireEvent(fp, 'input'));
+  assert.equal(s.q('#fleet-become-submit').disabled, true, 'agents.receive needs a group');
+  await s.check(s.q('#fleet-become-unrestricted'));
+  assert.match(s.q('#fleet-become-warning').textContent, /every group created later/);
+  assert.equal(s.q('[data-become-slug="host.read"] input[type=checkbox]').disabled, true);
+  await s.click(s.q('#fleet-become-submit'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'becomeNode')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1', confirmFingerprint: FP_NEW, unrestricted: true });
 });
 
 async function openProfiles(s, pools) {
@@ -1237,7 +1321,7 @@ test('offers: preview then apply a config offer item by item, start a moved agen
 
   // Share an agent: only agents with a stable ID; the receiving group is required.
   await s.click(s.q('#fleet-share-agent-open'));
-  assert.deepEqual([...q('#fleet-share-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1']);
+  assert.deepEqual(await comboKeys(s.harness, q('#fleet-share-agent-agent')), ['agt_a1']);
   await s.click(q('#fleet-share-agent-send'));
   assert.match(q('#fleet-share-agent [role=alert]').textContent, /receiving group/);
   await type(q('#fleet-share-agent-group'), 'team');
@@ -1306,7 +1390,7 @@ test('moves: the move dialog spells out that the source retires and surfaces ref
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
   await s.click(s.q('#fleet-move-open'));
-  assert.deepEqual([...q('#fleet-move-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1'], 'only agents with a stable ID can move');
+  assert.deepEqual(await comboKeys(s.harness, q('#fleet-move-agent-agent')), ['agt_a1'], 'only agents with a stable ID can move');
   await s.click(q('#fleet-move-agent-send'));
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /receiving group/);
   const g = q('#fleet-move-agent-group'); g.value = 'team';
@@ -2324,12 +2408,13 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
   const mounted = await harness.mount(harness.html`<${MoveAgentDialog} peers=${peers} agents=${[{ id: 'agt_a1', label: 'ada' }]} actions=${actions} confirm=${confirm} onClose=${() => {}} onDone=${() => {}} />`);
   const q = (x) => harness.document.querySelector(x);
   const pick = async (sel, value) => { const el = q(sel); for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); } await harness.act(() => harness.fireEvent(el, 'change')); };
-  assert.deepEqual([...q('#fleet-move-agent-group-pick').querySelectorAll('option')].map((o) => o.textContent), ['pick a group that receives agents…', 'intake', 'labs', 'another group (type its name)…']);
-  await pick('#fleet-move-agent-group-pick', 'labs');
+  assert.equal(q('#fleet-move-agent-group-pick input').value, 'pick a group that receives agents…');
+  assert.deepEqual(await comboLabels(harness, q('#fleet-move-agent-group-pick')), ['intake', 'labs', 'another group (type its name)…']);
+  await comboPick(harness, q('#fleet-move-agent-group-pick'), 'labs');
   await harness.act(() => q('#fleet-move-agent-send').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.equal(sent.at(-1).group, 'labs');
-  await pick('#fleet-move-agent-group-pick', '\u0000other');
+  await comboPick(harness, q('#fleet-move-agent-group-pick'), '\u0000other');
   assert.ok(q('#fleet-move-agent-group'), 'typing is the fallback');
   await pick('#fleet-move-agent-peer', 'inst_lab');
   assert.equal(q('#fleet-move-agent-group-pick'), null, 'a peer listing no receiving group gets the text field');
@@ -2552,7 +2637,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   }) });
   await s.show();
   assert.equal(s.q('.fs-step.on').dataset.step, 'share', 'opens on the first step not done');
-  assert.equal(s.q('#fleet-setup-group').getAttribute('value'), 'build', 'the first group is picked');
+  assert.equal(s.q('#fleet-setup-group').dataset.value, 'build', 'the first group is picked');
   assert.ok(s.q('[data-preset="mail"] input').hasAttribute('checked'), 'mail is the default share');
   await s.click(s.q('#fleet-setup-share'));
   assert.equal(s.confirms.at(-1).title, 'Share build with forge?');
@@ -2564,9 +2649,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   ]);
   assert.match(s.toasts.at(-1), /Shared build with forge/);
 
-  const group = s.q('#fleet-setup-group');
-  for (const o of group.querySelectorAll('option')) { if (o.value === 'ops') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(group, 'change'));
+  await comboPick(s.harness, s.q('#fleet-setup-group'), 'ops');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await s.check(s.q('[data-preset="spawn"] input'));
   assert.match(s.q('[data-setup-step="share"] .fs-actions').textContent, /Grants message\.direct, groups\.presence\.read, groups\.members\.spawn in ops/, 'the roster grant forge holds on ops is not sent again');

@@ -278,7 +278,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	if input.DarwinRouteReservation != nil && !sameDarwinRouteSlots(input.DarwinRouteSlots, input.DarwinRouteReservation.Slots()) {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("darwin route reservation does not match launch slots")
 	}
-	cwd := canonicalSandboxPath(input.Cwd)
+	cwd := CanonicalSandboxPath(input.Cwd)
 	if cwd == "" {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude’s sandbox launch cwd %q is not an absolute canonical path", input.Cwd)
 	}
@@ -301,7 +301,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		effective, append([]string{cwd}, gitWriteDirs...)...)
 	launchWriteDirs := append(gitWriteDirs,
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessWrite)...)
-	launchWriteDirs = appendUniqueDir(launchWriteDirs, cwd)
+	launchWriteDirs = AppendUniqueDir(launchWriteDirs, cwd)
 	launchReadDirs := append(
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessRead),
 		launchContractReadDirs...,
@@ -344,7 +344,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	contractWriteDirs = append(contractWriteDirs, buckets.ContractWriteDirs...)
 	launchReadDirs = append(launchReadDirs, buckets.LaunchReadDirs...)
 	for _, dir := range buckets.LaunchWriteDirs {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, dir)
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, dir)
 	}
 	// The harness-config floor rides in as ordinary read grants so the same
 	// most-specific-wins ordering, constructed-root renderer, and Seatbelt
@@ -370,6 +370,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// carried around it and re-attached: they occupy their own sandbox paths, so
 	// they never fold with a contract dir, and dropping them here would silently
 	// launch without the mount the operator authored.
+	// The launch's own reopens, harness state included, may not fall under the
+	// spawn-time deny overlay: it covers each path's whole subtree.
+	if input.Snapshot != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(input.Snapshot.DenyOverlay,
+			launchReadDirs, launchWriteDirs, contractWriteDirs, stateDirs, readOnlyStateDirs); err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
+	}
 	effective.Filesystem = append(
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs),
 		remappedGrants...)
@@ -1601,7 +1609,7 @@ func tclaudeLayerSpecRenderInput(
 			}
 		}
 		for _, socket := range authoredSockets {
-			socketPaths = appendUniqueDir(socketPaths, socket)
+			socketPaths = AppendUniqueDir(socketPaths, socket)
 		}
 	}
 	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, nil
@@ -1875,7 +1883,7 @@ func cleanTclaudeLayerAbsoluteDirs(label string, paths []string) ([]string, erro
 		if path == "." || !filepath.IsAbs(path) {
 			return nil, fmt.Errorf("%s entry %d has non-absolute path %q", label, i, path)
 		}
-		out = appendUniqueDir(out, path)
+		out = AppendUniqueDir(out, path)
 	}
 	return out, nil
 }
@@ -3576,7 +3584,7 @@ func validateRemappedGuestPathsAgainstContract(
 	for _, grant := range remapped {
 		guest := grant.GuestPath()
 		for _, dir := range contractDirs {
-			dir = canonicalSandboxPath(dir)
+			dir = CanonicalSandboxPath(dir)
 			if dir == "" {
 				continue
 			}
@@ -3611,12 +3619,12 @@ func validateTmpfsPathsAgainstContract(
 ) error {
 	for _, mount := range mounts {
 		spellings := []string{mount.Path}
-		if canonical := canonicalSandboxPath(mount.Path); canonical != "" &&
+		if canonical := CanonicalSandboxPath(mount.Path); canonical != "" &&
 			canonical != mount.Path {
 			spellings = append(spellings, canonical)
 		}
 		for _, dir := range contractDirs {
-			dir = canonicalSandboxPath(dir)
+			dir = CanonicalSandboxPath(dir)
 			if dir == "" {
 				continue
 			}
@@ -3641,7 +3649,7 @@ func sandboxDenyCoversEffectivePath(
 	effective sandboxpolicy.EffectiveProfile,
 	path string,
 ) bool {
-	path = canonicalSandboxPath(path)
+	path = CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -3673,11 +3681,11 @@ func sandboxLaunchContractReadDirsForEffective(
 	}
 	var out []string
 	for _, candidate := range all {
-		candidate = canonicalSandboxPath(candidate)
+		candidate = CanonicalSandboxPath(candidate)
 		if candidate == "" || !sandboxDenyCoversEffectivePath(effective, candidate) {
 			continue
 		}
-		out = appendUniqueDir(out, candidate)
+		out = AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out

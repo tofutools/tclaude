@@ -159,6 +159,9 @@ const settingRows = (v) => {
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Gives the master exactly givePermissions ([{ slug, scope }]) or unrestricted
+    // trust on this node; the fingerprint is the one the operator pasted.
+    becomeNode: ({ master, token, previewToken, confirmFingerprint, givePermissions, unrestricted }) => call('POST', 'become-node', { master, token, preview_token: previewToken, confirm_fingerprint: confirmFingerprint, give_permissions: givePermissions, unrestricted: !!unrestricted }),
     // Bundle offers. An incoming offer is addressed by ID plus its source peer
     // (the same ID can come from two peers); import defaults to a preview.
     offers: async (direction) => (await call('GET', `bundle-offers?direction=${direction}`)) || [],

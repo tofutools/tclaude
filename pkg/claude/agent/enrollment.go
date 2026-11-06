@@ -50,7 +50,7 @@ func promoteCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *promoteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPromote(p, os.Stdout, os.Stderr))
+			os.Exit(runPromote(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -131,7 +131,7 @@ func retireCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *retireParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRetire(p, os.Stdout, os.Stderr))
+			os.Exit(runRetire(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -145,13 +145,9 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// Always send shutdown and delete_worktree explicitly so the request
 	// is unambiguous — the daemon defaults shutdown ON and delete_worktree
@@ -195,6 +191,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			Action string `json:"action"`
 			Detail string `json:"detail"`
 		} `json:"worktree"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		// A dangling agent entry — an enrollment whose conversation data
@@ -210,7 +207,9 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: retired → plain conversation (data kept, reinstatable)\n", short(resp.ConvID))
+	resp.printRemoteNote(stdout)
 	if len(resp.Outcome.GroupsLeft) > 0 {
 		fmt.Fprintf(stdout, "  left groups: %s\n", strings.Join(resp.Outcome.GroupsLeft, ", "))
 	}
@@ -258,7 +257,7 @@ func reinstateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reinstateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReinstate(p, os.Stdout, os.Stderr))
+			os.Exit(runReinstate(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

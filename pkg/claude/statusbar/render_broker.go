@@ -1,16 +1,12 @@
 package statusbar
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -343,50 +339,14 @@ func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, erro
 	if err != nil {
 		return out, err
 	}
-	socks := agentipc.ClientSocketPaths()
-	if len(socks) == 0 {
-		return out, fmt.Errorf("no agentd socket path resolved")
-	}
-	client := &http.Client{
-		Timeout: renderBrokerTimeout,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var lastErr error
-				for _, sock := range socks {
-					conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
-			},
-		},
-	}
-	httpReq, err := http.NewRequest(http.MethodPost, "http://tclaude/v1/whoami/statusline", bytes.NewReader(body))
-	if err != nil {
-		return out, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return out, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		statusErr := fmt.Errorf("agentd returned %d: %s", resp.StatusCode, bytes.TrimSpace(preview))
-		switch resp.StatusCode {
+	err = agentipc.PostToBroker("/v1/whoami/statusline", body, renderBrokerTimeout, &out)
+	if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok {
+		switch statusErr.Status {
 		case http.StatusForbidden, http.StatusUnauthorized:
-			return out, fmt.Errorf("%w: %w", errRenderBrokerRefused, statusErr)
+			return out, fmt.Errorf("%w: %w", errRenderBrokerRefused, err)
 		case http.StatusTooManyRequests:
-			return out, fmt.Errorf("%w: %w", errRenderBrokerThrottled, statusErr)
+			return out, fmt.Errorf("%w: %w", errRenderBrokerThrottled, err)
 		}
-		return out, statusErr
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return out, fmt.Errorf("decode broker response: %w", err)
-	}
-	return out, nil
+	return out, err
 }

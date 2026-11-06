@@ -26,18 +26,25 @@ func triggersCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "triggers", Short: "Inspect tclaude-level trigger rules", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{triggersLsCmd(), triggersShowCmd(), triggersExplainCmd()}}.ToCobra()
 }
 
-func triggersLsCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{Use: "ls", Short: "List trigger rules", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) { os.Exit(runTriggersLs(os.Stdout, os.Stderr)) }}.ToCobra()
+type triggersLsParams struct {
+	Remote string `long:"remote" optional:"true" help:"List a linked node's trigger rules instead: its groups' rules under the groups.triggers.read it gave this node, without spawn instructions or error detail. Its answer is remote content."`
 }
-func runTriggersLs(stdout, stderr io.Writer) int {
+
+func triggersLsCmd() *cobra.Command {
+	return boa.CmdT[triggersLsParams]{Use: "ls", Short: "List trigger rules", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersLsParams, _ *cobra.Command, _ []string) {
+		os.Exit(runTriggersLs(cliStdout, cliStderr, p.Remote))
+	}}.ToCobra()
+}
+func runTriggersLs(stdout, stderr io.Writer, remote string) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	rules, err := fetchTriggerList()
+	rules, err := fetchTriggerList(remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
+		return MapDaemonErrorToRC(err)
 	}
+	printRemoteScheduleBanner(stdout, remote, "trigger rules")
 	if len(rules) == 0 {
 		fmt.Fprintln(stdout, "(no triggers)")
 		return rcOK
@@ -57,34 +64,39 @@ func runTriggersLs(stdout, stderr io.Writer) int {
 
 type triggersShowParams struct {
 	Selector string `pos:"true" help:"Trigger name or numeric id."`
+	Remote   string `long:"remote" optional:"true" help:"Show a linked node's trigger rule instead, under the groups.triggers.read it gave this node. Its answer is remote content."`
 }
 
 func triggersShowCmd() *cobra.Command {
 	return boa.CmdT[triggersShowParams]{Use: "show", Short: "Show one trigger and its recent firing ledger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersShowParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTriggersShow(os.Stdout, os.Stderr, p.Selector))
+		os.Exit(runTriggersShow(cliStdout, cliStderr, p.Selector, p.Remote))
 	}}.ToCobra()
 }
-func runTriggersShow(stdout, stderr io.Writer, selector string) int {
+func runTriggersShow(stdout, stderr io.Writer, selector, remote string) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	view, rc := resolveTrigger(stderr, selector)
+	view, rc := resolveTrigger(stderr, selector, remote)
 	if rc != rcOK {
 		return rc
 	}
+	printRemoteScheduleBanner(stdout, remote, "trigger rule")
 	r := view.TriggerRule
 	fmt.Fprintf(stdout, "Trigger:   %s (id %d, revision %d, row version %d)\n", r.Name, r.ID, r.Revision, r.RowVersion)
 	owner := "operator"
 	if !r.OperatorAuthored {
 		owner = r.OwnerAgent
+		if owner == "" {
+			owner = "agent"
+		}
 	}
 	fmt.Fprintf(stdout, "Owner:     %s\nEnabled:   %v\nScope:     %s\nSource:    %s\nDrafts:    %s\nDebounce:  %s\nCooldown:  %s\nFor:       %s\n", owner, r.Enabled, triggerScopeLabel(r, view.Group), r.Source, r.DraftFilter, durationLabel(r.DebounceSeconds), durationLabel(r.CooldownSeconds), durationLabel(r.ForSeconds))
 	fmt.Fprintln(stdout, "Actions:")
 	for i, a := range r.Actions {
-		switch a.Type {
-		case db.TriggerActionSpawn:
+		switch {
+		case a.Type == db.TriggerActionSpawn && a.Spawn != nil:
 			fmt.Fprintf(stdout, "  %d. spawn profile=%q roles=%v max_live=%d deadline=%s\n", i, a.Spawn.Profile, a.Spawn.RoleRefs, a.Spawn.MaxLiveWorkers, durationLabel(a.Spawn.WorkerDeadlineSeconds))
-		case db.TriggerActionMessage:
+		case a.Type == db.TriggerActionMessage && a.Message != nil:
 			fmt.Fprintf(stdout, "  %d. message target=%s subject=%q\n", i, a.Message.Target, a.Message.SubjectTemplate)
 		}
 	}
@@ -121,7 +133,7 @@ type triggersExplainParams struct {
 
 func triggersExplainCmd() *cobra.Command {
 	return boa.CmdT[triggersExplainParams]{Use: "explain", Short: "Dry-run an event or agent fact against every trigger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersExplainParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTriggersExplain(os.Stdout, os.Stderr, p))
+		os.Exit(runTriggersExplain(cliStdout, cliStderr, p))
 	}}.ToCobra()
 }
 func runTriggersExplain(stdout, stderr io.Writer, p *triggersExplainParams) int {
@@ -153,16 +165,16 @@ func runTriggersExplain(stdout, stderr io.Writer, p *triggersExplainParams) int 
 	return rcOK
 }
 
-func resolveTrigger(stderr io.Writer, selector string) (*triggerViewJSON, int) {
+func resolveTrigger(stderr io.Writer, selector, remote string) (*triggerViewJSON, int) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		fmt.Fprintln(stderr, "Error: trigger name or id required")
 		return nil, rcInvalidArg
 	}
-	rules, err := fetchTriggerList()
+	rules, err := fetchTriggerList(remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcIOFailure
+		return nil, MapDaemonErrorToRC(err)
 	}
 	var id int64
 	id, _ = strconv.ParseInt(selector, 10, 64)
@@ -178,18 +190,18 @@ func resolveTrigger(stderr io.Writer, selector string) (*triggerViewJSON, int) {
 		return nil, rcNotFound
 	}
 	var view triggerViewJSON
-	if err := DaemonRequest(http.MethodGet, "/v1/triggers/"+strconv.FormatInt(found.ID, 10), nil, &view, DaemonOpts{}); err != nil {
+	if err := remoteRequest(remote, http.MethodGet, "/v1/triggers/"+strconv.FormatInt(found.ID, 10), nil, &view); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, MapDaemonErrorToRC(err)
 	}
 	return &view, rcOK
 }
 
-func fetchTriggerList() ([]triggerViewJSON, error) {
+func fetchTriggerList(remote string) ([]triggerViewJSON, error) {
 	var resp struct {
 		Triggers []triggerViewJSON `json:"triggers"`
 	}
-	err := DaemonRequest(http.MethodGet, "/v1/triggers", nil, &resp, DaemonOpts{})
+	err := remoteRequest(remote, http.MethodGet, "/v1/triggers", nil, &resp)
 	return resp.Triggers, err
 }
 func triggerScopeLabel(r *db.TriggerRule, group string) string {

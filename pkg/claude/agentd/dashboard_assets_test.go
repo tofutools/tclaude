@@ -315,8 +315,9 @@ func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
 // its full path, while clone also derives the closed select's controlled title.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
-		"title=${selectTitle}",                           // clone's closed select follows controlled selection
+		"title: `${label} — ${worktree.path}`",                                // worktree rows (git-picker.js) retain the full path
+		"title=${item.disabled ? item.reason || '' : item.title || item.key}", // FilterCombobox rows show it
+		"attrs=${{ title: selectTitle }}",                                     // clone's closed box follows controlled selection
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)
@@ -424,8 +425,10 @@ func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 		"  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto auto;") {
 		t.Error("dashboard.css authored filesystem rows must use the shared segmented/path/action grid")
 	}
-	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {
-		t.Error("dashboard.css included-profile selector must retain intrinsic width")
+	// The included-profile choice is a type-to-filter box (tcl-986r2g), which
+	// has no intrinsic width of its own: it takes a bounded share of the row.
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1 1 14em; min-width: 0; max-width: 32em;") {
+		t.Error("dashboard.css included-profile choice must keep its bounded row share")
 	}
 }
 

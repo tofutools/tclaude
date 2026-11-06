@@ -37,7 +37,7 @@ type federationGroupLinks struct {
 }
 
 func linksCmd() *cobra.Command {
-	return boa.CmdT[linksParams]{Use: "links", Short: "Read per-group federation links (local operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *linksParams, _ *cobra.Command, _ []string) { os.Exit(runLinks(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[linksParams]{Use: "links", Short: "Read per-group federation links (local operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *linksParams, _ *cobra.Command, _ []string) { os.Exit(runLinks(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runLinks(p *linksParams, stdout, stderr io.Writer) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {

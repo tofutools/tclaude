@@ -865,12 +865,21 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				return
 			}
 		} else {
-			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
-			if err != nil {
+			validatedParent, fail := parentSandboxBound(spec.caller, parentSnapshot)
+			if fail != nil {
 				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-				writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+				writeSpawnFailure(w, fail)
 				return
 			}
+			// The instantiating agent's deny overlay is inherited by every
+			// member, as a spawned child's is.
+			overlaid, err := sandboxpolicy.ApplyDenyOverlay(effectiveSandbox, validatedParent.DenyOverlay)
+			if err != nil {
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
+				return
+			}
+			effectiveSandbox = overlaid
 			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
 				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
 				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())

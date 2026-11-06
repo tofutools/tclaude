@@ -484,9 +484,15 @@ type Snapshot struct {
 	// between groups, to keep a setting on the group it left. Nil follows the
 	// default: the sandbox tier and the group environment both come from
 	// ResolutionGroupID, which tracks the agent's membership.
-	GroupBinding *GroupBinding    `json:"group_binding,omitempty"`
-	Effective    EffectiveProfile `json:"effective"`
-	Applied      []AppliedProfile `json:"applied"`
+	GroupBinding *GroupBinding `json:"group_binding,omitempty"`
+	// DenyOverlay is the spawn-time deny overlay (deny_overlay.go): the
+	// canonical paths denied to this agent on top of its profiles, its
+	// parent's included. Effective already has it applied; it is kept
+	// separately so every relaunch can lay it over a freshly resolved chain,
+	// and so a child's overlay starts from it.
+	DenyOverlay []string         `json:"deny_overlay,omitempty"`
+	Effective   EffectiveProfile `json:"effective"`
+	Applied     []AppliedProfile `json:"applied"`
 	// LaunchEnvironment is merged into the child process after the sandbox
 	// profile environment. It is not sandbox authority, so RequireContained
 	// intentionally does not inspect it.
@@ -551,10 +557,15 @@ func (s Snapshot) ProfilesOmittedByChoice() bool {
 	return s.ProfilesOmitted && !s.ProfilesOmittedDerived
 }
 
-// CopyOmission copies whether, and why, from omits the sandbox profiles.
+// CopyOmission copies whether, and why, from omits the sandbox profiles, and
+// the deny overlay laid over them. Both describe the launch contract rather
+// than the effective profile, and every site that rebuilds a snapshot around
+// a changed effective profile calls this: dropping the overlay there would
+// widen the agent's next relaunch.
 func (s *Snapshot) CopyOmission(from Snapshot) {
 	s.ProfilesOmitted = from.ProfilesOmitted
 	s.ProfilesOmittedDerived = from.ProfilesOmitted && from.ProfilesOmittedDerived
+	s.DenyOverlay = append([]string(nil), from.DenyOverlay...)
 }
 
 func (s *Snapshot) CopyGroupProvenance(from Snapshot) {

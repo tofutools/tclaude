@@ -75,12 +75,12 @@ func TestPeerViewManagesNodeDefaultsAndCreatesGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 	require.Equal(t, "made remotely", g.Descr)
-	require.Equal(t, 403, do("POST", "/api/groups/one/clone", map[string]any{"new_name": "copy"}), "clones take unrestricted trust")
+	require.Equal(t, 403, do("POST", "/api/groups/one/clone", map[string]any{"new_name": "copy"}), "a clone takes groups.clone")
 
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	require.Equal(t, 201, do("POST", "/api/groups", map[string]any{"name": "rooted", "default_cwd": t.TempDir()}))
 	require.Equal(t, 200, do("POST", "/api/groups/one/clone", map[string]any{"new_name": "copy", "no_clone_members": true}))
-	require.Contains(t, snapshot()["peer_view"].(map[string]any)["included"], "groups.create.full")
+	require.Contains(t, snapshot()["peer_view"].(map[string]any)["included"], "groups.clone")
 }
 
 // "Save as profile…" from a peer's spawn dialog: node.spawn.profiles.create

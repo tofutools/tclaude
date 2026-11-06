@@ -34,7 +34,7 @@ func dashboardCmd() *cobra.Command {
 		Long:        "Asks the daemon (via the human-only /v1/dashboard/open endpoint) for a one-shot dashboard URL and opens it in the default browser. Pass --print to print the URL instead — note it carries a single-use token that expires in ~60s, so use it immediately.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *dashboardParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDashboard(p, os.Stdout, os.Stderr))
+			os.Exit(runDashboard(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

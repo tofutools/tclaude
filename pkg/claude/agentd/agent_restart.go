@@ -72,7 +72,7 @@ func dashboardRestartAgent(w http.ResponseWriter, _ *http.Request, convSelector 
 	defer launchLock.Unlock()
 	switchedClients, _, fail := restartIdleAgentLocked(agentID, convID, nil)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

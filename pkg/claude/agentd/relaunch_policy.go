@@ -208,7 +208,7 @@ func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 		if q := r.URL.Query(); q.Get("preview") != "" {
 			resolved, fail := spawnRelaunchPreview(q.Get("group"), q.Get("profile"), q.Get("explicit"))
 			if fail != nil {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				writeSpawnFailure(w, fail)
 				return
 			}
 			resp["resolved"] = resolved

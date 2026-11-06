@@ -17,6 +17,7 @@
 import { signal } from '@preact/signals';
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { randomUUID } from './insecure-origin.js';
+import { lockChanged } from './resource-lock.js';
 
 export const PROCESS_CONTEXT_PATH = '/v1/process/context';
 
@@ -324,12 +325,14 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       }, fetchImpl);
     },
     // setResourceLock locks or unlocks a group resource against agent
-    // changes (POST /api/resource-locks, the operator's alone): kind is
+    // changes (POST /api/resource-locks, the operator's route): kind is
     // process (a template id), board (a board id) or page (a page id).
     async setResourceLock(kind, id, locked) {
-      return processRequest('/api/resource-locks', {
+      const body = await processRequest('/api/resource-locks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
       }, fetchImpl);
+      void lockChanged(kind, id, locked);
+      return body;
     },
     // createGroupPage creates a blank page the group owns (POST /api/pages).
     async createGroupPage(group, name) {

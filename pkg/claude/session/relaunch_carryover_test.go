@@ -231,14 +231,14 @@ func captureCarryoverStderr(t *testing.T, params *NewParams, explicit explicitLa
 	t.Helper()
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	orig := os.Stderr
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = orig })
+	orig, origCLI := os.Stderr, cliStderr
+	os.Stderr, cliStderr = w, w
+	t.Cleanup(func() { os.Stderr, cliStderr = orig, origCLI })
 
 	applyErr := applyRecordedLaunchPosture(params, explicit)
 
 	require.NoError(t, w.Close())
-	os.Stderr = orig
+	os.Stderr, cliStderr = orig, origCLI
 	out, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.NoError(t, applyErr)

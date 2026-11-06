@@ -73,7 +73,7 @@ func reincarnateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reincarnateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReincarnate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runReincarnate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -140,10 +140,21 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 		Note          string   `json:"note,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
 		Changes       []string `json:"changes,omitempty"`
+		// Mode "self" is a peer's agent asked to reincarnate itself
+		// (member@peer): no successor exists yet.
+		Mode   string `json:"mode,omitempty"`
+		ConvID string `json:"conv_id,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
+	if resp.Mode == "self" {
+		fmt.Fprintf(stdout, "Asked %s to reincarnate itself (inbox message #%d); it writes its own handoff at a clean point\n", short(resp.ConvID), resp.MessageID)
+		return rcOK
 	}
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "Reincarnated %s -> %s (called by %s)\n",

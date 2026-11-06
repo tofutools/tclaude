@@ -33,7 +33,7 @@ func TestPlanLaunchDirsGrantsTheWorkspaceUnderTheOuterLayer(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Nil(t, dirs.codexRuntime)
-	assert.Contains(t, dirs.write, canonicalSandboxPath(cwd))
+	assert.Contains(t, dirs.write, CanonicalSandboxPath(cwd))
 	assert.Contains(t, dirs.read, "/managed")
 	assert.Empty(t, dirs.deny)
 }
@@ -47,5 +47,5 @@ func TestPlanLaunchDirsLeavesAHarnessNativeWorkspaceToTheHarness(t *testing.T) {
 		sandboxImplementation: sandboxpolicy.ImplementationHarnessBuiltin,
 	})
 	require.NoError(t, err)
-	assert.NotContains(t, dirs.write, canonicalSandboxPath(cwd))
+	assert.NotContains(t, dirs.write, CanonicalSandboxPath(cwd))
 }

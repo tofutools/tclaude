@@ -2,12 +2,14 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { ProfileCombobox } from './profile-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 import { ImportConfirmList } from './paf-dialogs.js';
 import { keepParams } from './paf-model.js';
 import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLanding } from './fleet-admin-landing.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -284,8 +286,8 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFindings(e.body?.findings || []); setError('The history looks like it contains credentials. Share without history, or send it anyway.'); } else setError(errText(e)); });
   };
   return html`<${Dialog} id="fleet-share-agent" onClose=${onClose} title="Offer an agent to a peer">
-    <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-share-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
+    <div class="fa-of-row"><span class="fa-k">agent</span><${AgentCombobox} id="fleet-share-agent-agent" value=${form.agent} agents=${choiceAgents(agents)} ariaLabel="Agent"
+      onChange=${(agent) => set('agent')({ currentTarget: { value: agent, type: 'text' } })} /></div>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
@@ -324,8 +326,7 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
     }).catch((e) => setError(e?.status === 409 ? `${errText(e)} — apply the profile to ${label} first (Profiles & pools).` : errText(e)));
   };
   return html`<${Dialog} id="fleet-offer-profile" onClose=${onClose} title="Offer a profile's config to a peer">
-    <label class="fa-of-row"><span class="fa-k">profile</span><${Select} size="sm" id="fleet-offer-profile-name" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
-      ${profiles.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">profile</span><${ProfileCombobox} id="fleet-offer-profile-name" value=${profile} profiles=${profiles} ariaLabel="Profile" onChange=${setProfile} /></label>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}

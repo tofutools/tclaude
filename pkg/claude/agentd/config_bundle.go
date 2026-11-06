@@ -630,11 +630,23 @@ func planConfigBundleItem(r *http.Request, caller, section string, item configbu
 				check.Agents[n].ProfileInline = &inline
 			}
 		}
-		if _, fail := buildTemplateFromJSON(check); fail != nil {
+		built, fail := buildTemplateFromJSON(check)
+		if fail != nil {
 			return nil, bundleFailure(fail)
 		}
+		// Judged at planning, before any item applies, and again when it applies.
+		gate := callerTemplateOwnerScopesGate(r, caller)
+		if replace {
+			current, err := db.GetGroupTemplate(built.Name)
+			if err != nil {
+				return nil, err
+			}
+			if fail := checkTemplateOwnerScopes(gate, current, built.OwnerScopesJSON); fail != nil {
+				return nil, bundleFailure(fail)
+			}
+		}
 		return func() error {
-			res, exists, fail := importTemplateEnvelope(caller, env, "", replace)
+			res, exists, fail := importTemplateEnvelope(caller, env, "", replace, gate)
 			preview.Warnings = append(preview.Warnings, res.Warnings...)
 			if fail != nil {
 				return bundleFailure(fail)
@@ -679,7 +691,8 @@ func planConfigBundleItem(r *http.Request, caller, section string, item configbu
 		if hash != "" && !replace {
 			return func() error { return errors.New("process template already exists") }, nil
 		}
-		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) {
+		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) &&
+			!agentHoldsResourceLock(r, resourceKindProcess, parsed.Template.ID) {
 			return nil, &resourceLockedError{what: "process template " + parsed.Template.ID}
 		}
 		return func() error { _, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, hash); return err }, nil

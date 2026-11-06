@@ -406,3 +406,26 @@ func groupsKey(groups []string) string {
 	}
 	return strings.Join(groups, ", ")
 }
+
+// servePeerFleet serves the fleet brief to a peer holding fleet.read, the
+// whole fleet as this node's operator sees it (an instance grant).
+func servePeerFleet(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !v.allows(rule, 0) {
+		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
+		return
+	}
+	shared, ok := requestStatusSnapshot(w, r, nil)
+	if !ok {
+		return
+	}
+	brief, err := buildFleetBrief(shared, "", strings.TrimSpace(r.URL.Query().Get("group")), time.Now())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", "fleet brief unavailable")
+		return
+	}
+	if brief == nil {
+		writeError(w, http.StatusNotFound, "not_found", "object not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, brief)
+}

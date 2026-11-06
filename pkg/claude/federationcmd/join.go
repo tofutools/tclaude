@@ -54,7 +54,7 @@ connection and connects. Running join is consent: use --preview to inspect
 the code first. The dashboard does the same from ⚙ Fleet → Setup guide.`,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *joinParams, _ *cobra.Command, _ []string) {
-			os.Exit(runJoin(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runJoin(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -516,26 +516,34 @@ notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
 
-A file download a peer trusting this node unrestricted serves (a snapshot's
-or an agent's `.paf`, a group archive, a template) crosses the same way.
+A file download a peer serves (a snapshot's or an agent's `.paf`, a group
+archive, a template) crosses the same way.
 `GET /api/peer-download/INSTANCE?path=PATH` (local-only) asks the peer to stage
 `PATH` (`POST /api/peer-downloads {"path"}`, a peer view job there; only the
-download routes stage, and only under unrestricted trust), reads it in 4 MiB
-chunks (`GET /api/peer-downloads/ID?offset=`; a staged file goes away once
-its last chunk is read, or 10 minutes after its last read), and serves it as
+download routes stage, each under its own peer rule: unrestricted trust, or
+for a group archive `groups.export` and for an agent's `.paf`
+`agent.bundle.export`, see [peer grants](federation-peers.md); snapshot,
+template and log exports take unrestricted trust). It reads the file in 4 MiB
+chunks (`GET /api/peer-downloads/ID?offset=`). Only the peer that staged a file
+reads it, and every chunk holds the route's rule again, so a grant revoked
+mid-download stops it. A staged file goes away once its last chunk is read, or
+10 minutes after its last read. This node serves the download as
 an opaque, sandboxed, `nosniff` attachment with Range support. A download is
 at most `federation.agent_transfer_max_bytes` (2 GiB by default), the cap
 agent archives already cross nodes under.
 
-Uploads go the other way, in 512 KiB chunks. Today the only upload is a spawn's
-attachments on a peer's group, from the shared spawn dialog.
+Uploads go the other way, in 512 KiB chunks: a spawn's attachments on a peer's
+group, from the shared spawn dialog, and a group archive imported into a peer.
 `POST /api/peer-upload/INSTANCE?path=PATH` (local-only) opens a staged upload
 on the peer (`POST /api/peer-uploads`) and appends the body chunk by chunk
 (`POST /api/peer-uploads/chunk?id=&offset=`). It then has the peer run the
 upload route on the whole file (`POST /api/peer-uploads/finish
 {"id","path","content_type"}`, a peer view job) and answers that route's reply.
-Only the upload routes (`/api/spawn-attachments`) take a staged upload, and
-only under unrestricted trust. The chunk route alone may carry a 512 KiB
+Only the upload routes take a staged upload, each under its own peer rule:
+spawn attachments under unrestricted trust only, and a group import
+(`/api/groups/import` and its `/inspect` preview) also under `groups.import`
+(see [peer grants](federation-peers.md)). A staged upload is appended to and
+finished only by the peer that opened it, and each peer keeps at most 8 open. The chunk route alone may carry a 512 KiB
 request; every other peer view request keeps its 32 KiB body limit. An upload
 is at most `federation.agent_transfer_max_bytes`, on top of the route's own
 caps.

@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,4 +137,82 @@ func TestLiveSpawnResumeStopsOpenCodeWhenTheStateAllocationIsMissing(t *testing.
 	runtime, err := db.GetOpenCodeRuntime(started)
 	require.NoError(t, err)
 	assert.Nil(t, runtime, "the OpenCode runtime started for the failed resume must be stopped")
+}
+
+// openCodeResumeWithPrompt resumes an OpenCode conversation carrying launch
+// text, with the managed server swapped for a fixture and the prompt API for
+// send, and returns the wrapper's argv.
+func openCodeResumeWithPrompt(t *testing.T, convID, prompt string, send func(string) error) []string {
+	t.Helper()
+	argvFile, _ := fakeTclaudeOnPath(t, 0, "")
+	t.Cleanup(SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (OpenCodeRuntimeFixture, error) {
+		return OpenCodeRuntimeFixture{SessionID: sessionID, ConvID: resumeID,
+			ServerURL: "http://127.0.0.1:43210", Password: "pw", PID: 1}, nil
+	}))
+	sendOpenCodePromptForSpawn = func(_ *openCodeLaunch, _, text, _, _ string) error { return send(text) }
+	require.NoError(t, liveSpawnResume(clcommon.SpawnArgs{
+		ConvID: convID, Cwd: t.TempDir(), Harness: harness.OpenCodeName,
+		Sandbox: harness.OpenCodeSandboxAccessControl, Approval: harness.OpenCodeApprovalAsk,
+		InitialPrompt: prompt,
+	}))
+	return readLines(t, argvFile)
+}
+
+// tcl-8knxfa: OpenCode ignores --initial-prompt, so a resume's launch text
+// (the managed standing guidance) must reach the conversation over the
+// managed server's prompt API.
+func TestLiveSpawnResumeSendsOpenCodeLaunchTextOverTheServer(t *testing.T) {
+	resetTestDB(t)
+	var sent []string
+	openCodeResumeWithPrompt(t, "ses_resume_guidance", "STANDING GUIDANCE", func(text string) error {
+		sent = append(sent, text)
+		return nil
+	})
+	assert.Equal(t, []string{"STANDING GUIDANCE"}, sent)
+	msgs, err := db.ListAgentMessagesForConv("ses_resume_guidance", 10)
+	require.NoError(t, err)
+	assert.Empty(t, msgs, "a delivered launch text leaves no inbox copy")
+}
+
+// A failed send is not a dropped one: the launch text waits in the agent's
+// inbox, where the nudge pipeline retries it over the same server.
+func TestLiveSpawnResumeQueuesOpenCodeLaunchTextWhenTheSendFails(t *testing.T) {
+	resetTestDB(t)
+	openCodeResumeWithPrompt(t, "ses_resume_guidance_fail", "STANDING GUIDANCE", func(string) error {
+		return errors.New("prompt_async refused")
+	})
+	msgs, err := db.ListAgentMessagesForConv("ses_resume_guidance_fail", 10)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, launchTextSubject, msgs[0].Subject)
+	assert.Equal(t, "STANDING GUIDANCE", msgs[0].Body)
+	assert.True(t, msgs[0].ReadAt.IsZero(), "the queued copy is still unread, so it is delivered")
+}
+
+// tcl-gjmtvb: a spawn that resumes imported history already started this
+// launch's managed server and briefs through it after the fork. The resume
+// must reuse it: starting its own would retire the spawn's server and lose
+// the brief. It also must not send the brief a second time.
+func TestLiveSpawnResumeReusesTheCallersOpenCodeServer(t *testing.T) {
+	resetTestDB(t)
+	argvFile, envFile := fakeTclaudeOnPath(t, 0, "")
+	starts := 0
+	t.Cleanup(SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (OpenCodeRuntimeFixture, error) {
+		starts++
+		return OpenCodeRuntimeFixture{SessionID: sessionID, ConvID: resumeID}, nil
+	}))
+	var sent []string
+	sendOpenCodePromptForSpawn = func(_ *openCodeLaunch, _, text, _, _ string) error {
+		sent = append(sent, text)
+		return nil
+	}
+	require.NoError(t, liveSpawnResume(openCodeWrapperArgs(clcommon.SpawnArgs{
+		ConvID: "ses_imported", Cwd: t.TempDir(), Harness: harness.OpenCodeName,
+		Sandbox: harness.OpenCodeSandboxAccessControl, Approval: harness.OpenCodeApprovalAsk,
+		InitialPrompt: "SPAWN BRIEF",
+	})))
+	assert.Zero(t, starts, "the resume reuses the server its caller started")
+	assert.Empty(t, sent, "the caller briefs through its own server")
+	assert.Contains(t, readLines(t, argvFile), "ses_imported")
+	assertOpenCodeWrapperEnv(t, envFile)
 }

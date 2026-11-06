@@ -86,7 +86,7 @@ func profilesDefaultShowCmd() *cobra.Command {
 		Short:       "Show the global default spawn profile",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesDefaultShow(os.Stdout, os.Stderr))
+			os.Exit(runProfilesDefaultShow(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -106,7 +106,7 @@ func profilesDefaultSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesDefaultSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesDefaultSet(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesDefaultSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -118,7 +118,7 @@ func profilesDefaultClearCmd() *cobra.Command {
 		Long:        "Clear the global spawn-profile fallback. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesDefaultClear(os.Stdout, os.Stderr))
+			os.Exit(runProfilesDefaultClear(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -187,7 +187,7 @@ func profilesLsCmd() *cobra.Command {
 		Long:        "Returns every spawn profile with its aliases, launch shape (harness/model/effort), and one-line description. With --json, emits the complete profiles as a JSON array.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *profilesLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesLs(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -266,7 +266,7 @@ func profilesShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -326,13 +326,13 @@ func profilesCreateCmd() *cobra.Command {
 			"and permission state, so it is supplied as a file rather than via flags. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *profilesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProfilesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runProfilesCreate(p *profilesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	prof, rc := loadProfileFile(p.File, stdin, stderr)
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -376,7 +376,7 @@ func profilesEditCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProfilesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -387,7 +387,7 @@ func runProfilesEdit(p *profilesEditParams, stdin io.Reader, stdout, stderr io.W
 		fmt.Fprintln(stderr, "Error: a profile name is required")
 		return rcInvalidArg
 	}
-	prof, rc := loadProfileFile(p.File, stdin, stderr)
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -408,30 +408,8 @@ func runProfilesEdit(p *profilesEditParams, stdin io.Reader, stdout, stderr io.W
 	if rc := verifySubmittedDisabledState(prof, resp.Profile, resp.SupportsExplicitDisabled, stderr); rc != rcOK {
 		return rc
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated profile %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated profile %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "profile", name, resp.Name)
 	return rcOK
-}
-
-// loadProfileFile reads a profile JSON file (or stdin for "-") and unmarshals it.
-func loadProfileFile(file string, stdin io.Reader, stderr io.Writer) (*profileJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a profile JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var prof profileJSON
-	if err := json.Unmarshal([]byte(raw), &prof); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid profile JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &prof, rcOK
 }
 
 // ---- disable / enable ----
@@ -452,7 +430,7 @@ func profilesDisableCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesDisableParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesDisable(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesDisable(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -472,7 +450,7 @@ func profilesEnableCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesEnableParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesEnable(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesEnable(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -598,7 +576,7 @@ func profilesRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *profilesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runProfilesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

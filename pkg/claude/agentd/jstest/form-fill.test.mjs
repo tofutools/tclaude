@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { applyFill, claimField, FILL_FORMS, filledIn, fillSummary, undoFill, watchForm } from '../dashboard/js/form-fill.js';
+import { applyFill, claimChange, claimField, FILL_FORMS, filledIn, fillSummary, undoFill, watchForm } from '../dashboard/js/form-fill.js';
 import { parseHTML } from './third_party/linkedom.mjs';
 
 const ROW = `
@@ -156,6 +156,21 @@ test('what the operator\'s own change moves is theirs too', async () => {
   await null;
   p.settle();
   assert.deepEqual(statuses(await fill(p, { 'agent-spawn-model': '' })), { 'agent-spawn-model': 'operator_edited' });
+  p.stop();
+});
+
+// A type-to-filter profile choice sends no trusted change (cold review of
+// #4111): the dialog says so with claimChange, and the cascade is the
+// operator's as a <select> change's was.
+test('a choice the operator makes without a change event claims what it moves', async () => {
+  const p = page();
+  await fill(p, { 'agent-spawn-model': 'opus' });
+  claimChange('spawn', 'agent-spawn-load-profile');
+  p.document.getElementById('agent-spawn-model').value = '';
+  p.document.getElementById('agent-spawn-harness').value = 'codex';
+  p.settle();
+  assert.deepEqual(filledIn('spawn').map((field) => field.id), [], 'the profile moved the filled model: it is the operator\'s now');
+  assert.deepEqual(statuses(await fill(p, { 'agent-spawn-harness': 'claude' })), { 'agent-spawn-harness': 'operator_edited' });
   p.stop();
 });
 

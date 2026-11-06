@@ -1,0 +1,208 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+// tcl-eq8pq9: one set of move rules for the ⋯ menu, the Groups tab's
+// resource drag and the Collab panel's drag.
+const SNAP = {
+  groups: [
+    { id: 1, name: 'crew', members: [{ agent_id: 'agt_a' }] },
+    { id: 2, name: 'lab', members: [{ agent_id: 'agt_a' }] },
+    { id: 3, name: 'ops', members: [] },
+  ],
+  agents: [
+    { agent_id: 'agt_a', conv_id: 'ca', title: 'alpha', groups: ['crew', 'lab'], spawn_group: 'crew' },
+    { agent_id: 'agt_z', conv_id: 'cz', title: 'loner', groups: [] },
+  ],
+};
+
+test('canMoveResource: a board anywhere or out of every group, a page only where it may live', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/resource-moves.js');
+  const board = { kind: 'board', id: 'b', group: 'crew' };
+  assert.equal(m.canMoveResource(board, 'ops', SNAP), true);
+  assert.equal(m.canMoveResource(board, '', SNAP), true, 'a board may leave every group');
+  assert.equal(m.canMoveResource(board, 'crew', SNAP), false, 'not to its own group');
+  assert.equal(m.canMoveResource(board, 'gone', SNAP), false, 'not to a group that is not listed');
+  assert.equal(m.canMoveResource({ kind: 'board', id: 'b', group: '' }, 'crew', SNAP), true, 'a loose board into a group');
+  const page = { kind: 'page', id: 'p', group: 'crew', owner: 'agt_a', closed: false };
+  assert.equal(m.canMoveResource(page, 'lab', SNAP), true, "an agent's page to a group its agent is in");
+  assert.equal(m.canMoveResource(page, 'ops', SNAP), false, 'not to one it is not in');
+  assert.equal(m.canMoveResource(page, '', SNAP), false, 'a page always has a group');
+  const blank = { kind: 'page', id: 'q', group: 'crew', owner: '', closed: false };
+  assert.equal(m.canMoveResource(blank, 'ops', SNAP), false, "a group's own page stays while it is open");
+  assert.equal(m.canMoveResource({ ...blank, closed: true }, 'ops', SNAP), true, 'and moves once closed');
+  assert.equal(m.canMoveResource({ kind: 'shell', id: 's', group: 'crew' }, 'ops', SNAP), false, 'a shell is its group\'s own');
+});
+
+test('moveResource calls the ⋯ menu\'s move and says how it went', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/resource-moves.js');
+  const calls = [];
+  const notes = [];
+  const api = { moveBoard: async (...a) => calls.push(['board', ...a]), moveGroupPage: async (...a) => { calls.push(['page', ...a]); throw new Error('not_member'); } };
+  const notify = (...a) => notes.push(a);
+  assert.equal(await m.moveResource({ kind: 'board', id: 'b', label: 'Plan' }, '', { api, notify }), true);
+  assert.equal(await m.moveResource({ kind: 'page', id: 'p', label: 'App' }, 'lab', { api, notify }), false);
+  assert.deepEqual(calls, [['board', 'b', ''], ['page', 'p', 'lab']]);
+  assert.deepEqual(notes, [['Moved Plan out of its group'], ['Could not move App: not_member', true]]);
+});
+
+// railSection builds a panel section as collab-rail.js renders one.
+function railSection(doc, id) {
+  const rail = doc.body.querySelector('[data-collab-rail]') || doc.body.appendChild(Object.assign(doc.createElement('div'), {}));
+  rail.setAttribute('data-collab-rail', '');
+  const section = rail.appendChild(doc.createElement('div'));
+  section.className = 'cr-section';
+  section.setAttribute('data-rail-group-id', String(id));
+  return section.appendChild(doc.createElement('div'));
+}
+
+const agentItem = (agent, group) => ({ key: `pane:agent:${agent.agent_id}`, kind: 'terminal', title: agent.title, group, status: { agent } });
+
+test('the Collab panel: a drop on another group\'s section moves an agent, board or page; anything else is no move', async (t) => {
+  const harness = await createPreactHarness(t);
+  const a = await harness.importDashboardModule('js/collab-rail-actions.js');
+  const doc = harness.document;
+  const crew = railSection(doc, 1);
+  const lab = railSection(doc, 2);
+  const ops = railSection(doc, 3);
+  const none = railSection(doc, 'other');
+  const stray = railSection(doc, 'other-sessions');
+  const alpha = agentItem(SNAP.agents[0], 'crew');
+  assert.equal(a.railGroupDrop(alpha, lab, SNAP, false).to, 'lab');
+  assert.equal(a.railGroupDrop(alpha, crew, SNAP, false), null, 'its own group');
+  assert.equal(a.railGroupDrop(alpha, none, SNAP, false).to, '', 'Not in a group takes it out');
+  assert.equal(a.railGroupDrop(alpha, stray, SNAP, false), null, 'Other sessions is no group');
+  assert.equal(a.railGroupDrop(alpha, doc.body, SNAP, false), null, 'outside every section');
+  assert.equal(a.railGroupDrop(alpha, lab, SNAP, true), null, "a peer's page moves nothing");
+  assert.equal(a.railGroupDrop({ ...alpha, pane: { seed: { remote: { peer: 'p', agent: 'x' } } } }, lab, SNAP, false), null, "another node's agent");
+  const loner = agentItem(SNAP.agents[1], '');
+  assert.equal(a.railGroupDrop(loner, none, SNAP, false), null, 'an ungrouped agent onto Not in a group');
+  const board = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: { kind: 'board', id: 'plan', state: 'closed' } };
+  assert.deepEqual(a.railGroupDrop(board, none, SNAP, false).resource, { kind: 'board', id: 'plan', label: 'Plan', group: 'crew', owner: '', closed: true });
+  const page = { key: 'page:p1', kind: 'page', title: 'App', group: 'crew', resource: { kind: 'page', id: 'p1', owner: 'agt_a', state: 'running' } };
+  assert.equal(a.railGroupDrop(page, lab, SNAP, false).to, 'lab', "an agent's page to its agent's other group");
+  assert.equal(a.railGroupDrop(page, ops, SNAP, false), null, 'as the ⋯ menu would not offer');
+  const shell = { key: 'shell:crew', kind: 'shell', title: 'crew shell', group: 'crew', resource: { kind: 'shell', id: 'crew' } };
+  assert.equal(a.railGroupDrop(shell, lab, SNAP, false), null, 'a group shell stays');
+});
+
+test('the Collab panel moves an agent through the Groups tab\'s drop operations, and a board as its ⋯ menu does', async (t) => {
+  const harness = await createPreactHarness(t);
+  const a = await harness.importDashboardModule('js/collab-rail-actions.js');
+  const calls = [];
+  const groupOps = {
+    context: () => 'ctx',
+    move: async (payload, to, ctx) => calls.push(['move', payload, to, ctx]),
+    add: async (payload, to, ctx) => calls.push(['add', payload, to, ctx]),
+    remove: async (payload, ctx) => calls.push(['remove', payload, ctx]),
+  };
+  const alpha = agentItem(SNAP.agents[0], 'crew');
+  await a.railItemToGroup(alpha, { to: 'lab', agent: SNAP.agents[0] }, { groupOps });
+  await a.railItemToGroup(alpha, { to: '', agent: SNAP.agents[0] }, { groupOps });
+  const loner = agentItem(SNAP.agents[1], '');
+  await a.railItemToGroup(loner, { to: 'ops', agent: SNAP.agents[1] }, { groupOps });
+  const payload = { conv: 'ca', agent: 'agt_a', label: 'alpha', sourceGroup: 'crew', sourceUngrouped: false };
+  assert.deepEqual(calls, [
+    ['move', payload, 'lab', 'ctx'],
+    ['remove', payload, 'ctx'],
+    ['add', { conv: 'cz', agent: 'agt_z', label: 'loner', sourceGroup: '', sourceUngrouped: true }, 'ops', 'ctx'],
+  ]);
+  const moved = [];
+  const api = { moveBoard: async (...args) => moved.push(args) };
+  await a.railItemToGroup({ kind: 'board' }, { to: 'ops', resource: { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' } }, { api });
+  assert.deepEqual(moved, [['plan', 'ops']]);
+});
+
+test('a rail drag over another group\'s section outlines it, and the drop there moves the item', async (t) => {
+  const harness = await createPreactHarness(t);
+  const a = await harness.importDashboardModule('js/collab-rail-actions.js');
+  const doc = harness.document;
+  railSection(doc, 1);
+  const lab = railSection(doc, 2);
+  const source = doc.body.appendChild(doc.createElement('div'));
+  const moved = [];
+  const item = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: { kind: 'board', id: 'plan', state: 'closed' } };
+  const data = new Map();
+  const dataTransfer = { setData: (k, v) => data.set(k, v), dropEffect: 'none', effectAllowed: 'all' };
+  a.startRailDrag({ currentTarget: source, dataTransfer }, item, { snapshot: { value: SNAP }, notify: () => {} });
+  const fire = (type, target) => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const over = fire('dragover', lab);
+  assert.equal(over.defaultPrevented, true, 'the section takes the drop');
+  assert.ok(lab.parentElement.classList.contains('cr-drop-over'), 'and is outlined');
+  // The drop runs the board move; its API is the process run API, which a
+  // test cannot reach, so the route itself is pinned by the test above. Here
+  // the drop only has to be taken and the outline cleared.
+  const { processRunApi } = await harness.importDashboardModule('js/process-context.js');
+  const real = processRunApi.moveBoard;
+  processRunApi.moveBoard = async (...args) => moved.push(args);
+  t.after(() => { processRunApi.moveBoard = real; });
+  const dropped = fire('drop', lab);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(dropped.defaultPrevented, true);
+  assert.equal(lab.parentElement.classList.contains('cr-drop-over'), false, 'the outline clears');
+  assert.deepEqual(moved, [['plan', 'lab']]);
+});
+
+test('the Groups tab: a board or page row dragged onto another group\'s box moves it there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const dnd = await harness.importDashboardModule('js/resource-dnd.js');
+  const doc = harness.document;
+  const box = (attr, name) => {
+    const el = doc.body.appendChild(doc.createElement('details'));
+    el.setAttribute(attr, name);
+    return el.appendChild(doc.createElement('div'));
+  };
+  const crew = box('data-dnd-target-group', 'crew');
+  const ops = box('data-dnd-target-group', 'ops');
+  const ungrouped = box('data-dnd-target-ungrouped', '1');
+  const row = crew.appendChild(doc.createElement('div'));
+  row.setAttribute('data-dnd-resource', JSON.stringify({ kind: 'board', id: 'plan', label: 'Plan', group: 'crew' }));
+  const button = row.appendChild(doc.createElement('button'));
+  row.draggable = true;
+  const moved = [];
+  const notes = [];
+  const unbind = dnd.bindResourceDnd(doc, { api: { moveBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {} });
+  t.after(unbind);
+  const dataTransfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
+  const member = { setData: () => {}, types: ['application/x-tclaude-member', 'text/plain'], dropEffect: 'none', effectAllowed: 'all' };
+  const fire = (type, target, transfer = dataTransfer) => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    target.dispatchEvent(event);
+    return event;
+  };
+  fire('pointerdown', button);
+  assert.equal(row.draggable, false, 'a press on a row control is a click');
+  fire('pointerup', button);
+  assert.equal(row.draggable, true);
+  fire('dragstart', row);
+  assert.equal(fire('dragover', crew).defaultPrevented, false, 'not its own group');
+  assert.equal(fire('dragover', ops).defaultPrevented, true);
+  assert.ok(ops.parentElement.classList.contains('dnd-drop-over'), 'the box is outlined');
+  assert.equal(fire('dragover', ungrouped).defaultPrevented, true, 'a board may leave every group');
+  assert.equal(ops.parentElement.classList.contains('dnd-drop-over'), false, 'one box at a time');
+  fire('drop', ops);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(moved, [['plan', 'ops']]);
+  assert.deepEqual(notes, [['Moved Plan to ops']]);
+  fire('dragend', row);
+  assert.equal(doc.querySelector('.dnd-drop-over'), null);
+
+  // A resource drag whose row a re-render detached never reaches the
+  // document's dragend; a later member drag must not carry the board along.
+  fire('dragstart', row);
+  row.remove();
+  const agentRow = ops.appendChild(doc.createElement('div'));
+  fire('dragstart', agentRow, member);
+  assert.equal(fire('dragover', crew, member).defaultPrevented, false, 'another drag is not a resource drag');
+  fire('drop', crew, member);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(moved, [['plan', 'ops']], 'no second move');
+});

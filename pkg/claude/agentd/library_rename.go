@@ -63,13 +63,13 @@ func handleLibraryRename(w http.ResponseWriter, r *http.Request) {
 			renamed := *existing
 			renamed.Name = req.To
 			if fail := roleConferralFailure(caller, existing, &renamed); fail != nil {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				writeSpawnFailure(w, fail)
 				return
 			}
 		}
 	}
 	if fail := rename(req.Name, req.To); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, libraryRenameResp{Kind: req.Kind, Name: req.To, From: req.Name})
@@ -143,6 +143,10 @@ func renameTemplate(from, to string) *spawnFailure {
 		return fail
 	}
 	t.ID = existing.ID
+	// Carry the owner scopes verbatim: the wire round-trip renders a stored map
+	// it cannot decode as empty, and a rename must not drop a narrowing that
+	// changing needs groups.settings.owner-scopes for (tcl-yjjbfh).
+	t.OwnerScopesJSON = existing.OwnerScopesJSON
 	if err := db.UpdateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
 		return renameTaken(err)
 	} else if err != nil {

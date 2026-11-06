@@ -71,26 +71,13 @@ type glProxyMRMergeRequest struct {
 func openGLProxy(w http.ResponseWriter, r *http.Request, perm string, body any, remoteOf func() string) (
 	*glProxySession, bool,
 ) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return nil, false
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, perm)
-	if !ok {
-		return nil, false
-	}
-	if body != nil && !decodeGitProxyBody(w, r, body) {
-		return nil, false
-	}
-	g, fault := newGLProxySession(r.Context(), convID, remoteOf(), deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return nil, false
-	}
-	if !finishProxyPermission(w, r, convID, perm, g.remoteKey, deferred) {
-		return nil, false
-	}
-	return g, true
+	return openRemoteProxy(w, r, perm, body, func(ctx context.Context, convID string, deferred bool) (*glProxySession, string, *proxyFault) {
+		g, fault := newGLProxySession(ctx, convID, remoteOf(), deferred)
+		if fault != nil {
+			return nil, "", fault
+		}
+		return g, g.remoteKey, nil
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -658,26 +645,9 @@ func handleGLProxyMREdit(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	title := strings.TrimSpace(body.Title)
-	hasBody := strings.TrimSpace(body.Body) != ""
-	if title == "" && !hasBody {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to edit: pass a title, a body, or both")
+	payload, ok := proxyEditPayload(w, body.Title, body.Body, "description")
+	if !ok {
 		return
-	}
-	payload := map[string]any{}
-	if title != "" {
-		if fault := validateGHTitle(title); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["title"] = title
-	}
-	if hasBody {
-		if fault := validateGHBody(body.Body, true); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["description"] = body.Body
 	}
 	raw, failure, err := g.rest(r.Context(), glAPIRequest{
 		Method: http.MethodPut,

@@ -279,11 +279,18 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 
 	target, fail := resolveAdvanceTarget(st, strings.TrimSpace(body.To))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 
 	actor := granterLabel(caller)
+	byPeer := ""
+	if a := peerGrantFromRequest(r); a != nil {
+		// A linked node's advance is recorded and announced as its own,
+		// never as this node's operator's.
+		byPeer = a.author
+		actor = "peer: " + a.author
+	}
 	// AdvanceGroupProcess returns the phase actually moved FROM, read inside its
 	// own transaction — so the response reports the true recorded transition
 	// even if a concurrent advance interleaved after resolveAdvanceTarget's
@@ -302,7 +309,7 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 	// "entering" roles), reusing the existing agent_messages pipeline — no
 	// direct pane input, no new delivery mechanism. Best-effort: a delivery
 	// failure is logged, never fails the advance (the transition is recorded).
-	notified := notifyEnteringRoles(g, fromPhase, target, caller)
+	notified := notifyEnteringRoles(g, fromPhase, target, caller, byPeer)
 
 	freshState, trs, err := loadGroupProcess(g.ID)
 	if err != nil {
@@ -358,7 +365,7 @@ func resolveAdvanceTarget(st *db.GroupProcessState, to string) (db.ProcessPhase,
 // The message names old → new and carries the new phase's criteria prose. It
 // reuses the existing message pipeline (which nudges live panes); a phase
 // listing "all" reaches every member. Returns the number of members notified.
-func notifyEnteringRoles(g *db.AgentGroup, fromPhase string, entered db.ProcessPhase, fromConv string) int {
+func notifyEnteringRoles(g *db.AgentGroup, fromPhase string, entered db.ProcessPhase, fromConv, byPeer string) int {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		slog.Warn("process advance: list members failed", "group", g.Name, "error", err)
@@ -382,6 +389,9 @@ func notifyEnteringRoles(g *db.AgentGroup, fromPhase string, entered db.ProcessP
 		fmt.Fprintf(&body, " from %q", fromPhase)
 	}
 	fmt.Fprintf(&body, " to %q — your role is active in this phase.", entered.Name)
+	if byPeer != "" {
+		fmt.Fprintf(&body, "\n\n%s advanced it through that node's peer access; this node's operator did not.", byPeer)
+	}
 	if entered.Criteria != "" {
 		fmt.Fprintf(&body, "\n\nCriteria for %q:\n%s", entered.Name, entered.Criteria)
 	}

@@ -23,14 +23,14 @@ type repoRemoveParams struct {
 }
 
 func repoRequest(method, path string, body any) {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		os.Exit(rc)
 	}
 	var out any
 	if e := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{}); e != nil {
-		os.Exit(fail(os.Stderr, e))
+		os.Exit(fail(cliStderr, e))
 	}
-	os.Exit(printJSON(os.Stdout, out))
+	os.Exit(printJSON(cliStdout, out))
 }
 func reposCmd() *cobra.Command {
 	write := func(p *repoAddParams, method string) {

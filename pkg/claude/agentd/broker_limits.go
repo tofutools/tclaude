@@ -113,9 +113,14 @@ type brokerLimiter struct {
 
 var defaultBrokerLimiter = &brokerLimiter{buckets: map[string]*brokerBucket{}}
 
+// clock reads now under mu, since a test may swap it while a request is in
+// flight; it is never called with mu held.
 func (l *brokerLimiter) clock() time.Time {
-	if l.now != nil {
-		return l.now()
+	l.mu.Lock()
+	now := l.now
+	l.mu.Unlock()
+	if now != nil {
+		return now()
 	}
 	return time.Now()
 }

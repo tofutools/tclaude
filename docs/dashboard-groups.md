@@ -61,7 +61,10 @@ column header to sort.
 
 Extra rows appear at the end of the list, depending on ▾ view:
 
-- **Ungrouped**: agents in no group.
+- **Ungrouped**: agents in no group. With Both on, it has the same Agents and
+  Resources sections as a real group. Resources lists the boards that are in
+  no group, such as one made from the Collab panel's ＋ New. To move a board
+  into a group, use its ⋯ → **Move to group**.
 - **Conversations**: sessions tclaude knows that are not agents yet.
   **promote** makes one an agent.
 - **Retired**: retired agents, with who retired them and why. **reinstate**
@@ -148,7 +151,9 @@ Below the sections is the group's list of links, with **+ link**.
 
 Drag a group header onto another group to nest it, or to its top or bottom edge
 to reorder. Ctrl-drag (⌘-drag on a Mac) a header to clone the group. Drag an agent's row to
-another group to move it. A **Retire** bin appears while you drag: drop a row there
+another group to move it. In Resources, drag a board or page row to another
+group the same way; drop a board on **Ungrouped** to take it out of every group.
+A **Retire** bin appears while you drag: drop a row there
 to retire it, or a queued spawn to discard it. Drag from **Retired** to a group to
 reinstate an agent. Dragging a **Conversations** row to a group promotes it
 and adds it. From the library, drag a profile, role or template onto a group to
@@ -462,7 +467,9 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
 - **Boards:** the collab boards linked to the group.
 - **Pages:** the live pages its members showed into it, including closed
   ones saved with the group.
-- **Shell:** the group's terminal, in its default directory.
+- **Shell:** the group's terminal, in its default directory. It lists only
+  while it runs: once it exits (or is killed) the row goes away, and the
+  **＋** menu starts a new one.
 
 A kind with nothing in it is hidden. The section's count is its saved
 processes, boards, pages and shell (runs are not counted), and a section with
@@ -497,14 +504,22 @@ the row's **⋯** holds:
   only while closed.
 - **Delete…**, behind a confirm.
 
-Each resource has a lock chip. Click it to switch between two states:
-- **✎ agents can edit** (the default): agents edit the resource under their
-  usual permissions.
-- **🔒 agents: read-only:** members still use the resource, but no agent can
-  change it, whatever it is granted.
+Each resource has a lock chip. It shows the state and is also the toggle:
+click it (or focus it and press Enter) to switch between:
+- **✎ agents can edit** (the default): members read and edit the resource.
+- **🔒 agents: read-only:** members still read the resource, but no agent can
+  change it, except one holding `groups.resources.lock` for it.
 
-Only you can toggle the lock. The same chip is on the resource's own header
-too: the process editor, the board and the page. See
+You toggle the lock here; an agent can only when you grant it
+`groups.resources.lock`, which also lets it change the locked resource. The
+same chip is on the resource's own header: the process editor, the board and
+the page. In the Collab view, a locked resource also wears a small 🔒 on its
+tab name; its tooltip says what the lock means. Its row in the side panel has
+a lock toggle at its right end: an amber closed lock, always shown, while the
+resource is locked, and a dim open lock on hover or keyboard focus while it
+is unlocked. Click it to lock or unlock. A board tab's right-click menu has
+**Lock for agents** / **Unlock for agents**. All of these show the same
+state, so a toggle in one shows in the others at once. See
 [Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
 
 A peer's group in the fused view lists its resources too, read from that

@@ -39,7 +39,7 @@ func boardFromFleetCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardFromFleetParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardFromFleet(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardFromFleet(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -50,7 +50,7 @@ func runBoardFromFleet(p *boardFromFleetParams, boardID string, stdout, stderr i
 		path += "?group=" + url.QueryEscape(g)
 	}
 	var fleet fleetResp
-	if err := DaemonGet(path, &fleet); err != nil {
+	if err := DaemonRequest(http.MethodGet, path, nil, &fleet, boardOpts()); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -60,7 +60,7 @@ func runBoardFromFleet(p *boardFromFleetParams, boardID string, stdout, stderr i
 		if !errors.As(err, &de) || de.Status != http.StatusNotFound {
 			return boardErr(stderr, err)
 		}
-		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": "Fleet"}, &boardDoc{}, DaemonOpts{}); err != nil {
+		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": "Fleet"}, &boardDoc{}, boardOpts()); err != nil {
 			return boardErr(stderr, err)
 		}
 		doc = &boardDoc{ID: boardID}

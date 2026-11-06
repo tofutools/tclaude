@@ -306,6 +306,7 @@ dialog.
 | Model | `model` | kept | yes | Kept as launched; a morph or an explicit resume flag changes it. |
 | Reasoning effort | `effort` | kept | yes | Kept as launched; a morph or an explicit resume flag changes it. |
 | Directory and worktree | `directory` | kept | yes | The harness keys the conversation to its directory; only an explicit move changes it. |
+| Sandbox deny overlay | `sandbox_deny_overlay` | kept | yes | Stored with the agent and reapplied at every relaunch over whatever its profiles resolve to; its children inherit it with their own denies added. |
 
 ### Copied from the spawn profile at first spawn
 

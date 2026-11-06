@@ -44,13 +44,30 @@ stored version, so two writers cannot silently clobber each other — a stale
 hash is a refused save, and the caller re-reads with `show` and merges. The
 bundled `process-templates` agent skill and the CLI's `--help` are the deep
 reference for the authoring shape and the safe show-edit-validate-save loop;
-this page does not repeat them.
+this page does not repeat them. The bundled `process-runs` skill is the agent
+reference for starting, watching and steering runs (see [Running](#running)).
 
 Two permissions govern authoring, and neither executes anything:
 
 - `process.templates.read` — list, show, validate, export. Installed as an ordinary
   agent default by `tclaude setup --install-default-agent-permissions`.
 - `process.templates.manage` — save, import. Never a default.
+
+A template pinned to a group is also one of that group's resources. Its
+members, with neither slug, list and show it (`groups.resources.read`, which
+membership confers), and save a new version of it (`groups.resources.write`)
+when they are members of every group it is pinned to: a save changes it for
+all of them. Creating a template, deleting one, its library listing and its
+pins stay `process.templates.manage`'s, and a lock on the template refuses a
+member's save as it does any agent's. See
+[Boards › Group boards are their members'](boards.md#group-boards-are-their-members)
+for how the membership source works.
+
+Pins say who edits a template, not who runs it: a run in any group may start
+any template, and a subprocess without a pinned version follows its head. So
+a member's save also changes what later runs of that template, elsewhere,
+execute. Program steps still need `--authorize-program-profile` when a run
+starts, so a save alone runs nothing on the host.
 
 ### Sharing workflows
 
@@ -202,6 +219,15 @@ explicit per-agent deny overrides everything, the owner grant included. See
 [Permissions and audit](permissions-and-audit.md). Starting a run bound to a
 group or an agent uses the scope gates below instead.
 
+A run scoped to a group is that group's resource too: its members read it
+without `process.runs.read`. They list the group's runs with
+`runs ls --group <g>`, and `show` and `events` them (`groups.resources.read`,
+conferred by membership). The boundary is deliberate: membership confers no
+mutation. Pausing, resuming, deciding, assigning, reissuing, resolving a
+block or recording an outcome steers other agents' work, so they stay on
+`process.runs.manage`. An unfiltered `runs ls` still needs
+`process.runs.read`.
+
 ## Run scope
 
 Every run is bound to a context when it starts, and keeps that binding:
@@ -213,7 +239,9 @@ Every run is bound to a context when it starts, and keeps that binding:
 | `agent` (◉) | `... --agent <agent>` | the agent's stable `agent_id`, so the run survives reincarnate and compact; a clone does not copy it |
 
 The run's **owner** is whoever started it (`human:operator` or
-`agent:<agent_id>`). `tclaude process show` prints the scope and owner;
+`agent:<agent_id>`, or `peer:<instance>` for a linked node; see
+[federation peers](federation-peers.md)). A linked node's run tasks only the
+members in its scope, spawns no performer and runs no program. `tclaude process show` prints the scope and owner;
 `tclaude process runs ls` adds a SCOPE column and filters with `--group`,
 `--agent` and `--performer`. `--performer` matches runs bound to that agent
 and runs with a node attempt dispatched to it.
@@ -423,8 +451,8 @@ things there are specific to processes:
   the editor you last clicked in. Closing a floating editor, from the dock
   or with its window's close button, asks first when it has unsaved edits. A reload reopens an
   overlay tab on the last saved version.
-- **In a Collab tab.** The **＋** at the right of the Collab
-  tab strip has a *Processes* half beside *Boards*: every template, under the
+- **In a Collab tab.** **＋ New ▾** › **Process…** in the Collab side panel
+  lists every template, under the
   groups it is pinned to (*Not pinned* last), with a box that searches names,
   ids, descriptions and groups. Pick one to open its editor as a Collab tab, or
   type a new name and *＋ New process* stores a blank template and opens it.
@@ -434,7 +462,7 @@ things there are specific to processes:
   menu have *Open in overlay*, *Open in the Processes tab* and *Open in
   separate window*; an overlay tab has *Open in the Collab tab*. The editor
   moves as it does between the other places, draft and all, and an editor open
-  in the Processes tab moves to the strip when you pick it from the **＋**.
+  in the Processes tab moves to the strip when you pick it from **Process…**.
   Closing a process tab asks first when it has unsaved edits. Back to the Processes tab's URL of a template in a Collab tab brings
   the editor back there.
 - **Subprocesses.** A ▣ node runs a nested graph (see

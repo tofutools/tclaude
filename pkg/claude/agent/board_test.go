@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -518,4 +519,40 @@ func TestBoardPatchRejectsAFileWithoutElements(t *testing.T) {
 	list, err := parseBoardElements([]byte(`[{"id":"a"}]`))
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
+}
+
+func TestBoardAskHumanReachesEverySubcommandsRequest(t *testing.T) {
+	t.Cleanup(func() { boardAskHuman = askHumanValue{} })
+	var got []DaemonOpts
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, _, out any, opts DaemonOpts) error {
+		got = append(got, opts)
+		return json.Unmarshal([]byte(`{"boards":[]}`), out)
+	}
+	parse := func(args ...string) error {
+		sub, rest, err := boardCmd().Find(args)
+		require.NoError(t, err)
+		return sub.ParseFlags(rest)
+	}
+	require.NoError(t, parse("ls", "--ask-human", "45s"))
+	require.Equal(t, rcOK, runBoardLs(&boardLsParams{}, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Len(t, got, 1)
+	assert.Equal(t, "45s", got[0].AskHuman.String())
+
+	require.Error(t, parse("show", "plan", "--ask-human", "soon"), "an invalid timeout is refused as the flag is parsed")
+
+	// tcl-79am76: snapshot's raw PNG download carries it too.
+	var raw []DaemonOpts
+	prevRaw := DaemonGetRawWithOptionsImpl
+	t.Cleanup(func() { DaemonGetRawWithOptionsImpl = prevRaw })
+	DaemonGetRawWithOptionsImpl = func(path string, opts DaemonOpts) ([]byte, http.Header, error) {
+		raw = append(raw, opts)
+		return []byte("png"), http.Header{}, nil
+	}
+	require.NoError(t, parse("snapshot", "plan", "--ask-human", "30s"))
+	out := filepath.Join(t.TempDir(), "plan.png")
+	require.Equal(t, rcOK, runBoardSnapshot(&boardSnapshotParams{Output: out}, "plan", &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Len(t, raw, 1)
+	assert.Equal(t, "30s", raw[0].AskHuman.String())
 }

@@ -69,13 +69,13 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 	for i, g := range s.PeerGrants {
 		_, groupSlug := federationPeerSlugs[g.Slug]
 		instanceSlug := fedInstancePeerSlug(g.Slug)
-		if !groupSlug && !instanceSlug && (g.Slug != PermModelsProxy && g.Slug != PermModelsProxyLeased) {
+		if !groupSlug && !instanceSlug && !fedProxyPeerSlug(g.Slug) {
 			return fmt.Errorf("unsupported peer slug %s", g.Slug)
 		}
 		if instanceSlug && g.Scope != "" {
 			return fmt.Errorf("%s must be unscoped", g.Slug)
 		}
-		if (g.Slug == PermAgentsReceive || g.Slug == PermAgentsTeleportReceive) && g.Scope == "" {
+		if fedPeerSlugRequiresGroup(g.Slug) && g.Scope == "" {
 			return fmt.Errorf("%s requires a local group scope", g.Slug)
 		}
 		if g.Scope != "" && (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) {
@@ -198,7 +198,15 @@ func handleFederationNodeProfiles(w http.ResponseWriter, r *http.Request) {
 			writeFedErr(w, e)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"profile": p, "applied_peers": peers})
+		// A profile stored before its validation refused a grant still holds
+		// it; the grant authorizes nothing, and the operator sees why.
+		warnings := []string{}
+		for _, g := range p.Definition.PeerGrants {
+			if why := fedPeerGrantInert(g); why != "" {
+				warnings = append(warnings, fmt.Sprintf("peer grant %s is inert: %s", g.Slug, why))
+			}
+		}
+		writeJSON(w, 200, map[string]any{"profile": p, "applied_peers": peers, "warnings": warnings})
 		return
 	}
 	if r.Method == http.MethodDelete {

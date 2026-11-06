@@ -72,7 +72,7 @@ func ordersLsCmd() *cobra.Command {
 		Short:       "List standing orders",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runOrdersLs(os.Stdout, os.Stderr))
+			os.Exit(runOrdersLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -158,7 +158,7 @@ func ordersShowCmd() *cobra.Command {
 		Short:       "Show one standing order in full, with its capability matrix and recent deliveries",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *ordersShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runOrdersShow(os.Stdout, os.Stderr, p.Name))
+			os.Exit(runOrdersShow(cliStdout, cliStderr, p.Name))
 		},
 	}.ToCobra()
 }
@@ -252,7 +252,7 @@ func ordersExplainCmd() *cobra.Command {
 			"suppressed by its cadence.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *ordersExplainParams, _ *cobra.Command, _ []string) {
-			os.Exit(runOrdersExplain(os.Stdout, os.Stderr, p))
+			os.Exit(runOrdersExplain(cliStdout, cliStderr, p))
 		},
 	}.ToCobra()
 }

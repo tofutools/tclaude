@@ -38,6 +38,7 @@ grant, so discovery always works. Mutations are gated:
 | You want to… | Verb(s) | Slug required |
 |---|---|---|
 | Create / edit / delete a template, snapshot a group, import one | `create` `edit` `rm` `from-group` `import` | `templates.manage` |
+| Change or remove an existing template's `owner_scopes` (or delete a template that has them) | `edit` `import --update` `from-group --update` `rm` | also `groups.settings.owner-scopes`, `permissions.grant`, `permissions.revoke` |
 | Spawn a whole team from a template | `instantiate`, or `tclaude agent task-force deploy` | `templates.instantiate` |
 | Also create/edit roles the template references | `roles create/edit/rm` | `roles.manage` |
 | Also create/edit spawn profiles the template references | `profiles create/edit/rm` | `profiles.manage` |

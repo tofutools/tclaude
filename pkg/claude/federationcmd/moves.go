@@ -25,7 +25,7 @@ type moveAgentParams struct {
 
 func moveAgentCmd() *cobra.Command {
 	return boa.CmdT[moveAgentParams]{Use: "move-agent", Short: "Clone with history, retiring the source after running confirmation", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *moveAgentParams, _ *cobra.Command, _ []string) {
-		os.Exit(runAgentOffer(&shareAgentParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, Peer: p.Peer, Group: p.Group, History: true, CarryPermissions: p.CarryPermissions, AllowFlagged: p.AllowFlagged, JSON: p.JSON}, "/v1/federation/move-agent", os.Stdout, os.Stderr))
+		os.Exit(runAgentOffer(&shareAgentParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, Peer: p.Peer, Group: p.Group, History: true, CarryPermissions: p.CarryPermissions, AllowFlagged: p.AllowFlagged, JSON: p.JSON}, "/v1/federation/move-agent", cliStdout, cliStderr))
 	}}.ToCobra()
 }
 
@@ -34,14 +34,14 @@ type moveIDParams struct {
 }
 
 func movesGet(path string) {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		os.Exit(rc)
 	}
 	var out any
 	if err := agent.DaemonGet(path, &out); err != nil {
-		os.Exit(fail(os.Stderr, err))
+		os.Exit(fail(cliStderr, err))
 	}
-	os.Exit(printJSON(os.Stdout, out))
+	os.Exit(printJSON(cliStdout, out))
 }
 
 type movesListParams struct {
@@ -77,16 +77,16 @@ func runMovesList(p *movesListParams, stdout, stderr io.Writer) int {
 }
 func movesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "moves", Short: "Inspect or abandon durable agent moves (operator only)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[movesListParams]{Use: "ls", Short: "List incoming and outgoing moves, including moved-from provenance", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *movesListParams, _ *cobra.Command, _ []string) { os.Exit(runMovesList(p, os.Stdout, os.Stderr)) }}.ToCobra(),
+		boa.CmdT[movesListParams]{Use: "ls", Short: "List incoming and outgoing moves, including moved-from provenance", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *movesListParams, _ *cobra.Command, _ []string) { os.Exit(runMovesList(p, cliStdout, cliStderr)) }}.ToCobra(),
 		boa.CmdT[moveIDParams]{Use: "show", Short: "Show one move and its source/destination identities", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *moveIDParams, _ *cobra.Command, _ []string) {
 			movesGet("/v1/federation/moves/" + url.PathEscape(p.ID))
 		}}.ToCobra(),
 		boa.CmdT[moveIDParams]{Use: "abandon", Short: "Keep the source and ignore late confirmations; destination clones remain", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *moveIDParams, _ *cobra.Command, _ []string) {
 			var out any
-			if rc := offerPost(os.Stderr, "/v1/federation/moves/"+url.PathEscape(p.ID)+"/abandon", nil, &out); rc != 0 {
+			if rc := offerPost(cliStderr, "/v1/federation/moves/"+url.PathEscape(p.ID)+"/abandon", nil, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			os.Exit(printJSON(os.Stdout, out))
+			os.Exit(printJSON(cliStdout, out))
 		}}.ToCobra(),
 	}}.ToCobra()
 }

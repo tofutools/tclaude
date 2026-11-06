@@ -35,10 +35,15 @@ type groupResource struct {
 	Detail  string `json:"detail,omitempty"`
 	// Session is a shell's tmux session, which the dashboard kills it by.
 	Session string `json:"session,omitempty"`
+	// Locked is the lock against agent changes (group_resource_locks.go), for
+	// the Collab panel's and tab strip's lock icon.
+	Locked bool `json:"locked,omitempty"`
 }
 
-// groupResourcesSnapshot lists the resources of every active group. alive is
-// the snapshot's set of live tmux sessions.
+// groupResourcesSnapshot lists the resources of every active group, and the
+// boards in none (group_id 0: the Groups tab's Ungrouped lists them, so one
+// made from the Collab panel can be moved into a group). alive is the
+// snapshot's set of live tmux sessions.
 func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) []groupResource {
 	active := map[int64]*db.AgentGroup{}
 	for _, g := range groups {
@@ -46,23 +51,31 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 			active[g.ID] = g
 		}
 	}
-	if len(active) == 0 {
-		return nil
-	}
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
 	out = append(out, groupProcessResources(active)...)
-	// A group's shell: running while its tmux session is up, closed (opening
-	// starts it) while the group has a directory to start it in.
-	for _, g := range active {
-		session := groupTermSessionName(g.Name)
-		r := groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateClosed, Detail: g.DefaultCwd}
-		if _, ok := alive[session]; ok {
-			r.State, r.Session = resourceStateRunning, session
-		} else if strings.TrimSpace(g.DefaultCwd) == "" {
+	for _, kind := range []string{resourceKindBoard, resourceKindProcess} {
+		locked, err := db.GroupResourceLocks(kind)
+		if err != nil {
+			slog.Warn("group resources: locks unavailable", "kind", kind, "error", err)
 			continue
 		}
-		out = append(out, r)
+		for i := range out {
+			if out[i].Kind == kind && locked[out[i].ID] {
+				out[i].Locked = true
+			}
+		}
+	}
+	// A group's shell lists only while its tmux session is up. It has no
+	// saved state, so once it exits there is nothing left to show: a closed
+	// row would stay forever with no way to remove it. The ＋ menu starts a
+	// new one.
+	for _, g := range active {
+		session := groupTermSessionName(g.Name)
+		if _, ok := alive[session]; !ok {
+			continue
+		}
+		out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateRunning, Session: session, Detail: g.DefaultCwd})
 	}
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))
@@ -77,7 +90,7 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 	live := map[string]bool{}
 	for _, p := range livePages.list("") {
 		livePages.mu.Lock()
-		r := groupResource{Kind: resourceKindPage, ID: p.id, GroupID: p.groupID, Title: p.title, State: resourceStateRunning, Owner: p.owner}
+		r := groupResource{Kind: resourceKindPage, ID: p.id, GroupID: p.groupID, Title: p.title, State: resourceStateRunning, Owner: p.owner, Locked: p.agentsLocked}
 		livePages.mu.Unlock()
 		live[r.ID] = true
 		if active[r.GroupID] == nil || !pageOwnerInGroup(r.Owner, r.GroupID) {
@@ -100,7 +113,7 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 			continue
 		}
 		r := groupResource{Kind: resourceKindPage, ID: row.ID, GroupID: row.GroupID, Title: row.Title, State: resourceStateClosed,
-			Owner: row.Owner, Detail: row.ClosedReason}
+			Owner: row.Owner, Detail: row.ClosedReason, Locked: row.AgentsLocked}
 		if isGroupPageOwner(r.Owner) {
 			r.Owner = ""
 		}
@@ -109,8 +122,10 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 	return out
 }
 
-// groupBoardResources are the boards linked to a group. A board has nothing
-// that runs; who is editing it is its detail.
+// groupBoardResources are the boards linked to a group. A board linked to
+// none, or to a group that is archived, lists with group_id 0: it is the
+// operator's still, and nothing else reaches it. A board has nothing that
+// runs; who is editing it is its detail.
 func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
 	boards, err := db.ListCollabBoards()
 	if err != nil {
@@ -125,10 +140,11 @@ func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
 	}
 	var out []groupResource
 	for _, b := range boards {
-		if active[b.GroupID] == nil {
-			continue
+		groupID := b.GroupID
+		if active[groupID] == nil {
+			groupID = 0
 		}
-		r := groupResource{Kind: resourceKindBoard, ID: b.ID, GroupID: b.GroupID, Title: b.Title, State: resourceStateClosed}
+		r := groupResource{Kind: resourceKindBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed}
 		if r.Title == "" {
 			r.Title = b.ID
 		}

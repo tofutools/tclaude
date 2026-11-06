@@ -37,7 +37,7 @@ func renameCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *renameParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRename(p, os.Stdout, os.Stderr))
+			os.Exit(runRename(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -87,6 +87,7 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 		Title         string `json:"title"`
 		Auto          bool   `json:"auto,omitempty"`
 		Note          string `json:"note,omitempty"`
+		remoteReply
 	}
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
@@ -105,6 +106,8 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	if resp.Auto {
 		if resp.CallerConv != "" {
 			fmt.Fprintf(stdout, "Auto-rename nudge sent to %s (by %s); the agent will pick its own title.\n",

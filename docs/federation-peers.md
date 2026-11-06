@@ -86,7 +86,9 @@ Towards that peer, local agents' unscoped grants (including group grants and
 config defaults) also count. `group=` scopes and group ownership never confer
 remote authority; denies still apply. **Interactive attach permits answering harness approvals and prompts, just
 as a keyboard at the target pane does.** `--ask-human` remains a local
-operator workflow; remote keyboard access does not grant its daemon API. Each side chooses its own level;
+operator workflow; remote keyboard access does not grant its daemon API (only
+an unrestricted peer, or one holding `human.inbox.answer` within its groups,
+answers it from this node's human inbox). Each side chooses its own level;
 the hub cannot set it. Downgrading or untrusting affects subsequent authorization
 reads immediately, including reads by in-flight operations.
 
@@ -113,7 +115,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see [Launch settings a peer may choose](federation-work.md#launch-settings-a-peer-may-choose)) |
 | `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
 | `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
-| `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.sandbox` | add any of this node's sandbox profiles to the spawn, with `groups.members.spawn`, so its `harness_config` and other rules apply as they would to a local spawn: granting it trusts the peer with every profile you have |
 | `groups.members.spawn.permissions` | choose the approval, tool and harness sandbox modes, the auto-reviewer, question timeout, trust-folder answer and per-slug permissions, and launching with unenforceable sandbox rules or no sandbox profiles, with `groups.members.spawn` |
 | `groups.members.spawn.environment` | set environment overrides on the spawn, with `groups.members.spawn` |
 | `groups.members.spawn.owner` | make the spawn a group owner at birth, with `groups.members.spawn` |
@@ -123,8 +125,9 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
 | `groups.settings` | change the group's ordinary settings from the peer's dashboard: description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting; its default directory, default profile, default saved prompts and sandbox profile also need the matching spawn grant (see "Changing a peer's groups") |
 | `groups.settings.environment` | change the group's spawn environment, whose values reach every agent spawned into it |
-| `groups.resources.read` | list the group's resources (saved processes, boards, live pages) with their agent locks on the peer's dashboard, by name only. Before it existed, this list came with `groups.roster.read`; a peer that held only roster read (and no unrestricted trust) no longer sees it until granted this. That includes a peer granted `groups.resources.lock`: its lock chips sit on this list, so grant both for the lock to be usable from its dashboard |
-| `groups.resources.lock` | lock and unlock the group's resources (saved processes, boards, live pages) against agent changes from the peer's dashboard; a process pinned to several groups needs it in each. Locks stay the operator's: no agent reaches them, granted or not |
+| `groups.resources.read` | list the group's resources (saved processes, boards, live pages) with their agent locks on the peer's dashboard, and read the group's collab boards (the board API through the peer proxy; `boards.read` is the global slug a peer reaches only this way); the peer's page lists them in its Collab panel and under each group of its Groups tab ([boards.md](boards.md#a-peers-boards)). Before it existed, this list came with `groups.roster.read`; a peer that held only roster read (and no unrestricted trust) no longer sees it until granted this. That includes a peer granted `groups.resources.lock`: its lock chips sit on this list, so grant both for the lock to be usable from its dashboard |
+| `groups.resources.write` | edit the group's collab boards: their elements and titles, create a board in the group, and move one to another group you hold this in (never unlink it). It implies reading them, as locally. Edits are authored `operator@INSTANCE`, and a new board takes its id from its title. Peers' creates leave this node's last 100 board slots to its own operator and agents. A peer's board read carries no presence and no invited agents, and the group's members only with `groups.roster.read`. A board this node's operator locked refuses every peer's change, unrestricted trust's too, until it is unlocked (`groups.resources.lock`); it still reads. Deleting a board, its live view and presence, activity mail, undo, its rendered snapshot, and inviting agents stay with this node's dashboard. A board linked to no group is no peer's. Sensitive |
+| `groups.resources.lock` | lock and unlock the group's resources (saved processes, boards, live pages) against agent and peer changes from the peer's dashboard; a process pinned to several groups needs it in each. Locks stay the operator's: no agent reaches them, granted or not |
 | `groups.members.manage` | change member agents' ordinary settings from the peer's dashboard: name, tags, task link and notifications, and role and description in the group; an agent's own settings need it in every group the agent is in |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
@@ -136,17 +139,54 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `groups.visibility.read` | a group's name, description and member count, with no message, presence, launch or roster grant. A grant that includes members also gives the roster. See [Group links](#group-links-and-peer-proposals) |
 | `groups.link.accept` | pre-authorize incoming group link proposals on that group |
+| `groups.members.add` | add an agent the peer sees to the group, holding this grant in every group the agent is already in too (joining puts it under the group's context, settings and owners). Moving a member in takes it in the target. Sensitive |
+| `groups.members.remove` | remove a member from the group, or move it out with `groups.members.add` in the target; keeping its permissions is this node's operator's. Leaving can hand the agent another group's sandbox profile or environment, which takes `groups.members.spawn` and `.sandbox` or `.environment` in that group (for every group when it leaves its last one). Sensitive |
+| `groups.link.add` | link the group to another group on this node, or change a link's mode, holding this grant in both; a link to another node takes unrestricted trust. Sensitive |
+| `groups.link.remove` | remove a link that starts in the group. Sensitive |
+| `groups.archive` | archive and unarchive the group; an archived group is found for its unarchive by this grant on it. Sensitive |
+| `groups.delete` | delete the group; a sandbox or environment its members may take from their other groups instead takes that group's spawn grant, as on a remove. Sensitive |
+| `groups.owners.manage` | remove the group's owners, and make a member an owner when the peer holds everything an owner holds there. An owner holds the group's whole owner tier, spawning and the member lifecycle included, which no peer may confer (see [The peer ceiling](#the-peer-ceiling)), so in practice only unrestricted trust adds owners. Sensitive |
+| `groups.settings.member-permissions` | read and replace the permissions every member of the group holds. A row the peer adds or widens must be within its own grants ([The peer ceiling](#the-peer-ceiling)); a row it leaves as shown, or drops, needs nothing more. The whole list is replaced, so without this grant a peer can't replace it at all, since it would replace rows it was never shown. Sensitive |
+| `groups.settings.owner-scopes` | read and narrow what the group's owners hold. Loosening or dropping a constraint widens every owner's grant of that slug, which takes the peer holding that grant itself ([The peer ceiling](#the-peer-ceiling)). The dashboard's group permissions editor saves the member rows with them, so using it also takes `groups.settings.member-permissions`. Sensitive |
+| `permissions.grant`, `permissions.revoke` | edit a member agent's own permission overrides from the peer's dashboard, holding the grant in every group the agent is in. `permissions.grant` shows the agent's overrides and grants more: a grant the peer adds or widens must be within its own grants ([The peer ceiling](#the-peer-ceiling)), and narrowing one it was shown needs nothing more. `permissions.revoke` denies an override, or drops an unscoped grant. An override shadows what the agent inherits from its groups, roles and defaults, so dropping a deny or a scoped grant can widen what it holds: that takes `permissions.grant` and the ceiling for the slug unscoped. A stored scope that names anything the peer can't see (a hidden group, or a profile, resource or remote) is shown as unreadable, and only your operator changes it. Either grant is needed even to save a batch that changes nothing, and a peer's save never answers with the agent's overrides. A Steward's permissions, and keeping a grant for future Stewards, stay your operator's. An override the peer writes is recorded as the peer's, and while its `group=` scope names a group, the peer may not rename or delete that group. Sensitive |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
+| `process.runs.start`, `groups.members.process` | start a process run scoped to the group, or bound to one member agent (`groups.members.process` in every group the agent is in). The run is the peer's (owner `peer:<instance>`), never your operator's: it tasks only the members in its scope and spawns no performer. It cannot authorize program profiles, so a template with a program step is refused, and it cannot pick an older template version or a run ID. A node that would need a spawned performer fails its attempt rather than wait; a retry meets the same refusal, so such a step only completes once a member who can take it joins. Every node prompt it delivers opens with an untrusted-content banner that names the peer, because the peer's params reach the prompt. Starting from the peer's dashboard also needs the template list, which no peer grant serves yet; use `tclaude process run --remote`. Unrestricted trust starts runs as your operator does |
+| `process.runs.manage` | pause any process run here; resume, decide, reassign and resolve a blocked branch of a run that executes no host programs and spawns no performers on your authority (a run with program authorizations, or one of your runs whose agent steps may fall back to a spawn, stays your operator's, pause excepted). This includes your operator's own agent-only runs, in every group. Decisions are human gates: only the peer's operator decides them, never its agents. A reassignment goes only to an agent the peer could start an agent-bound run for (`groups.members.process` in every group it is in), inside a run scoped to a group or an agent. The actor recorded is the peer, and the evidence or note it writes, which a later performer can be shown, opens with the untrusted-content banner. Re-scoping a run stays your human's, and reissuing or recording a program command's outcome has no peer route |
+| `process.advance` | advance the group's advisory process to the next or a named phase. The transition is recorded as the peer's (`peer: the operator of linked node …`), and the members it nudges are told which node advanced it. Any peer that sees the group reads its process |
+| `groups.messages.schedule`, `groups.members.schedule` | schedule recurring messages to the group (`groups.messages.schedule`) or to a member agent (`groups.members.schedule` in every group the agent is in), and list, read the run history of and disable your own cron jobs aimed there. A job the peer schedules is the peer's, never your operator's: it sends messages only and never spawns; each one arrives as the peer's mail under the untrusted-content banner; and every fire rechecks the peer's grants, recording `peer_denied` and delivering nothing once they no longer reach the target. The peer changes, enables, fires and deletes only its own jobs; on yours it reads and disables (disabling is reversible), and creating, editing, enabling, firing and deleting stay with their owner and your operator. A peer keeps at most 50 jobs here (10 for each of its agents); a run replaces the job's still-unread earlier one, as local cron does; your operator may reschedule, disable or delete a peer's job but never rewrites what it says; another peer's jobs are not in reach; a group export leaves them out. Unlinking or revoking the peer deletes its jobs. Jobs an unrestricted peer creates are ordinary local jobs and stay when it is downgraded or unlinked. The peer sees no conversation IDs and no run error text, and a spawn job's worker instructions stay yours. `agent.schedule` is granted as `groups.members.schedule` |
+| `groups.triggers.read` | list and inspect the group's trigger rules and their recent firings, without a spawn's instruction template or any error detail. Global rules stay yours, and no peer grant authors, edits, enables or disables a rule: trigger rules are only ever your operator's (`groups.triggers.manage` is local). `triggers.read` is granted as `groups.triggers.read` |
+| `groups.members.interrupt`, `.compact`, `.reincarnate`, `.context-info`, `.pr` | from the peer's dashboard: interrupt a member Codex agent's running turn, compact a member agent, ask it to reincarnate itself, read its context window use, and list or present its pull requests. Each needs the grant in every group the agent is in. No peer text is typed into the agent's pane: a peer's compact takes no follow-up, and a peer's reincarnate is the agent's own (mode `self`, no focus hint; the inbox request names your node and is not operator-authored). A peer presenting a PR names no repository directory. Unrestricted trust keeps every option |
+| `groups.members.delete` | permanently delete a member agent from the peer's dashboard, holding this grant in every group the agent is in or owns, archived ones included (a delete purges those memberships and owner seats). Deleting its git worktree as well takes unrestricted trust: it can destroy uncommitted work on this machine, so the peer's delete dialog offers no worktree option. Sensitive |
+| `groups.members.debug-export` | download a member agent's recorded launch and sandbox configuration, holding this grant in every group the agent is in. Every environment value, the recorded PATH and each sandbox-profile pre-launch script are redacted (names kept, each field listed under `redactions`); unrestricted trust gets the full export. Sensitive |
+| `groups.members.remote-control` | turn a member agent's Claude Code Remote Access on or off, holding this grant in every group the agent is in. Remote Access exposes the session to this node's claude.ai account, not to the peer. Sensitive |
 | `agents.receive` | offer agents into that group. See [Sharing an agent](federation-moving.md#sharing-an-agent-with-a-peer) |
 | `agents.receive.permissions` | opt-in permission carry into a receiving group, optionally limited to named slugs. It never transfers ownership or sensitive authority. See [permission carry](federation-moving.md#receiver-approved-permission-carry) |
 | `agents.teleport.receive` | automatic teleport landing in that group, with an applied node profile that sets `teleport_landing` |
 | `agent.move` | move a member agent to a peer, with `groups.members.retire` on the source |
 | `jobs.run` | one-shot remote jobs in that group, under a launch policy. See [Remote one-shot jobs](federation-work.md#remote-one-shot-jobs) |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `fleet.read` | the fleet brief: every active agent with its status, groups, task link and PRs, and what waits on the operator (unscoped only; read-only) |
+| `process.runs.read` | list and inspect every process run here (unscoped only; read-only). Sensitive: it covers runs in every group, including groups the peer cannot otherwise see. The peer's view is an allowlist that leaves out how programs run: no program command lines, working directories or sandboxes, program authorizations, blocked-branch error details, bound task prompts or event payloads. It does show run params and performer reports. A group's `groups.resources.read` does not read runs |
+| `agent.sandbox-impl` | read a member agent's sandbox implementation and, with `groups.members.spawn.sandbox`, only add confinement to it: `off` to `resource-only`, either of those to `harness-builtin` or `tclaude-layer`. Both grants must be held in every group the agent is in. Moving an agent onto less confinement, switching between the two that confine access, pinning a harness sandbox mode, or accepting a move-out's consequences takes unrestricted trust; restarting a running agent onto it also takes `groups.members.stop` and `.resume` there. Sensitive |
+| `human.inbox.read` | read your unread human notifications that an agent the peer sees sent in the group, never a senderless one, and the pending ask-human requests of agents that have the grant in every group they are in. See [Human inbox across your own nodes](federation-work.md#human-inbox-across-your-own-nodes). Sensitive |
+| `human.inbox.answer` | reply to the notifications `human.inbox.read` shows, and answer those requests once. Deny needs only this grant. Approve also needs the requested action to be within the peer ceiling, checked when it answers. "Always allow" and deadline extensions stay yours. Sensitive |
 | `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see [The remote spawn dialog](federation-work.md#the-remote-spawn-dialog)) |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
-| `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
-| `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see [Managing a peer's node](federation-work.md#managing-a-peers-node)) |
+| `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take `profiles.manage` (unscoped only) |
+| `sandbox-profiles.manage` | create sandbox profiles that narrow one of yours, and edit, rename and delete only the ones it created. A peer's profile includes exactly one existing profile, fixed once created, and adds only filesystem denies and `network_access: none`, so it never confines less than its include: it follows your operator's edits of the include, and it fails to resolve rather than falling back to anything if the include is gone (deleting an included profile is refused, and renaming one moves the reference). Your own profiles, the default profile and implementation, and profile import, directories, harness-config repairs, read exclusions and enforcement take unrestricted trust. The dashboard's sandbox profile editor stays unrestricted trust's; a restricted peer saves its profiles through the API (unscoped only). Sensitive |
+| `config.export` | download a config bundle, staged like every peer download, carrying only the sections the peer reads otherwise: roles, spawn and sandbox profiles and saved prompts with `node.spawn.read` (saved prompts also with `prompts.manage`), templates with `templates.manage`, process templates with `process.templates.read`. Your node's config keys and default permissions are never in it, and neither is an item flagged as a possible credential (no `allow_flagged`; skip it instead). Naming a section in `only` that the peer can't read is refused (unscoped only). Sensitive |
+| `profiles.manage` | edit and delete this node's spawn profiles from the peer's dashboard. Sensitive: an edit reaches every new spawn that uses the profile, your default profile and your own spawns included. A restricted peer changes a launch value only where it holds the matching remote spawn grant for every group (`groups.members.spawn` plus `.harness`, `.model`, `.effort`, `.roles`, `.permissions` for approval, sandbox, tools and per-slug permissions, `.environment`, `.owner`, `.features`, `.prompts`, `.worktree`, or `.all`), so it never sets what it could not launch itself; the startup context and first message take `.prompts`; disabling, enabling, renaming or deleting a profile counts as changing every value it set; a group-scoped spawn grant that opens less in one group narrows what the peer may set; making a profile selectable by agents, its relaunch policy and its model gateway take unrestricted trust (unscoped only) |
+| `prompts.manage` | create, edit and delete this node's saved prompts. Sensitive: they are text your own spawns start from (unscoped only) |
+| `roles.manage` | create, edit and delete this node's roles: name, description and brief. A role's permission grants take unrestricted trust. Sensitive: a role's brief reaches every spawn that names it (unscoped only) |
+| `templates.manage` | create, edit, delete and import this node's group templates, and snapshot a group the peer can see into one. A template agent's launch settings (harness, model, effort, roles, profile, approval, sandbox, ownership, inline profile, first message) are held to the peer's own remote spawn grants as a profile edit is, and its permission grants take unrestricted trust; so does a snapshot of a group whose members carry more. A snapshot or its preview carries the group's owners only under `groups.owners.manage` there, its members' own permission grants never, and its owner scopes only under `groups.settings.owner-scopes`; without that last grant a preview leaves them out and a save from a group that has them is refused, since a template without them would deploy owners holding more. Changing a template's owner scopes, and an import that embeds spawn profiles or roles, take unrestricted trust; instantiating one does not come with this grant (unscoped only) |
+| `process.templates.read` | list, show and validate this node's process templates; exporting a workflow file, which this node signs, stays this node's (unscoped only; read-only) |
+| `process.templates.manage` | create, edit, delete, import and list this node's process templates, and pin or unpin one in a group's process list where the peer also holds `groups.settings`. Starting a run takes `process.runs.start` (unscoped only) |
+| `node.groups.create` | create groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap. A launch setting (directory, environment, default profile, repository clone, remote-control policy) takes `groups.members.spawn` and the matching `.cwd`, `.environment`, `.profile` (a profile it could pick), `.worktree` or `.features` grant for every group (unscoped only; see [Managing a peer's node](federation-work.md#managing-a-peers-node)) |
+| `templates.instantiate` | deploy a team from this node's templates. Scoped to a group: re-brief a deployed group, and reinforce it (with `groups.members.spawn` there). Unscoped, with `node.groups.create` and an unscoped `groups.members.spawn`: instantiate or deploy into a new group. Every agent the template launches, whoever wrote it, must be one the peer could spawn itself (its harness, model, effort, roles, profile, approval, sandbox, environment and first message within the peer's spawn grants, no permission grants); a new group's owner seats and owner scopes take unrestricted trust (an owner holds the whole owner tier; see [The peer ceiling](#the-peer-ceiling)); the request's own directory, worktree, environment or context take their spawn grants. A request that needs more is refused whole. The task or mission text arrives marked as a remote request |
+| `groups.clone` | clone the group, with `node.groups.create`. Its settings copy from the source; a setting the request overrides takes its spawn grant as on create. Cloning its members takes `groups.members.clone` in every group of each; copying its owners takes unrestricted trust, so a restricted peer sets `copy_owners` to false |
+| `groups.import` | import a group archive as a new group, with `node.groups.create`, through the staged upload only. The group's context and default prompts take `.prompts`, a legacy default model `.model` and `.profile`, and the target directory `.cwd`, each with `groups.members.spawn` for every group; saved prompts the file carries join this node's library and take `prompts.manage`. Every member's landing harness and model take `.harness` and `.model` for every group: a member that needs more refuses the whole import, which lists each such member with what it needs (the preview lists them too). The import keeps nothing the file asks for: owner seats, environment, stored grants, sudo grants and cron jobs drop, listed in the reply, and the landing is written to this node's audit log (`federation.group_import`) with what dropped. Keeping any of them (`keep*`) is this node's operator's. A file whose mail is addressed to, or whose head aliases point at, an agent it does not carry is refused, so an import cannot reach this node's own agents; an import the check cannot judge is refused too (unscoped only) |
+| `groups.export` | download the group as an archive (`.paf`, or `?format=zip`), with `sessions.files.read` in the group, and `groups.settings.environment` when the group has an environment, whose values the peer view otherwise withholds. Carrying workflows and a flagged export (`allow_flagged`) take unrestricted trust. The grants are held again at every chunk of the staged download, so revoking one stops it. The transcripts take `sessions.files.read` in this group only, including those of members that are also in groups the peer has no grant in. Sensitive: the archive holds every member's conversation, the group's settings and its stored grants |
+| `agent.bundle.export` | download a member agent as a portable archive, held in every group the agent is in; its private transcript (`history=true`) also takes `sessions.files.read` in each, and a launch environment it carries takes `groups.settings.environment` in each (and `node.spawn.read` when it comes from a spawn profile). Only the staged download serves a restricted peer. Other export options (carried workflows, a flagged export, a summary) take unrestricted trust, and the grants are held again at every chunk |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `usage.read` | usage totals (today, week, month), limit readings and budget counts, which the peer's fleet usage limits count (unscoped only; see [Fleet limits](usage-and-costs.md#fleet-limits-spend-across-peers)) |
 | `usage-rules.manage` | this node's usage limits, usage profiles, assignments and per-agent budget adjustments from the peer's dashboard (unscoped only) |
@@ -154,6 +194,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 | `node.update` | check and apply tclaude updates here. See [Updating nodes](federation-admin.md#updating-local-and-linked-nodes) (unscoped only) |
+| `host.read` | this node's host status (`GET /api/host/status` through the peer proxy): CPU load, memory, live agents and sessions, disk capacity by kind (data, work), and the warnings its thresholds raise. Never a host path: disks and disk warnings go by kind, and warning messages and error text are left out. Unrestricted trust reads the full status. Unscoped only. Sensitive |
 | `node.harnesses.read` | installed harness binary paths and versions, and whether credentials exist, as a yes or no (unscoped only) |
 | `node.harnesses.install` | install and update harnesses here (unscoped only) |
 | `node.credentials.receive` | receive harness credentials copied from a peer (unscoped only) |
@@ -170,7 +211,31 @@ Rows marked unscoped only are instance-wide and refuse a scope. For the rest,
 prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
 its spawn launch policy. Revoking the scoped row leaves any unscoped grant
-in force.
+in force. `agents.receive`, `agents.teleport.receive` and
+`agents.receive.permissions` require a group scope. An unscoped one, which a
+node profile saved by an older tclaude can still hold, authorizes nothing:
+`federation grants` and the dashboard's grant list mark it inert, and
+`federation profile show` warns about it, until it is granted per group.
+
+Some local permissions have no peer grant at all. Some examples:
+`settings.default-model` edits the host's `~/.claude/settings.json`, which
+reaches Claude sessions outside tclaude. `relaunch-policy.manage` is refused
+to every peer on purpose, unrestricted trust included. `groups.pages.*`: a
+live page is this node's stage origin, shown to the local operator's own
+dashboard and its agents, so a peer has no view of it. The credential proxies (`proxy.git.*`,
+`proxy.github.*`, `proxy.gitlab.*`, `proxy.http`, `proxy.linear.*`,
+`proxy.awb.*`) use this node's operator's credentials, so a peer's agents use
+their own node's proxies instead. Umbrella slugs (`groups.admin`,
+`resources.read`, `resources.write`) are not peer grants: a peer is granted
+each operation it needs, so its grant list says exactly what it holds. Morph
+(`agent.morph`, `groups.members.morph`) re-forms an agent's whole launch, and
+`sandbox.harness-config` selects a spawn's harness-config posture directly,
+a setting a peer's spawn does not carry. A peer's sandbox choices go through
+`groups.members.spawn.sandbox` (an existing sandbox profile, whose own
+`harness_config` then applies) and `groups.members.spawn.permissions`. `groups.settings.default-spawn-target`, inbox watch,
+`human.notify` and `agent.standdown` belong to this node's own operator and
+agents. The dashboard's grant picker lists every one of them as a disabled
+row with its reason.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's
@@ -233,11 +298,13 @@ buttons stop or wake every member under `groups.members.stop` and
 `groups.members.resume` for that group. An agent's name, tags, task link and
 notifications change under `groups.members.manage`, held in every group the
 agent is in; its role and description in a group under that group's grant.
-Removing an agent from a group, deleting it, reincarnating it, switching its
-remote access or fast mode, assigning its sandbox implementation and
-downloading its debug export take unrestricted trust. Cloning a group,
-deleting it (with retiring its members first) and cleaning up its offline
-members take unrestricted trust: no peer grant covers them.
+Deleting an agent takes `groups.members.delete`, its debug export
+`groups.members.debug-export` and its remote access
+`groups.members.remote-control`, each held in every group the agent is in (a
+delete also in every group it owns). Deleting its git worktree with it, switching its
+fast mode and assigning its sandbox implementation take unrestricted trust.
+Cloning a group with retiring its members first, and cleaning up its offline
+members, take unrestricted trust: no peer grant covers them.
 
 Unrestricted trust makes a peer's dashboard about equivalent to this node's
 own. It holds every peer grant, and every dashboard route without a peer
@@ -258,6 +325,61 @@ worktree, and so on. A few things stay with this node even then:
 - its human inbox, which has its own peer routes.
 
 Each change is in this node's federation audit as `federation.peer_view`.
+
+### The peer ceiling
+
+What a peer confers on this node's agents (a member permission row, a
+loosened owner scope, an owner seat) never exceeds what the peer itself
+holds here. This node's operator grants without that bound; a peer's
+request does not. A row is within the ceiling only when:
+
+- its slug is one a peer may confer (below);
+- it names no peer (`peer=`): such a row acts on other nodes, which no
+  grant here measures;
+- the peer holds the slug's peer grant in every group the row reaches: the
+  groups its `group=` scope names, or, with no group scope, every group,
+  so the grant must be unscoped. An instance-wide slug is always held
+  unscoped.
+
+The slugs a peer may confer are local permissions whose peer grant of the
+same name reaches the same operation here, through a peer route that adds no
+bound of its own:
+
+- agent controls: `groups.members.interrupt`, `.context-info`, `.pr`,
+  `.remote-control`, `.rename`, `.tags`, `.task`, `.update`;
+- a group's reads and plain settings: `groups.roster.read`,
+  `groups.presence.read`, `groups.resources.read`,
+  `groups.settings.environment`, `.description`, `.max-members`,
+  `.notifications`, `.remote-control-policy`, `groups.attachment`,
+  `groups.rename`, `groups.archive`, `message.attachments`,
+  `process.advance`;
+- this node's libraries and reads: `prompts.manage`, `costs.read`,
+  `usage.read`.
+
+Every other slug stays this node's operator's to confer, even when the peer
+holds a grant of the same name. Some examples of why:
+- the peer route refuses an option the local gate allows (stop's, resume's
+  and restart's options, retire's worktree deletion);
+- the peer route redacts (the debug export);
+- the peer route checks a wider footprint (delete, add, remove, links,
+  nesting);
+- it takes extra grants (exports, clone, templates, process runs);
+- the local gate reaches what the peer route keeps back
+  (`process.templates.read` also exports a workflow file this node signs);
+- the peer form carries a policy a local row can't hold (spawning,
+  one-shot jobs, permission carry);
+- it can put text into another agent's context (compact's focus,
+  reincarnate's follow-up, cron jobs);
+- it is a global `agent.*` gate, which also reaches agents in no group;
+- its local gate opens more than the peer route: the group context's gate
+  also sets default saved prompts, the resource lock's reaches resources in
+  no group, and the role library's lets an agent attach its own grants to
+  roles.
+
+A `group=` scope names a group by name, so a peer may not rename a group
+from or to a name that a permission it conferred names, nor delete such a
+group: the permission would follow the name onto another group.
+
 
 A peer view request is one exchange of at most 15 seconds. Longer operations,
 a repository pull or sync and a worktree cleanup, run as jobs instead: the
@@ -356,6 +478,139 @@ Your operator grants agents ordinary slugs with a required `peer=` scope:
 Peer grants for roster, presence and attachments control what the receiving
 instance shares. Agents do not need separate roster, presence or attachment
 grants for these remote operations.
+
+### Agent peer views: lifecycle and settings on a peer
+
+An agent can also act on a peer's agents and groups through the peer view
+API (`/v1/federation/peer/{node}/{tail...}`), the way its operator can from
+the dashboard. Two gates apply, and **both** must pass:
+
+1. **On your node**, the agent holds the route's slugs with an explicit
+   `peer=<peer>/<remote-group>` (or `peer=<peer>`) grant covering every
+   group the route touches. For an agent route that is every group your
+   node's latest catalog of the peer shows the target in, plus a clone's
+   destination group. Nothing is granted by default. An unscoped grant, a
+   `group=` grant, ownership and agent defaults never count, even toward a
+   peer you trust unrestricted. An explicit deny wins. One missing group
+   can still be approved once with `--ask-human`; more than one is refused.
+2. **On the peer**, the request runs under an *agent principal*. The peer's
+   own grants to your node still decide, as for your operator. An agent
+   never gets the peer's local-operator paths, not even when the peer trusts
+   your node unrestricted. Your node sends the groups it checked, and the
+   peer refuses a request that touches any other group (`agent_footprint`),
+   so a stale catalog cannot widen what the agent reaches. Its operator can turn agent views off for your
+   node with `tclaude federation agent-views <peer> deny`. The default is
+   `allow`, because gate 1 already requires an explicit grant per slug.
+
+| Route on the peer | Agent slug (`peer=` scope) |
+|---|---|
+| `GET snapshot`, `groups`, `groups/{name}`, `agents/{id}` | `agents.status.read` |
+| `GET fleet` | `fleet.read` (scope `peer=<peer>`; the peer grants `fleet.read`) |
+| `GET v1/process/runs`, `v1/process/runs/{id}`, `…/events` | `process.runs.read` (scope `peer=<peer>`; the peer grants `process.runs.read`) |
+| `POST v1/process/runs` with `group` · with `agent` | `process.runs.start` (that group) · `agent.process` (every group the agent is in). The run is owned by your node's agent (`peer:<instance>/agent:<id>`) |
+| `GET groups/{name}/process` · `POST groups/{name}/process/advance` | `agents.status.read` · `process.advance` |
+| `POST v1/process/runs/{id}/pause` · `resume` · `resolve-blocked` | `process.runs.manage` (scope `peer=<peer>`). Not `decide` (a decision is a human gate, the peer's operator's) and not `assign` (the assignee is named in the body, outside the footprint your node checks): both are the peer's operator's |
+| `POST v1/cron` | `groups.messages.schedule` for a `group:NAME` target, `agent.schedule` for an agent target (scope `peer=<peer>/<group>`, in every group of the agent). The job is the agent's own there |
+| `GET v1/cron` · `GET v1/cron/{id}/logs` · `PATCH`/`DELETE v1/cron/{id}` · `POST v1/cron/{id}/enable` · `disable` · `run-now` | `self.schedule` (scope `peer=<peer>`): an agent lists and manages only the jobs it scheduled there; its node's operator manages them too |
+| `POST agents/{id}/stop` · `resume` · `restart` · `retire` · `clone` | `agent.stop` · `agent.resume` · both for restart · `agent.retire` · `agent.clone` |
+| `POST agents/{id}/rename` · `tags` · `task` · `notify` | `agent.rename` · `agent.tags` · `agent.task` (notify too) |
+| `POST agents/{id}/interrupt` · `compact` · `reincarnate` | `agent.interrupt` · `agent.compact` · `agent.reincarnate` |
+| `GET agents/{id}/context-info`, `GET`/`POST agents/{id}/prs` | `agent.context-info`, `agent.pr` |
+| `PATCH groups/{name}/members/{conv}` | `groups.members.update` |
+| `POST groups/{name}/shutdown` · `power-on` | `groups.members.stop` · `groups.members.resume` |
+| `PATCH groups/{name}` with `descr`, `max_members`, `notify_enabled` | `groups.settings.description`, `.max-members`, `.notifications` |
+| `POST groups/{name}/rename`, `GET`/`POST groups/{name}/attachment` | `groups.rename`, `groups.attachment` |
+
+```bash
+tclaude agent permissions peer-reach add ops-lead --peer bob/builders --slug agent.stop --slug agent.resume
+tclaude agent permissions peer-reach add ops-lead --peer bob --slug agents.status.read
+```
+
+`peer-reach add` adds the peer to the agent's existing grant of each slug.
+It refuses a grant the agent holds for local use, rather than replacing it.
+Both `peer-reach add` and `permissions grant --scope peer=…` warn for
+`agent.stop`, `agent.retire` and `groups.members.stop`, which end sessions
+on the peer, and for `agent.resume`, which a restart also needs.
+
+From the CLI, the member verbs take `member@peer`, where the member is an
+`agt_…` ID or a name the peer's catalog shows exactly once:
+
+```bash
+tclaude agent stop builder@bob
+tclaude agent resume agt_0123456789abcdef@bob
+tclaude agent retire builder@bob --no-shutdown
+tclaude agent rename "builder (night shift)" --target builder@bob
+tclaude agent task set https://example.com/t/42 --target builder@bob
+tclaude agent compact --target builder@bob
+tclaude agent interrupt --target builder@bob
+tclaude agent context-info --target builder@bob
+tclaude agent present-pr https://github.com/org/repo/pull/7 --target builder@bob
+tclaude agent reincarnate "unused" --target builder@bob
+tclaude agent fleet --remote bob
+tclaude process runs ls --remote bob
+tclaude process show run_0123 --remote bob
+tclaude process run release-check --group builders --param issue=42 --remote bob
+tclaude process pause run_0123 --remote bob
+tclaude process decide run_0123 --node approve --verdict approve --remote bob
+tclaude agent cron ls --remote bob
+tclaude agent cron logs 12 --remote bob
+tclaude agent cron disable 12 --remote bob
+tclaude agent cron add --target group:builders --interval 1h --body "post your status" --remote bob
+tclaude agent cron rm 14 --remote bob
+tclaude agent triggers ls --remote bob
+tclaude agent triggers show reviews --remote bob
+```
+
+The same commands work for the operator, through the operator's own peer
+view and the peer's grants. A local agent whose title is `builder@bob`
+always wins over the peer, and two of them are an ambiguous selector: the
+verb never falls through to the peer.
+
+Options that stay the peer operator's are refused locally:
+- `resume --recreate-dir` and `--send-keys`;
+- `rename --auto`;
+- `task show` (read the agent with `agent ls --node`);
+- a follow-up on `compact` (it would be typed into the peer's pane).
+
+A remote `reincarnate` asks the agent to reincarnate itself with its own
+handoff: the follow-up the CLI requires is not sent, and the reply says
+so. A remote `present-pr` does not send your working directory.
+
+`retire` never deletes a peer's worktree or records a reason; the reply
+says so. Replies are marked as remote and untrusted: the CLI prints an
+untrusted-content line first, and `fleet --remote --json` carries
+`remote.untrusted`. Control characters are stripped from replies and errors.
+An agent's view metadata (`peer_view`) names `principal: agent` and lists
+only what agent views reach, for the groups its node checked its grants for.
+
+An agent that already holds `fleet.read` for this node, such as the Steward,
+keeps that grant: one grant per slug cannot hold both a local and a peer
+scope. Give it the peer reach through one of its groups instead:
+`tclaude agent permissions peer-reach add --group <its group> --peer bob --slug fleet.read`.
+
+Everything else on the peer view stays the operator's: moves and teleports,
+spawns (agents use the spawn request), sessions and shells, node management,
+environment and sandbox, and every group setting that shapes future members
+(startup context, saved prompts, default directory, profile and spawn target,
+member permissions, owners, nesting).
+
+Other limits:
+
+- An agent gets at most 60 peer view attempts a minute, refused ones
+  included, and 4 at once. Past the limit, one refusal per minute is
+  audited.
+- A peer that does not advertise agent views (an older tclaude) is refused
+  locally with `peer_lacks_agent_views`. It never receives the request,
+  because it would serve it as your operator's. A peer that answers without
+  confirming the agent principal, for example one downgraded since its last
+  catalog, is refused the same way, before the request is sent.
+- An agent's reads carry no group or member settings and no spawn catalogs
+  or defaults, even where the peer's grants would show them to its operator.
+- Both nodes audit the agent, reads and refusals included:
+  `federation.peer_view.agent.out` on yours, and
+  `agent:<name>/<agent-id>@<node>` on the peer's.
+- A reply carries `X-Tclaude-Remote-Content: untrusted`. What a peer returns
+  is remote content, so treat it like remote mail.
 
 ## Discovery: what your agents may address
 
@@ -607,7 +862,7 @@ supply or override this receiver-owned permission map.
 
 ## Enroll a node with a token
 
-Enrollment sets up reciprocal trust after both machines have joined the hub.
+Enrollment links a node to a master after both machines have joined the hub.
 Hub admission remains a separate step; an enrollment token is not a hub invite.
 On the master, create a node profile and issue a short-lived bearer:
 
@@ -617,7 +872,15 @@ tclaude federation enroll-token create --profile test-rig --uses 1 --ttl 24h
 
 The token is printed once on stdout; its public terms and master fingerprint
 appear on stderr. Deliver it privately to the node. Prefer a private file or
-stdin over `--token` to avoid shell history and process argument exposure:
+stdin over `--token` to avoid shell history and process argument exposure.
+
+A token **offers** the node what the master gives it; it never decides what
+the node gives the master. Two commands enroll, and they differ in exactly
+that.
+
+**`enroll` accepts the offer and gives the master nothing.** The master is
+trusted restricted, with no grants: it needs explicit grants here for anything
+more, given later with `tclaude federation grant` or `trust`.
 
 ```bash
 tclaude federation enroll <master-instance-id> --token-file /private/enrollment-token
@@ -625,19 +888,45 @@ tclaude federation enroll <master-instance-id> --token-file /private/enrollment-
 tclaude federation enroll <master-instance-id> --token-stdin --preview
 ```
 
-Running `enroll` is consent. Before sending, it displays both fingerprints, the
-profile's name, immutable ID and revision, expiry, and the trust level granted
-to the master on this node. `--trust-level unrestricted` when creating the
-bearer proposes full master authority: every peer permission on every live
-local group, automatic worker spawning, and local unscoped grants towards that
-peer. The default is restricted, which requires explicit local grants.
+Before sending, it displays both fingerprints, the profile's name, immutable ID
+and revision (your authority on the master), and expiry. The named profile
+controls the node's authority **on the master**, including pool memberships,
+peer grants and defaults for workers that node spawns there. Enrollment does
+not apply the node's default peer profile and does not automatically accept
+config offers. Offer/import those separately. Profile edits invalidate unused
+tokens; pool grants remain live membership policy.
 
-The named profile controls the node's authority **on the master**, including
-pool memberships, peer grants and defaults for workers that node spawns there.
-The node grants its master only the reciprocal trust level displayed by the
-token. Enrollment does not apply the node's default peer profile and does not
-automatically accept config offers. Offer/import those separately. Profile
-edits invalidate unused tokens; pool grants remain live membership policy.
+**`become-node` also gives the master control of this machine.** Use it to
+attach a worker node to your own fleet. It gives exactly the permissions it
+names, or unrestricted trust with `--yes-unrestricted`, and needs the master's
+fingerprint, compared with its operator over another channel:
+
+```bash
+tclaude federation become-node <master-instance-id> --token-file /private/enrollment-token \
+  --give-permissions agents.status.read,groups.members.spawn@group=builders \
+  --confirm-fingerprint <master-fingerprint>
+# Everything, for a machine you own:
+tclaude federation become-node <master-instance-id> --token-file /private/enrollment-token \
+  --yes-unrestricted --confirm-fingerprint <master-fingerprint>
+```
+
+It always prints a warning naming exactly what is given, with each Sensitive
+grant marked, and `--preview` prints that warning without enrolling. A
+permission is `slug` (every group, or an instance grant) or
+`slug@group=<local group>`. It is given with its default policy; one that takes
+a policy of its own (`agents.receive.permissions`, `models.proxy`) and a grant's
+limits are given afterwards with `federation grant`. Unrestricted means every
+peer permission on every live local group, automatic worker spawning, and
+local unscoped grants towards that peer. A refused become-node never reaches
+the master and spends no token use; once a node has enrolled with a token,
+become-node on it again is refused, and further permissions are given with
+`federation grant` or `trust`.
+
+`--request-trust unrestricted` when creating the bearer (formerly
+`--trust-level`, still accepted) only **requests** that level: both commands
+show it as the master's request, and neither applies it. A token issued before
+this change that requested unrestricted now enrolls restricted through
+`enroll`; existing enrollments keep their trust.
 
 `tcle1` tokens contain signed public terms, a pinned master public key and a
 random bearer secret. The master stores only the public terms and secret hash.
@@ -862,7 +1151,8 @@ tclaude agent groups ls --all-nodes --json
 accept `self` for the local instance. Hub-reported names do not select peers.
 Normal `federation nodes` still reads the cached node capability catalog under
 its existing `node.read` policy; live summaries and live peer views are
-operator reads. The local daemon APIs are `GET /v1/federation/node-summary`
+operator reads (an agent reaches only the routes in
+[Agent peer views](#agent-peer-views-lifecycle-and-settings-on-a-peer)). The local daemon APIs are `GET /v1/federation/node-summary`
 and `GET /v1/federation/peer/{node}/{tail...}`.
 
 A summary listing explicitly fetches self and trusted peers in the CLI, with

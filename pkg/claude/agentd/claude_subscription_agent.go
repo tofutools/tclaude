@@ -82,7 +82,7 @@ func servePeerAgentClaudeSubscription(w http.ResponseWriter, r *http.Request, v 
 	}
 	owner := marker != nil && marker.Peer == v.peer.InstanceID
 	if r.Method == http.MethodDelete {
-		if marker != nil && !owner && !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		if marker != nil && !owner && !v.unrestricted() {
 			writeError(w, 403, "permission", "only the subscription's owner, or an unrestricted peer, may switch this agent's login")
 			return
 		}

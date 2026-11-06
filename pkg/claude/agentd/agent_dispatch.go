@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -34,6 +35,12 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		selector = u
 	}
 	res, _, err := agent.ResolveSelector(selector)
+	// member@peer: a selector that names no local agent but a trusted peer
+	// runs the verb on that peer's agent (federation_member_verbs.go). An
+	// ambiguous local match stays a local error: it never reaches the peer.
+	if err != nil && !errors.Is(err, agent.ErrAmbiguous) && serveRemoteMemberVerb(w, r, selector, verb) {
+		return
+	}
 	var convID string
 	if err == nil {
 		convID = res.ConvID

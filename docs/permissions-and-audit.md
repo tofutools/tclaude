@@ -56,7 +56,12 @@ set**, the union of:
   moment the agent leaves the group),
 - per-conversation grants,
 - active [sudo](#sudo-time-bounded-elevation) elevations,
-- grants contributed by group ownership (see below).
+- grants contributed by group ownership (see below),
+- slugs conferred by membership: a few group-scoped slugs are every active
+  member's in that group, checked live at each request. They are
+  `groups.messages.schedule`, and `groups.resources.read` /
+  `groups.resources.write` (read and change the group's boards; see
+  [Boards › Group boards are their members'](boards.md#group-boards-are-their-members)).
 
 An explicit per-agent **deny** beats everything except sudo. If no source
 supplies the slug, the request is refused.
@@ -108,6 +113,44 @@ configuration (`process.templates.manage`, `agent.sandbox-impl`,
 `sandbox.harness-config`, `human.clipboard`, `usage-rules.manage`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
 
+A group template can carry owner scopes too, and every group deployed from it
+starts with them. Creating a template with owner scopes needs only
+`templates.manage`. Changing or removing an existing template's owner scopes
+(an edit, an import or bundle that replaces it, a re-snapshot from a group, or
+deleting a template that has them) also needs what changing a live group's
+does: `groups.settings.owner-scopes`, `permissions.grant` and
+`permissions.revoke`. Before this, `templates.manage` alone could loosen the
+narrowing a template's author declared for every later deployment.
+
+### Resource umbrellas: `resources.read` and `resources.write`
+
+A manager agent that looks after resources across groups gets one grant
+instead of one per kind:
+
+- `resources.read` reads every board (`boards.read`), every process template
+  (`process.templates.read`) and every process run (`process.runs.read`).
+- `resources.write` changes every board (`boards.write`) and process template
+  (`process.templates.manage`), and implies `resources.read`. The per-kind
+  write slugs still do not imply their read slugs.
+
+Both are scoped like any grant. `group=` reaches the resources linked to
+those groups, `resource=kind:id` (`board:plan`, `process_template:ship`) the
+named ones, and no scope reaches every resource. A read passes through any
+one of a resource's groups; a write needs every one of them. Operations on
+the whole library (listing changes, imports, pinning, creating a new
+template) still need the unscoped per-kind slug.
+
+The umbrellas are never default-granted and never conferred by ownership or
+membership. A dedicated deny of a per-kind slug (or of `resources.read`)
+still wins over its umbrella. Neither passes an operator lock (see
+[The operator's lock on a resource](#the-operators-lock-on-a-resource)), and
+run mutations stay on `process.runs.manage`.
+
+```bash
+tclaude agent permissions grant ops-manager resources.write --scope group=crew,infra
+tclaude agent permissions grant ops-manager resources.read --scope resource=board:q4-roadmap
+```
+
 ## Scoped grants
 
 A grant can be narrowed to part of what its slug reaches:
@@ -132,7 +175,7 @@ evaluation rules:
   sources, and if none passes, the request gets a 403.
 
 The registry advertises which dimensions each slug supports (`group`,
-`spawn_profile`, `sandbox_profile`, `process_template`, `target_agent`, and proxy-specific
+`spawn_profile`, `sandbox_profile`, `process_template`, `resource`, `target_agent`, and proxy-specific
 dimensions). Two relational matchers exist on `agent.retire`,
 `groups.members.retire` and `agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
 and `@descendants` (its spawn lineage, up to 64 generations). Lineage is
@@ -221,23 +264,44 @@ authorizes a send.
 
 ### The operator's lock on a resource
 
-The operator can lock a process template, a collab board or a live page
-against every agent. While it is locked, any change an agent makes is refused
-with `resource_locked` (403), and no grant overrides that: not a slug, a sudo
-elevation, group ownership or `groups.admin`. Reads stay open. For a process
-template the lock refuses a save, a delete, a library-listing change, an
-unpin and an import over it; pinning it to another group is still allowed.
-For a board it refuses the agent's patches, and for a page it refuses
-patches, eval, close and a re-show, by the shower as well as by members.
+A process template, a collab board or a live page can be locked against
+agent changes. While it is locked, any change an agent makes is refused with
+`resource_locked` (403), and no grant overrides that (not a slug, a sudo
+elevation of another slug, group ownership or `groups.admin`), except
+`groups.resources.lock` itself. Reads stay open: a group's members still read
+a locked board. For a process template the lock refuses a save, a delete, a
+library-listing change, an unpin and an import over it; pinning it to
+another group is still allowed. For a board it refuses the agent's patches,
+and for a page it refuses patches, eval, close and a re-show, by the shower
+as well as by members.
 
-Only the operator sets or clears a lock, from the dashboard
-(`POST /api/resource-locks`). No agent route reaches it. An operator of a
-trusted federation peer can do it from their own dashboard only as far as
-this node's grants to that peer reach: the group-scoped peer grant
-`groups.resources.lock`, in every group the resource belongs to (each group
-a process template is pinned to). Unrestricted trust holds it; it is never
-granted by default, and an agent never holds it, on either node. Listing a
-group's resources there, with their locks, takes the separate peer grant
+The operator sets or clears a lock from the dashboard
+(`POST /api/resource-locks`). An agent does it with
+`tclaude agent resources lock|unlock <kind> <id>` (`POST /v1/resource-locks`)
+when it holds `groups.resources.lock` in every group the resource belongs to
+(each group a process template is pinned to); a resource in no group needs an
+unscoped grant. The same grant lets the agent change the resource while it
+is locked, as the operator can, including a re-show that replaces a locked
+page, adopting a locked group page and a config-bundle import over a locked
+template. The resource stays locked to everyone else. The slug is never
+default-granted, never conferred by ownership or membership and not covered
+by `groups.admin`: the operator grants it, for example scoped to one group:
+
+```bash
+tclaude agent permissions grant <agent> groups.resources.lock --scope group=design
+```
+
+`tclaude agent resources ls <group>` lists a group's processes, boards and
+pages with their locks, for its members (`groups.resources.read`). Holding
+the lock in the group covers its boards and pages, but not a template that
+is also pinned to a group where you don't hold it: the list names those.
+
+An operator of a trusted federation peer can lock from their own dashboard
+only as far as this node's grants to that peer reach: the group-scoped peer
+grant `groups.resources.lock`, in every group the resource belongs to.
+Unrestricted trust holds it; it is never granted by default. A federated
+agent never toggles a lock on another node. Listing a group's resources
+there, with their locks, takes the separate peer grant
 `groups.resources.read` (also held by unrestricted trust, never by default). A process or board
 lock is stored and is removed when its board or template is deleted, so a new
 resource with the same id starts unlocked. A page lock lasts until the page

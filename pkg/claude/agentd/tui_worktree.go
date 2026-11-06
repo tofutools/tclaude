@@ -81,7 +81,7 @@ func buildTUIConsoleMux() http.Handler {
 // pane must not reach through it.
 func handleTUIWorktree(w http.ResponseWriter, r *http.Request) {
 	if classify(peerFromContext(r.Context())) != classHuman {
-		writeError(w, http.StatusForbidden, "forbidden",
+		writeError(w, http.StatusForbidden, "permission",
 			"creating a worktree is an operator-console operation")
 		return
 	}

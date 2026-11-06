@@ -1179,6 +1179,14 @@ func TestUsageCollapseSubviews(t *testing.T) {
 	assert.NotContains(t, string(clean), "usage_collapse_subviews")
 }
 
+func TestSidePanelEdgeReveal(t *testing.T) {
+	off := false
+	assert.True(t, (*Config)(nil).SidePanelEdgeReveal(), "nil → on")
+	assert.True(t, (&Config{}).SidePanelEdgeReveal(), "no block → on")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).SidePanelEdgeReveal(), "absent key → on")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{SidePanelEdgeReveal: &off}}).SidePanelEdgeReveal(), "explicit false → off")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")
@@ -1814,4 +1822,29 @@ func TestVoice(t *testing.T) {
 	cfg.Dashboard.Voice = &VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSend, Phrase: "over"}, {Action: "unknown", Phrase: "x"}}}
 	assert.Equal(t, "over", phrase(cfg.Voice(), VoiceActionSend), "the list wins")
 	assert.Len(t, cfg.Voice().Phrases, len(VoicePhraseDefaults))
+}
+
+func TestSidePanelTuning(t *testing.T) {
+	def := (*Config)(nil).SidePanelTuning()
+	assert.Equal(t, SidePanelTuning{
+		PredictivePeek: true, GrowingPeek: false, EdgeZonePx: 32, RetractMs: 500,
+		PredictMinSpeed: 1200, PredictSpeedDistancePx: 600, PredictMinSpeedFloor: 600,
+		PredictMinReadings: 4, MinTravelPx: 80, BrakePercent: 70, PeekMinPx: 48,
+	}, def, "nil → today's defaults")
+	assert.Equal(t, def, (&Config{Dashboard: &DashboardConfig{}}).SidePanelTuning(), "absent keys → defaults")
+	off, big, neg, slow := false, 100000, -5, 300
+	got := (&Config{Dashboard: &DashboardConfig{
+		SidePanelPredictivePeek: &off, SidePanelGrowingPeek: &off,
+		SidePanelEdgeZonePx: &big, SidePanelRetractMs: &neg, SidePanelBrakePercent: &big,
+		SidePanelPredictMinSpeed: &slow,
+	}}).SidePanelTuning()
+	assert.False(t, got.PredictivePeek)
+	assert.False(t, got.GrowingPeek)
+	on := true
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{SidePanelGrowingPeek: &on}}).SidePanelTuning().GrowingPeek,
+		"the growing peek is off by default, on when set (tcl-bg5qm1)")
+	assert.Equal(t, 200, got.EdgeZonePx, "clamped to the max")
+	assert.Equal(t, SidePanelTuningLimits["retract_ms"].Min, got.RetractMs, "clamped to the min")
+	assert.Equal(t, 100, got.BrakePercent)
+	assert.Equal(t, 300, got.PredictMinSpeedFloor, "the floor never exceeds the minimum speed")
 }

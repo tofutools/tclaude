@@ -809,26 +809,9 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	}
 	timing("pane_alive")
 	h := harnessForConv(convID)
-	codexSelected := false
-	if h.Name == harness.CodexName {
-		var err error
-		codexSelected, err = codexAppServerSelected(convID)
-		if err != nil {
-			slog.Error("spawn: Codex app-server posture unreadable; post-init delivery abandoned without pane fallback",
-				"conv", convID, "error", err)
-			return
-		}
-	}
-
-	piSelected := false
-	if h.Name == harness.PiName {
-		var err error
-		piSelected, err = piDriveSelected(convID)
-		if err != nil {
-			slog.Error("spawn: pi drive posture unreadable; post-init delivery abandoned without pane fallback",
-				"conv", convID, "error", err)
-			return
-		}
+	codexSelected, piSelected, ok := postInitDriveSelection("spawn", convID, h)
+	if !ok {
+		return
 	}
 
 	// Codex's seed-delivered welcome and out-of-band title update need no
@@ -844,30 +827,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		timing("keystroke_delay_skipped")
 	}
 
-	// An API-driven Copilot launch is not ready for post-init the moment its
-	// pane is alive. Its bootstrap creates a session under the conversation id
-	// and foregrounds it, so everything below — the rename and the welcome —
-	// must wait for that, or it lands in the startup session the bootstrap is
-	// about to replace and is lost. See awaitCopilotAPISession, which waits on
-	// the CONNECTION and not on the launch posture, and explains why the posture
-	// cannot answer this.
-	//
-	if h.Name == harness.CopilotName && copilotLaunchIntentForConv(convID).API &&
-		!awaitCopilotAPISession(convID) {
-		slog.Error("spawn: the Copilot API channel never came up within the bootstrap "+
-			"budget; post-init delivery is abandoned because the failed launch is being "+
-			"shut down as crashed and API posture never falls back to pane input",
-			"conv", convID, "budget", copilotAPIBootstrapTimeout())
-		return
-	}
-	if piSelected && !awaitPiDrive(convID) {
-		slog.Error("spawn: the pi drive channel never connected; post-init delivery is abandoned without pane fallback",
-			"conv", convID, "budget", piDriveConnectTimeout)
-		return
-	}
-	if codexSelected && !awaitCodexAppServerReady(convID) {
-		slog.Error("spawn: the Codex app-server channel never became ready; post-init delivery is abandoned without pane fallback",
-			"conv", convID, "budget", codexAppServerStartupTimeout)
+	if !awaitPostInitDrive("spawn", convID, h, codexSelected, piSelected) {
 		return
 	}
 

@@ -74,7 +74,7 @@ func seanceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *seanceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSeance(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runSeance(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -249,16 +249,11 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// mapSeanceDaemonErrorToRC is MapDaemonErrorToRC plus the one code only the
+// séance endpoint sends.
 func mapSeanceDaemonErrorToRC(err error) int {
-	if de, ok := err.(*DaemonError); ok {
-		switch de.Code {
-		case "permission":
-			return rcAuth
-		case "unsupported_harness":
-			return rcInvalidArg
-		case "invalid_arg":
-			return rcInvalidArg
-		}
+	if de, ok := err.(*DaemonError); ok && de.Code == "unsupported_harness" {
+		return rcInvalidArg
 	}
 	return MapDaemonErrorToRC(err)
 }

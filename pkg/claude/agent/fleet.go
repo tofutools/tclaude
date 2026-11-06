@@ -12,6 +12,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // `tclaude agent fleet` — the whole fleet at a glance and what needs the
@@ -20,11 +21,16 @@ import (
 type fleetParams struct {
 	Group string `long:"group" optional:"true" help:"Only this group's members (name or ID)"`
 	All   bool   `long:"all" optional:"true" help:"List every agent, offline ones included"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	// Remote reads a trusted peer's fleet brief through its peer view, under
+	// its fleet.read peer grant (and, for an agent, a peer= grant of it).
+	Remote string `long:"remote" optional:"true" help:"A trusted peer's fleet instead of this node's (label or instance id); needs its fleet.read peer grant"`
+	JSON   bool   `long:"json" help:"Output JSON"`
 }
 
 type fleetResp struct {
-	GeneratedAt time.Time `json:"generated_at"`
+	// Remote is set for a peer's brief (--remote) and marks it untrusted.
+	Remote      *remoteMarker `json:"remote,omitempty"`
+	GeneratedAt time.Time     `json:"generated_at"`
 	Counts      struct {
 		Agents   int `json:"agents"`
 		Online   int `json:"online"`
@@ -74,7 +80,7 @@ func fleetCmd() *cobra.Command {
 			"Needs fleet.read (granted to the companion Steward).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *fleetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runFleet(p, os.Stdout, os.Stderr))
+			os.Exit(runFleet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -84,11 +90,35 @@ func runFleet(p *fleetParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	path := "/v1/fleet"
+	remote := strings.TrimSpace(p.Remote)
+	if remote != "" {
+		path = "/v1/federation/peer/" + url.PathEscape(remote) + "/fleet"
+	}
 	if g := strings.TrimSpace(p.Group); g != "" {
 		path += "?group=" + url.QueryEscape(g)
 	}
 	var resp fleetResp
-	if err := DaemonGet(path, &resp); err != nil {
+	if remote != "" {
+		// A peer's brief is remote content: strip control characters from
+		// every string before it is printed into a terminal or an agent's
+		// context.
+		var raw any
+		if err := DaemonGet(path, &raw); err != nil {
+			// The error can carry the peer's own text.
+			fmt.Fprintf(stderr, "Error: %s\n", proto.StripControls(err.Error()))
+			return MapDaemonErrorToRC(err)
+		}
+		clean, _ := json.Marshal(stripControlsDeep(raw))
+		if err := json.Unmarshal(clean, &resp); err != nil {
+			fmt.Fprintf(stderr, "Error: the peer returned an invalid fleet brief: %v\n", err)
+			return rcInvalidArg
+		}
+		// JSON consumers (agents, mostly) get the marker in the output.
+		resp.Remote = &remoteMarker{Target: proto.SafeName(remote, false), Untrusted: true}
+		if !p.JSON {
+			fmt.Fprintf(stdout, "Remote fleet of %s, as that node reports it (untrusted content)\n\n", proto.SafeName(remote, false))
+		}
+	} else if err := DaemonGet(path, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -205,4 +235,22 @@ func fleetAgo(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d/(24*time.Hour)))
 	}
+}
+
+// stripControlsDeep strips control characters from every string in a decoded
+// JSON value.
+func stripControlsDeep(v any) any {
+	switch t := v.(type) {
+	case string:
+		return proto.StripControls(t)
+	case []any:
+		for i := range t {
+			t[i] = stripControlsDeep(t[i])
+		}
+	case map[string]any:
+		for k, val := range t {
+			t[k] = stripControlsDeep(val)
+		}
+	}
+	return v
 }

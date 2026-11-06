@@ -28,9 +28,11 @@ const (
 	cacheTTL      = 5 * time.Minute
 )
 
-// fetchFunc, refreshTokenFunc, and credentialCandidatesFunc are swappable for testing.
+// fetchFunc, fetchRawFunc, refreshTokenFunc, and credentialCandidatesFunc are
+// swappable for testing.
 var (
 	fetchFunc        = Fetch
+	fetchRawFunc     = FetchRaw
 	refreshTokenFunc = RefreshAccessToken
 
 	// credentialCandidatesFunc enumerates login-token sources in priority
@@ -549,71 +551,6 @@ func writeCredentials(store credentialStore, data []byte) error {
 	}
 }
 
-// FetchUsageRaw fetches the raw usage JSON, trying every credential source
-// (file, then keychain/keyring) and falling through to the next on an
-// unauthorized token, plus the opt-in 429→refresh retry. This is the
-// source-robust entry point for callers that don't already hold a token
-// (e.g. `tclaude usage --json`).
-func FetchUsageRaw() ([]byte, error) {
-	body, err := fetchRawWithSources()
-	if err == nil {
-		return body, nil
-	}
-
-	var rateLimitErr *RateLimitError
-	if !errors.As(err, &rateLimitErr) {
-		return nil, err
-	}
-	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
-		return nil, err
-	}
-
-	slog.Info("FetchUsageRaw: got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
-	newToken, refreshErr := refreshTokenFunc()
-	if refreshErr != nil {
-		slog.Warn("FetchUsageRaw: token refresh failed", "error", refreshErr)
-		return nil, err
-	}
-
-	slog.Info("FetchUsageRaw: retrying with new token")
-	body, retryErr := FetchRaw(newToken)
-	if retryErr != nil {
-		slog.Warn("FetchUsageRaw: retry failed after token refresh", "error", retryErr)
-		return nil, retryErr
-	}
-
-	slog.Info("FetchUsageRaw: succeeded after token refresh")
-	return body, nil
-}
-
-// fetchRawWithSources tries each credential source's token against the usage
-// API, advancing to the next source only when the API rejects the current
-// token as unauthorized (an AuthError — stale/revoked). Rate-limit (429),
-// network, and other errors are returned as-is: switching source won't fix
-// them, and a 429 must not trigger extra API calls.
-func fetchRawWithSources() ([]byte, error) {
-	cands := credentialCandidatesFunc()
-	if len(cands) == 0 {
-		return nil, errNoCredentials()
-	}
-	var lastErr error
-	for i, c := range cands {
-		body, err := FetchRaw(c.token)
-		if err == nil {
-			return body, nil
-		}
-		lastErr = err
-		var authErr *AuthError
-		if errors.As(err, &authErr) && i < len(cands)-1 {
-			slog.Warn("usage token rejected; trying next credential source",
-				"rejected_store", string(c.store), "next_store", string(cands[i+1].store))
-			continue
-		}
-		return nil, err
-	}
-	return nil, lastErr
-}
-
 // FetchRaw calls the Anthropic usage API and returns the raw JSON response body.
 func FetchRaw(token string) ([]byte, error) {
 	req, err := http.NewRequest("GET", usageEndpoint, nil)
@@ -662,29 +599,85 @@ func FetchRaw(token string) ([]byte, error) {
 // plus the opt-in 429→refresh retry. Source-robust entry point for callers
 // that don't already hold a token (e.g. `tclaude usage`).
 func FetchUsage() (*Response, error) {
-	return fetchWithRateLimitRetry()
+	return refreshOnRateLimit(func() (*Response, error) { return fromCredentialSources(fetchFunc) }, fetchFunc)
+}
+
+// FetchUsageRaw is FetchUsage returning the raw usage JSON, for callers that
+// print it as is (e.g. `tclaude usage --json`).
+func FetchUsageRaw() ([]byte, error) {
+	return refreshOnRateLimit(func() ([]byte, error) { return fromCredentialSources(fetchRawFunc) }, fetchRawFunc)
+}
+
+// fromCredentialSources tries each credential source's token with fetch,
+// advancing to the next source only when the API rejects the current token as
+// unauthorized (an AuthError — stale/revoked). Rate-limit (429), network, and
+// other errors are returned as-is: switching source won't fix them, and a 429
+// must not trigger extra API calls.
+func fromCredentialSources[T any](fetch func(token string) (T, error)) (T, error) {
+	var zero T
+	cands := credentialCandidatesFunc()
+	if len(cands) == 0 {
+		return zero, errNoCredentials()
+	}
+	var lastErr error
+	for i, c := range cands {
+		v, err := fetch(c.token)
+		if err == nil {
+			return v, nil
+		}
+		lastErr = err
+		var authErr *AuthError
+		if errors.As(err, &authErr) && i < len(cands)-1 {
+			slog.Warn("usage token rejected; trying next credential source",
+				"rejected_store", string(c.store), "next_store", string(cands[i+1].store))
+			continue
+		}
+		return zero, err
+	}
+	return zero, lastErr
+}
+
+// refreshOnRateLimit runs first. On a 429 it refreshes the token and retries
+// once with retry, but only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by
+// default because refreshing from tclaude invalidates Claude Code's in-memory
+// refresh token). A failed refresh returns the original 429.
+func refreshOnRateLimit[T any](first func() (T, error), retry func(token string) (T, error)) (T, error) {
+	var zero T
+	v, err := first()
+	if err == nil {
+		return v, nil
+	}
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		return zero, err
+	}
+	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+		return zero, err
+	}
+
+	slog.Info("got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
+	newToken, refreshErr := refreshTokenFunc()
+	if refreshErr != nil {
+		slog.Warn("token refresh failed after 429, giving up", "error", refreshErr)
+		return zero, err // return original 429 error
+	}
+
+	slog.Info("token refreshed, retrying usage fetch with new token")
+	v, retryErr := retry(newToken)
+	if retryErr != nil {
+		slog.Warn("usage fetch failed even after token refresh", "error", retryErr)
+		return zero, retryErr
+	}
+
+	slog.Info("usage fetch succeeded after token refresh")
+	return v, nil
 }
 
 // FetchWithRetry calls the usage API with a single, caller-supplied token and
 // on 429 refreshes the token and retries once. It does NOT do source
 // fallback (the caller already chose the token); use FetchUsage for that.
 func FetchWithRetry(token string) (*Response, error) {
-	resp, err := fetchFunc(token)
-	if err == nil {
-		return resp, nil
-	}
-	var rateLimitErr *RateLimitError
-	if !errors.As(err, &rateLimitErr) {
-		return nil, err
-	}
-	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
-		return nil, err
-	}
-	newToken, refreshErr := refreshTokenFunc()
-	if refreshErr != nil {
-		return nil, err
-	}
-	return fetchFunc(newToken)
+	return refreshOnRateLimit(func() (*Response, error) { return fetchFunc(token) }, fetchFunc)
 }
 
 // Fetch calls the Anthropic usage API and returns the parsed response.
@@ -731,71 +724,6 @@ func stampLastAttemptAt(err error, now time.Time) {
 		cached.LastError = err.Error()
 	}
 	saveCache(cached, "", nil)
-}
-
-// fetchWithSources tries each credential source's token against the usage API,
-// advancing to the next source only when the API rejects the current token as
-// unauthorized (an AuthError — stale/revoked). Rate-limit (429), network, and
-// other errors are returned as-is: switching source won't fix them, and a 429
-// must not trigger extra API calls.
-func fetchWithSources() (*Response, error) {
-	cands := credentialCandidatesFunc()
-	if len(cands) == 0 {
-		return nil, errNoCredentials()
-	}
-	var lastErr error
-	for i, c := range cands {
-		resp, err := fetchFunc(c.token)
-		if err == nil {
-			return resp, nil
-		}
-		lastErr = err
-		var authErr *AuthError
-		if errors.As(err, &authErr) && i < len(cands)-1 {
-			slog.Warn("usage token rejected; trying next credential source",
-				"rejected_store", string(c.store), "next_store", string(cands[i+1].store))
-			continue
-		}
-		return nil, err
-	}
-	return nil, lastErr
-}
-
-// fetchWithRateLimitRetry fetches usage data across all credential sources
-// (see fetchWithSources). On 429 it attempts a token refresh only when
-// TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because refreshing from
-// tclaude invalidates Claude Code's in-memory refresh token).
-func fetchWithRateLimitRetry() (*Response, error) {
-	resp, err := fetchWithSources()
-	if err == nil {
-		return resp, nil
-	}
-
-	var rateLimitErr *RateLimitError
-	if !errors.As(err, &rateLimitErr) {
-		return nil, err
-	}
-
-	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
-		return nil, err
-	}
-
-	slog.Info("got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
-	newToken, refreshErr := refreshTokenFunc()
-	if refreshErr != nil {
-		slog.Warn("token refresh failed after 429, giving up", "error", refreshErr)
-		return nil, err // return original 429 error
-	}
-
-	slog.Info("token refreshed, retrying usage fetch with new token")
-	resp, retryErr := fetchFunc(newToken)
-	if retryErr != nil {
-		slog.Warn("usage fetch failed even after token refresh", "error", retryErr)
-		return nil, retryErr
-	}
-
-	slog.Info("usage fetch succeeded after token refresh")
-	return resp, nil
 }
 
 // buildCachedUsage converts an API Response to a CachedUsage. Windows the
@@ -935,7 +863,7 @@ func GetCached() (*CachedUsage, error) {
 		return cached, nil
 	}
 
-	resp, err := fetchWithRateLimitRetry()
+	resp, err := FetchUsage()
 	if err != nil {
 		stampLastAttempt(err)
 		if stale := loadCacheStale(); stale != nil && !stale.FetchedAt.IsZero() {

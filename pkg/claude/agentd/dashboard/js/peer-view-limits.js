@@ -71,33 +71,41 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // A member's role belongs to the group (its description cell also edits
   // the agent's tags: an agent control).
   'edit-role': ['groups.members.manage'],
-  // A clone's members spawn with the node's launch settings, and delete and
-  // cleanup remove what no peer grant hands out: unrestricted trust only (a
-  // feature no restricted peer shares).
-  'clone-group': ['feature:groups.create.full'],
-  'delete-group': ['feature:groups.manage.full'],
+  // A clone takes groups.clone there (and node.groups.create, which the
+  // daemon checks); cleanup removes what no peer grant hands out:
+  // unrestricted trust only (a feature no restricted peer shares).
+  'clone-group': ['groups.clone'],
   'cleanup-group': ['feature:groups.manage.full'],
-  // Removing a member from the group: unrestricted trust only.
-  'remove-member': ['feature:agents.manage.full'],
+  // Its structure (peer_group_structure.go): the node names what else a
+  // request takes (the add grant in the agent's other groups, a link's other
+  // end, another group's sandbox or environment).
+  'delete-group': ['groups.delete'],
+  'remove-member': ['groups.members.remove'],
+  'add-member': ['groups.members.add'],
+  'link-new': ['groups.link.add'],
+  'link-edit': ['groups.link.add'],
+  'link-delete': ['groups.link.remove'],
+  // The group's advisory process advances under process.advance there.
+  'advance-phase': ['process.advance'],
+  // A deployed force's re-brief re-sends its template's own work pattern.
+  'rebrief-force': ['templates.instantiate'],
+  // Its owners and member permissions, held to the peer ceiling: what a
+  // peer confers never exceeds what it holds here (peer_ceiling.go). Making
+  // an owner confers spawning and the member lifecycle, which no peer may
+  // confer, so in practice a peer only removes owners. The permissions
+  // editor saves the whole list, which takes the grant that shows it.
+  'grant-owner': ['groups.owners.manage'],
+  'revoke-owner': ['groups.owners.manage'],
+  'set-group-permissions': ['groups.settings.member-permissions'],
   // What no peer grant covers, which unrestricted trust reaches as this
-  // node's operator does (the local_dashboard routes): its process, force
-  // and ownership controls, the auto-join default, its member permissions, its
-  // links within its node, new cron jobs, its standing orders, adding
-  // members, its cross-harness spawn policy and saving it as a template there.
-  'advance-phase': ['feature:local_dashboard'],
-  'rebrief-force': ['feature:local_dashboard'],
+  // node's operator does (the local_dashboard routes): its stand-down, the
+  // auto-join default, new cron jobs, its standing orders, its cross-harness
+  // spawn policy and saving it as a template there.
   'stand-down-force': ['feature:local_dashboard'],
-  'grant-owner': ['feature:local_dashboard'],
-  'revoke-owner': ['feature:local_dashboard'],
   'set-default-spawn-group': ['feature:local_dashboard'],
-  'set-group-permissions': ['feature:local_dashboard'],
-  'link-new': ['feature:local_dashboard'],
-  'link-edit': ['feature:local_dashboard'],
-  'link-delete': ['feature:local_dashboard'],
   'cron-new': ['feature:local_dashboard'],
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
-  'add-member': ['feature:local_dashboard'],
   // A subgroup, through the regular create dialog on the group's node.
   'create-subgroup': ['feature:groups.create'],
   // A pending spawn's 🗑, on the group it is pending in.
@@ -107,8 +115,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'queued-spawn-launch': ['feature:local_dashboard'],
   'queued-spawn-edit': ['feature:local_dashboard'],
   'queued-spawn-discard': ['feature:local_dashboard'],
-  // Its archive downloads from its node (dashboard_peer_downloads.go).
-  'export-group': ['feature:local_dashboard'],
+  // Its archive downloads from its node (dashboard_peer_downloads.go,
+  // peer_transfer.go); a group with an environment also takes
+  // groups.settings.environment, which the node names when it refuses.
+  'export-group': ['groups.export', 'sessions.files.read'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -119,8 +129,7 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cleanup-worktrees-group': ['feature:local_dashboard'],
   // Not listed, so local to their own node: the links manager,
   // messages, the template manager, terminals and showing a
-  // window (hiding one is an agent control); and export, whose binary archive the JSON peer
-  // view does not carry.
+  // window (hiding one is an agent control).
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group
@@ -156,17 +165,28 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],
-  // Remote access, fast mode, the sandbox implementation, the debug export,
-  // compaction, reincarnation and permanent delete reach what no peer grant hands out:
-  // unrestricted trust only (a feature no restricted peer shares).
-  'toggle-remote-control': ['feature:agents.manage.full'],
-  'sandbox-impl': ['feature:agents.manage.full'],
-  'debug-export': ['feature:agents.manage.full'],
+  // Compaction, and a request that the agent reincarnate itself (a peer
+  // sends no follow-up, focus hint or forced mode).
+  'compact-agent': ['groups.members.compact'],
+  'reincarnate': ['groups.members.reincarnate'],
+  // Remote access, permanent delete (its worktree is unrestricted trust's:
+  // the dialog's worktree probe is refused, so it offers none) and the debug
+  // export (environment values redacted) under their own grants.
+  'toggle-remote-control': ['groups.members.remote-control'],
+  'debug-export': ['groups.members.debug-export'],
+  'delete-agent': ['groups.members.delete'],
+  // Its own permission overrides, held to the peer ceiling: the editor
+  // starts from the overrides the grant shows (peer_agent_permissions.go),
+  // and its save refuses what the peer could not grant itself.
+  'perm-edit': ['permissions.grant'],
+  // The sandbox implementation, under its own grant: the dialog reads it,
+  // and a save also takes groups.members.spawn.sandbox (or .all), which the
+  // refused save names; a restricted peer's move only adds confinement.
+  'sandbox-impl': ['agent.sandbox-impl'],
+  // Fast mode reaches what no peer grant hands out yet: unrestricted trust
+  // only (a feature no restricted peer shares).
   'fast-mode-set': ['feature:agents.manage.full'],
   'fast-mode-disable': ['feature:agents.manage.full'],
-  'compact-agent': ['feature:agents.manage.full'],
-  'reincarnate': ['feature:agents.manage.full'],
-  'delete-agent': ['feature:agents.manage.full'],
   // Its lifecycle, through the regular dialogs (peer_actions.go refuses
   // their local-only options). A restart stops the agent first.
   'restart': ['groups.members.stop', 'groups.members.resume'],
@@ -181,12 +201,12 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'reinstate-agent': ['feature:local_dashboard'],
   'delete-generation': ['feature:local_dashboard'],
   'hide': ['feature:local_dashboard'],
-  'perm-edit': ['feature:local_dashboard'],
   'sudo-grant': ['feature:local_dashboard'],
   // Its node's snapshot library and PAF export; the file downloads from
   // there (dashboard_peer_downloads.go).
   'snapshot-agent': ['feature:local_dashboard'],
-  'export-paf': ['feature:local_dashboard'],
+  // Its export carries the transcript by default.
+  'export-paf': ['agent.bundle.export', 'sessions.files.read'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way

@@ -3,7 +3,8 @@
 // terminals, by group, each in one of four buckets. Active (open here, on the
 // dock, or running out of sight) is what shows by default; closed items show
 // under the Closed chip and in a search. A group shell that is not running is
-// not listed at all: the Groups tab keeps it, where New → Shell starts it.
+// not listed at all (the server lists it only while it runs); the Groups
+// tab's ＋ → Shell starts one.
 // Pure: the panel (collab-rail.js) and the home (collab-home.js, for the agents
 // that need the operator) feed it the snapshot, this browser's places, its open panes, overlay tabs and
 // background sessions, and when each item was last used here.
@@ -128,6 +129,11 @@ export function resourcePaneKey(resource) {
 }
 
 export const UNGROUPED = Object.freeze({ id: 'other', name: 'Not in a group' });
+// OTHER_SESSIONS holds the sessions running here that cannot be attached (a
+// superseded generation, a tmux session tclaude did not start, one locked
+// against attaching): they belong to no group, and are listed, last, so
+// nothing runs unnoticed and each can still be killed.
+export const OTHER_SESSIONS = Object.freeze({ id: 'other-sessions', name: 'Other sessions' });
 
 // agentGroupName is the one group an agent is listed under: the group it was
 // spawned into while it is still a member, else its first group. '' for
@@ -160,10 +166,17 @@ export function railItems({
   const stamp = (item) => ({ ...item, usedAt: used.get(item.key) || 0 });
 
   for (const r of resources) {
+    // A board in no group (group_id 0) is listed under Not in a group, where
+    // its ⚙ or a drag moves it into one.
+    if (r && !r.group_id && r.kind === 'board') {
+      const view = resourceState(r, places);
+      add(UNGROUPED.id, stamp({ key: resourceKey(r), kind: r.kind, title: r.title || r.id, view, bucket: bucketOf(view), resource: r, group: '', paneKey: resourcePaneKey(r) }));
+      continue;
+    }
     if (!r || !names.has(r.group_id)) continue;
     const view = resourceState(r, places);
     const bucket = bucketOf(view);
-    // A group shell nobody started is the Groups tab's, not the rail's.
+    // A group shell that is not running is not the rail's to list.
     if (r.kind === 'shell' && bucket === 'closed') continue;
     // A group's shell is named for its group: "Group shell" twice says nothing.
     const title = r.kind === 'shell' ? `${names.get(r.group_id)} shell` : r.title || r.id;
@@ -208,19 +221,67 @@ export function railItems({
     terminal({ key: `overlay:${tab.id}`, title: tab.label || tab.id, view, bucket: bucketOf(view), overlay: tab });
   }
   // A background session counts once: not when an overlay window holds it
-  // (a minimized one is detached, so the listing has it too), and only when
-  // it can be attached (a superseded generation or a stray session cannot).
+  // (a minimized one is detached, so the listing has it too). One that can be
+  // attached goes under its agent's group; one that cannot (a superseded
+  // generation, a stray tmux session, a locked one: it has no key) goes under
+  // Other sessions, where it can be killed. A board's agent sessions ride on
+  // the board's own item (its row menu ends them), and a group shell's session
+  // on its group's shell item (its row menu kills it); one whose item no
+  // group lists is listed under Not in a group.  A peer's rows are never this
+  // node's resources: they list as terminals.
   const held = new Set(overlays.map((tab) => tab?.paneKey).filter(Boolean));
+  const boardSessions = new Map();
+  const shellSessions = new Map();
   for (const row of background) {
-    if (!row || !row.key || held.has(row.key) || row.kind === 'board' || row.kind === 'group_shell') continue;
-    terminal({ key: `bg:${row.node?.id || ''}:${row.tmux_session || row.key}`, title: titleOf(row), view: 'background', bucket: 'background', row });
+    if (!row || held.has(row.key)) continue;
+    if (row.kind === 'board' && row.board && !row.node) {
+      boardSessions.set(`board:${row.board}`, row);
+      continue;
+    }
+    if (row.kind === 'group_shell' && row.key && !row.node) {
+      shellSessions.set(row.key, row);
+      continue;
+    }
+    const key = `bg:${row.node?.id || ''}:${row.tmux_session || row.key}`;
+    if (!row.key) {
+      add(OTHER_SESSIONS.id, stamp({ key, kind: 'terminal', title: titleOf(row), view: 'background', bucket: 'background', group: '', status: null, row }));
+      continue;
+    }
+    terminal({ key, title: titleOf(row), view: 'background', bucket: 'background', row });
+  }
+  for (const items of byGroup.values()) {
+    for (const [index, item] of items.entries()) {
+      const sessions = item.kind === 'board' && boardSessions.get(item.key);
+      // The snapshot calls a board closed whatever runs on it: one with
+      // sessions is in the background, where the Background box lists it.
+      if (sessions) {
+        boardSessions.delete(item.key);
+        const live = item.bucket === 'closed' ? { view: 'background', bucket: 'background' } : {};
+        items[index] = { ...item, ...live, ...(sessions.killable ? { sessions } : {}) };
+      }
+      const shell = item.kind === 'shell' && shellSessions.get(item.paneKey);
+      if (shell) {
+        shellSessions.delete(item.paneKey);
+        if (shell.killable) items[index] = { ...item, shellSession: shell };
+      }
+    }
+  }
+  for (const [key, row] of shellSessions) {
+    add(UNGROUPED.id, stamp({ key: `bg::${row.tmux_session || key}`, kind: 'terminal', title: titleOf(row), view: 'background', bucket: 'background', group: '', status: null, row }));
+  }
+  // A board with sessions that no group lists still shows, so they can be
+  // reached and ended.
+  for (const [key, row] of boardSessions) {
+    add(UNGROUPED.id, stamp({ key, kind: 'board', title: titleOf(row), view: 'background', bucket: 'background', group: '', row,
+      sessions: row.killable ? row : undefined }));
   }
 
   const sections = [...byGroup.entries()].map(([id, items]) => {
     const sorted = items.map((item, index) => ({ item, index }))
       .sort((a, b) => compareItems(a.item, b.item) || a.index - b.index)
       .map(({ item }) => item);
-    return { id, name: id === UNGROUPED.id ? UNGROUPED.name : names.get(id), items: sorted };
+    const name = id === UNGROUPED.id ? UNGROUPED.name : id === OTHER_SESSIONS.id ? OTHER_SESSIONS.name : names.get(id);
+    return { id, name, items: sorted };
   });
   return { sections: sortSections(sections, order) };
 }
@@ -235,7 +296,9 @@ function sortSections(sections, order) {
   const tier = (s) => (s.items.some(needsYou) ? 0 : s.items.some((i) => i.bucket === 'open') ? 1
     : s.items.some((i) => live(i) && isAgentItem(i)) ? 2 : s.items.some(live) ? 3 : 4);
   const rank = (s) => (s.id === UNGROUPED.id ? Infinity : order.get(s.id) ?? Infinity);
-  return [...sections].sort((a, b) => tier(a) - tier(b) || rank(a) - rank(b));
+  // Other sessions belong to no group and come last, whatever they hold.
+  const last = (s) => (s.id === OTHER_SESSIONS.id ? 1 : 0);
+  return [...sections].sort((a, b) => last(a) - last(b) || tier(a) - tier(b) || rank(a) - rank(b));
 }
 
 // matchesQuery is whether an item's title or group holds the query.

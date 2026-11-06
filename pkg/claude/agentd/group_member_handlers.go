@@ -313,7 +313,7 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	}
 	convID, fail := addGroupOwner(r, g, auditedCaller(grantedBy, PermGroupsOwnersManage))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -334,7 +334,7 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 		return
 	}
 	if fail := removeGroupOwner(g, convSelector); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -352,7 +352,7 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	convID, fail := addGroupMember(r, g)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
@@ -370,7 +370,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 	}
 	convID, fail := updateGroupMember(r, g, convSelector)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
@@ -387,7 +387,7 @@ func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	if fail := removeGroupMember(g, convSelector); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -420,7 +420,7 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	// Kept permissions outlive the membership that showed them, so only the
 	// operator can choose them; an agent manager moves with the defaults.
 	if body.KeepPermissions && classify(peerFromContext(r.Context())) != classHuman {
-		writeError(w, http.StatusForbidden, "permission_denied", "keep_permissions is operator-only")
+		writeError(w, http.StatusForbidden, "permission", "keep_permissions is operator-only")
 		return
 	}
 	if body.To == "" {

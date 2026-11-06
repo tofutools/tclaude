@@ -1,5 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const view = {
   self: { id: 'inst_self', name: 'desk' },
@@ -171,10 +172,7 @@ test('skill install: a group target and a custom dir whose error shows inline', 
   await s.click(s.q('[data-cb-act="install"]'));
   const dlg = () => document.querySelector('#fleet-cb-install');
   await s.check(dlg().querySelector('[data-target="group"] input[type="radio"]'));
-  const sel = dlg().querySelector('#fleet-cb-group');
-  [...sel.options].forEach((o) => o.removeAttribute('selected'));
-  sel.querySelector('option[value="group:tclaude"]').setAttribute('selected', '');
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await comboPick(s.harness, dlg().querySelector('#fleet-cb-group'), 'group:tclaude');
   await s.settle();
   assert.match(dlg().textContent, /\/home\/u\/git\/tclaude\/\.claude\/skills/);
   await s.click(dlg().querySelector('#fleet-cb-preview-btn'));

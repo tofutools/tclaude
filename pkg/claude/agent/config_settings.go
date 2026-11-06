@@ -104,7 +104,7 @@ func configGetCmd() *cobra.Command {
 		Long:        "Show the effective value of a supported config key, and whether it is set explicitly or comes from the default. With no key, lists every supported key.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *configGetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runConfigGet(p, os.Stdout, os.Stderr))
+			os.Exit(runConfigGet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -116,7 +116,7 @@ func configSetCmd() *cobra.Command {
 		Long:        "Set a supported config key to true or false, or to default to clear the explicit value. The same settings are in the dashboard under Config › Agents › Terminal startup groups. Human-only: a managed agent cannot change the operator config.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *configSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runConfigSet(p, os.Stdout, os.Stderr))
+			os.Exit(runConfigSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

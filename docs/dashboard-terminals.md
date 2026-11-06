@@ -24,12 +24,60 @@ The right side panel lists what you can open here, by group. It is the same
 panel and handle as the palette on the Groups tab. It starts folded: open it with the
 handle on the right edge. Each tab remembers its own panel's state.
 
+While a panel is folded, it opens by itself only from a *peek*: its leading
+edge sliding in at the right edge, on this tab and on Groups. Moving onto the
+peek floats the panel in over the page. The edge alone opens nothing: a
+pointer resting or moving slowly by the right edge never changes anything, so
+the controls along it stay reachable.
+
+Two motions peek the panel (no button held):
+
+- A pointer flung at the edge peeks it before it gets there. A motion that
+  brakes, as one aimed at something on the page does, lets the peek go. Only
+  the rightward part of a motion counts. The closer to the panel a motion
+  starts, the less speed it needs, and a small move by the edge is too short
+  to count.
+- A fast snap into the edge zone (within about 32 pixels of the page's edge,
+  or the page's scrollbar) from further out peeks it too, even if it runs
+  past the window's edge. Where the peek slides in under a pointer already at
+  the edge, the next move onto it opens the panel.
+
+A peek holds while the pointer stays by the edge, and goes shortly after the
+pointer moves away without opening it. With **growing peek** turned on (it is
+off by default), the peek widens as the pointer closes in, and crossing where
+the open panel's edge would be, or stopping there, opens the panel too.
+
+An open panel goes again shortly after the pointer leaves it, after the same
+delay as a popover. The page scrollbar beside it counts as part of it. It
+stays while something in it has focus, one of its menus is open, or you are
+dragging its scrollbar. **Esc** sends it away. Its handle still unfolds it for
+good, even while it peeks, and while the pointer is on the handle the panel
+neither opens nor closes by itself.
+
+Moving the pointer out of the browser window, by any edge, freezes all of this:
+a panel that is open stays open, a folded one stays folded, and a peek stays
+where it is until the pointer comes back. From the first move back in, the
+usual rules apply. Back on the page beside an open panel, for example, it goes
+after the usual delay. **Esc**, switching tabs and the panel's Hide button still
+work while the pointer is outside.
+
+To turn this off, uncheck **Side panel at the edge** on the Config tab
+(`dashboard.side_panel_edge_reveal`). The peek and its growth have switches of
+their own there, and **Advanced** holds the values that tune them. None of
+this does anything on touch screens.
+
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
   Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,
   Processes). By default everything but Closed is listed. The button shows a
   count of the boxes changed from the default, and **Reset** puts them back.
   The browser remembers the filter. A search finds everything, whatever the
-  filter is.
+  filter is. It also counts the [background sessions](#background-sessions).
+- **＋ New ▾** makes something: **Agent…** (the spawn dialog), **Shell…** and
+  **Page…** (pick the group), **Board…** (the board list: open one, or create
+  one), **Process…** (the process list, with Processes on) and **Import
+  board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
+  the same menu for that group: a **Shell** in its directory, a **Board** and a
+  **Page** in the group, and an agent spawned into it.
 - In each group, the agents come first, in a fixed order: needs you, working
   (green light), idle (amber), then by name. Closed items come last.
 - A group with an agent that needs you comes first, then groups with something
@@ -42,8 +90,27 @@ handle on the right edge. Each tab remembers its own panel's state.
   page reopens. Drag it onto the tab strip or the home to open it as a tab, or
   anywhere else to float it in a window. A terminal that cannot float stays a
   tab.
+- Drag an agent, board or page onto another group's section in the panel to
+  move it there, as you would in the Groups tab. An agent goes through the same
+  confirm as there. Drop an agent on **Not in a group** to take it out of the
+  group it is listed under (it stays in any others), or a board to take it out
+  of its group. A page always stays in a group, and only moves to a group its
+  agent is in.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
+- **⚙** on an agent, board or page row opens the same edit menu its Groups-tab
+  row has. An agent's menu starts with **move to** each other group (or Not in a
+  group), then has its Groups ⚙ items for the group it is listed under. A board's
+  or page's menu has **Rename…**, **Move to group** and **Delete…**. A board in
+  no group is listed under **Not in a group**.
+- **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
+  **Kill session…** for a background session or a group's shell, and on a
+  board **Download .excalidraw**, **End agents' sessions…** and **Delete
+  board…**. Each destructive one asks first.
+- A board, page or process row has a lock at its right end: an amber closed
+  lock, always shown, while agents can only read it, and a dim open lock on
+  hover or keyboard focus while they can edit it. Click it to lock or unlock;
+  see [Groups › Resources](dashboard-groups.md#resources). Agent rows have none.
 
 ## Opening a terminal
 
@@ -79,7 +146,9 @@ pending permission request, a **🔑** opens the
   overlay tab's right-click menu has the same two. Dragging a separate window's header
   back works like its button back to the dashboard. A separate window offers **Open in overlay** only while the dashboard that
   opened it is there to take it, and a terminal that can't float any more lands in a tab.
-- **Drag a tab off the strip** to float it where you drop it. What can't float opens in
+- **Drag a tab off the strip** to float it where you drop it. Once clear of the strip,
+  the snap targets an overlay window's drag shows appear: let go on one, a room edge, an
+  empty cell's box or a window's marker, and it snaps there instead. What can't float opens in
   a separate window instead: a peer's terminal and an offline agent. Drop it on an overlay window's title bar instead to join that window,
   where a marker shows. Overlay tabs drag back the same way, onto this strip or onto
   **Collab** in the main nav.
@@ -157,22 +226,27 @@ When the last tab closes, the dashboard moves to Groups, unless you turn on
 
 ## Background sessions
 
-The counter at the right of the tab strip shows sessions running with no terminal
-attached, so idle ones aren't left running by accident. It's hidden at zero. Hover
-to peek, or click to pin it open.
+Sessions running with no terminal attached are counted on the side panel, so
+idle ones aren't left running by accident: on its **Filter ▾** button, on the
+**Background** box in it, and, while the panel is folded, on its handle. The
+count is hidden at zero.
 
-Its sections are `Agents`, `Sessions`, `Shells`, `Group shells`, `Boards` and
-`Other tmux sessions`. Each row shows the idle time.
+The panel lists them, with **Background** ticked, under their agent's group,
+each with its idle time (amber after a few hours).
 
-- **Attach** (or click the title) opens it as a tab. **Attach all** appears with
-  two or more.
-- **Kill** ends a shell or a leftover session. It asks again as `Kill?` for three
-  seconds.
-- **Open** and **End** on a board row open the board, or remove its
-  [board sessions](boards.md#board-sessions) and leave it.
+- Click one, or **Attach** in its menu, to open it as a tab. **Attach all
+  background** at the bottom of the Filter menu opens every one that can be
+  attached, one at a time.
+- **Kill session…** in its menu ends it, after asking.
+- A board with [board sessions](boards.md#board-sessions) has **End agents'
+  sessions…** in its menu, which removes them and leaves the board.
+- Sessions the dashboard cannot attach (an earlier generation, a tmux session
+  tclaude did not start, or one that is locked) are listed last, under **Other
+  sessions**. Their tooltip has the `tmux attach` command to reach them from a
+  shell, and their menu can kill them.
 
-With linked nodes, peers' unattached agents and shells appear under each node's
-pill; which ones depends on your [grants from that peer](fleet-ui.md).
+With linked nodes, peers' unattached agents and shells are listed too; which ones
+depends on your [grants from that peer](fleet-ui.md).
 
 ## Terminals on other nodes
 

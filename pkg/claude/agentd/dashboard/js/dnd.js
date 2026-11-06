@@ -429,6 +429,8 @@ function bindDnd() {
     // tab is showing, so this is currently unreachable rather than a live bug —
     // the guard keeps the separation explicit instead of resting on that.
     if (e.dataTransfer.types.includes('application/x-tclaude-terminal-tab')) return;
+    // A board or page row drag (resource-dnd.js) moves a resource, never a member.
+    if (e.dataTransfer.types.includes('application/x-tclaude-resource')) return;
     // dragover only accepts (preventDefault) while this document's member
     // drag is live, so an inactive drop is one the macOS release path above
     // already finished — or a stray foreign drop. Never act on it twice.
@@ -580,4 +582,6 @@ const ops = createDndOps({
   land: (target) => markLanded(target),
 });
 
-export { bindDnd, dndDragActive };
+// dndOps are this page's member drop operations, for another drag that drops
+// an agent on a group (the Collab panel's, collab-rail-actions.js).
+export { bindDnd, dndDragActive, ops as dndOps };

@@ -86,7 +86,7 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 
 			code, err := runTclaudeLayerWinchRelay(args, winch, binding)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "tclaude: terminal resize relay: %v\n", err)
+				fmt.Fprintf(cliStderr, "tclaude: terminal resize relay: %v\n", err)
 				os.Exit(125)
 			}
 			os.Exit(code)

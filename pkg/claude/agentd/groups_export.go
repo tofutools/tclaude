@@ -563,6 +563,13 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	// Previewed as the import will run it: mail and head aliases for
+	// conversations outside the file drop (import_foreign_refs.go).
+	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
@@ -583,8 +590,10 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
-	insp.FileWarnings = settled.warnings
-	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, settled.warnings)
+	insp.FileWarnings = append(append([]string(nil), settled.warnings...), foreignWarnings...)
+	// The confirmation's warnings are what a preview with keepable items
+	// shows, so the dropped mail and aliases ride there too.
+	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, insp.FileWarnings)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -837,6 +846,14 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	// The importer remaps only the file's own conversations: mail and head
+	// aliases addressed to any other conversation drop, listed in the reply
+	// (import_foreign_refs.go). A peer import already refused them.
+	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
 
 	targetName := asName
 	if targetName == "" {
@@ -907,7 +924,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
-	fileWarnings := settled.warnings
+	fileWarnings := append(append([]string(nil), settled.warnings...), foreignWarnings...)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -1196,15 +1213,21 @@ func groupImportPromptWarnings(result *db.GroupImportResult) []string {
 
 func validateImportedConvIDs(exp *groupexport.Export) error {
 	for _, convID := range importedIdentityConvIDs(exp) {
-		if harness.ValidOpenCodeConvID(convID) {
-			continue
-		}
-		parsed, err := uuid.Parse(convID)
-		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
+		if !canonicalConvID(convID) {
 			return fmt.Errorf("conversation id %q is not a canonical UUID or OpenCode session id", convID)
 		}
 	}
 	return nil
+}
+
+// canonicalConvID is whether id is a conversation id as the importer writes
+// one: a canonical UUID or an OpenCode session id.
+func canonicalConvID(id string) bool {
+	if harness.ValidOpenCodeConvID(id) {
+		return true
+	}
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed != uuid.Nil && parsed.String() == id
 }
 
 func importedIdentityConvIDs(exp *groupexport.Export) []string {

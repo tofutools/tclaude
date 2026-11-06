@@ -231,15 +231,16 @@ func pageAdoptTarget(w http.ResponseWriter, r *http.Request, agentID string, req
 
 // adoptGroupPageLocked finds the group's page an adopting show takes over,
 // or says why not (refused is then non-nil and writes the answer). The
-// adopter may not already have a page by that name. Caller holds reg.mu.
-func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.AgentGroup, agentID, name string, mine *livePage) (*livePage, func()) {
+// adopter may not already have a page by that name. held is the locked pages
+// the adopter holds the lock slug for (pageLocksHeld). Caller holds reg.mu.
+func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.AgentGroup, agentID, name string, mine *livePage, held map[string]bool) (*livePage, func()) {
 	gp := reg.byOwner[groupPageOwner(g.ID)][name]
 	switch {
 	case gp == nil:
 		return nil, func() {
 			writeError(w, http.StatusNotFound, "not_found", "no page "+g.Name+"/"+name+" is shared with you")
 		}
-	case gp.agentsLocked:
+	case gp.agentsLocked && !held[gp.id]:
 		return nil, func() { writeResourceLocked(w, "page "+g.Name+"/"+name) }
 	case mine != nil:
 		return nil, func() {

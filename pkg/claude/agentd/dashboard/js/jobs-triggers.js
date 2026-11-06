@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
 
@@ -485,8 +486,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         <div class="trigger-fields trigger-scope-fields">
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'global'} onChange=${() => setDraft({ ...draft, scope: 'global', group: '' })} /> global</label>
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'group'} onChange=${() => setDraft({ ...draft, scope: 'group' })} /> group</label>
-          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<${Select} size="sm" required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
-            <option value="">pick a group…</option>${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}<//></label>`}
+          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<${GroupCombobox} id="trigger-scope-group" groups=${groups}
+            value=${draft.group} noneLabel="pick a group…" onChange=${(key) => setDraft({ ...draft, group: key })} /></label>`}
         </div>
       </${Step}>
       <${Step} name="THEN" expanded=${step === 'then'} onToggle=${() => setStep(step === 'then' ? '' : 'then')}

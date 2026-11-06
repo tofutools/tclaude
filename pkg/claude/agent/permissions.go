@@ -130,6 +130,7 @@ type permissionsMutateResp struct {
 	Slug      string          `json:"slug"`
 	Scope     permissionScope `json:"scope,omitempty"`
 	Effective []string        `json:"effective"`
+	Warnings  []string        `json:"warnings,omitempty"`
 }
 
 // --- permissions ls ---
@@ -149,7 +150,7 @@ func permissionsLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsLs(p, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -501,7 +502,7 @@ func permissionsGrantCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsGrantParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.Scope, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.Scope, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -529,7 +530,7 @@ func permissionsDenyCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsDenyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, nil, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -554,7 +555,7 @@ func permissionsRevokeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsRevokeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, nil, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -578,13 +579,9 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHumanRaw)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHumanRaw, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp permissionsMutateResp
 	body := map[string]any{
@@ -609,6 +606,9 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 		} else {
 			label = fmt.Sprintf("%s (%s)", resp.Target, who)
 		}
+	}
+	for _, w := range resp.Warnings {
+		fmt.Fprintln(stderr, "warning: "+w)
 	}
 	sort.Strings(resp.Effective)
 	if len(resp.Effective) == 0 {
@@ -643,7 +643,7 @@ func permissionsSlugsCmd() *cobra.Command {
 		Short:       "List known permission slugs and their descriptions",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *permissionsSlugsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsSlugs(p, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsSlugs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

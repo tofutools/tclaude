@@ -179,6 +179,7 @@ GET routes preserve read-only semantics on both API surfaces.
 | POST | `enroll-tokens/{id}/revoke` | `enroll-token revoke` |
 | GET | `enrollments` | `enrollments` |
 | POST | `enroll/preview`, `enroll` | `enroll --preview`, `enroll` |
+| POST | `become-node` | `become-node --preview`, `become-node` |
 | POST | `peers/trust`, `peers/untrust` | `trust`, `untrust` |
 | GET / POST / DELETE | `grants` | `grants`, `grant`, `revoke` |
 | GET / POST | `profiles` | `profile ls`, `profile create` |
@@ -204,11 +205,26 @@ Important shared request shapes for dashboard clients:
   `apply: false`, then commit using the returned token. The default-profile
   request is `{profile}` (an empty string clears it).
 - Pool creation uses `{name}`; adding or removing a member uses `{peer}`.
-- Enrollment token creation uses `{profile, uses, ttl_seconds, trust_level}`.
-  The bearer is returned only at creation; token listings expose public
-  metadata. Revoke by public token ID. Joining uses `{master, token}` for
-  preview, then adds `preview_token` for enrollment. Responses preserve the
+- Enrollment token creation uses `{profile, uses, ttl_seconds, trust_level}`;
+  `trust_level` is only the trust the token requests of the enrolling node,
+  shown to it (`requested_trust` in the preview) and never applied. The bearer
+  is returned only at creation; token listings expose public metadata. Revoke
+  by public token ID. Joining uses `{master, token}` for preview, then adds
+  `preview_token` for enrollment. `enroll` gives the master restricted trust
+  with no grants and refuses (400 `enroll_gives`) any `trust`, `unrestricted`,
+  `give_permissions` or `confirm_fingerprint` field. Responses preserve the
   existing consent and fingerprint fields.
+- `become-node` uses `{master, token, preview_token, confirm_fingerprint,
+  give_permissions: [{slug, scope}], unrestricted}`, where `scope` is empty or
+  `group=<local group>`; `check_only: true` returns what it would give, each
+  slug with its `sensitive` flag, without contacting the master. It refuses,
+  before contacting the master and so spending no token use, a wrong or missing
+  fingerprint, both or neither of `unrestricted` and a list, a `trust` field,
+  an unknown or local-only slug, `agents.receive.permissions` and
+  `models.proxy*` (given afterwards with a grant), a scope on an instance grant,
+  a group grant that needs a group without one, and an unknown or archived
+  group (400 `enroll_gives`); a token this node already enrolled with is 409
+  `already_enrolled`.
 
 Full status exposes hub-visible untrusted instances for the trust screen.
 Trusting one of these instances pins its identity through the existing trust

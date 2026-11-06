@@ -41,6 +41,8 @@ applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
+import { bindResourceDnd } from './resource-dnd.js';
+import { startPeerBoards } from './peer-boards.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindGroupsDragAutoScroll } from './groups-drag-autoscroll.js';
 import { bindDockDnd } from './dock-dnd.js';
@@ -354,6 +356,11 @@ async function settleInitialLayout() {
     bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
   );
   pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
+  // A board or page row dragged onto another group's box moves it there
+  // (resource-dnd.js, its own MIME type).
+  pageCleanups.push(bindResourceDnd());
+  // A peer's page reads the boards it shares (peer-boards.js, tcl-ug8bb8).
+  if (globalThis.__tclaudeRemoteNode?.id) pageCleanups.push(startPeerBoards());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /
   // group-reorder.js via a distinct custom MIME + self-gating state.

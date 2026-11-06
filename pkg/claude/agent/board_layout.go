@@ -304,7 +304,7 @@ func boardLayoutCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardLayoutParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardLayout(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardLayout(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

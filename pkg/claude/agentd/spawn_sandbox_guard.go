@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -1075,4 +1077,72 @@ func launchPostureFailure(spawnerConv string, h *harness.Harness, harnessName, m
 		return &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
 	}
 	return nil
+}
+
+// denyOverlayLaunchFailure refuses a launch that carries a deny overlay it
+// would not enforce. The overlay promises that nothing under a denied path is
+// reachable, so it fails closed:
+//
+//   - an implementation that stands the OS boundary down (off, resource-only),
+//     or a mode that omits the profile tiers, confines nothing;
+//   - a denied path covering the working directory, or the Git administrative
+//     directories a worktree launch opens for writing, would be reopened by
+//     the launch itself. The session launch backstops the rest of its own
+//     reopens (harness state, agent directories) with the same refusal.
+func denyOverlayLaunchFailure(
+	snapshot *sandboxpolicy.Snapshot, cwd, harnessName, harnessBuiltinMode, sandboxImplementation string,
+) *spawnFailure {
+	if snapshot == nil || len(snapshot.DenyOverlay) == 0 {
+		return nil
+	}
+	if sandboxProfileTierInert(harnessName, harnessBuiltinMode, sandboxImplementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			"this launch carries a sandbox deny overlay (" + strings.Join(snapshot.DenyOverlay, ", ") +
+				"), and its sandbox mode would not enforce it"}
+	}
+	if deny := denyOverlayCoveringDir(snapshot.DenyOverlay, cwd); deny != "" {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny",
+			"sandbox deny " + deny + " covers the working directory " + cwd + ", which the launch always opens to the agent"}
+	}
+	for _, dir := range launchGitWriteDirs(cwd) {
+		if deny := denyOverlayCoveringDir(snapshot.DenyOverlay, dir); deny != "" {
+			return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny",
+				"sandbox deny " + deny + " covers " + dir + ", a Git directory the launch opens for writing in " + cwd}
+		}
+	}
+	return nil
+}
+
+// launchGitWriteDirs is the Git administrative directories a launch in cwd
+// opens for writing, as the session launch computes them; none outside a
+// repository or when Git cannot say.
+func launchGitWriteDirs(cwd string) []string {
+	if cwd == "" {
+		return nil
+	}
+	gitCommonDir, err := harness.GitCommonDir(cwd)
+	if err != nil || gitCommonDir == "" {
+		return nil
+	}
+	gitDir, err := harness.GitDir(cwd)
+	if err != nil {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	return harness.GitWorktreeWriteDirsForIdentity(gitCommonDir, gitDir, home)
+}
+
+// denyOverlayCoveringDir is the overlay path covering dir, compared on both
+// its spelling and its symlink-resolved path, or "".
+func denyOverlayCoveringDir(overlay []string, dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if deny := sandboxpolicy.DenyOverlayCovers(overlay, filepath.Clean(dir)); deny != "" {
+		return deny
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return sandboxpolicy.DenyOverlayCovers(overlay, resolved)
+	}
+	return ""
 }

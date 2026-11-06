@@ -331,6 +331,31 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 	if convID == "" || source == "" {
 		return errors.New("SetAgentCodexAppServerSelectionForConv: conversation and source required")
 	}
+	return setAgentRelaunchFieldsForConv(convID, "SetAgentCodexAppServerSelectionForConv", func(p *AgentRelaunchProfile) {
+		p.CodexAppServer = boolPtr(selected)
+		p.CodexAppServerSource = stringPtr(source)
+	})
+}
+
+// SetAgentPiDriveForConv records whether a pi agent is driven through
+// tclaude's pi extension. The drive has no session column or session-new flag:
+// the extension asks agentd (pi_drive.go), which reads it from here, so a
+// clone or an imported agent that should keep the drive needs it written on
+// its own new agent.
+func SetAgentPiDriveForConv(convID string, on bool) error {
+	return setAgentRelaunchFieldsForConv(convID, "SetAgentPiDriveForConv", func(p *AgentRelaunchProfile) {
+		p.PiDrive = boolPtr(on)
+	})
+}
+
+// setAgentRelaunchFieldsForConv applies a field change to the conv's agent
+// relaunch profile in one transaction, starting an empty profile when the
+// agent has none yet, so unrelated durable launch intent is preserved.
+func setAgentRelaunchFieldsForConv(convID, caller string, apply func(*AgentRelaunchProfile)) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return errors.New(caller + ": conversation required")
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -347,7 +372,7 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 		JOIN agents a ON a.agent_id = ac.agent_id
 		WHERE ac.conv_id = ?`, convID).Scan(&agentID, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("SetAgentCodexAppServerSelectionForConv: conversation %s is not an agent", convID)
+		return fmt.Errorf("%s: conversation %s is not an agent", caller, convID)
 	}
 	if err != nil {
 		return err
@@ -359,8 +384,7 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 	if profile == nil {
 		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
 	}
-	profile.CodexAppServer = boolPtr(selected)
-	profile.CodexAppServerSource = stringPtr(source)
+	apply(profile)
 	encoded, err := encodeRelaunchProfile(*profile)
 	if err != nil {
 		return err

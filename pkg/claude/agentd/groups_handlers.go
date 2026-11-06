@@ -318,7 +318,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := defaultProfileConferralFailure(r, creator, body.Name, groupProfile); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		// Validate the optional remote-control policy up front (JOH-262); a bad
@@ -640,6 +640,48 @@ func normalizeGroupDescr(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// groupUpdateBody is a group settings update; each field left out stays
+// unchanged.
+type groupUpdateBody struct {
+	Descr             *string                           `json:"descr,omitempty"`
+	DefaultCwd        *string                           `json:"default_cwd,omitempty"`
+	DefaultContext    *string                           `json:"default_context,omitempty"`
+	Environment       *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	DefaultSpawnGroup *bool                             `json:"default_spawn_group,omitempty"`
+	// DefaultProfile names the spawn profile (JOH-210) whose launch fields
+	// fill blank spawn fields for this group's agents; "" clears it. *string
+	// so a caller can clear it by sending "" — distinct from omitting it.
+	DefaultProfile *string `json:"default_profile,omitempty"`
+	// DefaultPrompts is a complete replacement of the group's saved-prompt
+	// set; [] clears it.
+	DefaultPrompts *[]string `json:"default_prompts,omitempty"`
+	// MaxMembers is the group's hard member cap; 0 = unlimited. A
+	// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
+	MaxMembers *int `json:"max_members,omitempty"`
+	// NotifyEnabled is the group's OS-notification switch; false
+	// mutes state-transition notifications for every member agent
+	// (a per-agent 'on' pref still overrides).
+	NotifyEnabled *bool `json:"notify_enabled,omitempty"`
+	// RemoteControlPolicy is the group's remote-control policy that overrides
+	// a spawn profile's remote-control default (JOH-262): "inherit" (defer to
+	// the profile), "optin" (force on) or "deny" (force off). *string so a
+	// caller can change it without touching the other fields; omitting it
+	// leaves the policy unchanged.
+	RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
+	// ReinjectAfterCompact sets what tclaude re-injects into member agents
+	// after a compaction or /clear: "contexts", "identity" or "off".
+	ReinjectAfterCompact *string `json:"reinject_after_compact,omitempty"`
+	// Permissions is a complete replacement allowlist. Pointer distinguishes
+	// omitted (unchanged) from [] (clear every group grant).
+	Permissions *[]db.PermissionGrant `json:"permissions,omitempty"`
+	// OwnerScopes is a complete replacement owner-scope map for this group
+	// (TCL-1071): slug → the scope that slug's owner-implied bypass is
+	// confined to here. Raw so {} and null both reach the parser and both
+	// mean "no narrowing"; the pointer distinguishes omitted (unchanged)
+	// from an explicit clear.
+	OwnerScopes *json.RawMessage `json:"owner_scopes,omitempty"`
+}
+
 // handleGroupUpdate patches mutable group-level settings:
 //
 //   - descr — the group's own one-line description, shown next to the
@@ -683,176 +725,209 @@ func normalizeGroupDescr(s string) string {
 // fields can widen (clearing a narrowing) and narrow (adding one) in a single
 // write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	var body struct {
-		Descr             *string                           `json:"descr,omitempty"`
-		DefaultCwd        *string                           `json:"default_cwd,omitempty"`
-		DefaultContext    *string                           `json:"default_context,omitempty"`
-		Environment       *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-		DefaultSpawnGroup *bool                             `json:"default_spawn_group,omitempty"`
-		// DefaultProfile names the spawn profile (JOH-210) whose launch fields
-		// fill blank spawn fields for this group's agents; "" clears it. *string
-		// so a caller can clear it by sending "" — distinct from omitting it.
-		DefaultProfile *string `json:"default_profile,omitempty"`
-		// DefaultPrompts is a complete replacement of the group's saved-prompt
-		// set; [] clears it.
-		DefaultPrompts *[]string `json:"default_prompts,omitempty"`
-		// MaxMembers is the group's hard member cap; 0 = unlimited. A
-		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
-		MaxMembers *int `json:"max_members,omitempty"`
-		// NotifyEnabled is the group's OS-notification switch; false
-		// mutes state-transition notifications for every member agent
-		// (a per-agent 'on' pref still overrides).
-		NotifyEnabled *bool `json:"notify_enabled,omitempty"`
-		// RemoteControlPolicy is the group's remote-control policy that overrides
-		// a spawn profile's remote-control default (JOH-262): "inherit" (defer to
-		// the profile), "optin" (force on) or "deny" (force off). *string so a
-		// caller can change it without touching the other fields; omitting it
-		// leaves the policy unchanged.
-		RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
-		// ReinjectAfterCompact sets what tclaude re-injects into member agents
-		// after a compaction or /clear: "contexts", "identity" or "off".
-		ReinjectAfterCompact *string `json:"reinject_after_compact,omitempty"`
-		// Permissions is a complete replacement allowlist. Pointer distinguishes
-		// omitted (unchanged) from [] (clear every group grant).
-		Permissions *[]db.PermissionGrant `json:"permissions,omitempty"`
-		// OwnerScopes is a complete replacement owner-scope map for this group
-		// (TCL-1071): slug → the scope that slug's owner-implied bypass is
-		// confined to here. Raw so {} and null both reach the parser and both
-		// mean "no narrowing"; the pointer distinguishes omitted (unchanged)
-		// from an explicit clear.
-		OwnerScopes *json.RawMessage `json:"owner_scopes,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "json", err.Error())
+	u := &groupUpdate{r: r, g: g}
+	defer u.close()
+	if !u.decode(w) {
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.DefaultPrompts == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.ReinjectAfterCompact == nil && body.Permissions == nil && body.OwnerScopes == nil {
+	if !u.authorize(w) {
+		return
+	}
+	if !u.normalize(w) {
+		return
+	}
+	if !u.applyLaunchDefaults(w) {
+		return
+	}
+	u.applyMembershipPolicy(w)
+}
+
+// groupUpdate is one group settings update's state, built up step by step by
+// handleGroupUpdate. Each step writes its own response when it stops the
+// update and returns false.
+type groupUpdate struct {
+	r                     *http.Request
+	g                     *db.AgentGroup
+	body                  groupUpdateBody
+	caller                string
+	defaultPrompts        []string
+	ownerScopes           string
+	normalizedEnvironment []sandboxpolicy.EnvironmentEntry
+	reinjectMode          string
+	normalizedPermissions []db.PermissionGrant
+	cwd                   string
+	ctx                   string
+	profile               string
+	policy                *bool
+	resp                  map[string]any
+	// cleanups are the handler's deferred closes, run in reverse by close.
+	cleanups []func()
+}
+
+// close runs the registered cleanups, last registered first, as the
+// handler's defers did.
+func (u *groupUpdate) close() {
+	// Deferred one by one, so a cleanup that panics still lets the earlier
+	// ones run, exactly as separate defers would.
+	for _, cleanup := range u.cleanups {
+		defer cleanup()
+	}
+}
+
+// decode reads the update and refuses one that names no field.
+func (u *groupUpdate) decode(w http.ResponseWriter) bool {
+	if err := json.NewDecoder(u.r.Body).Decode(&u.body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return false
+	}
+	if u.body.Descr == nil && u.body.DefaultCwd == nil && u.body.DefaultContext == nil && u.body.Environment == nil && u.body.DefaultSpawnGroup == nil && u.body.DefaultProfile == nil && u.body.DefaultPrompts == nil && u.body.MaxMembers == nil && u.body.NotifyEnabled == nil && u.body.RemoteControlPolicy == nil && u.body.ReinjectAfterCompact == nil && u.body.Permissions == nil && u.body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, default_prompts, max_members, notify_enabled, remote_control_policy, reinject_after_compact, permissions and/or owner_scopes)")
-		return
+		return false
 	}
+	return true
+}
+
+// authorize checks the settings permission of every field the update names,
+// that the group is active, and a peer's limits on the default profile and
+// prompts.
+func (u *groupUpdate) authorize(w http.ResponseWriter) bool {
 	required := make([]string, 0, 10)
-	if body.Descr != nil {
+	if u.body.Descr != nil {
 		required = append(required, PermGroupsSettingsDescription)
 	}
-	if body.DefaultCwd != nil {
+	if u.body.DefaultCwd != nil {
 		required = append(required, PermGroupsSettingsDefaultDir)
 	}
 	// The re-injection mode governs what happens to the startup context after
 	// a compaction, so it shares the startup-context slug, as do the default
 	// prompts: both are text every fresh member receives at spawn.
-	if body.DefaultContext != nil || body.ReinjectAfterCompact != nil || body.DefaultPrompts != nil {
+	if u.body.DefaultContext != nil || u.body.ReinjectAfterCompact != nil || u.body.DefaultPrompts != nil {
 		required = append(required, PermGroupsSettingsDefaultContext)
 	}
-	if body.Environment != nil {
+	if u.body.Environment != nil {
 		required = append(required, PermGroupsSettingsEnvironment)
 	}
-	if body.DefaultSpawnGroup != nil {
+	if u.body.DefaultSpawnGroup != nil {
 		required = append(required, PermGroupsSettingsDefaultSpawnTarget)
 	}
-	if body.DefaultProfile != nil {
+	if u.body.DefaultProfile != nil {
 		required = append(required, PermGroupsSettingsDefaultProfile)
 	}
-	if body.MaxMembers != nil {
+	if u.body.MaxMembers != nil {
 		required = append(required, PermGroupsSettingsMaxMembers)
 	}
-	if body.NotifyEnabled != nil {
+	if u.body.NotifyEnabled != nil {
 		required = append(required, PermGroupsSettingsNotifications)
 	}
-	if body.RemoteControlPolicy != nil {
+	if u.body.RemoteControlPolicy != nil {
 		required = append(required, PermGroupsSettingsRemoteControlPolicy)
 	}
-	if body.Permissions != nil {
+	if u.body.Permissions != nil {
 		required = append(required, PermGroupsSettingsMemberPermissions)
 	}
-	if body.OwnerScopes != nil {
+	if u.body.OwnerScopes != nil {
 		required = append(required, PermGroupsSettingsOwnerScopes)
 	}
-	caller := ""
+	u.caller = ""
 	for _, perm := range required {
-		resolved, ok := requireGroupPermission(w, r, perm, g, ActionContext{Group: g.Name})
+		resolved, ok := requireGroupPermission(w, u.r, perm, u.g, ActionContext{Group: u.g.Name})
 		if !ok {
-			return
+			return false
 		}
-		caller = resolved
+		u.caller = resolved
 	}
-	if !requireGroupActive(w, g) {
-		return
+	if !requireGroupActive(w, u.g) {
+		return false
 	}
-	if a := peerGrantFromRequest(r); a != nil && body.DefaultProfile != nil {
-		name, err := resolveGroupDefaultProfileName(*body.DefaultProfile)
+	if a := peerGrantFromRequest(u.r); a != nil && u.body.DefaultProfile != nil {
+		name, err := resolveGroupDefaultProfileName(*u.body.DefaultProfile)
 		if err == nil {
 			err = a.allowsDefaultProfile(name)
 		}
 		if err != nil {
 			writeError(w, http.StatusForbidden, "profile_not_allowed", "a peer may set only a profile it may pick for a spawn into this group")
-			return
+			return false
 		}
 	}
-	if a := peerGrantFromRequest(r); a != nil && body.DefaultPrompts != nil && !a.allowsDefaultPrompts() {
-		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for group:%s", PermGroupsMembersSpawnPrompts, g.Name))
-		return
+	if a := peerGrantFromRequest(u.r); a != nil && u.body.DefaultPrompts != nil && !a.allowsDefaultPrompts() {
+		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for group:%s", PermGroupsMembersSpawnPrompts, u.g.Name))
+		return false
 	}
-	var defaultPrompts []string
-	if body.DefaultPrompts != nil {
+	return true
+}
+
+// normalize validates and canonicalizes every field before any is written:
+// prompts, the permission-administration gate, owner scopes, environment,
+// re-injection mode, permission rows, directory, context, profile and
+// remote-control policy.
+func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
+	if u.body.DefaultPrompts != nil {
 		// Validate before any field is written so a bad name cannot leave a
 		// partial settings update behind.
 		var fail *spawnFailure
-		if defaultPrompts, fail = resolveSavedPromptRefs(*body.DefaultPrompts); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
+		if u.defaultPrompts, fail = resolveSavedPromptRefs(*u.body.DefaultPrompts); fail != nil {
+			writeSpawnFailure(w, fail)
+			return false
 		}
 	}
-	if body.Permissions != nil || body.OwnerScopes != nil {
+	peer := peerGrantFromRequest(u.r)
+	if (u.body.Permissions != nil || u.body.OwnerScopes != nil) && peer == nil {
 		// Authorize the higher-impact fields before applying ANY part of a mixed
 		// PATCH, so a caller cannot get a partial settings update followed by a
-		// permission-administration 403.
-		if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
-			return
+		// permission-administration 403. A peer is held to its ceiling below
+		// instead (peer_group_permissions.go): what it confers never exceeds
+		// what it holds here.
+		if _, ok := requirePermission(w, u.r, PermPermissionsGrant); !ok {
+			return false
 		}
-		if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
-			return
+		if _, ok := requirePermission(w, u.r, PermPermissionsRevoke); !ok {
+			return false
 		}
 	}
 	// Validate + canonicalize the owner-scope map before any write lands, for
 	// the same reason: a rejected map must not follow a committed descr.
-	ownerScopes := ""
-	if body.OwnerScopes != nil {
-		canonical, err := canonicalOwnerScopes(string(*body.OwnerScopes))
+	u.ownerScopes = ""
+	if u.body.OwnerScopes != nil {
+		canonical, err := canonicalOwnerScopes(string(*u.body.OwnerScopes))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_owner_scopes", err.Error())
-			return
+			return false
 		}
-		ownerScopes = canonical
+		u.ownerScopes = canonical
+		if peer != nil {
+			if err := peerOwnerScopesFailure(peer.peer, u.g, canonical); err != nil {
+				writeError(w, http.StatusForbidden, "permission", err.Error())
+				return false
+			}
+		}
 	}
-	var normalizedEnvironment []sandboxpolicy.EnvironmentEntry
-	if body.Environment != nil {
+	if u.body.Environment != nil {
 		var err error
-		normalizedEnvironment, err = sandboxpolicy.NormalizeEnvironment(*body.Environment)
+		u.normalizedEnvironment, err = sandboxpolicy.NormalizeEnvironment(*u.body.Environment)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
-			return
+			return false
 		}
 	}
-	reinjectMode := ""
-	if body.ReinjectAfterCompact != nil {
-		reinjectMode = strings.TrimSpace(*body.ReinjectAfterCompact)
-		if reinjectMode == "" || !db.ValidReinjectAfterCompact(reinjectMode) {
+	u.reinjectMode = ""
+	if u.body.ReinjectAfterCompact != nil {
+		u.reinjectMode = strings.TrimSpace(*u.body.ReinjectAfterCompact)
+		if u.reinjectMode == "" || !db.ValidReinjectAfterCompact(u.reinjectMode) {
 			writeError(w, http.StatusBadRequest, "invalid_reinject_after_compact",
-				fmt.Sprintf("invalid reinject_after_compact %q (want contexts, identity, or off)", reinjectMode))
-			return
+				fmt.Sprintf("invalid reinject_after_compact %q (want contexts, identity, or off)", u.reinjectMode))
+			return false
 		}
 	}
-	var normalizedPermissions []db.PermissionGrant
-	if body.Permissions != nil {
+	if u.body.Permissions != nil {
 		var failure *spawnFailure
-		normalizedPermissions, failure = normalizeBlueprintGrants(*body.Permissions)
+		u.normalizedPermissions, failure = normalizeBlueprintGrants(*u.body.Permissions)
 		if failure != nil {
-			writeError(w, failure.Status, failure.Kind, failure.Msg)
-			return
+			writeSpawnFailure(w, failure)
+			return false
 		}
-		sort.Slice(normalizedPermissions, func(i, j int) bool {
-			return normalizedPermissions[i].Slug < normalizedPermissions[j].Slug
+		sort.Slice(u.normalizedPermissions, func(i, j int) bool {
+			return u.normalizedPermissions[i].Slug < u.normalizedPermissions[j].Slug
 		})
 		// A group grant is conferred on every current AND future member, so it is
 		// a minting surface. An agent caller must clear the same attenuation bar
@@ -860,264 +935,221 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// whose own hold on a slug is scoped could add that slug to a group it
 		// belongs to and, on the very next request, resolve unscoped: the group
 		// tier unions its rows, and one unscoped row absorbs the tier.
-		conferred := make([]conferredGrant, 0, len(normalizedPermissions))
-		for _, grant := range normalizedPermissions {
+		conferred := make([]conferredGrant, 0, len(u.normalizedPermissions))
+		for _, grant := range u.normalizedPermissions {
 			conferred = append(conferred, conferredGrant{Slug: grant.Slug, Scope: grant.Scope})
 		}
-		if err := checkGrantAttenuation(caller, grantConferee{}, conferred); err != nil {
+		if err := checkGrantAttenuation(u.caller, grantConferee{}, conferred); err != nil {
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
-			return
+			return false
+		}
+		// A peer's caller reads as the human here, whom attenuation leaves
+		// unconstrained: hold its rows to the peer ceiling instead.
+		if peer != nil {
+			if err := peerGroupPermissionsFailure(peer.peer, u.g, u.normalizedPermissions); err != nil {
+				writeError(w, http.StatusForbidden, "permission", err.Error())
+				return false
+			}
 		}
 	}
 	// Every field is validated before the first write, so a rejected save leaves
 	// nothing behind.
-	var cwd, ctx, profile string
-	if body.DefaultCwd != nil {
+	if u.body.DefaultCwd != nil {
 		// Normalise + validate: expand "~", require an absolute path (a
 		// relative default would resolve against the daemon's cwd at
 		// spawn time, which is meaningless). Empty stays empty — clears it.
 		var err error
-		if cwd, err = resolveGroupDefaultCwd(*body.DefaultCwd); err != nil {
+		if u.cwd, err = resolveGroupDefaultCwd(*u.body.DefaultCwd); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
-			return
+			return false
 		}
 	}
-	if body.DefaultContext != nil {
+	if u.body.DefaultContext != nil {
 		// Fold CRLF → LF and enforce the size cap. Empty stays empty —
 		// that clears the group context.
 		var err error
-		if ctx, err = normalizeGroupContext(*body.DefaultContext); err != nil {
+		if u.ctx, err = normalizeGroupContext(*u.body.DefaultContext); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
+			return false
 		}
 	}
-	if body.DefaultProfile != nil {
+	if u.body.DefaultProfile != nil {
 		// Validate only that the referenced profile exists (its launch fields
 		// were validated against their own harness at save) — the harness-correct
 		// replacement for the retired Claude-only default_model gate (#343).
 		// Empty stays empty — that clears the group default.
 		var err error
-		if profile, err = resolveGroupDefaultProfileName(*body.DefaultProfile); err != nil {
+		if u.profile, err = resolveGroupDefaultProfileName(*u.body.DefaultProfile); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
-			return
+			return false
 		}
-		if fail := defaultProfileConferralFailure(r, caller, g.Name, profile); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
+		if fail := defaultProfileConferralFailure(u.r, u.caller, u.g.Name, u.profile); fail != nil {
+			writeSpawnFailure(w, fail)
+			return false
 		}
 	}
-	var policy *bool
-	if body.RemoteControlPolicy != nil {
+	if u.body.RemoteControlPolicy != nil {
 		var err error
-		if policy, err = parseRemoteControlPolicy(*body.RemoteControlPolicy); err != nil {
+		if u.policy, err = parseRemoteControlPolicy(*u.body.RemoteControlPolicy); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_remote_control_policy", err.Error())
-			return
+			return false
 		}
 	}
-	resp := map[string]any{"group": g.Name}
+	return true
+}
+
+// applyLaunchDefaults writes the description and the launch defaults (default
+// directory, default spawn group, context, environment, profile, prompts),
+// keeping a spent sudo use once anything is written.
+func (u *groupUpdate) applyLaunchDefaults(w http.ResponseWriter) bool {
+	u.resp = map[string]any{"group": u.g.Name}
 	// The writes are not one transaction, so a failure part way through has
 	// changed something, and a sudo use spent on it stays spent.
-	defer func() {
-		if len(resp) > 1 {
-			keepSudoUses(r)
+	u.cleanups = append(u.cleanups, func() {
+		if len(u.resp) > 1 {
+			keepSudoUses(u.r)
 		}
-	}()
+	})
 
-	if body.Descr != nil {
+	if u.body.Descr != nil {
 		// The group descr is a one-line label. Fold any embedded
 		// newline (an API caller could send one — the CLI positional
 		// and the dashboard's <input type=text> cannot) to a space so
 		// it never breaks the single-line dashboard header. Empty
 		// stays empty — that clears the description.
-		descr := normalizeGroupDescr(*body.Descr)
-		n, err := db.SetAgentGroupDescr(g.Name, descr)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+		descr := normalizeGroupDescr(*u.body.Descr)
+		if !u.writeField(w, "descr", func() (int64, error) { return db.SetAgentGroupDescr(u.g.Name, descr) }, descr) {
+			return false
 		}
-		// Zero rows: the group was renamed or deleted between the
-		// dispatcher's lookup and this update. Report not_found rather
-		// than a misleading 200.
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["descr"] = descr
 	}
 
-	if body.DefaultCwd != nil {
-		n, err := db.SetAgentGroupDefaultCwd(g.Name, cwd)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.DefaultCwd != nil {
+		if !u.writeField(w, "default_cwd", func() (int64, error) { return db.SetAgentGroupDefaultCwd(u.g.Name, u.cwd) }, u.cwd) {
+			return false
 		}
-		// Zero rows: the group was renamed or deleted between the
-		// dispatcher's lookup and this update. Report not_found rather
-		// than a misleading 200.
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["default_cwd"] = cwd
 	}
 
-	if body.DefaultSpawnGroup != nil {
-		n, err := db.SetAgentGroupDefaultSpawn(g.Name, *body.DefaultSpawnGroup)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_default_spawn_group", err.Error())
-			return
+	if u.body.DefaultSpawnGroup != nil {
+		if !u.writeFieldOr(w, http.StatusBadRequest, "invalid_default_spawn_group", "default_spawn_group", func() (int64, error) { return db.SetAgentGroupDefaultSpawn(u.g.Name, *u.body.DefaultSpawnGroup) }, *u.body.DefaultSpawnGroup) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["default_spawn_group"] = *body.DefaultSpawnGroup
 	}
 
-	if body.DefaultContext != nil {
-		n, err := db.SetAgentGroupDefaultContext(g.Name, ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.DefaultContext != nil {
+		if !u.writeField(w, "default_context", func() (int64, error) { return db.SetAgentGroupDefaultContext(u.g.Name, u.ctx) }, u.ctx) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["default_context"] = ctx
 	}
 
-	if body.Environment != nil {
-		n, err := db.SetAgentGroupEnvironment(g.Name, normalizedEnvironment)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.Environment != nil {
+		if !u.writeField(w, "environment", func() (int64, error) { return db.SetAgentGroupEnvironment(u.g.Name, u.normalizedEnvironment) }, u.normalizedEnvironment) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["environment"] = normalizedEnvironment
 	}
 
-	if body.DefaultProfile != nil {
-		n, err := db.SetAgentGroupDefaultProfile(g.Name, profile)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.DefaultProfile != nil {
+		if !u.writeField(w, "default_profile", func() (int64, error) { return db.SetAgentGroupDefaultProfile(u.g.Name, u.profile) }, u.profile) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["default_profile"] = profile
 	}
 
-	if body.DefaultPrompts != nil {
-		n, err := db.SetAgentGroupDefaultPrompts(g.Name, defaultPrompts)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.DefaultPrompts != nil {
+		if !u.writeField(w, "default_prompts", func() (int64, error) { return db.SetAgentGroupDefaultPrompts(u.g.Name, u.defaultPrompts) }, u.defaultPrompts) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["default_prompts"] = defaultPrompts
 	}
 
-	if body.MaxMembers != nil {
+	return true
+}
+
+// applyMembershipPolicy writes the member cap, notifications, remote-control
+// policy, re-injection mode, permissions and owner scopes, and answers with
+// what was stored.
+func (u *groupUpdate) applyMembershipPolicy(w http.ResponseWriter) bool {
+	if u.body.MaxMembers != nil {
 		// db.SetAgentGroupMaxMembers clamps a negative value to 0
 		// (unlimited) rather than rejecting it, so a careless caller
 		// can never wedge a group with an impossible cap.
-		n, err := db.SetAgentGroupMaxMembers(g.Name, *body.MaxMembers)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		stored := *body.MaxMembers
+		stored := *u.body.MaxMembers
 		if stored < 0 {
 			stored = 0
 		}
-		resp["max_members"] = stored
+		if !u.writeField(w, "max_members", func() (int64, error) { return db.SetAgentGroupMaxMembers(u.g.Name, *u.body.MaxMembers) }, stored) {
+			return false
+		}
 	}
 
-	if body.NotifyEnabled != nil {
-		n, err := db.SetAgentGroupNotifyEnabled(g.Name, *body.NotifyEnabled)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.NotifyEnabled != nil {
+		if !u.writeField(w, "notify_enabled", func() (int64, error) { return db.SetAgentGroupNotifyEnabled(u.g.Name, *u.body.NotifyEnabled) }, *u.body.NotifyEnabled) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["notify_enabled"] = *body.NotifyEnabled
 	}
 
-	if body.RemoteControlPolicy != nil {
-		n, err := db.SetAgentGroupRemoteControl(g.Name, policy)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+	if u.body.RemoteControlPolicy != nil {
+		if !u.writeField(w, "remote_control_policy", func() (int64, error) { return db.SetAgentGroupRemoteControl(u.g.Name, u.policy) }, remoteControlPolicyToWire(u.policy)) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["remote_control_policy"] = remoteControlPolicyToWire(policy)
 	}
 
-	if body.ReinjectAfterCompact != nil {
+	if u.body.ReinjectAfterCompact != nil {
 		// Validated above, before any write landed.
-		n, err := db.SetAgentGroupReinjectAfterCompact(g.Name, reinjectMode)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+		if !u.writeField(w, "reinject_after_compact", func() (int64, error) { return db.SetAgentGroupReinjectAfterCompact(u.g.Name, u.reinjectMode) }, u.reinjectMode) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["reinject_after_compact"] = reinjectMode
 	}
 
-	if body.Permissions != nil {
+	if u.body.Permissions != nil {
 		// Changing a group allowlist is permission administration, not ordinary
 		// cosmetic group editing. Both meta-slugs were checked before mutations
 		// because a replacement can widen and narrow the set in one request.
-		grantedBy := caller
-		if grantedBy == "" {
+		grantedBy := u.caller
+		if a := peerGrantFromRequest(u.r); a != nil {
+			grantedBy = "peer:" + a.peer
+		} else if grantedBy == "" {
 			grantedBy = "<human>"
 		}
-		if err := db.ReplaceAgentGroupPermissionGrants(g.ID, normalizedPermissions, grantedBy); err != nil {
+		if err := db.ReplaceAgentGroupPermissionGrants(u.g.ID, u.normalizedPermissions, grantedBy); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+			return false
 		}
-		resp["permissions"] = normalizedPermissions
+		u.resp["permissions"] = u.normalizedPermissions
 	}
 
-	if body.OwnerScopes != nil {
+	if u.body.OwnerScopes != nil {
 		// Same class as the allowlist above, and gated on the same pair. The
 		// canonical form was computed before any write landed, so this cannot
 		// fail on validation here.
-		n, err := db.SetAgentGroupOwnerScopes(g.Name, ownerScopes)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+		if !u.writeField(w, "owner_scopes", func() (int64, error) { return db.SetAgentGroupOwnerScopes(u.g.Name, u.ownerScopes) }, ownerScopesWire(u.ownerScopes)) {
+			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return
-		}
-		resp["owner_scopes"] = ownerScopesWire(ownerScopes)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, u.resp)
+	return true
+}
+
+// writeField makes one field's write and records the stored value in the
+// answer. An error is reported as io; zero rows means the group was renamed or
+// deleted between the dispatcher's lookup and this update, so it reports
+// not_found rather than a misleading 200.
+func (u *groupUpdate) writeField(w http.ResponseWriter, key string, write func() (int64, error), stored any) bool {
+	return u.writeFieldOr(w, http.StatusInternalServerError, "io", key, write, stored)
+}
+
+// writeFieldOr is writeField for a write whose error is the caller's to fix,
+// reported with the given status and code.
+func (u *groupUpdate) writeFieldOr(w http.ResponseWriter, errStatus int, errCode, key string, write func() (int64, error), stored any) bool {
+	n, err := write()
+	if err != nil {
+		writeError(w, errStatus, errCode, err.Error())
+		return false
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "no such group")
+		return false
+	}
+	u.resp[key] = stored
+	return true
 }
 
 // ownerScopesWireOmitEmpty is ownerScopesWire for a field tagged omitempty: it

@@ -11,8 +11,8 @@ exported as an `.excalidraw` file.
 
 ## In the dashboard
 
-The **＋** at the right of the Collab tab strip lists the boards, one line each
-(it has a *Processes* half too: see [Processes](processes.md)):
+**＋ New ▾** › **Board…** in the Collab side panel lists the boards, one line each
+(**Process…** beside it lists the processes: see [Processes](processes.md)):
 in their groups, newest first, with a green dot on a board an agent has a
 session on. Pick one to open it in a tab. The box at the top searches titles and groups;
 a new title makes a board with **Create** or Enter, and the title of one that
@@ -183,8 +183,8 @@ board, in the dashboard's saved preferences.
 
 ## Permissions
 
-Boards are global, not scoped to a group: `boards.read` and `boards.write` cover
-every board, including a fleet map, whose cards show agents' tasks and PRs.
+`boards.read` and `boards.write` are global: they cover every board, including a
+fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|
@@ -197,6 +197,41 @@ Neither is default-granted, although a Steward gets both when summoned:
 tclaude agent permissions grant <agent> boards.read
 tclaude agent permissions grant <agent> boards.write
 ```
+
+### Group boards are their members'
+
+A board linked to a group belongs to that group's members, who need neither
+global slug for it. Active membership confers two group-scoped slugs in that
+group:
+
+| Slug | Allows, on the group's boards |
+|---|---|
+| `groups.resources.read` | `board show`, `board snapshot`; `board ls` lists them |
+| `groups.resources.write` | every change and `board open`/`close`, and `board create --group <group>`; implies read |
+
+Membership is checked at every request, so an agent that joins a group can use
+its boards at once, and one that leaves (or whose group is archived) loses
+them at once. An explicit deny of either slug for an agent wins over its
+membership:
+
+```bash
+tclaude agent permissions deny <agent> groups.resources.write   # keeps read
+```
+
+Membership and the global slugs are independent sources: denying an agent
+`boards.read` or `boards.write` does not keep it off its own groups' boards;
+deny `groups.resources.read` / `groups.resources.write` for that. Like every
+`groups.*` slug, both are also covered by `groups.admin`.
+
+A board linked to no group is reachable only through `boards.read` and
+`boards.write`. Without `boards.read`, `board ls` lists only the boards of the
+agent's groups. An operator lock on a board refuses an agent's change
+whatever its access: see
+[The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
+
+Every board command takes `--ask-human <timeout>`: when the agent lacks the
+slug, the operator gets an approval popup instead of a refusal, as with other
+permission-gated commands.
 
 An agent that changes a board becomes one of its participants. The operator
 can also add or remove participants from the dashboard.
@@ -362,6 +397,35 @@ receive the invitation mail. An agent can only create a board for a group it
 belongs to. Choosing "No group" unlinks the board. Archiving or deleting the
 group also unlinks it in effect: the board stays, without the group.
 
+## A peer's boards
+
+On a linked peer's page (the Fleet map's **Open**, `?node=…`), the peer's
+boards show when it shares them through their groups:
+`groups.resources.read` in a group reads that group's boards, and
+`groups.resources.write` also edits them (see
+[federation-peers.md](federation-peers.md)). A board in no group is never a
+peer's. The page lists them in two places:
+
+- The **Collab** panel lists each board under its group, with an **edit** or
+  **read-only** badge. A group you may edit has a ＋ that makes a new board
+  there; a group with no boards yet gets its first from the Groups tab.
+- Each group in the peer's **Groups** tab lists its **Boards**, with **Open**,
+  and **＋ Board** where you may edit.
+
+Both open the same editor, under a **Remote board** banner that names the peer
+and the group and says whether you can edit. The editor reads the board every
+second instead of keeping a live socket open. Your edits are authored
+`operator@INSTANCE` on the peer. Undo, invites, presence, deleting the board
+and its rendered snapshot stay with the peer's own dashboard.
+
+The board is read-only here when the group grants only read, when the peer's
+operator locked it, or when the peer refused an edit (the change is rolled
+back, the banner says so, and the board stays read-only until you reopen it).
+A peer's board opens as a tab only, never in an overlay window or a window of
+its own. A board the peer deleted or moved out of your
+groups says it is no longer shared. When the peer is out of reach, the editor
+keeps showing the last copy it read.
+
 ## Mapping the fleet
 
 `board from-fleet <board>` draws the fleet as a map you can talk staffing over.
@@ -430,8 +494,9 @@ snapshot is `~/.tclaude/data/boards/<id>.png` and the event images are under
 The dashboard uses `/api/boards` (list, create, read, patch, delete, snapshot
 upload and download, participants, events, view, group and undo), and
 `DELETE /api/boards/{id}/sessions` to end a board's sessions. A federation
-peer's dashboard view never reaches these routes: boards stay with their own
-node. Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,
+peer's dashboard view reaches only the list, create, read, patch, title and
+group routes, for the boards of the groups it was granted (see
+[A peer's boards](#a-peers-boards)). Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,
 `GET /v1/boards/{id}` (`?since=N`), `PATCH /v1/boards/{id}`,
 `GET /v1/boards/{id}/snapshot`, and `POST` and `DELETE /v1/boards/{id}/session`
 for the caller's own session. The snapshot response carries `X-Board-Snapshot-Version` and `X-Board-Version`

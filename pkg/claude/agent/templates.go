@@ -162,9 +162,14 @@ type templateJSON struct {
 	Rhythms []rhythmJSON `json:"rhythms,omitempty"`
 	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
 	// prior wave to go idle before the next spawns anyway (JOH-244). 0 = default.
-	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	WaveMaxWait int `json:"wave_max_wait,omitempty"`
+	// OwnerScopes narrows what ownership of a group deployed from the template
+	// confers (TCL-1071). It is carried as raw JSON, read and sent back as the
+	// daemon wrote it: `edit` is a full replace, so a field dropped here would
+	// be deleted from the template.
+	OwnerScopes json.RawMessage `json:"owner_scopes,omitempty"`
+	CreatedAt   string          `json:"created_at,omitempty"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents — effective
@@ -189,7 +194,7 @@ func templatesLsCmd() *cobra.Command {
 		Long:        "Returns every group template, with its agent count and owner(s).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -234,9 +239,15 @@ func templatesShowCmd() *cobra.Command {
 		Long:        "Prints a template's context and per-agent specs. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file, so `templates show X --json` is the start of an edit loop.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesShow is `tclaude agent templates show <name> [--json]`, as the
+// command runs it, for callers that drive the CLI against a daemon in-process.
+func RunTemplatesShow(name string, jsonOut bool, stdout, stderr io.Writer) int {
+	return runTemplatesShow(&templatesShowParams{Name: name, JSON: jsonOut}, stdout, stderr)
 }
 
 func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
@@ -482,13 +493,13 @@ func templatesCreateCmd() *cobra.Command {
 			"'templates from-group' or by editing another template's --json output.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runTemplatesCreate(p *templatesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -523,9 +534,16 @@ func templatesEditCmd() *cobra.Command {
 			"edit x.json, 'templates edit X --file x.json'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesEdit is `tclaude agent templates edit <name> --file <file>`, as
+// the command runs it, for callers that drive the CLI against a daemon
+// in-process.
+func RunTemplatesEdit(name, file string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runTemplatesEdit(&templatesEditParams{Name: name, File: file}, stdin, stdout, stderr)
 }
 
 func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -534,7 +552,7 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: a template name is required")
 		return rcInvalidArg
 	}
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -549,32 +567,8 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated template %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated template %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "template", name, resp.Name)
 	return rcOK
-}
-
-// loadTemplateFile reads a template JSON file (or stdin for "-") and
-// unmarshals it. A missing --file, an unreadable path, or malformed
-// JSON each surface as a clear error with the matching rc.
-func loadTemplateFile(file string, stdin io.Reader, stderr io.Writer) (*templateJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a template JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var tmpl templateJSON
-	if err := json.Unmarshal([]byte(raw), &tmpl); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid template JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &tmpl, rcOK
 }
 
 // ---- rm ----
@@ -590,7 +584,7 @@ func templatesRmCmd() *cobra.Command {
 		Long:        "Removes a template blueprint. Groups already instantiated from it are left untouched — only the blueprint is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -639,7 +633,7 @@ func templatesInstantiateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesInstantiateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesInstantiate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesInstantiate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -857,7 +851,7 @@ func templatesReinforceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesReinforceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesReinforce(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesReinforce(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -961,7 +955,7 @@ func templatesFromGroupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesFromGroupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesFromGroup(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesFromGroup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1061,7 +1055,7 @@ func templatesExportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesExport(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1135,7 +1129,7 @@ func templatesImportCmd() *cobra.Command {
 			"tclaude is rejected with an upgrade message.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesImport(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1261,7 +1255,7 @@ func templatesStartersLsCmd() *cobra.Command {
 		Long:        "Lists every starter tclaude ships, with its agent count and a one-line description. Install one with 'templates starters install <name>'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1300,7 +1294,7 @@ func templatesStartersShowCmd() *cobra.Command {
 		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1346,7 +1340,7 @@ func templatesStartersInstallCmd() *cobra.Command {
 			"is sacred) — pass --as <name> to install a fresh copy under a different name. Works on a fresh empty DB.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersInstallParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersInstall(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersInstall(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -107,6 +107,25 @@ Wherever a command takes an agent selector, you can pass the `agt_` id
 8+-character conversation-id prefix, a global head alias, or the display
 title.
 
+### Exit codes
+
+`tclaude agent` commands that talk to the daemon exit with a code a script
+can branch on:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success. |
+| 1 | Not found: no agent, group, message or other target matched. |
+| 2 | Ambiguous: a selector matched more than one target. |
+| 3 | Invalid argument. |
+| 4 | I/O failure: the daemon is unreachable, or it failed for another reason. |
+| 5 | Refused: an identity failure, a permission denial, or any other HTTP 403 from the daemon whose code does not map to 1–3 above. |
+
+A permission denial exits 5. Earlier versions exited 4, the same as an
+I/O failure, so a script could not tell "you may not do this" from "the
+daemon is down". A script that retried on 4 should not retry on 5: a retry
+will not grant a permission.
+
 ## Becoming an agent
 
 There are two paths into agenthood:
@@ -513,7 +532,9 @@ and carried skills override same-named library skills for that agent only.
 Cloning creates an independent overlay, and reincarnation refreshes the next
 launch without deleting the predecessor's files before it stops. A harness that
 cannot bind a no-copy clone's identity refuses that operation with managed items;
-use a history-copy clone. One-shot runs with managed items refuse explicitly;
+use a history-copy clone. Claude Code and OpenCode can (OpenCode's clone takes the
+id its managed server mints). On OpenCode the standing guidance arrives over the
+managed server, as the agent's first turn of the launch, on resume and clone too. One-shot runs with managed items refuse explicitly;
 use an ordinary worker.
 
 Older receivers are refused only when managed items actually travel. A human can

@@ -6,7 +6,11 @@
 // collab-rail-model.js.
 
 import { signal } from '@preact/signals';
-import { railItems } from './collab-rail-model.js';
+import { OTHER_SESSIONS, UNGROUPED, isAgentItem, railItems } from './collab-rail-model.js';
+import { MOVABLE_KINDS, canMoveResource, moveResource } from './resource-moves.js';
+import { processContext, processRunApi } from './process-context.js';
+import { onPeerPage } from './node-api.js';
+import { peerBoardResources, peerBoards } from './peer-boards.js';
 import { overlayResourceKey } from './resource-model.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
@@ -63,10 +67,13 @@ function terminalStatus(item, value) {
 
 // collabItems is everything the rail and the home list now: panes are the
 // strip's, snapshot the dashboard's.
-export function collabItems(panes, snapshot) {
+// On a peer's page its snapshot carries no resources: the boards it shares
+// come from its board list (peer-boards.js, tcl-ug8bb8).
+export function collabItems(panes, snapshot, peer = onPeerPage()) {
   const value = snapshot?.value;
+  const resources = peer ? peerBoardResources(peerBoards.value, value) : value?.group_resources || [];
   return railItems({
-    resources: value?.group_resources || [], groups: value?.groups || [], places: resourcePlaces.value,
+    resources, groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
     titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(),
   });
@@ -131,7 +138,8 @@ export async function railItemToFloat(item, at, ctx) {
   if (item.view === 'open-tab') return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
   const r = item.resource;
   if (r?.kind === 'page' && item.view !== 'closed') return openPageOverlay(r.id, item.title, at);
-  if (r?.kind === 'board') return openBoardOverlay(r.id, item.title, at);
+  // A peer's board opens as a tab only: the overlay is this node's own.
+  if (r?.kind === 'board') return r.peer ? openRailItem(item, ctx) : openBoardOverlay(r.id, item.title, at);
   if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
   // A shell or a terminal floats from the tab it opens in.
   const key = (await openRailItem(item, ctx))?.key || item.paneKey;
@@ -180,6 +188,70 @@ function landingAt(event, zone) {
 
 const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
 
+// --- moving an item to another group (tcl-eq8pq9) ---
+
+// railResource is a board or page item as resource-moves.js reads it.
+export function railResource(item) {
+  if (!MOVABLE_KINDS.includes(item.kind)) return null;
+  const id = item.resource?.id || item.key.slice(item.kind.length + 1);
+  return { kind: item.kind, id, label: item.title, group: item.group || '', owner: item.resource?.owner || '',
+    closed: item.resource ? item.resource.state !== 'running' : false };
+}
+
+// railAgent is an agent item's agent on this node, or null (another node's
+// agent moves on its own dashboard).
+export function railAgent(item) {
+  if (!isAgentItem(item) || item.pane?.seed?.remote || item.row?.node) return null;
+  const agent = item.status.agent;
+  return agent.conv_id || agent.agent_id ? agent : null;
+}
+
+// railGroupDrop is what a drop of item on target in the panel does: move it
+// to the group section under target ({ section, to, agent | resource }), or
+// nothing (null). Not a group section, its own group, Other sessions, a
+// peer's page, or a move the Groups tab would not offer, is nothing. to is
+// '' for Not in a group.
+export function railGroupDrop(item, target, snapshotValue, peer = onPeerPage()) {
+  if (peer || !item) return null;
+  const section = elementOf(target)?.closest?.('[data-rail-group-id]');
+  const id = section?.getAttribute('data-rail-group-id');
+  if (!id || id === OTHER_SESSIONS.id) return null;
+  const to = id === UNGROUPED.id ? '' : (snapshotValue?.groups || []).find((g) => String(g.id) === id)?.name;
+  if (typeof to !== 'string' || to === (item.group || '')) return null;
+  const agent = railAgent(item);
+  if (agent) return { section, to, agent };
+  const resource = railResource(item);
+  return resource && canMoveResource(resource, to, snapshotValue) ? { section, to, resource } : null;
+}
+
+// railItemToGroup makes the move railGroupDrop found. An agent goes through
+// the Groups tab's own drop operations (dnd-ops.js, the same confirm and
+// calls): into a group from none it is added, out to none it is removed,
+// between two it moves. A board or page moves as its ⋯ → Move to group does.
+//   ctx: { notify, groupOps?, api? } (tests pass groupOps and api).
+export async function railItemToGroup(item, drop, ctx = {}) {
+  const notify = ctx.notify || (() => {});
+  if (drop.resource) {
+    return moveResource(drop.resource, drop.to, { api: ctx.api || processRunApi, notify, refresh: () => processContext.refresh() });
+  }
+  const ops = ctx.groupOps || (await import('./dnd.js')).dndOps;
+  const conv = drop.agent.conv_id || drop.agent.agent_id;
+  const from = item.group || '';
+  const payload = { conv, agent: drop.agent.agent_id || conv, label: drop.agent.title || item.title, sourceGroup: from, sourceUngrouped: !from };
+  const where = ops.context();
+  if (!drop.to) return ops.remove(payload, where);
+  if (!from) return ops.add(payload, drop.to, where);
+  return ops.move(payload, drop.to, where);
+}
+
+let markedSection = null;
+function markSection(section) {
+  if (markedSection === section) return;
+  markedSection?.classList?.remove('cr-drop-over');
+  markedSection = section || null;
+  markedSection?.classList?.add('cr-drop-over');
+}
+
 // startRailDrag begins dragging an item out of the side panel. Until the
 // drag ends, the page takes the drop: the strip and the home open the item as a
 // tab there, the rest of the page floats it where it lands; the rail itself
@@ -198,7 +270,16 @@ export function startRailDrag(event, item, ctx) {
   };
   const over = (e) => {
     const zone = railDropZone(e.target);
-    if (zone === 'rail') return aim(null);
+    if (zone === 'rail') {
+      aim(null);
+      const move = railGroupDrop(item, e.target, ctx.snapshot?.value);
+      markSection(move?.section);
+      if (!move) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      return;
+    }
+    markSection(null);
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     aim(zone === 'strip' ? landingAt(e, zone) : null);
@@ -210,12 +291,21 @@ export function startRailDrag(event, item, ctx) {
     doc.removeEventListener('drop', drop, true);
     doc.removeEventListener('dragend', finish, true);
     doc.body?.classList?.remove('rail-dragging');
+    markSection(null);
     aim(null);
     railDrag.value = null;
   };
   function drop(e) {
     const zone = railDropZone(e.target);
-    if (zone === 'rail') return;
+    if (zone === 'rail') {
+      const move = railGroupDrop(item, e.target, ctx.snapshot?.value);
+      if (!move) return;
+      e.preventDefault();
+      e.stopPropagation();
+      finish();
+      void railItemToGroup(item, move, ctx);
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     let landing = null;

@@ -129,7 +129,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		}
 		if fail := openCodePrivateStateRefusal(h, agentID, convID, normal.Cwd,
 			string(sandboxpolicy.ImplementationHarnessBuiltin)); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		mode, modeErr := harness.SandboxOffMode(h)

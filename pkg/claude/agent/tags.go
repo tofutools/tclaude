@@ -73,7 +73,7 @@ func tagsSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *tagsSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTagsSet(p, os.Stdout, os.Stderr))
+			os.Exit(runTagsSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -101,7 +101,7 @@ func tagsAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *tagsAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTagsAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runTagsAdd(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -138,7 +138,7 @@ func tagsRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *tagsRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTagsRm(p, os.Stdout, os.Stderr))
+			os.Exit(runTagsRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -172,7 +172,7 @@ func tagsShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *tagsShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTagsShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTagsShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -232,13 +232,9 @@ func tagsWrite(target, askHuman string, tags []string, stdout, stderr io.Writer)
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// tags is non-nil so it always marshals as [] (a clear), never null.
 	if tags == nil {

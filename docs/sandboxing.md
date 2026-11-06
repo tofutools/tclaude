@@ -829,7 +829,7 @@ a "Deny access to the Home directory" rule that inserts an ordinary editable
 
 Confinement is heritable, in one direction only. Resume, reincarnation, and
 agent-initiated child spawns can never weaken a deny or introduce a reopen the
-recorded parent lacked; both count as widening and are refused. The check is
+parent lacks; both count as widening and are refused. The check is
 specificity-aware — a broad parent read above a deny does not "cover" a child's
 reopen beneath it. A resume or reincarnation re-reads the agent's sandbox
 profiles and revalidates the result. If the re-read profiles cannot be
@@ -839,6 +839,82 @@ this launch), it relaunches under the policy stored at the agent's last launch
 and returns a warning saying why. It refuses only when the stored policy
 cannot be launched either (on resume, as `sandbox_profile_changed`). Humans are the trust
 root and bypass lineage.
+
+An agent's child gets its sandbox as follows:
+
+- **Into the parent's own group, naming no profile:** the child inherits the
+  parent's selected profiles, resolved the way the parent's own next relaunch
+  would resolve them. Under the relaunch policy's `sandbox_profile_contents`
+  row, re-resolve (the default) gives their current contents and reuse gives
+  the contents stored at the parent's last launch. An operator who edits the
+  parent's profiles while it runs, widening or narrowing them, edits its
+  children too. That edit is the operator's, not an escalation by the parent.
+- **Into another group, naming no profile:** the child takes that group's
+  assignment. It must fit inside the parent's configuration as resolved now,
+  and a group that assigns more than the parent has is refused
+  (`sandbox_profile_restricted`).
+- **Naming a profile explicitly:** the child gets that profile, which must
+  fit inside the parent's configuration as resolved now, the same bound.
+
+Members of a template the parent instantiates, and agents launched on its
+behalf, are held to that bound too. If the parent's profiles cannot be used
+now, as when one was deleted, the bound is the policy stored at its last
+launch, as the parent's own relaunch would fall back to. Judging the bound
+creates nothing on disk: the parent's agent-owned directories are not probed
+or recreated for it.
+
+In every case the child's own `--harness-config` posture is applied last and
+checked with the profiles. A parent's own explicit posture is not inherited.
+Spawns by a peer, a federation request or an external steward have no parent
+sandbox here: they take the target group's assignment.
+
+### Denying a child more: `--sandbox-deny`
+
+A spawner can deny its child paths on top of whatever profiles the child
+resolves:
+
+```bash
+tclaude agent spawn crew --name worker --sandbox-deny ~/secrets --sandbox-deny /srv/keys
+```
+
+The API field is `sandbox_deny`: absolute paths, or `~/…` under the daemon's
+home. The CLI expands `~` and makes relative paths absolute. In the
+dashboard's spawn dialog, **Deny paths** (under Sandbox profile) takes the
+same paths as chips. It flags a relative path and a deny over the working
+directory, and when the chosen sandbox cannot enforce a deny it says so and
+keeps the paths, so the spawn is refused rather than launched without them.
+It is not offered for a spawn on another node.
+
+- **A denied path covers its whole subtree.** A more specific grant beneath
+  it, which profile composition alone would keep (the most specific rule
+  wins), is removed. The same goes for a temporary filesystem or a Unix
+  socket allowed there, and for a grant that mounts an ancestor of the denied
+  path at another sandbox path, since that path would expose the subtree. A
+  composition notice on the launch names what was removed.
+- **It is the agent's configuration.** The overlay is stored with the child
+  and reapplied at every resume and reincarnation, under re-resolve and reuse
+  alike. A later profile edit that adds a grant beneath a denied path is
+  removed again at the next relaunch rather than reopening it.
+- **It is inherited.** A child's overlay is its parent's plus its own, into
+  the parent's group or another, so denies only accumulate down a lineage.
+  A child can never drop its parent's. Members of a template the agent
+  instantiates, and agents launched on its behalf, inherit it too.
+- **It fails closed.** A spawn or relaunch whose launch would not enforce
+  the overlay is refused: a sandbox implementation of `off` or
+  `resource-only`, or a mode that omits the sandbox profiles
+  (`--omit-sandbox-profiles` is refused alongside `--sandbox-deny`), and an
+  operator's temporary sandbox-off restart.
+- **A launch never reopens it.** A launch opens some paths for itself: the
+  working directory, the workspace's Git administrative directories, the
+  harness's own state, and agent-owned directories. A denied path covering
+  one of those is not opened for it; the launch is refused and the error
+  names the path. The spawn request is refused up front for the working
+  directory and the Git directories; the rest are only known when the
+  session assembles its launch, and a spawn, resume, reincarnation or clone
+  fails there instead.
+
+The overlay denies filesystem paths only. External steward spawns cannot set
+it, and a group exported and imported elsewhere lands without it.
 
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a
@@ -1142,6 +1218,18 @@ The isolated posture has an explicit platform delta:
 | Harness-internal localhost server | Works on the private namespace's own loopback | Refused: Darwin loopback is host loopback, so reopening it would also reopen the IDE-bridge/host-service surface |
 | Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
 | Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
+
+tclaude writes the macOS profile in a fixed rule order: `(allow default)`
+first, then every deny, and every other allow (`darwin_allow_mach_register`,
+Local access ports) last. Seatbelt is usually described as last-match-wins,
+where the order of unrelated rules would not matter. It does not behave that
+way: a later deny on a Unix-socket path intermittently overrides an earlier
+TCP localhost allow, even though that deny cannot match the TCP connect.
+Measured on macOS 26.7.2 and 27.2, the earlier allow lost about 1 connect in
+10 and 8 in 10. With every allow last, it won every time. The isolated posture
+has no separate allows. Its exceptions sit inside the deny itself
+(`require-not`), and that form holds. The macOS assumption suite checks both
+orders on every macOS CI run.
 
 The stricter Darwin localhost behavior is deliberate. If a real harness later
 requires an internal localhost server, the remedy is a harness-descriptor

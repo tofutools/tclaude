@@ -29,11 +29,11 @@ type AWBPickupList struct {
 
 // AWBPickupProcess is one ready-polling process and its current dispatch.
 type AWBPickupProcess struct {
-	Process    string   `json:"process"`
-	Workspace  string   `json:"workspace"`
-	Labels     []string `json:"labels,omitempty"`
-	Group      string   `json:"group,omitempty"`
-	Interval   string   `json:"interval,omitempty"`
+	Process   string   `json:"process"`
+	Workspace string   `json:"workspace"`
+	Labels    []string `json:"labels,omitempty"`
+	Group     string   `json:"group,omitempty"`
+	Interval  string   `json:"interval,omitempty"`
 	// Configured is false for a leftover dispatch row whose process the
 	// running daemon did not start (removed or renamed in config).
 	Configured bool `json:"configured"`

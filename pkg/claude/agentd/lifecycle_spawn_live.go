@@ -143,16 +143,6 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	}()
 	var openCodeLaunch *openCodeLaunch
 	if a.Harness == harness.OpenCodeName {
-		resolvedCwd, cwdErr := resolveOpenCodeLaunchCwd(a.Cwd)
-		if cwdErr != nil {
-			return cwdErr
-		}
-		a.Cwd = resolvedCwd
-		permissionJSON, policyErr := openCodePermissionJSONForLaunch(
-			a.Cwd, a.Sandbox, a.Approval, a.ToolGovernance, a.EffectiveSandbox)
-		if policyErr != nil {
-			return policyErr
-		}
 		implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
 			a.SandboxImplementation,
 		)
@@ -171,63 +161,18 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if identityErr != nil {
 			return identityErr
 		}
-		if agentID == "" && implementation == sandboxpolicy.ImplementationTclaudeLayer {
-			return fmt.Errorf("OpenCode with tclaude’s sandbox resume has no stable agent identity")
-		}
-		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
-			a.SandboxImplementation,
-			a.Cwd,
-			a.GitWorktreeWriteDirs,
-			a.EffectiveSandbox,
-			agentID,
-			a.ConvID,
-		)
-		if sandboxErr != nil {
-			return sandboxErr
-		}
-		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
-			a.ConvID, a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, true)
-		if resourceErr != nil {
-			return resourceErr
-		}
-		var err error
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
-			a.SandboxImplementation, sandboxSpec, resourceCgroupDir)
-		if err != nil && resourceCgroupDir != "" &&
-			errors.Is(err, errOpenCodeResourceCgroup) &&
-			degradeManagedServerResourceCgroup(
-				a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, true, err) {
-			resourceCleanup()
-			resourceCgroupDir = ""
-			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-				a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
-				a.SandboxImplementation, sandboxSpec, "")
-		}
-		if err != nil {
-			resourceCleanup()
-			return err
-		}
-		a.OpenCodeServerURL = openCodeLaunch.ServerURL
-		a.OpenCodeServerPassword = openCodeLaunch.Password
-		a.OpenCodeTransport = openCodeLaunch.Transport
-		a.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
-		a.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
-		a.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
-		a.OpenCodeServerPID = openCodeLaunch.PID
-		a.ResourceCgroupDir = resourceCgroupDir
-		if sandboxSpec != nil {
-			a.OpenCodeEnvironment = append(
-				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
-			allocation, allocationErr := requireOpenCodeStateAllocation(agentID)
-			if allocationErr != nil {
-				// The runtime is already serving this launch; stop it like every
-				// later failure below does, or it outlives a resume that never
-				// gets a pane.
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-				return allocationErr
+		// A spawn that resumes imported history has already started this
+		// launch's managed server (its args carry it) and briefs the agent
+		// through it after the fork. Starting a second one here would retire
+		// that server (retirePriorOpenCodeResumeRuntime stops the runtime
+		// serving this conversation) and lose the brief (tcl-gjmtvb). The
+		// caller owns that server: it is not started, sent to or stopped here.
+		if a.OpenCodeServerURL == "" {
+			var err error
+			openCodeLaunch, err = startManagedOpenCodeServer(&a, a.ConvID, agentID, "", a.ConvID, true)
+			if err != nil {
+				return err
 			}
-			a.OpenCodeStateIsolation = allocation.Mode
 		}
 	}
 	stopOpenCode := func() {
@@ -252,6 +197,12 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
 	resumeLaunched = true
+	if openCodeLaunch != nil {
+		// OpenCode ignores the --initial-prompt the wrapper was handed: its
+		// first turn of this launch (the managed standing guidance) goes over
+		// the managed server, as spawn's does.
+		deliverLaunchTextOverDrive(convID, a.InitialPrompt, openCodeLaunch, a.Cwd, a.Model, a.Effort)
+	}
 	return nil
 }
 

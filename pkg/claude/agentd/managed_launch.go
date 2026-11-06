@@ -54,10 +54,17 @@ func resolveManagedLaunch(g *db.AgentGroup, p *spawnParams, parentConv string, k
 			return &spawnFailure{http.StatusForbidden, "permission_denied", "owning principal predates effective sandbox snapshots"}
 		}
 		if parent != nil {
-			validated, valErr := ensureAgentDirectoriesForRelaunch(*parent)
-			if valErr != nil {
-				return &spawnFailure{http.StatusBadRequest, "spawn_failed", valErr.Error()}
+			validated, fail := parentSandboxBound(parentConv, parent)
+			if fail != nil {
+				return fail
 			}
+			// The owner's deny overlay binds what it launches, as a spawned
+			// child's does: it is inherited, never dropped.
+			overlaid, overlayErr := sandboxpolicy.ApplyDenyOverlay(snapshot, validated.DenyOverlay)
+			if overlayErr != nil {
+				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", overlayErr.Error()}
+			}
+			snapshot = overlaid
 			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
 				return &spawnFailure{http.StatusForbidden, "permission_denied", containErr.Error()}
 			}

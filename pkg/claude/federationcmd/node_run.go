@@ -34,10 +34,10 @@ type nodeRunParams struct {
 func nodeRunCmd() *cobra.Command {
 	return boa.CmdT[nodeRunParams]{Use: "run", Short: "Run an operator script on selected nodes (full code execution)", Args: cobra.ArbitraryArgs, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeRunParams, cmd *cobra.Command, args []string) {
 		if len(args) > 0 && cmd.ArgsLenAtDash() < 0 {
-			fmt.Fprintln(os.Stderr, "commands must follow --")
+			fmt.Fprintln(cliStderr, "commands must follow --")
 			os.Exit(1)
 		}
-		os.Exit(runNodeRuns(p, args, os.Stdout, os.Stderr))
+		os.Exit(runNodeRuns(p, args, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func nodeRunPath(node, tail string) string {
@@ -257,7 +257,7 @@ type nodeScriptSettingsParams struct {
 
 func nodeScriptSettingsCmd() *cobra.Command {
 	return boa.CmdT[nodeScriptSettingsParams]{Use: "scripts", Short: "Inspect or configure this node's remote script acceptance (local only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeScriptSettingsParams, _ *cobra.Command, _ []string) {
-		os.Exit(runNodeScriptSettings(p, os.Stdout, os.Stderr))
+		os.Exit(runNodeScriptSettings(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runNodeScriptSettings(p *nodeScriptSettingsParams, stdout, stderr io.Writer) int {

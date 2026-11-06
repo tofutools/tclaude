@@ -218,6 +218,10 @@ func resolveResumeSandboxPolicyFrom(
 	if err != nil {
 		return nil, err
 	}
+	if len(current.DenyOverlay) > 0 && sandboxProfileTierInert(harnessName, harnessBuiltinMode, sandboxImplementation) {
+		return nil, fmt.Errorf("this agent carries a sandbox deny overlay (%s), and the relaunch's sandbox mode would not enforce it",
+			strings.Join(current.DenyOverlay, ", "))
+	}
 	if current.ProfilesOmitted {
 		// Either a durable per-agent launch choice, or a mode that still
 		// cannot carry profiles; not an empty ambient resolution. Do not let
@@ -290,8 +294,20 @@ func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, prev
 		// error, a group environment that no longer merges) still fails.
 		current, err = resolved, nil
 	}
-	if err != nil || current.ProfilesOmitted {
+	var overlay []string
+	if previous != nil {
+		overlay = previous.DenyOverlay
+	}
+	if err != nil {
 		return current, err
+	}
+	if current.ProfilesOmitted {
+		if len(overlay) > 0 {
+			// A relaunch into a mode that omits the profiles would drop the
+			// agent's deny overlay: refuse it rather than launch wider.
+			return sandboxpolicy.Snapshot{}, sandboxpolicy.ErrDenyOverlayUnenforced
+		}
+		return current, nil
 	}
 	if stored {
 		current = withChainHarnessConfig(convID, current, previous)
@@ -301,7 +317,16 @@ func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, prev
 		// The explicit posture no longer applies to the profiles.
 		return sandboxpolicy.Snapshot{}, relaunchChainUnusable(err)
 	}
-	return applied, nil
+	// The deny overlay is part of the agent's configuration, kept by every
+	// relaunch like its explicit posture: laid over a freshly resolved chain,
+	// it removes again whatever a profile edit added beneath a denied path.
+	// Its failure is not an unusable chain to fall back from: the stored
+	// snapshot would carry the same overlay.
+	overlaid, err := sandboxpolicy.ApplyDenyOverlay(applied, overlay)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("reapply the sandbox deny overlay: %w", err)
+	}
+	return overlaid, nil
 }
 
 // withChainHarnessConfig gives a stored snapshot whose harness_config is an
@@ -615,6 +640,13 @@ func prepareRereadRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox,
 // connect. A relaunch has no allow-unenforced override.
 func relaunchSandboxGateFailure(harnessName, mode, implementation string, snapshot *sandboxpolicy.Snapshot,
 	copilotAPI bool, transport session.ModelTransportLaunchContext) *spawnFailure {
+	// Every relaunch (resume, reincarnate, clone, a layer change) carries the
+	// agent's deny overlay, so one whose mode confines nothing is refused.
+	if snapshot != nil && len(snapshot.DenyOverlay) > 0 && sandboxProfileTierInert(harnessName, mode, implementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			"this agent carries a sandbox deny overlay (" + strings.Join(snapshot.DenyOverlay, ", ") +
+				"), and the relaunch's sandbox mode would not enforce it"}
+	}
 	if fail := sandboxProfileCapabilityFailure(harnessName, mode, snapshot, implementation); fail != nil {
 		return fail
 	}
@@ -667,6 +699,14 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		policy.Snapshot = effective
 	}
 	if req.temporaryBuiltinMode {
+		// A temporary sandbox-off relaunch confines no filesystem, so an
+		// agent whose overlay promises a denied subtree stays unreachable is
+		// refused it rather than relaunched without that promise.
+		if effective != nil && len(effective.DenyOverlay) > 0 {
+			return nil, cleanup(&spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+				"this agent carries a sandbox deny overlay (" + strings.Join(effective.DenyOverlay, ", ") +
+					"), which a temporary sandbox-off relaunch would not enforce"}), false
+		}
 		effective = temporarySandboxLaunchSnapshot(req.harness, effective)
 	}
 	if fail := relaunchSandboxGateFailure(req.harness, req.builtinMode, req.implementation,

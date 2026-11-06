@@ -2,8 +2,8 @@ package session
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
@@ -32,23 +32,27 @@ func launchShellEnvironment(
 	return shellEnvironment
 }
 
-// finishHarnessSpawnSpec fills in the parts of the spawn spec that depend on
+// FinishHarnessSpawnSpec fills in the parts of the spawn spec that depend on
 // the harness: pi's natively registered instructions and, behind tclaude's
 // wall, its walled agent directory; and a harness's live-status extension.
 // It returns the extension's directory when tclaude's sandbox must mount it
-// for the pane.
-func finishHarnessSpawnSpec(
+// for the pane. An unavailable extension costs live status, not the launch,
+// and is also reported to warnings when that is non-nil. `session new` and
+// the conv resume paths both call it, so a resumed pane is finished as a
+// fresh one is.
+func FinishHarnessSpawnSpec(
 	h *harness.Harness,
 	spec *harness.SpawnSpec,
-	params *NewParams,
+	managedInstructionsRoot string,
 	outerLayer bool,
 	root sandboxpolicy.RootPosture,
 	approvalPolicy string,
+	warnings io.Writer,
 ) ([]string, error) {
 	var readPaths []string
 	if h.Name == harness.PiName {
-		// Verified above; pi registers its skills and rules natively.
-		spec.ManagedInstructionsRoot = params.ManagedInstructionsRoot
+		// Verified by the caller; pi registers its skills and rules natively.
+		spec.ManagedInstructionsRoot = managedInstructionsRoot
 	}
 	if outerLayer && h.Name == harness.PiName {
 		// A walled pi runs against tclaude's walled agent directory, never
@@ -73,7 +77,9 @@ func finishHarnessSpawnSpec(
 			return nil, fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", err)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
+			if warnings != nil {
+				_, _ = fmt.Fprintf(warnings, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
+			}
 			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")
 		} else {
 			spec.StatusExtensionPath = path

@@ -1,7 +1,8 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import { Tabs } from './ui-tabs.js';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 import { isLoopbackDashboard } from './helpers.js';
@@ -248,8 +249,8 @@ export function GroupsRouteMap({ state }) {
       : groupsFocusLocation(effectiveGroupsFocus(state));
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
   };
-  const selectGroup = (event) => {
-    state.setRouteGroup(event.currentTarget.value);
+  const selectGroup = (key) => {
+    state.setRouteGroup(key);
     state.setSubview('routes', '');
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation('', state.routeGroup.value, state.routeView.value) } }));
   };
@@ -258,7 +259,8 @@ export function GroupsRouteMap({ state }) {
     <${Tabs} class="groups-subnav" label="Groups views" value=${state.subview.value} onSelect=${changeSubview}
       items=${[{ key: 'members', label: 'Members' }, { key: 'routes', label: 'Route map' }]} />
     ${isRoutes && html`<div class="route-map-toolbar">
-      <label>Group <${Select} size="sm" value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.label || group.name}</option>`)}<//></label>
+      <label>Group <${GroupCombobox} id="route-map-group" ariaLabel="Route map group" value=${groupName} onChange=${selectGroup}
+        groups=${groups.map((group) => ({ value: group.name, label: group.label || group.name }))} /></label>
       <div class="ui-seg route-map-mode" role="group" aria-label="Route map view mode"><${Button} size="sm" pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph<//><${Button} size="sm" pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list<//></div>
       <span class="route-map-count" aria-live="polite">${routes.length} route${routes.length === 1 ? '' : 's'}</span>
     </div>`}

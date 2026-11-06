@@ -578,11 +578,11 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := profileConferralFailure(r, caller, nil, p, "", libraryProfileReach); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateSpawnProfile(p)
@@ -652,7 +652,7 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if fail := profileConferralFailure(r, caller, nil, prof, "",
 			"the global default profile applies to every spawn no group default or named profile overrides, automations included"); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, prof.Name, prof.ID); err != nil {
@@ -1060,7 +1060,7 @@ func handleSpawnProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	res, fail := inspectProfileEnvelope(env)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -1086,7 +1086,7 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 	}
 	res, fail := importProfiles(caller, profileImportRequestEnvelope(req), req.Decisions)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -1400,11 +1400,15 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := profileConferralFailure(r, caller, existing, p, "", libraryProfileReach); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := peerProfileEditFailure(r, existing, p); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		p.ID = existing.ID
@@ -1435,6 +1439,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		if existing == nil {
 			writeError(w, http.StatusNotFound, "not_found", "no such profile")
+			return
+		}
+		if fail := peerProfileEditFailure(r, existing, nil); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		n, err := db.DeleteSpawnProfile(existing.Name)

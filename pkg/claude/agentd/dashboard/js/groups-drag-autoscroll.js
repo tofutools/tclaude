@@ -91,7 +91,7 @@ function bindGroupsDragAutoScroll() {
     }
   };
   const start = (e) => {
-    const source = e.target.closest?.('.dnd-draggable, [data-group-reorder]');
+    const source = e.target.closest?.('.dnd-draggable, [data-group-reorder], [data-dnd-resource]');
     if (!source) return;
     stop();
     active = true;

@@ -685,6 +685,32 @@ func DeleteAgentGroup(name string) error {
 	return tx.Commit()
 }
 
+// AgentsWithSettingsFromGroup lists the agents whose sandbox profile or
+// environment is pinned to groupID without being a member of it (moved away
+// keeping a setting): a delete of the group rebinds them too (DeleteAgentGroup).
+func AgentsWithSettingsFromGroup(groupID int64) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT agent_id FROM agents WHERE json_valid(effective_sandbox_config) AND (
+			json_extract(effective_sandbox_config, '$.resolution_group_id') = ?1 OR
+			json_extract(effective_sandbox_config, '$.group_binding.environment_group_id') = ?1)`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var agentID string
+		if err := rows.Scan(&agentID); err != nil {
+			return nil, err
+		}
+		out = append(out, agentID)
+	}
+	return out, rows.Err()
+}
+
 const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_spawn_group, default_context,
 	CASE WHEN default_profile_id IS NULL THEN default_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = default_profile_id), '') END,

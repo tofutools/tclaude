@@ -393,29 +393,35 @@ func TestDashboardFill_NeedsItsOwnPermission(t *testing.T) {
 	ask := func() int {
 		return testharness.Serve(c.f.Mux, agentd.AsAgentPeer(fillBody(t), conv)).Code
 	}
-	t.Cleanup(agentd.SetCaptureTimeoutForTest(10 * time.Millisecond))
-
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardCapture, "test"))
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsCapture, "test"))
 	assert.Equal(t, http.StatusForbidden, ask(), "reading a form does not allow filling it")
 
+	// The granted fill stays pending until the tab answers it below. It is
+	// not left to expire on a shortened capture timeout, which a slow runner
+	// could hit before the presence poll ever saw the fill.
+
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsFill, "test"))
 	waiting := c.fillRequest(agentd.AsAgentPeer(fillBody(t), conv))
-	var named string
+	var id, named string
 	require.Eventually(t, func() bool {
 		rec := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
 			map[string]any{"client": "tab", "focused": true, "visible": true}))
 		var resp struct {
 			Capture struct {
+				ID        string `json:"id"`
 				AgentName string `json:"agent_name"`
 			} `json:"capture"`
 		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		named = resp.Capture.AgentName
-		return named != ""
+		id, named = resp.Capture.ID, resp.Capture.AgentName
+		return id != ""
 	}, 5*time.Second, 5*time.Millisecond)
 	assert.Equal(t, "worker", named, "the highlight and warning name the agent the daemon identified, not one it claims")
-	assert.Equal(t, http.StatusGatewayTimeout, (<-waiting).Code, "granted, it reached the tab")
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"error": "the spawn form is not open"}))
+	rec := <-waiting
+	assert.Equal(t, http.StatusConflict, rec.Code, "granted, it reached the tab, whose answer came back")
+	assert.Contains(t, rec.Body.String(), "the spawn form is not open")
 }
 
 func TestDashboardFormsFill_IsNotGivenToASteward(t *testing.T) {

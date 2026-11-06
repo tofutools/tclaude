@@ -50,7 +50,7 @@ func groupAttachmentSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentSet(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -82,7 +82,7 @@ func groupAttachmentClearCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentClearParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentClear(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentClear(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -100,13 +100,9 @@ func groupAttachmentWrite(group, askHuman string, body map[string]any, stdout, s
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp groupAttachmentResp
 	path := "/v1/groups/" + url.PathEscape(group) + "/attachment"
@@ -136,7 +132,7 @@ func groupAttachmentShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentShow(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

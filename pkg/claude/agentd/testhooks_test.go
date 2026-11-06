@@ -92,6 +92,47 @@ func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string
 	}
 }
 
+// OpenCodePromptRecorder collects the prompts the daemon sends through a
+// managed OpenCode server's prompt API, keyed by the conversation they target.
+type OpenCodePromptRecorder struct {
+	mu      sync.Mutex
+	prompts map[string][]string
+}
+
+// RecordOpenCodePromptsForTest records every prompt sent to a managed OpenCode
+// server after a launch. Call it after SetOpenCodeRuntimeForTest (newFlow does).
+func RecordOpenCodePromptsForTest(t *testing.T) *OpenCodePromptRecorder {
+	t.Helper()
+	rec := &OpenCodePromptRecorder{prompts: map[string][]string{}}
+	previous := sendOpenCodePromptForSpawn
+	sendOpenCodePromptForSpawn = func(launch *openCodeLaunch, _, prompt, _, _ string) error {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.prompts[launch.ConvID] = append(rec.prompts[launch.ConvID], prompt)
+		return nil
+	}
+	t.Cleanup(func() { sendOpenCodePromptForSpawn = previous })
+	return rec
+}
+
+// WaitFor returns the first prompt sent to convID, failing after timeout.
+func (r *OpenCodePromptRecorder) WaitFor(t *testing.T, convID string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		r.mu.Lock()
+		got := r.prompts[convID]
+		r.mu.Unlock()
+		if len(got) > 0 {
+			return got[0]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no OpenCode prompt was sent to %s within %s", convID, timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // SetOpenCodePromptErrorForTest fails the first prompt, which a spawn sends after
 // its pane forked. Call it after SetOpenCodeRuntimeForTest.
 func SetOpenCodePromptErrorForTest(err error) func() {
@@ -1790,6 +1831,21 @@ func ResetBrokerLimiterForTest() func() {
 	}
 }
 
+// FreezeBrokerLimiterClockForTest stops the broker rate limiter's clock, so
+// every request a test makes falls in the same one-second window and a
+// ceiling is reached by count, not by how fast the test runs.
+func FreezeBrokerLimiterClockForTest() func() {
+	frozen := time.Now()
+	defaultBrokerLimiter.mu.Lock()
+	defaultBrokerLimiter.now = func() time.Time { return frozen }
+	defaultBrokerLimiter.mu.Unlock()
+	return func() {
+		defaultBrokerLimiter.mu.Lock()
+		defaultBrokerLimiter.now = nil
+		defaultBrokerLimiter.mu.Unlock()
+	}
+}
+
 // ResetBrokerRefusalsForTest clears the process-wide brokered-refusal
 // recorder. It is daemon-wide state (one daemon, one view of the
 // condition), so a test that drives a refusal must start clean or it
@@ -2724,4 +2780,37 @@ func CaptureApprovalPopupForTest(decision bool) (func() []ApprovalPopupFields, f
 		}, func() {
 			RequestHumanApprovalImpl = prev
 		}
+}
+
+// ResetAgentPeerViewLimitsForTest forgets every agent's peer view attempts.
+func ResetAgentPeerViewLimitsForTest() {
+	agentPeerViewLimits.mu.Lock()
+	defer agentPeerViewLimits.mu.Unlock()
+	agentPeerViewLimits.attempts, agentPeerViewLimits.inFlight = map[string][]time.Time{}, map[string]int{}
+}
+
+// SetAgentPeerViewClockForTest replaces the agent peer view limiter's clock.
+func SetAgentPeerViewClockForTest(now func() time.Time) func() {
+	prev := agentPeerViewNow
+	agentPeerViewNow = now
+	return func() { agentPeerViewNow = prev }
+}
+
+// PeerCeilingCoversForTest is peerCeilingCovers with a scope given by
+// dimension name.
+func PeerCeilingCoversForTest(peer, slug string, scope map[string][]string) error {
+	s := PermissionScope{}
+	for dim, values := range scope {
+		s[ScopeDim(dim)] = values
+	}
+	return peerCeilingCovers(peer, slug, s)
+}
+
+// PeerCeilingSlugsForTest lists the slugs a peer may confer.
+func PeerCeilingSlugsForTest() []string {
+	var out []string
+	for slug := range peerCeilingSlugs {
+		out = append(out, slug)
+	}
+	return out
 }

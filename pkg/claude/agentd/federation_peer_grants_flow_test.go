@@ -46,7 +46,7 @@ func TestFederation_PeerGrantScopes(t *testing.T) {
 	require.NoError(t, db.ArchiveAgentGroup("two"))
 	grant(agentd.PermGroupsRosterRead, "group=one")
 	fedEventually(t, "archived group hidden", func() bool { return len(latest().Groups) == 2 })
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "permissions.grant", "scope": "group=one"})
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsRename, "scope": "group=one"})
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermMessageDirect}), "some-agent"))
 	require.Equal(t, http.StatusForbidden, rec.Code)

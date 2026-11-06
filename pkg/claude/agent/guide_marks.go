@@ -78,7 +78,7 @@ func guideMarkCmd() *cobra.Command {
 			"         tclaude agent guide mark box --region 120,300,400,80 --timeout 5m --tip 'This row'",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideMarkParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideMark(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideMark(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -176,7 +176,7 @@ func guideMarksCmd() *cobra.Command {
 		Short:       "List marks, newest first, with who ended each and how",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideMarksParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideMarks(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideMarks(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -234,7 +234,7 @@ func guideUnmarkCmd() *cobra.Command {
 		Short:       "Take down a mark, or all of yours",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideUnmarkParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideUnmark(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideUnmark(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -292,7 +292,7 @@ func guideCapturesCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{guideCaptureGetCmd()},
 		RunFunc: func(p *guideCapturesParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideCaptures(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideCaptures(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -336,7 +336,7 @@ func guideCaptureGetCmd() *cobra.Command {
 		Short:       "Fetch a saved capture's image and context",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideCaptureGetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideCaptureGet(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideCaptureGet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

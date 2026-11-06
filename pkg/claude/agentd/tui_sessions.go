@@ -7,8 +7,8 @@ package agentd
 // started, or a `tclaude session new` from the operator's shell — is not an
 // agent: no conversation the agent API describes, no group, no permissions,
 // and so no /v1 shape to read it through. It is host-local state, exactly like
-// the two moves tui.go already keeps off the API (handing this terminal to a
-// pane, starting a shell session), and it is read and acted on here the same
+// the two moves the console already keeps off the API (handing this terminal
+// to a pane, starting a shell session), and it is read and acted on here the same
 // way and behind the same gates: an operator console that shares the daemon's
 // host. A console the daemon classifies as an agent sees none of it — the
 // directories alone are the operator's own, outside any sandbox, the same

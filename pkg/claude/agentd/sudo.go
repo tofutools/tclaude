@@ -245,7 +245,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if fail := unknownSudoSlugFailure(body.Slugs); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 
@@ -305,7 +305,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	policy := resolveSudoConfig(cfg, p.ConvID, agentID, title)
 
 	if fail := blockedSudoSlugFailure(body.Slugs, policy); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
@@ -346,7 +346,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	defer approvals.release(slot)
 	approved := requestHumanApproval(req, popupBaseURL)
 	if !approved {
-		writeError(w, http.StatusForbidden, "denied",
+		writeError(w, http.StatusForbidden, "permission",
 			"sudo request denied by human (or popup timed out)")
 		return
 	}
@@ -398,7 +398,7 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	policy := resolveSudoConfig(cfg, targetConv, targetAgentID, title)
 
 	if fail := proactiveSudoGrantFailure(targetConv, body.Slugs, policy); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)

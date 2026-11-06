@@ -25,7 +25,6 @@ func indexInDB(t *testing.T, projectDir, sessionID, filePath string) {
 	}), "UpsertConvIndex")
 }
 
-
 // helper to create a .jsonl file with user messages
 func createConvFile(t *testing.T, dir, sessionID string, withUserMsg bool) string {
 	t.Helper()

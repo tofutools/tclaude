@@ -57,7 +57,7 @@ func guideViewCmd() *cobra.Command {
 		Short:       "Show which dashboard view the operator is on",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideViewParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideView(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideView(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -176,7 +176,7 @@ func guideCaptureCmd() *cobra.Command {
 			"Example: tclaude agent guide capture -o /tmp/view.png",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideCaptureParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideCapture(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideCapture(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -358,7 +358,7 @@ func guideShowCmd() *cobra.Command {
 			"         tclaude agent guide show --open agt_0123abcd --note 'builder is waiting on a permission prompt'",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideShow(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

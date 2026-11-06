@@ -483,12 +483,31 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid task-force JSON: "+err.Error())
 		return
 	}
+	if a := peerGrantFromRequest(r); a != nil {
+		// The embedded profiles and roles carry launch settings and grants
+		// for this node's spawns, which import judges against a local caller
+		// only: from a linked node they take unrestricted trust.
+		if len(env.Profiles) > 0 || len(env.Roles) > 0 {
+			writeError(w, http.StatusForbidden, "permission",
+				"a task force that embeds spawn profiles or roles takes unrestricted trust; export it without them")
+			return
+		}
+		if len(env.SavedPrompts) > 0 {
+			if _, ok := a.gate(w, r, PermPromptsManage, ActionContext{}); !ok {
+				return
+			}
+		}
+		if fail := peerTemplateEditFailure(r, nil, env.Template); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+	}
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
 
-	res, existed, fail := importTemplateEnvelope(caller, env, asName, update)
+	res, existed, fail := importTemplateEnvelope(caller, env, asName, update, httpTemplateOwnerScopesGate(w, r))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// A collision without update is a 409 here — the import verb never
@@ -513,14 +532,15 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 // machine-local references that don't resolve here (spawn profiles, unknown
 // slugs, dangling role refs — each warned), validates + builds the template,
 // then creates it (or, when update is set, replaces it in place). asName, when
-// non-empty, renames the template on import.
+// non-empty, renames the template on import. ownerScopesGate authorizes an
+// update that changes the stored template's owner scopes.
 //
 // It returns the result, whether a same-named template already EXISTED, and a
 // failure. When a template already exists and update is false, it does NOT
 // write — the caller decides what the collision means: /v1/templates/import
 // reports a 409, a starter install reports a friendly skip. This is the single
 // importer both paths share (JOH-246) — there is no second import path.
-func importTemplateEnvelope(caller string, env templateExportEnvelope, asName string, update bool) (templateImportResult, bool, *spawnFailure) {
+func importTemplateEnvelope(caller string, env templateExportEnvelope, asName string, update bool, ownerScopesGate templateOwnerScopesGate) (templateImportResult, bool, *spawnFailure) {
 	if strings.TrimSpace(env.Format) != templateExportFormat {
 		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat)}
@@ -584,6 +604,9 @@ func importTemplateEnvelope(caller string, env templateExportEnvelope, asName st
 			// Collision — leave the stored template untouched; the caller decides
 			// (409 for import, skip for starter install).
 			return templateImportResult{Imported: t.Name, Warnings: warnings}, true, nil
+		}
+		if fail := checkTemplateOwnerScopes(ownerScopesGate, existing, t.OwnerScopesJSON); fail != nil {
+			return templateImportResult{}, true, fail
 		}
 		// Overwrite in place: the envelope carries the full desired state, so this
 		// is a wholesale replace (the PATCH contract), reusing the existing row's id.

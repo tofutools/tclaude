@@ -58,19 +58,8 @@ type geminiLegacyReader struct {
 
 func (r geminiLegacyReader) Close() error { _ = r.source.Close(); return r.PipeReader.Close() }
 func (h geminiHistory) Export(id, cwd string) ([]byte, error) {
-	r, err := h.Open(id, cwd)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	raw, err := io.ReadAll(io.LimitReader(r, agentbundle.MaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(raw)) > agentbundle.MaxBytes {
-		return nil, errors.New("gemini history exceeds federation.agent_transfer_max_bytes default (2 GiB)")
-	}
-	return raw, h.Validate(raw, id)
+	return readHistoryExport(func() (io.ReadCloser, error) { return h.Open(id, cwd) }, agentbundle.MaxBytes,
+		"gemini history exceeds federation.agent_transfer_max_bytes default (2 GiB)", func(raw []byte) error { return h.Validate(raw, id) })
 }
 func (h geminiHistory) Validate(raw []byte, id string) error {
 	return h.ValidateReader(bytes.NewReader(raw), id)

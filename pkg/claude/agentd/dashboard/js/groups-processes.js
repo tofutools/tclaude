@@ -44,6 +44,7 @@ import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.j
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
 import { Button, Select } from './ui-components.js';
+import { AgentCombobox } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -193,9 +194,8 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ${agentScoped
     ? html`<span class="pk-chip ui-tag pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
-        ? html`<${Select} size="sm" aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
-          ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-        <//>`
+        ? html`<${AgentCombobox} attrs=${{ 'data-start-agent': '' }} ariaLabel="Agent" value=${agent} disabled=${busy} agents=${agents} group=${group.name}
+          placeholder=${wizard ? 'Type to find a hero…' : 'Type to find an agent…'} onChange=${setAgent} />`
         : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
     : html`<span class="pk-chip ui-tag pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
@@ -738,23 +738,49 @@ function ungroupedRuns(perspective, group) {
   return memberRunEntries(perspective.context, group.members || [], perspective.filter);
 }
 
-export function UngroupedProcessBody({ group }) {
+// ungroupedBoards are the boards in no group, as the snapshot lists them
+// (group_id 0), in the shape GroupResources' board rows read.
+export function ungroupedBoards(snapshotValue) {
+  return (snapshotValue?.group_resources || [])
+    .filter((r) => r && r.kind === 'board' && !r.group_id)
+    .map((r) => ({ id: r.id, title: r.title || r.id, editing: Number.parseInt(r.detail, 10) || 0, agentsLocked: !!r.locked }));
+}
+
+// UngroupedProcessBody is Ungrouped's body in Processes and Both. In Both it
+// is laid out as a real group's: an Agents section (`agents`, the member
+// table, and `count`), then Resources: the boards in no group, with the
+// same rows and ⋯ menu (Move to group links one), then its agents' runs.
+// There is no ＋: what is made here belongs in a group.
+export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot = dashboardState.snapshot }) {
   const perspective = useProcessesPerspective();
   if (!perspective) return null;
   const { wizard, filter } = perspective;
   const entries = ungroupedRuns(perspective, group);
   const label = filterLabel(filter, wizard);
-  // In Both, Ungrouped's runs follow its member table only when there are
-  // any: it has no controls, so an empty section would be pure noise.
+  const key = group.key || group.name;
   if (perspective.fused) {
-    if (!entries.length) return null;
-    return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-      attrs=${{ 'data-fused-processes': group.key || group.name }}>
-      <div class="gp-group" data-process-group=${group.key || group.name}>
-        <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
-          onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
-      </div>
-    <//>`;
+    // The snapshot is this node's: another node's Ungrouped (the fused
+    // fleet view) lists none of its boards.
+    const own = !group.fleet_node || group.fleet_node.local;
+    const boards = own ? ungroupedBoards(snapshot?.value) : [];
+    const shown = boards.length > 0 || entries.length > 0;
+    const agentsSection = html`<${FusedSection} group=${key} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${count}>${agents}<//>`;
+    // Another node's boards are not read here, so its Ungrouped claims none:
+    // Resources shows only for its agents' runs.
+    if (!own && !entries.length) return agentsSection;
+    return html`${agentsSection}
+      <${FusedSection} group=${key} section="processes" label="Resources" count=${boards.length} auto=${shown}
+        attrs=${{ 'data-fused-processes': key }}>
+        <div class="gp-group" data-process-group=${key}>
+          <${GroupResources} group=${{ id: 0, name: key }} boards=${boards} api=${perspective.api} source=${perspective.source}
+            notify=${perspective.notify || defaultNotify} snapshot=${snapshot} />
+          <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
+            onOpen=${(runId) => perspective.onFocusRun({ group: key, runId })} />
+          ${!shown && own && html`<div class="gp-empty ui-empty" data-resources-empty=${key}>${wizard
+            ? 'Nothing here. A board made outside a party lands here; ⋯ binds it to one.'
+            : 'No resources outside groups. A board made outside a group lands here; its ⋯ moves it into one.'}</div>`}
+        </div>
+      <//>`;
   }
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
     <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}

@@ -17,6 +17,7 @@ import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
 import { clickNavExactly } from './automations-nav.js';
 import { onPeerPage } from './node-api.js';
+import { peerBoardsShared } from './peer-boards.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import { configLocation, setConfigPanel } from './config-panel.js';
@@ -72,8 +73,8 @@ let ready = false;
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   // Boards has no nav anchor: a board is a tab of the Terminals section.
-  // A peer's page has none: boards are this node's.
-  if (tab === 'boards') return !onPeerPage();
+  // A peer's page has them only when the peer shares its boards (tcl-ug8bb8).
+  if (tab === 'boards') return !onPeerPage() || peerBoardsShared();
   // Nor has a process template's Collab tab, which needs Processes too.
   if (tab === 'collab-processes') return !onPeerPage() && !document.body.classList.contains('hide-processes');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);

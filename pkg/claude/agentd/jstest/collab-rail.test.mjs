@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -14,7 +15,7 @@ const SNAPSHOT = {
   group_resources: [
     { kind: 'board', id: 'launch', group_id: 1, title: 'Launch-resolution map', state: 'closed' },
     { kind: 'page', id: 'pg_dash', group_id: 1, title: 'Dashboard preview', state: 'running' },
-    { kind: 'process', id: 'pr-review', group_id: 1, title: 'pr-review', state: 'running' },
+    { kind: 'process', id: 'pr-review', group_id: 1, title: 'pr-review', state: 'running', locked: true },
     { kind: 'shell', id: 'tclaude', group_id: 1, title: 'Group shell', state: 'running', session: 's' },
     { kind: 'board', id: 'release', group_id: 1, title: 'Release planning', state: 'closed' },
     { kind: 'board', id: 'net', group_id: 2, title: 'Network diagram', state: 'closed' },
@@ -46,8 +47,8 @@ test('rail model: agents under their group first, live before closed, never-star
       { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
       { kind: 'agent', tmux_session: 'old-gen', label: 'superseded' }],
   });
-  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group'],
-    'groups with something open here first; a group with only a closed shell is not there');
+  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group', 'Other sessions'],
+    'groups with something open here first; a group with only a closed shell is not there; sessions that cannot be attached last');
   const tclaude = all.sections[0].items.map((i) => i.key);
   assert.equal(tclaude[0], 'pane:agent:x', 'the agent spawned into tclaude is listed there, first');
   assert.ok(tclaude.includes('shell:tclaude'), 'a running group shell is listed');
@@ -57,7 +58,8 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.equal(all.sections[1].items[0].key, 'overlay:term:y', 'an agent with no spawn group goes under its first group');
   assert.deepEqual(all.sections[2].items.map((i) => [i.key, i.bucket]), [['bg::tc-z', 'background']], 'an agent in no group is under Not in a group');
   assert.ok(!flat.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
-  assert.ok(!flat.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
+  assert.deepEqual(all.sections[3].items.map((i) => [i.title, i.bucket, i.group]), [['superseded', 'background', '']],
+    'a session that cannot be attached is listed under Other sessions, in the background, in no group');
 
   const active = m.filterRail(all);
   assert.equal(active.hidden, 2, 'the default leaves the two closed items out');
@@ -177,10 +179,15 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'the default filter shows no count');
   assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
   assert.equal(root.querySelector('[data-rail-item="board:launch"] .cr-state'), null, 'an item open here needs no words');
+  assert.ok(root.querySelector('[data-rail-item="process:pr-review"] [data-rail-lock="process:pr-review"].is-locked'), 'a locked process wears the lock icon');
+  assert.ok(!root.querySelector('[data-rail-item="board:launch"] [data-rail-lock]').classList.contains('is-locked'), 'an unlocked one wears an open lock');
+  assert.equal(root.querySelector('[data-lock-badge]'), null, 'the panel has the toggle, not the passive badge');
 
   // A strip tab comes forward on click, and offers pop out and close.
   const launch = root.querySelector('[data-rail-item="board:launch"]');
-  assert.equal(launch.querySelectorAll('.cr-tool').length, 2);
+  assert.equal(launch.querySelectorAll('.cr-tool:not(.cr-more):not(.cr-gear-btn)').length, 2);
+  assert.ok(launch.querySelector('.cr-more'), 'and a ⋯ for the rest');
+  assert.ok(launch.querySelector('.cr-gear-btn'), 'and a ⚙ to edit it');
   await harness.act(async () => { harness.fireEvent(launch.querySelector('.cr-name'), 'click'); await wait(); });
   assert.deepEqual(activated, ['board:launch']);
 
@@ -283,4 +290,122 @@ test('opening a live item does not reorder the panel', async (t) => {
   const before = m.railItems({ resources, groups }).sections.map((s) => s.name);
   const after = m.railItems({ resources, groups, used: new Map([['page:b', 99]]) }).sections.map((s) => s.name);
   assert.deepEqual(after, before);
+});
+
+// railWithLocks mounts the Collab panel over SNAPSHOT with a fake lock route
+// and a snapshot re-read that, like the daemon's, shows what was posted.
+async function railWithLocks(t, { refresh = null } = {}) {
+  const harness = await createPreactHarness(t);
+  const [rail, lock] = await Promise.all([
+    harness.importDashboardModule('js/collab-rail.js'),
+    harness.importDashboardModule('js/resource-lock.js'),
+  ]);
+  const posts = [];
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url) === '/api/resource-locks') posts.push(JSON.parse(init.body));
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  const refreshes = [];
+  const snapshot = { value: structuredClone(SNAPSHOT) };
+  const reread = async () => {
+    const value = structuredClone(snapshot.value);
+    for (const { kind, id, locked } of posts) {
+      const row = value.group_resources.find((r) => r.kind === kind && r.id === id);
+      if (row) row.locked = locked;
+    }
+    snapshot.value = value;
+  };
+  lock.lockRefresh.run = () => { refreshes.push(1); return (refresh || reread)(); };
+  const activated = [];
+  const toasts = [];
+  const actions = { activatePane: (key) => activated.push(key), closePane: () => {}, popOutPane: () => {} };
+  const { container } = await harness.mount(harness.html`<${rail.CollabRail} panes=${[]} actions=${actions}
+    snapshot=${snapshot} notify=${(text, error) => toasts.push([text, !!error])} />`);
+  return { harness, lock, snapshot, root: container.querySelector('[data-collab-rail]'), posts, refreshes, activated, toasts };
+}
+
+test('rail lock: resources carry it, agents and shells do not; the tooltip says the state and the click', async (t) => {
+  const { root } = await railWithLocks(t);
+  const locked = root.querySelector('[data-rail-lock="process:pr-review"]');
+  assert.ok(locked.classList.contains('is-locked'));
+  assert.equal(locked.getAttribute('aria-pressed'), 'true');
+  assert.equal(locked.title, 'Locked. Group members can read but not edit. Click to unlock.');
+  const open = root.querySelector('[data-rail-lock="page:pg_dash"]');
+  assert.ok(!open.classList.contains('is-locked'));
+  assert.equal(open.title, 'Unlocked. Group members can edit. Click to lock (members keep read).');
+  assert.equal(root.querySelector('[data-rail-item="shell:tclaude"] [data-rail-lock]'), null, 'a group shell has no lock');
+  for (const row of root.querySelectorAll('[data-rail-item].cr-agent')) {
+    assert.equal(row.querySelector('[data-rail-lock]'), null, `agent row ${row.dataset.railItem} has no lock`);
+  }
+});
+
+test('rail lock: always shown while locked, on row hover or focus while unlocked', async () => {
+  const css = await readFile(new URL('../dashboard/mux.css', import.meta.url), 'utf8');
+  assert.match(css, /\.collab-rail \.cr-lock \{ flex: none; display: none;/, 'an unlocked lock is hidden at rest');
+  assert.match(css, /\.collab-rail \.cr-lock\.is-locked \{ display: inline-flex; color: #d29922;/, 'a locked one always shows, amber');
+  assert.match(css, /\.collab-rail \.cr-item:hover \.cr-lock, \.collab-rail \.cr-item:focus-within \.cr-lock \{ display: inline-flex; \}/,
+    'row hover and keyboard focus show the open lock');
+});
+
+test('rail lock: a click toggles through the lock route, the row follows, and the snapshot is re-read', async (t) => {
+  const { harness, lock, snapshot, root, posts, refreshes, activated, toasts } = await railWithLocks(t);
+  const button = () => root.querySelector('[data-rail-lock="page:pg_dash"]');
+  await harness.act(async () => { harness.fireEvent(button(), 'click'); await wait(); await wait(); });
+  assert.deepEqual(posts, [{ kind: 'page', id: 'pg_dash', locked: true }], 'the existing POST /api/resource-locks');
+  assert.equal(activated.length, 0, 'clicking the lock does not open the item');
+  assert.ok(button().classList.contains('is-locked'), 'the row shows the new state');
+  assert.match(button().title, /^Locked\./);
+  assert.equal(refreshes.length, 1, 'the snapshot is re-read');
+  assert.equal(snapshot.value.group_resources.find((r) => r.id === 'pg_dash').locked, true, 'and the re-read row agrees');
+  assert.deepEqual(toasts, [['Dashboard preview is read-only for agents', false]]);
+  assert.equal(lock.knownLock('page', 'pg_dash'), true, 'the tab menu reads the same state');
+
+  await harness.act(async () => { harness.fireEvent(root.querySelector('[data-rail-lock="process:pr-review"]'), 'click'); await wait(); await wait(); });
+  assert.deepEqual(posts.at(-1), { kind: 'process', id: 'pr-review', locked: false });
+});
+
+test('rail lock: a toggle wins over the stale snapshot until a snapshot row agrees, and a passive read cannot undo it', async (t) => {
+  // The re-read resolves but publishes nothing (superseded by a poll, or failed).
+  const { harness, lock, snapshot, root } = await railWithLocks(t, { refresh: async () => {} });
+  const button = () => root.querySelector('[data-rail-lock="process:pr-review"]');
+  await harness.act(async () => { harness.fireEvent(button(), 'click'); await wait(); await wait(); });
+  assert.equal(lock.resourceLocked(snapshot.value, 'process', 'pr-review'), false, 'pending: the toggle wins over the older snapshot row');
+  assert.ok(!button().classList.contains('is-locked'), 'a re-read that published nothing does not flip the icon back');
+  lock.rememberLock('process', 'pr-review', true);
+  assert.equal(lock.knownLock('process', 'pr-review'), false, 'an older read (a board load) does not undo the pending toggle');
+  const agreeing = { group_resources: [{ kind: 'process', id: 'pr-review', locked: false }] };
+  assert.equal(lock.resourceLocked(agreeing, 'process', 'pr-review'), false, 'the snapshot caught up');
+  const flipped = { group_resources: [{ kind: 'process', id: 'pr-review', locked: true }] };
+  assert.equal(lock.resourceLocked(flipped, 'process', 'pr-review'), true, 'after that, a lock changed elsewhere shows');
+});
+
+test('rail lock: a pending toggle no snapshot confirms gives way after PENDING_MS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const lock = await harness.importDashboardModule('js/resource-lock.js');
+  lock.lockRefresh.run = async () => {};
+  const value = { group_resources: [{ kind: 'board', id: 'old', locked: false }] };
+  await lock.lockChanged('board', 'old', true, { now: Date.now() - lock.PENDING_MS - 1 });
+  assert.equal(lock.resourceLocked(value, 'board', 'old'), false, 'an expired toggle no longer overrides the snapshot');
+  await lock.lockChanged('board', 'old', true);
+  assert.equal(lock.resourceLocked(value, 'board', 'old'), true);
+});
+
+test('rail lock: where this node cannot change the lock it shows the state and says the slug is needed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const lock = await harness.importDashboardModule('js/resource-lock.js');
+  const previous = globalThis.__tclaudeRemoteNode;
+  globalThis.__tclaudeRemoteNode = { id: 'peer-b' };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
+  const posts = [];
+  const fetchImpl = async (url, init) => { posts.push(init.body); return { ok: true, json: async () => ({}) }; };
+  const value = { group_resources: [{ kind: 'board', id: 'b1', locked: true }] };
+  const { container } = await harness.mount(harness.html`<${lock.RailLock} kind="board" id="b1" name="Plan" snapshot=${{ value }} fetchImpl=${fetchImpl} />`);
+  const button = container.querySelector('[data-rail-lock="board:b1"]');
+  assert.ok(button.classList.contains('is-locked'), 'the state still shows');
+  assert.equal(button.getAttribute('aria-disabled'), 'true');
+  assert.match(button.title, /^Locked\. Group members can read but not edit\. Changing it needs groups\.resources\.lock/);
+  await harness.act(async () => { harness.fireEvent(button, 'click'); await wait(); });
+  assert.deepEqual(posts, [], 'nothing is posted');
 });
