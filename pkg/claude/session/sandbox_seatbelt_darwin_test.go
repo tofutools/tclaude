@@ -4,6 +4,8 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -395,6 +397,26 @@ func TestDarwinProxyLauncherTreatsENODEVAsNonTerminal(t *testing.T) {
 	restore, err := darwinProxyGiveTerminalTo(4242)
 	require.NoError(t, err)
 	restore()
+}
+
+// The launcher hands its sandboxed command no inherited descriptors: nothing
+// renders a launch that asks for them, and a decoded spec that does is
+// refused before the launcher acts on it.
+func TestDarwinProxyLauncherRefusesInheritedDescriptors(t *testing.T) {
+	spec := darwinProxyLaunchSpec{
+		Binary: darwinSeatbeltExecutable, Plan: darwinProxyLauncherTestPlan(t, 443), HarnessCommand: "true",
+	}
+	_, err := darwinProxyLauncherCommand(spec)
+	require.NoError(t, err)
+	for _, fds := range []int{1, 2} {
+		spec.PreserveFDs = fds
+		_, err := darwinProxyLauncherCommand(spec)
+		require.ErrorIs(t, err, errDarwinProxyLaunchPreservesFDs, "render preserve_fds=%d", fds)
+		data, err := json.Marshal(spec)
+		require.NoError(t, err)
+		_, err = decodeDarwinProxyLaunchSpec(base64.RawURLEncoding.EncodeToString(data))
+		require.ErrorIs(t, err, errDarwinProxyLaunchPreservesFDs, "decode preserve_fds=%d", fds)
+	}
 }
 
 func darwinProxyLauncherTestPlan(t *testing.T, port int) sandboxpolicy.MountPlan {

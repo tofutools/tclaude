@@ -3,25 +3,12 @@
 package session
 
 import (
-	"net"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
-
-// freeLoopbackPort is a port nothing listens on, for a route slot the
-// renderer reserves itself.
-func freeLoopbackPort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := l.Addr().(*net.TCPAddr).Port
-	require.NoError(t, l.Close())
-	return port
-}
 
 func TestLayerCommandPins(t *testing.T) {
 	inputs, normaliseInputs := layerPinFixture(t)
@@ -38,6 +25,8 @@ func TestLayerCommandPins(t *testing.T) {
 	helper := TclaudeLayerRouteHelper{
 		SocketPath: "/home/test/.tclaude/api/agentd.sock", AgentID: "agt_test", ConvID: "conv_test",
 		LaunchGeneration: "launch_test", GroupIDs: []int64{42}, ProxyOnly: true,
+		// The proxy launcher's route authority needs the capability handoff.
+		HandoffSocketPath: "/home/test/.tclaude/data/route-helper-handoff.sock",
 	}
 	pins := map[string]string{}
 	var order []string
@@ -64,5 +53,5 @@ func TestLayerCommandPins(t *testing.T) {
 		pin(p+"server", func() (string, error) { return tclaudeLayerServerCommand(in, 0, "exec opencode serve") })
 		pin(p+"server+loopback", func() (string, error) { return tclaudeLayerServerCommand(in, 4567, "exec opencode serve") })
 	}
-	checkLayerPins(t, pins, order)
+	checkLayerPins(t, "layer_command_pins", pins, order)
 }
