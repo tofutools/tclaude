@@ -34,6 +34,11 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		selector = u
 	}
 	res, _, err := agent.ResolveSelector(selector)
+	// member@peer: a selector that names no local agent but a trusted peer
+	// runs the verb on that peer's agent (federation_member_verbs.go).
+	if err != nil && serveRemoteMemberVerb(w, r, selector, verb) {
+		return
+	}
 	var convID string
 	if err == nil {
 		convID = res.ConvID

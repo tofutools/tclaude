@@ -213,6 +213,8 @@ func peerViewRules() map[string]peerViewRule {
 	// The sender of a teleport onto its own Claude subscription sends the
 	// token for that offer; only the offer's own sender's token is held.
 	rules["POST /api/teleport-subscription"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, write: servePeerTeleportSubscription}
+	// The fleet brief, under an instance grant (fleet.go).
+	rules["GET /api/fleet"] = peerViewRule{feature: "fleet", requires: PermFleetRead, serve: servePeerFleet}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota
@@ -296,9 +298,14 @@ type peerViewMetadata struct {
 	// Level is the trust this node grants the reading peer ("restricted" or
 	// "unrestricted"), so the peer's map can show that direction of the link
 	// next to its own trust in this node.
-	Level    string             `json:"level"`
-	Included []string           `json:"included"`
-	Omitted  []peerViewOmission `json:"omitted"`
+	Level string `json:"level"`
+	// Principal is "agent" for a view one of the peer's agents opened: it
+	// lists only the features and grants agent peer views reach, and an
+	// unrestricted Level means every grant on them, never local-operator
+	// equivalence.
+	Principal string             `json:"principal,omitempty"`
+	Included  []string           `json:"included"`
+	Omitted   []peerViewOmission `json:"omitted"`
 	// Groups names, per visible group, the group-scoped grants behind the
 	// controls a peer-granted route serves (peerGroupGrants).
 	Groups map[string][]string `json:"groups,omitempty"`
@@ -336,8 +343,13 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 }
 func (v *peerView) metadata() peerViewMetadata {
 	out := peerViewMetadata{Peer: peerDisplay(v.peer), Level: db.FederationTrustRestricted, Included: []string{}, Omitted: []peerViewOmission{}}
-	if v.unrestricted() {
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
 		out.Level = db.FederationTrustUnrestricted
+	}
+	var agentFeatures, agentSlugs map[string]bool
+	if v.agent != nil {
+		out.Principal = "agent"
+		agentFeatures, agentSlugs = agentPeerViewMetadataScope()
 	}
 	groups, _ := db.ListAgentGroups()
 	hasAccess := peerHasAccess(v.peer.InstanceID)
@@ -346,6 +358,9 @@ func (v *peerView) metadata() peerViewMetadata {
 		features[rule.feature] = rule
 	}
 	for _, rule := range features {
+		if agentFeatures != nil && !agentFeatures[rule.feature] {
+			continue
+		}
 		allowed := v.allows(rule, 0)
 		if rule.group {
 			for _, g := range groups {
@@ -370,6 +385,9 @@ func (v *peerView) metadata() peerViewMetadata {
 	}
 	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)
 	out.Agents = v.agentGrants(groups)
+	if agentSlugs != nil {
+		out.Groups, out.Agents = filterGrantLists(out.Groups, agentSlugs), filterGrantLists(out.Agents, agentSlugs)
+	}
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })
 	return out

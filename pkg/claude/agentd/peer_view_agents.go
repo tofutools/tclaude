@@ -78,6 +78,7 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"GET /api/groups":        {slugs: []string{PermAgentsStatusRead}, target: agentViewNode},
 	"GET /api/groups/{name}": {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
 	"GET /api/agents/{id}":   {slugs: []string{PermAgentsStatusRead}, target: agentViewAgent},
+	"GET /api/fleet":         {slugs: []string{PermFleetRead}, target: agentViewNode},
 	// Member lifecycle. A restart stops the session first, so it needs the
 	// stop grant too, as the receiver does.
 	"POST /api/agents/{id}/stop":    {slugs: []string{PermAgentStop}, target: agentViewAgent, destructive: true},
@@ -561,4 +562,38 @@ func agentPeerViewRefusal(instanceID, pattern string, r *http.Request, principal
 		}
 	}
 	return 0, "", ""
+}
+
+// agentPeerViewMetadataScope is the features and peer grants agent peer view
+// routes reach, which an agent principal's view metadata is limited to.
+func agentPeerViewMetadataScope() (features, slugs map[string]bool) {
+	features, slugs = map[string]bool{}, map[string]bool{}
+	rules := peerViewRules()
+	for pattern := range agentPeerViewRoutes {
+		if rule, ok := rules[pattern]; ok {
+			features[rule.feature] = true
+			slugs[rule.requires] = true
+		}
+	}
+	return features, slugs
+}
+
+// filterGrantLists keeps, per key, only the grants in keep.
+func filterGrantLists(in map[string][]string, keep map[string]bool) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for k, held := range in {
+		var kept []string
+		for _, slug := range held {
+			if keep[slug] {
+				kept = append(kept, slug)
+			}
+		}
+		if len(kept) > 0 {
+			out[k] = kept
+		}
+	}
+	return out
 }

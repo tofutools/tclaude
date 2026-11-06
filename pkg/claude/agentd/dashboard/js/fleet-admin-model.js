@@ -164,6 +164,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'agents.receive', kind: 'scoped', what: 'move or share agents into the group' },
   { slug: 'agents.teleport.receive', kind: 'scoped', what: 'teleport agents into the group' },
   { slug: 'node.read', kind: 'node', what: 'platform, harness versions, labels and resource numbers' },
+  { slug: 'fleet.read', kind: 'node', what: 'the fleet brief: every active agent here with its status, groups, task link and presented PRs, and what needs your attention (read-only)', warning: 'Shows every agent on this node, in every group, and what waits on you: approvals, prompts and questions.' },
   { slug: 'node.spawn.read', kind: 'node', sensitive: true, what: 'the spawn dialog\'s catalogs, so its remote spawn dialog shows what you would apply and offers your profiles and prompts: spawn profiles, launch defaults, saved prompts, roles, sandbox profiles and harness policies (read-only)', warning: 'Spawn and sandbox profiles carry their environment values (often tokens) and paths: this shares them with the peer.' },
   { slug: 'node.spawn.defaults.manage', kind: 'node', sensitive: true, what: 'set or clear your global default spawn profile and global sandbox profile, among your existing profiles' },
   { slug: 'node.spawn.profiles.create', kind: 'node', sensitive: true, what: 'save new spawn profiles here (saved operator-only; editing and deleting take unrestricted trust)' },
