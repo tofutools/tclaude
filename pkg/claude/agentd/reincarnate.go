@@ -470,7 +470,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		if isValidRenameTitle(successorTitle) {
 			title = successorTitle
 		}
-		startErr := prepareReincarnationOpenCodeAttachments(spawnArgs.SandboxImplementation, label,
+		startErr := prepareOpenCodeLaunchAttachments(spawnArgs.SandboxImplementation, label,
 			&privateAttachmentRootCreated)
 		if startErr == nil {
 			// The successor continues the predecessor's recorded sandbox
@@ -752,27 +752,6 @@ func enrollReincarnationHandoff(target, caller, followUp, successorTitle, preset
 	spawnArgs.InitialPrompt = buildReincarnationLaunchPrompt(spawnArgs.Name,
 		reincarnationHandoffAuthor(caller, target), h.msgID, followUp, inlineCap)
 	return h
-}
-
-// prepareReincarnationOpenCodeAttachments creates the successor's private
-// attachments directory before its OpenCode server starts. Under tclaude's
-// sandbox the server's launch spec grants that directory and requires it to
-// exist; spawn reserves it with the label and resume prepares it the same
-// way. created reports whether this call made it.
-func prepareReincarnationOpenCodeAttachments(rawImplementation, label string, created *bool) error {
-	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
-	if err != nil {
-		return err
-	}
-	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
-		return nil
-	}
-	_, made, err := tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
-	if err != nil {
-		return err
-	}
-	*created = made
-	return nil
 }
 
 // stopReincarnationSuccessor kills a successor's tmux session (its label

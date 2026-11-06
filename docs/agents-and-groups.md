@@ -532,7 +532,9 @@ and carried skills override same-named library skills for that agent only.
 Cloning creates an independent overlay, and reincarnation refreshes the next
 launch without deleting the predecessor's files before it stops. A harness that
 cannot bind a no-copy clone's identity refuses that operation with managed items;
-use a history-copy clone. One-shot runs with managed items refuse explicitly;
+use a history-copy clone. Claude Code and OpenCode can (OpenCode's clone takes the
+id its managed server mints). On OpenCode the standing guidance arrives over the
+managed server, as the agent's first turn of the launch, on resume and clone too. One-shot runs with managed items refuse explicitly;
 use an ordinary worker.
 
 Older receivers are refused only when managed items actually travel. A human can

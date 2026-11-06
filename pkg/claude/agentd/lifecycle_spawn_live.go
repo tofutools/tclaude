@@ -161,10 +161,18 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if identityErr != nil {
 			return identityErr
 		}
-		var err error
-		openCodeLaunch, err = startManagedOpenCodeServer(&a, a.ConvID, agentID, "", a.ConvID, true)
-		if err != nil {
-			return err
+		// A spawn that resumes imported history has already started this
+		// launch's managed server (its args carry it) and briefs the agent
+		// through it after the fork. Starting a second one here would retire
+		// that server (retirePriorOpenCodeResumeRuntime stops the runtime
+		// serving this conversation) and lose the brief (tcl-gjmtvb). The
+		// caller owns that server: it is not started, sent to or stopped here.
+		if a.OpenCodeServerURL == "" {
+			var err error
+			openCodeLaunch, err = startManagedOpenCodeServer(&a, a.ConvID, agentID, "", a.ConvID, true)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	stopOpenCode := func() {
@@ -189,6 +197,12 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
 	resumeLaunched = true
+	if openCodeLaunch != nil {
+		// OpenCode ignores the --initial-prompt the wrapper was handed: its
+		// first turn of this launch (the managed standing guidance) goes over
+		// the managed server, as spawn's does.
+		deliverLaunchTextOverDrive(convID, a.InitialPrompt, openCodeLaunch, a.Cwd, a.Model, a.Effort)
+	}
 	return nil
 }
 

@@ -573,7 +573,7 @@ func (r *cloneRun) rollbackHandoff() {
 
 // spawnNoCopy launches the clone as a fresh `session new` and waits for its
 // session to come up, under a fresh label (and, when enrolled, a preset conv).
-func (r *cloneRun) spawnNoCopy() (cloneSpawnResult, *cloneSpawnError) {
+func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnError) {
 	cwd := r.p.Cwd
 	proofToken := r.p.ProofToken
 	proofCwd := r.p.ProofCwd
@@ -615,7 +615,32 @@ func (r *cloneRun) spawnNoCopy() (cloneSpawnResult, *cloneSpawnError) {
 	// does. Without enrollment the id is whatever the harness mints, and the
 	// poll below discovers it.
 	presetConv := launchEnroll || len(p.RouteHelperGroupIDs) > 0
-	if presetConv {
+	// A server-authoritative harness (OpenCode) presets the id its managed
+	// server minted. Its follow-up is not launch-enrolled: the handoff row
+	// and the post-init flush deliver it over that server's prompt API.
+	var openCodeLaunch *openCodeLaunch
+	var queuedLaunchText int64
+	if cloneHarness, _ := harness.Resolve(relaunch.Harness); cloneHarness != nil && cloneHarness.UsesAuthoritativeServer() {
+		var cleanupOpenCode func()
+		var startFail *cloneSpawnError
+		openCodeLaunch, cleanupOpenCode, startFail = r.startOpenCodeCloneServer(&proofArgs, label)
+		if startFail != nil {
+			agentDirectoryCleanup()
+			return cloneSpawnResult{}, startFail
+		}
+		// Every failure from here on leaves no clone running.
+		defer func() {
+			if cerr != nil {
+				cleanupOpenCode()
+				if queuedLaunchText > 0 {
+					_, _ = db.DeleteAgentMessagesByIDs([]int64{queuedLaunchText})
+				}
+			}
+		}()
+		r.newConv = openCodeLaunch.ConvID
+		proofArgs.SessionID = r.newConv
+		presetConv = true
+	} else if presetConv {
 		r.newConv = convops.GenerateUUID()
 		proofArgs.SessionID = r.newConv
 	}
@@ -644,6 +669,12 @@ func (r *cloneRun) spawnNoCopy() (cloneSpawnResult, *cloneSpawnError) {
 		}
 	}
 	r.managedCloneStarted = true
+	if openCodeLaunch != nil {
+		// OpenCode takes no launch prompt: the launch text (the managed
+		// standing guidance) goes over its managed server, as spawn's does.
+		queuedLaunchText = deliverLaunchTextOverDrive(r.newConv, strings.TrimSpace(proofArgs.InitialPrompt),
+			openCodeLaunch, proofArgs.Cwd, proofArgs.Model, proofArgs.Effort)
+	}
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
 	for time.Now().Before(deadline) {
 		select {
