@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
@@ -53,7 +54,11 @@ func TestPeerGroupImportLandsOperatorMailFromAnUnnamedSender(t *testing.T) {
 	}
 	inspectCode, inspect := h.importAs(t, archive, "/api/groups/import/inspect?"+url.Values{"into": {t.TempDir()}, "as": {"squad2"}}.Encode())
 	require.Equal(t, 200, inspectCode, inspect)
-	assert.Contains(t, inspect, "operator", "the preview says the operator's mail lands from another sender: %s", inspect)
+	var preview struct {
+		FileWarnings []string `json:"file_warnings"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(inspect), &preview))
+	assert.Contains(t, strings.Join(preview.FileWarnings, "\n"), "1 archived message from the source's operator", "the preview says the operator's mail lands from another sender: %s", inspect)
 
 	code, body := h.importAs(t, archive, "/api/groups/import?"+url.Values{"into": {t.TempDir()}, "as": {"squad2"}}.Encode())
 	require.Equal(t, 200, code, body)
