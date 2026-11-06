@@ -812,3 +812,63 @@ test('a peer group card reads again on the dashboard\'s snapshot tick once due, 
   await settle(harness);
   assert.equal(reads(), 3);
 });
+
+// withSnapshot sets the dashboard snapshot the mounted tree reads.
+async function withSnapshot(harness, value) {
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  await harness.act(() => { dashboardState.snapshot.value = value; });
+  await settle(harness);
+}
+
+test('Both lays Ungrouped out as a real group: Agents, then Resources listing the boards in no group, which ⋯ moves into one', async (t) => {
+  const snap = {
+    groups: [{ id: 1, name: 'frontend-squad', members: [] }, { id: 2, name: 'infra-crew', members: [] }],
+    group_resources: [
+      { kind: 'board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed', detail: '2 editing' },
+      { kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
+    ],
+  };
+  const moved = [];
+  const api = { moveBoard: async (id, group) => { moved.push([id, group]); } };
+  const ungrouped = { name: 'Ungrouped', key: ' ungrouped-virtual', virtual: true, members: [{ conv_id: 'c9', agent_id: 'agt_doc', title: 'doc-bot', online: true }] };
+  const { harness, details } = await mountFocus(t, { fused: true, api, groups: [GROUPS[0], GROUPS[1], ungrouped], allGroups: [GROUPS[0], GROUPS[1]] });
+  await withSnapshot(harness, snap);
+  const el = details(' ungrouped-virtual');
+  const section = (name) => el.querySelector(`:scope > .subtable > [data-fused-section="${name}"]`);
+  assert.ok(section('agents').querySelector('table'), 'the member table sits in an Agents section');
+  assert.equal(section('agents').querySelector('.gf-count').textContent, '1');
+  const resources = section('processes');
+  assert.ok(resources.classList.contains('open'), 'Resources opens while it lists something');
+  assert.equal(resources.querySelector('.gf-label').textContent, 'Resources');
+  assert.equal(resources.querySelector('.gf-count').textContent, '1');
+  assert.deepEqual([...resources.querySelectorAll('[data-resource-board]')].map((row) => row.dataset.resourceBoard), ['sketch'], 'only the board in no group');
+  assert.match(resources.querySelector('[data-resource-board="sketch"] .gr-meta').textContent, /2 editing/);
+  assert.equal(resources.querySelector('[data-resource-add]'), null, 'no ＋: what is made here belongs in a group');
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-board="sketch"] .gr-more'), 'click'));
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-move="sketch"]'), 'click'));
+  assert.deepEqual([...resources.querySelectorAll('[data-move-to]')].map((item) => item.dataset.moveTo), ['frontend-squad', 'infra-crew'], 'every group is a target');
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-move-to="infra-crew"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(moved, [['sketch', 'infra-crew']]);
+});
+
+test('Both folds an empty Ungrouped Resources to its line and says where boards come from', async (t) => {
+  const { harness, details } = await mountFocus(t, { fused: true });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' }] });
+  const resources = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
+  assert.equal(resources.classList.contains('open'), false);
+  assert.equal(resources.querySelector('.gf-count').textContent, '0');
+  await harness.act(() => harness.fireEvent(resources.querySelector('.gf-section-toggle'), 'click'));
+  const opened = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
+  assert.match(opened.querySelector('[data-resources-empty]').textContent, /^No resources outside groups\./);
+});
+
+test('another node\'s Ungrouped in Both lists none of this node\'s boards, and claims none of its own', async (t) => {
+  const peer = { name: 'Ungrouped@lab-b', key: ' ungrouped-virtual@lab-b', virtual: true, fleet_node: { id: 'n2', name: 'lab-b', local: false }, members: [] };
+  const { harness, details } = await mountFocus(t, { fused: true, groups: [GROUPS[0], peer], allGroups: [GROUPS[0]] });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed' }] });
+  const el = details(' ungrouped-virtual@lab-b');
+  assert.ok(el.querySelector(':scope > .subtable > [data-fused-section="agents"]'));
+  assert.equal(el.querySelector('[data-fused-section="processes"]'), null, 'no Resources section without runs');
+  assert.equal(el.querySelector('[data-resource-board]'), null);
+});

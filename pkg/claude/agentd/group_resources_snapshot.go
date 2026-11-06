@@ -40,17 +40,16 @@ type groupResource struct {
 	Locked bool `json:"locked,omitempty"`
 }
 
-// groupResourcesSnapshot lists the resources of every active group. alive is
-// the snapshot's set of live tmux sessions.
+// groupResourcesSnapshot lists the resources of every active group, and the
+// boards in none (group_id 0: the Groups tab's Ungrouped lists them, so one
+// made from the Collab panel can be moved into a group). alive is the
+// snapshot's set of live tmux sessions.
 func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) []groupResource {
 	active := map[int64]*db.AgentGroup{}
 	for _, g := range groups {
 		if g != nil && !g.IsArchived() {
 			active[g.ID] = g
 		}
-	}
-	if len(active) == 0 {
-		return nil
 	}
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
@@ -123,8 +122,10 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 	return out
 }
 
-// groupBoardResources are the boards linked to a group. A board has nothing
-// that runs; who is editing it is its detail.
+// groupBoardResources are the boards linked to a group. A board linked to
+// none, or to a group that is archived, lists with group_id 0: it is the
+// operator's still, and nothing else reaches it. A board has nothing that
+// runs; who is editing it is its detail.
 func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
 	boards, err := db.ListCollabBoards()
 	if err != nil {
@@ -139,10 +140,11 @@ func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
 	}
 	var out []groupResource
 	for _, b := range boards {
-		if active[b.GroupID] == nil {
-			continue
+		groupID := b.GroupID
+		if active[groupID] == nil {
+			groupID = 0
 		}
-		r := groupResource{Kind: resourceKindBoard, ID: b.ID, GroupID: b.GroupID, Title: b.Title, State: resourceStateClosed}
+		r := groupResource{Kind: resourceKindBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed}
 		if r.Title == "" {
 			r.Title = b.ID
 		}
