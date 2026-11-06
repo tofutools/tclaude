@@ -1296,50 +1296,19 @@ func (req *spawnRequest) resolveSandboxPolicy() *spawnFailure {
 	resolvedLaunch := req.resolvedLaunch
 	spawnerConvID := req.spawnerConvID
 	sshWorkaround := req.sshWorkaround
-	// An omission the caller asked for is kept by every relaunch; one the
-	// launch mode forces is re-judged when the mode changes (derived).
-	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
-	if !body.OmitSandboxProfiles {
-		effectiveSandbox = sandboxpolicy.DerivedOmittedProfilesSnapshot()
-	}
-	var policyErr error
-	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
-		!body.OmitSandboxProfiles {
-		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
-	}
-	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
-		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
-			fmt.Sprintf("sandbox profile %q does not exist", body.SandboxProfile)}
-	}
-	if policyErr != nil {
-		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error()}
-	}
-	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
+	effectiveSandbox, fail := resolveChildSandbox(childSandboxInput{
+		group:               g,
+		harnessName:         h.Name,
+		harnessBuiltinMode:  harnessBuiltinMode,
+		implementation:      body.SandboxImplementation,
+		sandboxProfile:      body.SandboxProfile,
+		omitSandboxProfiles: body.OmitSandboxProfiles,
+		harnessConfig:       body.HarnessConfig,
+		spawnerConvID:       spawnerConvID,
+		externalSpawn:       externalSpawn,
+	})
+	if fail != nil {
 		return fail
-	} else {
-		effectiveSandbox = applied
-	}
-	// A principal has no sandbox to contain the child. Its pinned profile is the
-	// bound, and sandboxScopePinned above refused a launch that wouldn't enforce it.
-	if spawnerConvID != "" && !externalSpawn {
-		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)
-		if err != nil {
-			return &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
-		}
-		if parentSnapshot == nil {
-			if sandboxpolicy.HasCapabilities(effectiveSandbox) {
-				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
-					"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to spawn the child"}
-			}
-		} else {
-			validatedParent, err := ensureAgentDirectoriesForRelaunch(*parentSnapshot)
-			if err != nil {
-				return &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
-			}
-			if err := sandboxpolicy.RequireContained(validatedParent, effectiveSandbox); err != nil {
-				return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
-			}
-		}
 	}
 	launchEnvironment, launchEnvironmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, profileTiers, body.Environment)
 	if envErr != nil {
