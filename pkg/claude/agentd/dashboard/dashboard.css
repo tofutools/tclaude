@@ -18655,7 +18655,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 
 /* A peer's board: what this node may do with it (peer-boards-ui.js,
    tcl-ug8bb8), in its Collab panel row and its group's Boards. */
-.peer-board-badge { flex: none; font-size: 10px; line-height: 1.5; padding: 0 6px; border: 1px solid; border-radius: 8px; white-space: nowrap; }
-.peer-board-badge.write { color: #3fb950; border-color: #2e6b3a; }
-.peer-board-badge.read { color: #8b949e; border-color: #30363d; }
+.ui-tag.peer-board-badge { flex: none; white-space: nowrap; }
+.ui-tag.peer-board-badge.write { color: #3fb950; border-color: #2e6b3a; }
 .peer-group-boards .peer-board-add { margin-top: 4px; }

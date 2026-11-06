@@ -408,7 +408,7 @@ peer's. The page lists them in two places:
 
 - The **Collab** panel lists each board under its group, with an **edit** or
   **read-only** badge. A group you may edit has a ＋ that makes a new board
-  there.
+  there; a group with no boards yet gets its first from the Groups tab.
 - Each group in the peer's **Groups** tab lists its **Boards**, with **Open**,
   and **＋ Board** where you may edit.
 
@@ -420,7 +420,9 @@ and its rendered snapshot stay with the peer's own dashboard.
 
 The board is read-only here when the group grants only read, when the peer's
 operator locked it, or when the peer refused an edit (the change is rolled
-back and the banner says so). A board the peer deleted or moved out of your
+back, the banner says so, and the board stays read-only until you reopen it).
+A peer's board opens as a tab only, never in an overlay window or a window of
+its own. A board the peer deleted or moved out of your
 groups says it is no longer shared. When the peer is out of reach, the editor
 keeps showing the last copy it read.
 

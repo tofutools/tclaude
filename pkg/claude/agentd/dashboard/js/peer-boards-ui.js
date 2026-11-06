@@ -18,7 +18,7 @@ const html = htm.bind(h);
 export function PeerBoardBadge({ access }) {
   if (!access) return null;
   const write = access === 'write';
-  return html`<span class=${`peer-board-badge ${write ? 'write' : 'read'}`} data-peer-board-access=${access}
+  return html`<span class=${`ui-tag peer-board-badge ${write ? 'write' : 'read'}`} data-peer-board-access=${access}
     title=${write ? `You can edit this board on ${peerName()}` : `${peerName()} shares this board read-only`}>${write ? 'edit' : 'read-only'}</span>`;
 }
 

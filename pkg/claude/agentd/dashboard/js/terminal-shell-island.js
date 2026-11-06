@@ -604,7 +604,9 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     headActions=${solo
       ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
         ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
-      : html`
+      // A peer's board stays a tab: the overlay windows and a pop-out's
+      // page are this node's own, and would open its board of the same id.
+      : onPeerPage() ? null : html`
         <${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
         <${Button} size="sm" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
   return html`<div

@@ -205,3 +205,15 @@ test('placement B: a peer group\'s Boards open here, and a group this node write
   assert.deepEqual(newOpen, [['crew-board', 'crew board']]);
   assert.match(notes[0][0], /^Created crew board in crew on lab-b/);
 });
+
+test('a peer\'s board dragged out of the Collab panel opens as a tab, not in this node\'s overlay', async (t) => {
+  const harness = await createPreactHarness(t);
+  await onPeer(t, harness);
+  const [actions, overlays] = await Promise.all([
+    harness.importDashboardModule('js/collab-rail-actions.js'),
+    harness.importDashboardModule('js/overlay-instances.js'),
+  ]);
+  const item = { key: 'board:plan', title: 'Plan', view: 'closed', resource: { kind: 'board', id: 'plan', peer: true } };
+  await actions.railItemToFloat(item, { x: 10, y: 10 }, { actions: {}, snapshot: { value: SNAP } });
+  assert.equal(overlays.overlayTabs.value.some((tab) => tab.board === 'plan'), false, 'no overlay window of this node\'s board plan');
+});

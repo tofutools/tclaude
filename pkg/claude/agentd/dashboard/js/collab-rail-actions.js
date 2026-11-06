@@ -138,7 +138,8 @@ export async function railItemToFloat(item, at, ctx) {
   if (item.view === 'open-tab') return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
   const r = item.resource;
   if (r?.kind === 'page' && item.view !== 'closed') return openPageOverlay(r.id, item.title, at);
-  if (r?.kind === 'board') return openBoardOverlay(r.id, item.title, at);
+  // A peer's board opens as a tab only: the overlay is this node's own.
+  if (r?.kind === 'board') return r.peer ? openRailItem(item, ctx) : openBoardOverlay(r.id, item.title, at);
   if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
   // A shell or a terminal floats from the tab it opens in.
   const key = (await openRailItem(item, ctx))?.key || item.paneKey;
