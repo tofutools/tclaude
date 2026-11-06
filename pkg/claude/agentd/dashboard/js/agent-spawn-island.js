@@ -1,4 +1,4 @@
-import { claimField } from './form-fill.js';
+import { claimChange, claimField } from './form-fill.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -770,6 +770,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // operatorProfile is the operator choosing a profile (or Clear): as a
+  // <select> change did, it claims the profile and every field it moves
+  // against agent form-fills. The picker sends no trusted change of its own.
+  const operatorProfile = (handle) => {
+    claimChange('spawn', 'agent-spawn-load-profile');
+    changeProfile(handle);
+  };
   // A remote spawn opened with a chosen profile (a palette or dock open on a
   // peer) picks it once the peer's profiles load, as the operator would: the
   // request then names it. One the grant does not let this operator pick
@@ -1404,10 +1411,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           profiles=${profiles} aliases=${true} items=${remote ? remoteProfileItems(profiles, remote, showFrom, draft.profile) : null}
           noneLabel=${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'} ariaLabel="Spawn profile"
           attrs=${{ 'data-remote-spawn-field': 'profile' }}
-          onChange=${changeProfile} />
+          onChange=${operatorProfile} />
         <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
-          onClick=${() => changeProfile('')}>Clear<//>
+          onClick=${() => operatorProfile('')}>Clear<//>
         <${Button} size="sm" id="agent-spawn-save-profile" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}

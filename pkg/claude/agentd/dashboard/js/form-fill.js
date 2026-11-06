@@ -228,17 +228,22 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
     look();
   };
   const watch = { name: form, root, owned, look, sweep, writing: false, kept: null, provenance, trace: null, undoing: false, filling: false };
-  const onEdit = (event) => {
-    if (!event.isTrusted || watch.writing || !event.target?.id) return;
+  // edited is the operator editing id (changed: a choice made, not text typed).
+  const edited = (id, changed) => {
     // The operator got in while a write settled: what moves now is theirs.
     if (watch.trace?.settling) watch.trace.interrupted = true;
     look();
-    release(event.target.id);
-    if (event.type !== 'change') return;
+    release(id);
+    if (!changed) return;
     // A profile pick or a harness change moves other fields: those are the
     // operator's now too.
     sweeping = true;
     setTimeoutImpl(sweep);
+  };
+  watch.operatorChanged = (id) => { if (!watch.writing) edited(id, true); };
+  const onEdit = (event) => {
+    if (!event.isTrusted || watch.writing || !event.target?.id) return;
+    edited(event.target.id, event.type === 'change');
   };
   look();
   if (keepValues) {
@@ -260,6 +265,13 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
 
 // claimField is for a change that fires no event, such as a directory chosen in
 // a browse dialog: that field is the operator's.
+// claimChange is the operator choosing in id, a control that sends no trusted
+// change of its own (a type-to-filter choice, a Clear button): like a <select>
+// change, the field and every field the choice moves are the operator's.
+export function claimChange(form, id) {
+  watches.get(form)?.operatorChanged?.(id);
+}
+
 export function claimField(form, id) {
   const watch = watches.get(form);
   watch?.owned.add(id);
