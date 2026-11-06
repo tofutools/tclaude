@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // These pin the rule an agent's child gets its sandbox by, at the spawn API
@@ -30,13 +31,13 @@ func TestChildSandboxRuleAllowsAPreSnapshotParentAChildWithoutCapabilities(t *te
 	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
 }
 
-// A child naming a profile explicitly is still judged against the parent's
-// stored launch snapshot, with the parent's own agent-owned directories
-// re-probed first (until tcl-n4294s). One that cannot be recreated at its
-// frozen path refuses the child as a changed profile, not as a widening. A
-// child naming no profile inherits instead, and is not refused for it
-// (TestChildSandboxInheritsWithoutProbingTheParentsDirectories).
-func TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated(t *testing.T) {
+// A child naming a profile explicitly is judged against the parent's
+// configuration resolved now, as an inheriting one is
+// (TestChildSandboxInheritsWithoutProbingTheParentsDirectories). The bound is
+// judged, not launched, so the parent's own agent-owned directories are not
+// probed or recreated for it: one that is broken on disk neither refuses the
+// child nor is touched (tcl-n4294s).
+func TestChildSandboxRuleDoesNotProbeTheParentsDirectoriesForAnExplicitProfile(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -70,17 +71,47 @@ func TestChildSandboxRuleRefusesWhenTheParentsDirectoriesCannotBeRecreated(t *te
 		}
 	}
 	require.NotEmpty(t, gocache)
-	// A file where the directory belongs: the re-probe never retargets or
-	// replaces, so it cannot recreate it.
+	// A file where the directory belongs, which a re-probe could not recreate.
 	require.NoError(t, os.RemoveAll(gocache))
 	require.NoError(t, os.WriteFile(gocache, []byte("not a directory"), 0o600))
 
 	child := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
 		"name": "child", "harness": "codex", "sandbox": "tclaude-agent", "sandbox_profile": "parent-cache",
 	})
-	require.Equalf(t, http.StatusConflict, child.Code, "spawn body=%s", child.Raw)
-	assert.Contains(t, string(child.Raw), "sandbox_profile_changed")
-	// The re-probe's own refusal, not the child's later snapshot revalidation,
-	// which answers with the same code.
-	assert.Contains(t, string(child.Raw), "recreate agent-owned directory for GOCACHE")
+	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+	content, err := os.ReadFile(gocache)
+	require.NoError(t, err, "the parent's path is left as it was")
+	assert.Equal(t, "not a directory", string(content))
+}
+
+// Row 7: a child naming a different profile must fit inside the parent's
+// configuration as resolved now, not its stale launch snapshot. A write root
+// the operator adds to the running parent's profile is the parent's now, so
+// a child naming a profile with that root is allowed under re-resolve, and
+// refused under reuse, where the parent's own relaunch would not have it.
+func TestChildSandboxRuleJudgesAnExplicitProfileAgainstTheParentResolvedNow(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	writeRoot := testutil.CanonicalTempDir(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "mine"})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "other",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: writeRoot, Access: "write"}}})
+	require.NoError(t, err)
+	parent := spawnParentWithProfile(t, f, "mine")
+
+	before := f.AsAgent(parent).SpawnWith("crew", map[string]any{"name": "before", "cwd": t.TempDir(), "sandbox_profile": "other"})
+	assert.Equalf(t, http.StatusForbidden, before.Code, "wider than the parent: body=%s", before.Raw)
+
+	profile, err := db.GetSandboxProfile("mine")
+	require.NoError(t, err)
+	profile.Filesystem = []db.SandboxFilesystemGrant{{Path: writeRoot, Access: "write"}}
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+
+	after := f.AsAgent(parent).SpawnWith("crew", map[string]any{"name": "after", "cwd": t.TempDir(), "sandbox_profile": "other"})
+	require.Equalf(t, http.StatusOK, after.Code, "the operator's widening is the parent's now: body=%s", after.Raw)
+
+	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")
+	reused := f.AsAgent(parent).SpawnWith("crew", map[string]any{"name": "reused", "cwd": t.TempDir(), "sandbox_profile": "other"})
+	assert.Equalf(t, http.StatusForbidden, reused.Code, "reuse bounds by the stored contents: body=%s", reused.Raw)
 }

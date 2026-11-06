@@ -43,14 +43,11 @@ type childSandboxInput struct {
 //
 // Then the requested harness-config posture is applied, then the deny overlay
 // (the parent's plus the request's, see sandboxpolicy.ApplyDenyOverlay), and
-// an agent spawner's child must fit inside the spawner:
-//
-//   - with no explicit profile, inside the parent's configuration resolved
-//     now, so an operator's edit to the parent's profiles does not refuse its
-//     children (the edit is the operator's, not an escalation by the parent);
-//   - with an explicit profile, inside the parent's stored launch snapshot,
-//     with the parent's agent-owned directories re-probed first (step 4
-//     moves this onto the resolved-now configuration too).
+// an agent spawner's child must fit inside the spawner's configuration
+// resolved now (parentSandboxBound), whether it inherited, named a profile of
+// its own or followed another group's assignment. An operator's edit to the
+// parent's profiles therefore does not refuse its children: the edit is the
+// operator's, not an escalation by the parent.
 //
 // A spawner from before snapshots may not hand down custom capabilities. A
 // human, a peer and an external steward have no parent sandbox here.
@@ -123,7 +120,7 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 		}
 		return effectiveSandbox, nil
 	}
-	bound, fail := parent.bound(in.sandboxProfile != "")
+	bound, fail := parentSandboxBound(parent.conv, parent.stored)
 	if fail != nil {
 		return sandboxpolicy.Snapshot{}, fail
 	}
@@ -189,27 +186,23 @@ func (p *childSandboxParent) inheritedProfiles(groupID int64) (sandboxpolicy.Sna
 	return inherited, true
 }
 
-// bound is the configuration the child must fit inside. With an explicit
-// profile it is the parent's stored launch snapshot with its agent-owned
-// directories re-probed. Otherwise it is the parent's configuration resolved
-// now (parentSandboxNow), falling back to that stored snapshot when the
-// parent's chain cannot be used now, as the parent's own relaunch would. Any
-// other failure refuses: it says nothing about which policy is the parent's.
-func (p *childSandboxParent) bound(explicitProfile bool) (sandboxpolicy.Snapshot, *spawnFailure) {
-	if !explicitProfile {
-		now, err := parentSandboxNow(p.conv, p.stored)
-		if err == nil {
-			return now, nil
-		}
-		if !isRelaunchChainUnusable(err) {
-			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusInternalServerError, "io", "resolve the parent's sandbox: " + err.Error()}
-		}
+// parentSandboxBound is the configuration anything an agent launches (a
+// spawned child, a template's members, a launch on its behalf) must fit
+// inside: the agent's configuration resolved now (parentSandboxNow), or its
+// stored launch snapshot when its chain cannot be used now, as its own
+// relaunch would fall back. Agent-owned directories stay declarations in
+// both: the bound is judged, not launched, so nothing is created or probed
+// on disk for it. Any other failure refuses: it says nothing about which
+// policy is the parent's.
+func parentSandboxBound(conv string, stored *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, *spawnFailure) {
+	now, err := parentSandboxNow(conv, stored)
+	if err == nil {
+		return now, nil
 	}
-	validated, err := ensureAgentDirectoriesForRelaunch(*p.stored)
-	if err != nil {
-		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+	if !isRelaunchChainUnusable(err) {
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusInternalServerError, "io", "resolve the parent's sandbox: " + err.Error()}
 	}
-	return validated, nil
+	return unmaterializedAgentDirectories(*stored), nil
 }
 
 // parentSandboxNow is the configuration conv's own next relaunch would resolve
