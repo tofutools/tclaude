@@ -63,7 +63,8 @@ export function buildAddMemberCandidates({
 // conversation is what joins, and its role and description in another group
 // and whether adding promotes it to an agent trail the row.
 export function addMemberItem(candidate) {
-  const item = agentPickerItem(candidate, { identity: 'conv' });
+  // A promotion-pool conversation that says nothing of presence is offline.
+  const item = agentPickerItem({ ...candidate, online: !!candidate.online }, { identity: 'conv' });
   return {
     ...item,
     hint: shortId(candidate.conv_id),

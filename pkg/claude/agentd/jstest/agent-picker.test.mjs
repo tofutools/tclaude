@@ -34,7 +34,7 @@ test('a fleet of hundreds opens to its groups, and typing finds an agent to pick
   assert.ok(rows.length > 0 && rows.length <= 30, `at most the cap: ${rows.length}`);
   assert.equal(rows[0].dataset.key, 'agt_013');
   assert.ok(rows[0].querySelector('.online'), 'the online dot leads the row');
-  assert.match(rows[0].querySelector('.groups-tag').textContent, /in: infra/);
+  assert.match(rows[0].querySelector('.groups-tag').textContent, /infra/);
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.deepEqual(picked, ['agt_013']);
 });
@@ -76,4 +76,29 @@ test('a scoped target picks among its group\'s members by typing, and shows the 
   assert.match(container.querySelector('.agent-combobox-chosen').textContent, /beta/);
   await harness.act(() => harness.fireEvent(container.querySelector('.agent-combobox-clear'), 'click'));
   assert.equal(container.querySelector('#t-scoped-member').dataset.value, '');
+});
+
+test('in a form, the agent box keeps a label\'s click off its ×, and Enter off the form', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AgentCombobox } = await harness.importDashboardModule('js/agent-picker.js');
+  const agents = [{ agent_id: 'agt_a', title: 'alpha', online: true }, { agent_id: 'agt_b', title: 'beta', online: true }];
+  let submitted = 0;
+  function Holder() {
+    const [value, setValue] = harness.hooks.useState('agt_a');
+    return harness.html`<form onSubmit=${(event) => { event.preventDefault(); submitted++; }}>
+      <label class="row">Agent <${AgentCombobox} id="pick" value=${value} agents=${agents} onChange=${setValue} /></label></form>`;
+  }
+  const { container } = await harness.mount(harness.html`<${Holder} />`);
+  const box = container.querySelector('#pick');
+  const label = container.querySelector('label.row');
+  const first = [...label.querySelectorAll('button, input, select, textarea')][0];
+  assert.equal(first.id, 'pick-input', 'the label\'s first control is the box, not the × that clears it');
+  const input = container.querySelector('#pick-input');
+  await harness.input(input, 'zzz');
+  const enter = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperty(enter, 'key', { value: 'Enter' });
+  await harness.act(() => input.dispatchEvent(enter));
+  assert.equal(enter.defaultPrevented, true, 'Enter with nothing to pick does not submit the form');
+  assert.equal(box.dataset.value, 'agt_a');
+  assert.equal(submitted, 0);
 });
