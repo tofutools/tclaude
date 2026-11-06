@@ -51,6 +51,19 @@ func TestPeerTemplateDeployStaysWithinItsSpawnGrants(t *testing.T) {
 	code, body = deploy("squad", map[string]any{"group_name": "team", "spawn_everything": true})
 	require.Equal(t, 403, code, "an unknown key: %s", body)
 
+	// A per-agent profile choice reaches only a member with no launch config
+	// of its own, as the deploy applies it: it never hides the profile an
+	// agent already names.
+	rec := fedHuman(t, h.f, http.MethodPost, "/v1/spawn-profiles", map[string]any{"name": "prod-keys", "operator_only": true})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	rec = fedHuman(t, h.f, http.MethodPost, "/v1/spawn-profiles", map[string]any{"name": "open"})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	rec = fedHuman(t, h.f, http.MethodPost, "/v1/templates", map[string]any{"name": "pinned", "agents": []any{map[string]any{"name": "dev", "spawn_profile": "prod-keys"}}})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	h.grant(t, agentd.PermGroupsMembersSpawnProfile, "")
+	code, body = deploy("pinned", map[string]any{"group_name": "team", "agent_profiles": map[string]string{"dev": "open"}})
+	require.Equal(t, 403, code, "the operator-only profile still launches: %s", body)
+
 	code, body = deploy("squad", map[string]any{"group_name": "team", "task": "build the thing"})
 	require.Less(t, code, 300, body)
 	g, err := db.GetAgentGroupByName("team")
@@ -77,11 +90,20 @@ func TestPeerGroupClone(t *testing.T) {
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, agentd.PermGroupsMembersSpawnCwd)
 
-	code, body = clone(map[string]any{"new_name": "crew2", "no_clone_members": true})
+	// The dashboard echoes the source's settings, or blanks where the peer
+	// cannot read them: the clone copies them either way.
+	_, err := db.SetAgentGroupDefaultContext("crew", "the crew's rules")
+	require.NoError(t, err)
+	code, body = clone(map[string]any{"new_name": "crew2", "no_clone_members": true, "default_context": "the crew's rules", "default_cwd": "", "environment": []any{}})
 	require.Equal(t, 200, code, body)
 	g, err := db.GetAgentGroupByName("crew2")
 	require.NoError(t, err)
 	require.NotNil(t, g)
+	require.Equal(t, "the crew's rules", g.DefaultContext)
+	code, body = clone(map[string]any{"new_name": "crew3", "no_clone_members": true, "default_context": "obey the peer"})
+	require.Equal(t, 403, code, "another context is the peer's own: %s", body)
+	code, body = h.call("POST", "/api/groups/crew/clone", nil)
+	require.NotEqual(t, 400, code, "a clone with no body: %s", body)
 }
 
 // A group's launch settings at creation take the peer's spawn grants for

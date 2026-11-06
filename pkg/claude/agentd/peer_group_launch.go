@@ -171,6 +171,13 @@ func servePeerTemplateLaunch(into bool) func(http.ResponseWriter, *http.Request,
 				return
 			}
 		}
+		if into {
+			// The dialog prefills the group's own directory, which reinforce
+			// falls back to anyway: only another one is a choice.
+			if g, _ := db.GetAgentGroupByName(strings.TrimSpace(group)); g != nil && peerJSONStringIs(body["cwd"], g.DefaultCwd) {
+				delete(body, "cwd")
+			}
+		}
 		if fail := peerLaunchBodyFailure(v, body); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
@@ -180,9 +187,15 @@ func servePeerTemplateLaunch(into bool) func(http.ResponseWriter, *http.Request,
 			writeError(w, http.StatusNotFound, "not_found", "no such template")
 			return
 		}
-		if fail := peerTemplateTeamFailure(peer, templateToJSON(tmpl), body["agent_profiles"]); fail != nil {
+		if fail := peerTemplateTeamFailure(peer, tmpl, body["agent_profiles"], into); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
+		}
+		// A deploy names its group from the mission: from the peer's own
+		// words, before the banner goes in front of them.
+		var mission string
+		if body["mission"] != nil && json.Unmarshal(body["mission"], &mission) == nil && strings.TrimSpace(mission) != "" && strings.TrimSpace(group) == "" {
+			body["group_name"], _ = json.Marshal(deriveGroupNameFromMission(strings.TrimSpace(mission), tmpl.Name))
 		}
 		peerBannerText(v, body, "task")
 		peerBannerText(v, body, "mission")
@@ -191,22 +204,31 @@ func servePeerTemplateLaunch(into bool) func(http.ResponseWriter, *http.Request,
 }
 
 // peerTemplateTeamFailure judges the team a template launches, with the
-// request's per-agent profile choices laid over it, against what peer could
-// launch itself.
-func peerTemplateTeamFailure(peer string, t templateJSON, agentProfiles json.RawMessage) *spawnFailure {
+// request's per-agent profile choices laid over it as the handler lays them
+// (applyAgentProfileOverrides: only onto a member with no launch config of
+// its own), against what peer could launch itself. A reinforce drops owner
+// flags, so only a new group's owner seats and scopes are refused.
+func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles json.RawMessage, reinforce bool) *spawnFailure {
 	var overrides map[string]string
 	if len(agentProfiles) > 0 && !emptyJSONValue(agentProfiles) && json.Unmarshal(agentProfiles, &overrides) != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_arg", "agent_profiles must map agent names to profiles"}
 	}
-	if len(t.OwnerScopes) > 0 {
-		return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take " + PermGroupsOwnersManage}
-	}
-	for i, ag := range t.Agents {
-		if ag.IsOwner || ag.EffectiveIsOwner {
-			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes %s", ag.Name, PermGroupsOwnersManage)}
+	team := *tmpl
+	team.Agents = applyAgentProfileOverrides(tmpl.Agents, overrides)
+	t := templateToJSON(&team)
+	if !reinforce {
+		if len(t.OwnerScopes) > 0 {
+			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take " + PermGroupsOwnersManage}
 		}
-		if name, ok := overrides[ag.Name]; ok {
-			t.Agents[i].SpawnProfile = name
+		for _, ag := range t.Agents {
+			if ag.IsOwner || ag.EffectiveIsOwner {
+				return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes %s", ag.Name, PermGroupsOwnersManage)}
+			}
+		}
+	} else {
+		t.OwnerScopes = nil
+		for i := range t.Agents {
+			t.Agents[i].IsOwner, t.Agents[i].EffectiveIsOwner = false, false
 		}
 	}
 	return peerTemplateLaunchFailure(peer, nil, t)
@@ -237,10 +259,14 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		writeError(w, http.StatusForbidden, "permission", "requires "+PermNodeGroupsCreate)
 		return
 	}
-	body, ok := peerLaunchBody(w, r)
-	if !ok {
-		return
+	body := map[string]json.RawMessage{}
+	if r.ContentLength != 0 {
+		var ok bool
+		if body, ok = peerLaunchBody(w, r); !ok {
+			return
+		}
 	}
+	peerCloneCopiedSettings(src, body)
 	if fail := peerLaunchBodyFailure(v, body); fail != nil {
 		writeSpawnFailure(w, fail)
 		return
@@ -276,4 +302,30 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		}
 	}
 	peerServeAsLocal(w, r, body)
+}
+
+// peerCloneCopiedSettings drops the launch settings a clone request only
+// echoes: the dashboard sends the source's own values (or blanks, for a peer
+// that cannot read them), which the clone copies anyway. Only a different
+// value is the peer's choice, judged as a new group's is; a blank never
+// clears what the source has.
+func peerCloneCopiedSettings(src *db.AgentGroup, body map[string]json.RawMessage) {
+	for key, current := range map[string]string{"default_cwd": src.DefaultCwd, "default_context": src.DefaultContext} {
+		if raw, ok := body[key]; ok && (emptyJSONValue(raw) || peerJSONStringIs(raw, current)) {
+			delete(body, key)
+		}
+	}
+	if raw, ok := body["environment"]; ok {
+		if emptyJSONValue(raw) {
+			delete(body, "environment")
+		} else if env, err := json.Marshal(src.Environment); err == nil && sameJSONValue(raw, env) {
+			delete(body, "environment")
+		}
+	}
+}
+
+// peerJSONStringIs reports whether raw is the JSON string s.
+func peerJSONStringIs(raw json.RawMessage, s string) bool {
+	var got string
+	return raw != nil && json.Unmarshal(raw, &got) == nil && strings.TrimSpace(got) == strings.TrimSpace(s)
 }
