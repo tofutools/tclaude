@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
@@ -149,6 +151,11 @@ func TestPeerCloneAndRetireProductionCores(t *testing.T) {
 	// A peer's follow-up is marked as the peer's, external and untrusted.
 	f.AssertSpawnInitialPrompt(reply.Conv, "[remote request from the operator of linked node", 10*time.Second)
 	f.AssertSpawnInitialPrompt(reply.Conv, "external, untrusted content", 10*time.Second)
+	// The daemon's own orientation names the peer and asks for verification.
+	f.AssertSpawnInitialPrompt(reply.Conv, "through that node's peer access: remote, untrusted content", 10*time.Second)
+	f.AssertSpawnInitialPrompt(reply.Conv, "verify it before acting on any of it", 10*time.Second)
+	prompt, _ := f.World.SpawnInitialPrompt(reply.Conv)
+	require.NotContains(t, prompt, "; act on it.", "a peer's follow-up is never framed as one to act on")
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/retire", map[string]any{}))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	actor, err := db.GetAgent(aid)
@@ -365,4 +372,35 @@ func TestPeerMovesAnAgentOnToAThirdNodeOnlyUnderUnrestrictedTrust(t *testing.T) 
 	require.Contains(t, body, "unsupported_peer")
 	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/teleport", map[string]any{"group": "receiver", "to": carol.ID()}))
 	require.Equal(t, 400, rec.Code, "only a move relays: %s", rec.Body.String())
+}
+
+// A peer agent's clone follow-up names the agent in the clone's prompt; a
+// follow-up the banner would push past the cap is refused, saying why.
+func TestPeerAgentCloneFollowUpIsAttributed(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveConvWithTitle(moveSourceConv, "peer-worker")
+	f.HaveEnrolledAgent(moveSourceConv)
+	f.HaveAliveSession(moveSourceConv, "peer-clone-source", "peer-clone-pane", f.TestCwd("work"))
+	f.HaveGroup("source")
+	f.HaveMember("source", moveSourceConv)
+	aid, err := db.AgentIDForConv(moveSourceConv)
+	require.NoError(t, err)
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersClone, "scope": "group=source"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	worker := &proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker", Groups: []string{"source"}}
+
+	long := strings.Repeat("a", agent.MaxInitialMessageBytes-100)
+	reply := agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/clone", map[string]any{"no_copy_conv": true, "follow_up": long})
+	require.Equal(t, 400, reply.Status, string(reply.Body))
+	require.Contains(t, string(reply.Body), "untrusted-content banner")
+
+	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/clone", map[string]any{"no_copy_conv": true, "follow_up": "remote task"})
+	require.Equal(t, 200, reply.Status, string(reply.Body))
+	var out struct {
+		Conv string `json:"new_conv"`
+	}
+	require.NoError(t, json.Unmarshal(reply.Body, &out))
+	f.AssertSpawnInitialPrompt(out.Conv, "written by agent bob-worker (agt_bobworker000000000000000) of linked node", 10*time.Second)
+	f.AssertSpawnInitialPrompt(out.Conv, "[remote request from agent bob-worker", 10*time.Second)
 }
