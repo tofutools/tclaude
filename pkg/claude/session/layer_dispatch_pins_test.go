@@ -72,7 +72,9 @@ func TestLayerDispatchPins(t *testing.T) {
 	slots := func(reserve bool, helper *TclaudeLayerRouteHelper) func(*testing.T, *TclaudeLayerLaunchInput) {
 		return func(t *testing.T, in *TclaudeLayerLaunchInput) {
 			in.DarwinRouteSlots, in.RouteHelper = []int{slot}, helper
-			if reserve {
+			// Only a Darwin launch takes its pool; elsewhere the spec refuses
+			// it first, and a reservation would only race for the port.
+			if reserve && runtime.GOOS == "darwin" {
 				reservation, err := ReserveDarwinRouteSlotsAt([]int{slot})
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = reservation.Release() })
@@ -103,6 +105,12 @@ func TestLayerDispatchPins(t *testing.T) {
 	}{
 		{"host-open", func() *sandboxpolicy.Snapshot { return nil }},
 		{"packet", func() *sandboxpolicy.Snapshot { return engineLaunchSnapshot(sandboxpolicy.NetworkEnginePacket) }},
+		// No network beyond agentd: on macOS the plain Seatbelt floor, where a
+		// route-slot pool is reserved while the profile renders.
+		{"isolated", func() *sandboxpolicy.Snapshot {
+			snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}, nil)
+			return &snapshot
+		}},
 		{"proxy", func() *sandboxpolicy.Snapshot { return engineLaunchSnapshot(sandboxpolicy.NetworkEngineProxy) }},
 	} {
 		for _, l := range launches {
