@@ -212,8 +212,9 @@ func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuma
 func asDashboardHumanPeer(r *http.Request) *http.Request {
 	// A peer's operator on a peer-granted route is not this node's human: its
 	// request stays unidentified, so human-only checks refuse it and every
-	// permission gate answers from its grants (peer_grant_routes.go).
-	if peerGrantFromRequest(r) != nil {
+	// permission gate answers from its grants (peer_grant_routes.go). The same
+	// holds for a peer's action on one agent (peer_actions.go).
+	if peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil {
 		return r
 	}
 	p := &peer{PID: 1, DashboardHuman: true}
