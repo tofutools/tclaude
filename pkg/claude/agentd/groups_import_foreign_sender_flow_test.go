@@ -60,7 +60,6 @@ func foreignSenderArchive(t *testing.T, f *testharness.Flow) []byte {
 			extra["created_at"] = "2026-01-01T00:00:00Z"
 			msgs = append(msgs, extra)
 		}
-		m["messages"] = msgs
 		for _, extra := range extraForeignSenders(t) {
 			msgs = append(msgs, extra)
 		}
@@ -79,7 +78,8 @@ func foreignSenderArchive(t *testing.T, f *testharness.Flow) []byte {
 
 // extraForeignSenders is mail from the victim written as its agent id, which
 // no conversation lookup matches but the mailbox resolves to its name.
-var extraForeignSenders = func(t *testing.T) []map[string]any {
+func extraForeignSenders(t *testing.T) []map[string]any {
+	t.Helper()
 	victimAgent, err := db.AgentIDForConv(foreignVictim)
 	require.NoError(t, err)
 	require.NotEmpty(t, victimAgent)
