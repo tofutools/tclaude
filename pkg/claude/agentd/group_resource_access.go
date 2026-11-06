@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
 // Group resource access: a group's members read and change the resources
@@ -351,7 +352,24 @@ func requireProcessTemplateAccess(w http.ResponseWriter, r *http.Request, id str
 	if write {
 		global = PermProcessTemplatesManage
 	}
-	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), resourceRef(resourceScopeKindProcessTemplate, id), write)
+	// A save of a template that does not exist yet creates it, a library-wide
+	// change, so no resource= scope reaches it: only an unscoped grant does.
+	resource := resourceRef(resourceScopeKindProcessTemplate, id)
+	if write && !processTemplateHeadExists(r, id) {
+		resource = ""
+	}
+	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), resource, write)
+}
+
+// processTemplateHeadExists reports whether template id has a stored head. A
+// store error reads as no, which only ever narrows what a scope reaches.
+func processTemplateHeadExists(r *http.Request, id string) bool {
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return false
+	}
+	_, err = fs.GetTemplateHead(r.Context(), id)
+	return err == nil
 }
 
 // readableProcessTemplates is what an agent without the global read lists:

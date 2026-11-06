@@ -315,3 +315,19 @@ func TestResourcesWriteUmbrellaImpliesRead(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, pathPlan, nil).Code, "a deny of resources.read wins")
 	assert.Equal(t, http.StatusOK, e.draw("plan"), "the write itself stays")
 }
+
+// Saving a template that does not exist creates it, which is a library-wide
+// change: a resource= scope naming that id does not reach it, while an
+// unscoped grant does.
+func TestResourcesUmbrellaScopedWriteCannotCreateATemplate(t *testing.T) {
+	e := newUmbrellaEnv(t)
+	e.grant(agentd.PermResourcesWrite, `{"resource":["process_template:fresh"],"group":["crew"]}`)
+	create := func() int {
+		return e.agent(http.MethodPost, "/v1/process/templates/fresh", map[string]any{"template": shipFeatureTemplate("fresh")}).Code
+	}
+	assert.Equal(t, http.StatusForbidden, create())
+	e.grant(agentd.PermResourcesWrite, `{"resource":["process_template:fresh"]}`)
+	assert.Equal(t, http.StatusForbidden, create())
+	e.grant(agentd.PermResourcesWrite, "")
+	assert.Equal(t, http.StatusCreated, create())
+}
