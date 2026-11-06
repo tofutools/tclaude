@@ -176,11 +176,12 @@ when it comes from a fork. Main keeps hosted macOS: `release.yml` and
 
 The runner is an experiment. It is one Mac mini, and how it holds up under
 real PR load (uptime, job isolation, how persistent caches age, macOS updates)
-is still being measured. That is why it serves only PRs that opt in, and why
-main, which gates releases, stays on hosted macOS. If a job fails on `mini`
-and the same change passes on Linux, suspect the runner before the change. To
-check, rerun the job, or opt out by removing the label or pushing without the
-trailer.
+is still being measured. That is why main, which gates releases, stays on
+hosted macOS. A failure on `mini` that has nothing to do with the change (job
+setup, a cache or toolchain error, a timeout) may be the runner, so rerun the
+job. If it persists, report it, and if you need to unblock the PR, opt out by
+removing the label or pushing without the trailer. A failure in darwin-specific
+code is still most likely real: catching those is why a PR opts in.
 
 - **Routing.** The `Changes` job passes `--self-hosted-macos` to the
   classifier only when `github.event.pull_request.head.repo.full_name` equals
