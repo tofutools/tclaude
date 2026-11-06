@@ -34,7 +34,7 @@ const (
 var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
 	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR,
 	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl,
-	PermPermissionsGrant, PermPermissionsRevoke}
+	PermPermissionsGrant, PermPermissionsRevoke, PermAgentSandboxImplementation, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
 // groups the agent owns (cloneAuthorizationGroups). A delete purges the
@@ -71,26 +71,24 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// grants held in every group of the agent (peer_agent_delete.go).
 	rules["DELETE /api/agents/{id}"] = peerViewRule{feature: "members.delete", requires: PermGroupsMembersDelete, group: true, write: servePeerAgentDelete}
 	rules["GET /api/agents/{id}/debug-export"] = peerViewRule{feature: "members.debug-export", requires: PermGroupsMembersDebugExport, group: true, serve: servePeerAgentDebugExport}
-	// An agent's fast mode and its sandbox implementation reach what no peer
-	// grant hands out yet: only unrestricted trust holds these, through this
-	// node's own handlers. So does the delete dialog's worktree probe, which
-	// only a delete that takes the worktree too needs (unrestricted again);
-	// the dialog treats a refused probe as no worktree to offer.
+	// An agent's sandbox implementation, under agent.sandbox-impl held in
+	// every group of the agent; a restricted peer only adds confinement
+	// (peer_agent_sandbox_impl.go).
+	impl := peerViewRule{feature: "members.sandbox-impl", requires: PermAgentSandboxImplementation, group: true}
+	impl.write = servePeerAgentSandboxImpl
+	rules["POST /api/agents/{id}/sandbox-impl"] = impl
+	impl.write, impl.serve = nil, servePeerAgentSandboxImpl
+	rules["GET /api/agents/{id}/sandbox-impl"] = impl
+	// An agent's fast mode reaches what no peer grant hands out yet: only
+	// unrestricted trust holds it, through this node's own handler. So does
+	// the delete dialog's worktree probe, which only a delete that takes the
+	// worktree too needs (unrestricted again); the dialog treats a refused
+	// probe as no worktree to offer.
 	full := peerViewRule{feature: "agents.manage.full", requires: PermAgentSandboxImplementation, unrestrictedOnly: true, write: servePeerFullAgent}
-	for _, pattern := range []string{
-		"POST /api/agents/{id}/fast-mode/{direction}",
-		"POST /api/agents/{id}/sandbox-impl",
-	} {
-		rules[pattern] = full
-	}
+	rules["POST /api/agents/{id}/fast-mode/{direction}"] = full
 	read := full
 	read.write, read.serve = nil, servePeerFullAgent
-	for _, pattern := range []string{
-		"GET /api/agents/{id}/worktree",
-		"GET /api/agents/{id}/sandbox-impl",
-	} {
-		rules[pattern] = read
-	}
+	rules["GET /api/agents/{id}/worktree"] = read
 }
 
 // peerAgentControlRoutes are an agent's controls a peer grant reaches, by

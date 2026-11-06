@@ -1417,3 +1417,53 @@ type sandboxProfileReadError struct{ err error }
 
 func (e sandboxProfileReadError) Error() string { return e.err.Error() }
 func (e sandboxProfileReadError) Unwrap() error { return e.err }
+
+// SetSandboxProfilePeerOwner records that a linked node created the profile
+// with this ID.
+func SetSandboxProfilePeerOwner(profileID int64, peer string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO sandbox_profile_peer_owners (profile_id, peer) VALUES (?, ?)
+		ON CONFLICT(profile_id) DO UPDATE SET peer = excluded.peer`, profileID, peer)
+	return err
+}
+
+// SandboxProfilePeerOwner names the linked node that created the profile with
+// this ID, "" for one this node's operator made.
+func SandboxProfilePeerOwner(profileID int64) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var peer string
+	err = d.QueryRow(`SELECT peer FROM sandbox_profile_peer_owners WHERE profile_id = ?`, profileID).Scan(&peer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return peer, err
+}
+
+// SandboxProfileReferenced reports whether anything resolves the profile
+// (this ID, or this name) when it next launches: a group's sandbox profile, the
+// global default, or a live agent that named it explicitly at spawn. An
+// agent's resume falls back to the recorded name once the ID is gone, so a
+// profile recreated under the name would confine it instead.
+func SandboxProfileReferenced(profileID int64, name string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return true, err
+	}
+	var referenced bool
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM agent_groups WHERE sandbox_profile_id = ?1)
+		OR EXISTS(SELECT 1 FROM sandbox_profile_global_assignment WHERE profile_id = ?1)
+		OR EXISTS(SELECT 1 FROM agents a, json_each(CASE WHEN json_valid(a.effective_sandbox_config)
+				THEN a.effective_sandbox_config ELSE '{}' END, '$.applied') ap
+			WHERE a.retired_at IS NULL AND json_extract(ap.value, '$.scope') = 'explicit'
+			AND (json_extract(ap.value, '$.id') = ?1 OR json_extract(ap.value, '$.name') = ?2))
+		OR EXISTS(SELECT 1 FROM agents a WHERE a.retired_at IS NULL AND json_valid(a.launch_layers)
+			AND trim(json_extract(a.launch_layers, '$.explicit.explicit_sandbox_profile.fields.SandboxProfile')) = ?2)`,
+		profileID, name).Scan(&referenced)
+	return referenced, err
+}

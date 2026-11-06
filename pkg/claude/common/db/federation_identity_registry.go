@@ -33,6 +33,7 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"federation_peer_grants", "peer", IdentityRebind},
 	{"federation_peer_agent_views", "peer", IdentityRebind},
 	{"agent_cron_jobs", "owner_peer", IdentityRebind},
+	{"sandbox_profile_peer_owners", "peer", IdentityRebind},
 	{"federation_peer_access_requests", "peer", IdentityRebind},
 	{"federation_auto_workers", "peer", IdentityRebind},
 	{"federation_bundle_offers", "peer", IdentityClose},

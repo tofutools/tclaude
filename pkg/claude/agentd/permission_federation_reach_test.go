@@ -97,6 +97,9 @@ var pinnedFederationPeerSlugs = map[string]string{
 	// An agent's own permission overrides, held in every group of the agent
 	// and within the peer ceiling (peer_agent_permissions.go).
 	PermPermissionsGrant: "permissions_grant", PermPermissionsRevoke: "permissions_revoke",
+	// An agent's sandbox implementation, only ever adding confinement
+	// (peer_agent_sandbox_impl.go).
+	PermAgentSandboxImplementation: "sandbox_impl",
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{
@@ -109,6 +112,9 @@ var pinnedFedInstancePeerSlugs = map[string]bool{
 	// This node's libraries, authored from a peer's dashboard (peer_library.go).
 	PermPromptsManage: true, PermRolesManage: true, PermTemplatesManage: true, PermProfilesManage: true,
 	PermProcessTemplatesRead: true, PermProcessTemplatesManage: true,
+	// Narrow-only peer sandbox profiles, and a config bundle of what the
+	// peer reads otherwise (peer_sandbox_profiles.go, peer_config_export.go).
+	PermSandboxProfilesManage: true, PermConfigExport: true,
 }
 
 func TestFederationPeerSlugTablesArePinned(t *testing.T) {
@@ -305,5 +311,26 @@ func TestPeerActionPassThroughsArePeerGrants(t *testing.T) {
 			}
 			assert.False(t, slices.Contains(peerGateGrants(gate), p.Via), "%s: %s already answers it by reach", gate, p.Via)
 		}
+	}
+}
+
+// UNGRANTABLE_SLUGS in the dashboard lists local-only slugs with their Why,
+// word for word.
+func TestDashboardUngrantableSlugsMatchFederationReach(t *testing.T) {
+	raw, err := os.ReadFile("dashboard/js/fleet-admin-model.js")
+	require.NoError(t, err)
+	block := regexp.MustCompile(`(?s)export const UNGRANTABLE_SLUGS = Object\.freeze\(\[(.*?)\n\]\);`).FindSubmatch(raw)
+	require.NotNil(t, block, "UNGRANTABLE_SLUGS not found")
+	rows := regexp.MustCompile(`(?m)^\s*\{ slug: '([^']+)', why: '((?:[^'\\]|\\.)*)' \},$`).FindAllStringSubmatch(string(block[1]), -1)
+	require.Len(t, rows, strings.Count(string(block[1]), "slug: "))
+	listed := map[string]bool{}
+	for _, m := range rows {
+		listed[m[1]] = true
+		reach := slugFederationReach[m[1]]
+		require.Equal(t, FedLocal, reach.Kind, m[1])
+		require.Equal(t, reach.Why, strings.ReplaceAll(m[2], `\'`, `'`), "%s: the picker's reason is the registry's", m[1])
+	}
+	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage} {
+		require.True(t, listed[slug], "%s is shown as not grantable", slug)
 	}
 }

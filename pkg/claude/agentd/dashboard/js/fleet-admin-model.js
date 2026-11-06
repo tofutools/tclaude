@@ -142,6 +142,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.spawn.effort', kind: 'group', what: 'choose the effort of a spawn (with groups.members.spawn)' },
   { slug: 'groups.members.spawn.profile', kind: 'group', sensitive: true, what: 'pick any enabled, non-operator-only spawn profile (with groups.members.spawn)', warning: 'A profile brings its own roles, sandbox and approval modes, environment and gateway: picking one can open what .roles or .sandbox would. Mark a profile operator-only to keep it out.' },
   { slug: 'groups.members.spawn.roles', kind: 'group', sensitive: true, what: 'choose the roles of a spawn from yours (with groups.members.spawn)', warning: 'Roles carry permissions on this node.' },
+  { slug: 'agent.sandbox-impl', kind: 'group', sensitive: true, what: 'read a member agent\'s sandbox implementation and, with groups.members.spawn.sandbox, add confinement to it (off to resource-only, either to an implementation that confines access), held in every group the agent is in; loosening one or switching between two that confine stays yours', warning: 'Changing the implementation relaunches the agent under it at its next launch.' },
   { slug: 'groups.members.spawn.sandbox', kind: 'group', sensitive: true, what: 'add one of your sandbox profiles to a spawn (with groups.members.spawn)', warning: 'A sandbox profile can widen what the worker may reach.' },
   { slug: 'groups.members.spawn.permissions', kind: 'group', sensitive: true, what: 'choose the permission, tool and sandbox modes and per-slug permissions of a spawn (with groups.members.spawn)', warning: 'Can run the worker with no approval prompts, with sandbox rules this machine cannot enforce, and with your permissions.' },
   { slug: 'groups.members.spawn.environment', kind: 'group', sensitive: true, what: 'set environment overrides on a spawn (with groups.members.spawn)', warning: 'Environment can redirect the harness: its endpoints, config and proxy.' },
@@ -181,6 +182,8 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'process.runs.manage', kind: 'node', sensitive: true, what: 'pause any process run here; resume, decide and reassign (your operator only, not your agents) and resolve runs that run no host programs and spawn no performers on this node\'s authority, including this node\'s operator\'s', warning: 'Decides gates and reassigns work on this node\'s agent-only runs, in every group; a run with host programs, or one that may spawn performers, stays this node\'s operator\'s.' },
   { slug: 'process.runs.read', kind: 'node', sensitive: true, what: 'list and inspect every process run here, without program commands, host paths, error details or event payloads (read-only)', warning: 'Covers runs in every group, including groups the peer cannot otherwise see, with their parameters and performer reports.' },
   { slug: 'fleet.read', kind: 'node', what: 'the fleet brief: every active agent here with its status, groups, task link and presented PRs, and what needs your attention (read-only)', warning: 'Shows every agent on this node, in every group, and what waits on you: approvals, prompts and questions.' },
+  { slug: 'sandbox-profiles.manage', kind: 'node', sensitive: true, what: 'create sandbox profiles that narrow one of yours (one include, plus filesystem denies and cutting the network), and edit or delete only those; your own profiles and defaults stay yours', warning: 'An agent you assign one of its profiles to runs with the denies it chose.' },
+  { slug: 'config.export', kind: 'node', sensitive: true, what: 'download a config bundle of the sections it may read otherwise (spawn catalogs with node.spawn.read, templates with templates.manage, process templates with process.templates.read); never your config keys or default permissions, nor an item flagged as a credential', warning: 'The bundle carries the profiles\' environment values and paths it can read.' },
   { slug: 'node.spawn.read', kind: 'node', sensitive: true, what: 'the spawn dialog\'s catalogs, so its remote spawn dialog shows what you would apply and offers your profiles and prompts: spawn profiles, launch defaults, saved prompts, roles, sandbox profiles and harness policies (read-only)', warning: 'Spawn and sandbox profiles carry their environment values (often tokens) and paths: this shares them with the peer.' },
   { slug: 'node.spawn.defaults.manage', kind: 'node', sensitive: true, what: 'set or clear your global default spawn profile and global sandbox profile, among your existing profiles' },
   { slug: 'node.spawn.profiles.create', kind: 'node', sensitive: true, what: 'save new spawn profiles here (saved operator-only; editing and deleting take profiles.manage)' },
@@ -226,6 +229,14 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'models.proxy.leased', kind: 'node', gateway: true, what: 'leased model gateway access for requester-paid workers (all gateways, or one)' },
 ]);
 
+// UNGRANTABLE_SLUGS are local permissions an operator may look for here that
+// no peer can hold, listed in the picker as disabled rows with the reason
+// (their Why in permission_federation_reach.go, which must agree).
+export const UNGRANTABLE_SLUGS = Object.freeze([
+  { slug: 'settings.default-model', why: 'edits the host\'s ~/.claude/settings.json, which reaches Claude sessions outside tclaude' },
+  { slug: 'relaunch-policy.manage', why: 'a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)' },
+]);
+
 export function slugInfo(slug) {
   return PEER_SLUGS.find((s) => s.slug === slug) || { slug, kind: 'node', what: '' };
 }
@@ -234,7 +245,7 @@ export function slugInfo(slug) {
 // order.
 export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
-const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'groups.members.schedule', 'groups.members.delete', 'groups.members.debug-export', 'groups.members.remote-control', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
+const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'groups.members.schedule', 'groups.members.delete', 'groups.members.debug-export', 'groups.members.remote-control', 'agent.sandbox-impl', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
 const GROUP_ADMIN = new Set(['groups.owners.manage', 'groups.settings.member-permissions', 'permissions.grant', 'permissions.revoke', 'groups.settings.owner-scopes', 'process.runs.start', 'process.advance', 'groups.messages.schedule', 'groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
 
 export function slugCategory(slug) {

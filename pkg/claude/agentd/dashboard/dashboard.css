@@ -17309,6 +17309,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-gd-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; padding: 6px 10px; border-bottom: 1px solid #21262d; cursor: pointer; }
 .fa-gd-item:hover { background: rgba(110, 118, 129, 0.08); }
 .fa-gd-item.on { background: rgba(56, 139, 253, 0.12); }
+.fa-gd-item.fa-gd-ungrantable { cursor: default; opacity: 0.6; }
+.fa-gd-item.fa-gd-ungrantable:hover { background: none; }
 .fa-gd-item > code { overflow-wrap: anywhere; }
 .fa-gd-what { grid-column: 2 / 4; font-size: 12px; }
 .fa-gd-badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }

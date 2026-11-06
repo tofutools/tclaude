@@ -28,6 +28,13 @@ type peerStageGate func(v *peerView, r *http.Request) (int, string, string)
 var peerStageGates = map[string]peerStageGate{
 	"GET /api/groups/{name}/export": peerGroupExportGate,
 	"GET /api/agent-bundle/export":  peerAgentBundleExportGate,
+	"GET /api/config-bundle/export": peerConfigExportGate,
+}
+
+// peerStageRewrites adjust a gated download's request before its gate judges
+// it and it is staged.
+var peerStageRewrites = map[string]func(v *peerView, sub *http.Request){
+	"GET /api/config-bundle/export": peerConfigExportSkips,
 }
 
 func addPeerTransferRules(rules map[string]peerViewRule) {
@@ -37,6 +44,7 @@ func addPeerTransferRules(rules map[string]peerViewRule) {
 	rules["GET /api/peer-downloads/{id}"] = peerViewRule{feature: "transfer.downloads", publicRead: true, serve: servePeerDownloadChunk}
 	// A peer view job, read by the peer that started it (servePeerViewJob).
 	rules["GET /api/peer-view-jobs/{id}"] = peerViewRule{feature: "transfer.downloads", publicRead: true, serve: servePeerViewJob}
+	rules["GET /api/config-bundle/export"] = peerViewRule{feature: "config.export", requires: PermConfigExport, serve: servePeerStageable(peerConfigExportGate)}
 	rules["GET /api/groups/{name}/export"] = peerViewRule{feature: "groups.export", requires: PermGroupsExport, group: true, serve: servePeerStageable(peerGroupExportGate)}
 	rules["GET /api/agent-bundle/export"] = peerViewRule{feature: "agent.bundle.export", requires: PermAgentBundleExport, group: true, serve: servePeerStageable(peerAgentBundleExportGate)}
 }
@@ -90,6 +98,12 @@ func servePeerDownloadStage(w http.ResponseWriter, r *http.Request, v *peerView,
 	if gate == nil {
 		writeError(w, http.StatusForbidden, "peer_view_local_only", "this download requires unrestricted trust")
 		return
+	}
+	if rewrite := peerStageRewrites[pattern]; rewrite != nil {
+		// Before the gate, which then judges (and every chunk rechecks)
+		// exactly what is staged.
+		rewrite(v, sub)
+		matched.URL.RawQuery = sub.URL.RawQuery
 	}
 	if status, code, msg := gate(v, matched); status != 0 {
 		writeError(w, status, code, msg)

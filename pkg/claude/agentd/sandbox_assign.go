@@ -186,6 +186,13 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			db.ErrTemporarySandboxOverrideActive.Error())
 		return
 	}
+	// A peer's move was judged from the implementation it read before the
+	// lock (servePeerAgentSandboxImpl): one that changed since is judged
+	// again, never applied from a stale start.
+	if judged, ok := r.Context().Value(peerSandboxImplFromKey{}).(string); ok && judged != current.SandboxImplementation {
+		writeError(w, http.StatusConflict, "changed", "the agent's sandbox implementation changed meanwhile; try again")
+		return
+	}
 	h, err := harness.Resolve(current.Harness)
 	if err != nil {
 		writeError(w, http.StatusConflict, "harness", err.Error())
