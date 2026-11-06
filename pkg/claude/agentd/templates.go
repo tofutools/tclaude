@@ -714,9 +714,11 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // declared, and nothing on the deployed group would show it.
 //
 // A create changes nothing: there was no blueprint to loosen, and owner
-// scopes only take reach away. Deleting a scoped template removes its
-// narrowing, so it needs the slug too; otherwise delete-and-recreate would
-// sidestep the check.
+// scopes only take reach away: a new template without them gives no more than
+// default ownership. Deleting a scoped template removes its narrowing, so it
+// is gated too. A rename keeps the template's scopes (renameTemplate carries
+// them verbatim) and stays ungated, so rename-and-recreate under the old name
+// is still possible: the gate protects a template's scopes, not its name.
 
 // templateOwnerScopesSlugs are the slugs a group's owner-scope change needs
 // (groups_handlers); a template's needs the same, unscoped, as a template has
@@ -761,14 +763,16 @@ func httpTemplateOwnerScopesGate(w http.ResponseWriter, r *http.Request) templat
 
 // callerTemplateOwnerScopesGate gates on caller ("" is the human operator)
 // without writing a response, for a write judged inside a larger operation
-// such as a config bundle import.
+// such as a config bundle import. With no response to answer, it cannot spend
+// a use of a use-limited sudo grant, so it refuses one rather than let it
+// authorize without counting; the template endpoints spend it.
 func callerTemplateOwnerScopesGate(r *http.Request, caller string) templateOwnerScopesGate {
 	return func() *spawnFailure {
 		if caller == "" {
 			return nil
 		}
 		for _, slug := range templateOwnerScopesSlugs {
-			allowed, _, err := permissionAllowsAction(r, caller, slug, ActionContext{})
+			allowed, matched, err := permissionAllowsAction(r, caller, slug, ActionContext{})
 			if err != nil {
 				return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 			}
@@ -776,6 +780,11 @@ func callerTemplateOwnerScopesGate(r *http.Request, caller string) templateOwner
 				return &spawnFailure{http.StatusForbidden, "permission",
 					"changing or removing a template's owner scopes requires permission " + slug}
 			}
+			if _, limited := limitedSudoSource(r, caller, slug, ActionContext{}); limited {
+				return &spawnFailure{http.StatusForbidden, "permission",
+					"a use-limited grant of " + slug + " cannot change a template's owner scopes from a bundle; edit or import the template itself"}
+			}
+			recordAuditPermissionScope(r, slug, matched)
 		}
 		return nil
 	}

@@ -3,7 +3,9 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,8 +231,23 @@ func TestTemplateWritesThatChangeOwnerScopesNeedTheGroupOwnerScopeSlugs(t *testi
 // the same way, before any of its items apply.
 func TestConfigBundleReplacingTemplateOwnerScopesNeedsTheGroupOwnerScopeSlugs(t *testing.T) {
 	f := newTemplateScribeFlow(t)
+	importBundle := unscopedCrewBundle(t, f)
+	refused := importBundle()
+	assert.NotEqual(t, http.StatusOK, refused.Code)
+	assert.Contains(t, refused.Body.String(), agentd.PermGroupsSettingsOwnerScopes, "the refusal names the slug")
+	assertCrewOwnerScopes(t, f, roundTripScopes, "a refused bundle leaves the owner scopes as they were")
+
+	grantOwnerScopesSlugs(t, templateScribe)
+	rec := importBundle()
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assertCrewOwnerScopes(t, f, "", "the bundle replaced the template")
+}
+
+// unscopedCrewBundle returns an import, by the scribe holding config.import,
+// of a bundle holding crew without its owner scopes.
+func unscopedCrewBundle(t *testing.T, f *testharness.Flow) func() *httptest.ResponseRecorder {
+	t.Helper()
 	require.NoError(t, db.GrantAgentPermission(templateScribe, agentd.PermConfigImport, "test"))
-	// A bundle of crew without its owner scopes.
 	patch := humanReq(t, f, http.MethodPatch, "/v1/templates/crew", crewWithScopes(t, f, ""))
 	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
 	rec := humanReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=templates/crew", nil)
@@ -239,17 +256,54 @@ func TestConfigBundleReplacingTemplateOwnerScopesNeedsTheGroupOwnerScopeSlugs(t 
 	testharness.DecodeJSON(t, rec, &bundle)
 	patch = humanReq(t, f, http.MethodPatch, "/v1/templates/crew", crewWithScopes(t, f, roundTripScopes))
 	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
-
-	importBundle := func() *http.Response {
-		rec := agentReq(t, f, templateScribe, http.MethodPost, "/v1/config-bundle/import",
+	return func() *httptest.ResponseRecorder {
+		return agentReq(t, f, templateScribe, http.MethodPost, "/v1/config-bundle/import",
 			map[string]any{"bundle": bundle, "apply": true, "replace": true})
-		return rec.Result()
 	}
-	refused := importBundle()
-	assert.NotEqual(t, http.StatusOK, refused.StatusCode)
-	assertCrewOwnerScopes(t, f, roundTripScopes, "a refused bundle leaves the owner scopes as they were")
+}
 
-	grantOwnerScopesSlugs(t, templateScribe)
-	assert.Equal(t, http.StatusOK, importBundle().StatusCode)
-	assertCrewOwnerScopes(t, f, "", "the bundle replaced the template")
+// A use-limited sudo grant of groups.settings.owner-scopes is spent by an edit,
+// one use per edit. A bundle cannot spend it, so a bundle refuses it rather than
+// let it authorize without counting.
+func TestLimitedOwnerScopesSudoIsSpentByAnEditAndRefusedByABundle(t *testing.T) {
+	f := newTemplateScribeFlow(t)
+	importBundle := unscopedCrewBundle(t, f)
+	for _, slug := range []string{agentd.PermPermissionsGrant, agentd.PermPermissionsRevoke} {
+		require.NoError(t, db.GrantAgentPermission(templateScribe, slug, "test"))
+	}
+	now := time.Now()
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: templateScribe, Slug: agentd.PermGroupsSettingsOwnerScopes,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test", UsesLimit: 1, UsesLeft: 1})
+	require.NoError(t, err)
+
+	refused := importBundle()
+	assert.NotEqual(t, http.StatusOK, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "use-limited")
+	assertCrewOwnerScopes(t, f, roundTripScopes, "a refused bundle leaves the owner scopes as they were")
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id), "a refused bundle spends nothing")
+
+	rec := agentReq(t, f, templateScribe, http.MethodPatch, "/v1/templates/crew", crewWithScopes(t, f, otherScopes))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id), "the edit spent the use")
+}
+
+// A rename keeps the owner scopes verbatim, even a stored map this build cannot
+// decode, so templates.manage alone cannot drop them by renaming.
+func TestTemplateRenameKeepsOwnerScopesVerbatim(t *testing.T) {
+	f := newTemplateScribeFlow(t)
+	const undecodable = `{"no.such.slug":{"group":["g"]}}`
+	_, err := db.CreateGroupTemplate(&db.GroupTemplate{Name: "legacy", OwnerScopesJSON: undecodable,
+		Agents: []db.GroupTemplateAgent{{Name: "lead"}}})
+	require.NoError(t, err)
+	for from, to := range map[string]string{"crew": "crew2", "legacy": "legacy2"} {
+		before, err := db.GetGroupTemplate(from)
+		require.NoError(t, err)
+		rec := agentReq(t, f, templateScribe, http.MethodPost, "/v1/library/rename",
+			map[string]any{"kind": "templates", "name": from, "to": to})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		after, err := db.GetGroupTemplate(to)
+		require.NoError(t, err)
+		require.NotNil(t, after)
+		assert.Equal(t, before.OwnerScopesJSON, after.OwnerScopesJSON, "renaming %s keeps its owner scopes", from)
+	}
 }
