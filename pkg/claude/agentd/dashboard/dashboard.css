@@ -7959,23 +7959,19 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .agent-spawn-role-chip .role-chip-inspect { padding: 3px 3px 3px 9px; }
 .agent-spawn-role-chip .role-chip-remove { padding: 3px 8px 3px 4px; color: #9fc6ef; }
 .agent-spawn-role-chip button:hover { color: #fff; }
-#agent-spawn-role-add {
-  box-sizing: border-box; width: auto; min-width: 112px; min-height: 21px;
-  flex: 1 1 112px; align-self: center;
-  border: 0; border-radius: 0; background: transparent;
-  color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
+/* The add boxes (a role, a saved prompt) sit inline after the chips, inside
+   the same field: the box takes the rest of the row, and its input reads as
+   part of the field, borderless (tcl-986r2g). */
+:is(#agent-spawn-role-add, .saved-prompt-chip-add) {
+  box-sizing: border-box; min-width: 112px; flex: 1 1 112px; align-self: center;
 }
-#agent-spawn-role-add:focus { border: 0; }
-body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
-/* Saved-prompt chips reuse the role picker; the add select and Manage button
-   sit inside the same field. */
-.saved-prompt-chip-add {
-  box-sizing: border-box; width: auto; min-width: 112px; min-height: 21px;
-  flex: 1 1 112px; align-self: center;
+:is(#agent-spawn-role-add, .saved-prompt-chip-add) .filter-combobox-input {
+  box-sizing: border-box; width: 100%; min-height: 21px;
   border: 0; border-radius: 0; background: transparent;
-  color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
+  color: #c9d1d9; padding: 2px; font-size: 13px;
 }
-.saved-prompt-chip-add:focus { border: 0; }
+:is(#agent-spawn-role-add, .saved-prompt-chip-add) .filter-combobox-input:focus { border: 0; }
+body.wizard #agent-spawn-role-add .filter-combobox-input { background: #140f28; color: #f3e6c0; }
 .saved-prompt-picker .saved-prompt-chip-manage { flex: 0 0 auto; margin-left: auto; padding: 2px 8px; font-size: 12px; }
 .saved-prompt-inspect-body { white-space: pre-wrap; max-height: 180px; overflow: auto; color: #c9d1d9; }
 .saved-prompts-transfer { margin: 0 0 8px; }
@@ -13135,13 +13131,9 @@ body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
-/* The per-hero library-reference selects — the role-library dropdown
-   (JOH-351) and the launch-profile picker (JOH-350) — share the send-to
-   select's arcane coat. Their labelled row wrappers (.template-agent-roleref)
-   already read parchment-muted, so only the control itself needs skinning.
-   Options render on the OS layer: dark ink on parchment for legibility, same
-   as tw-sendto. */
-body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+/* The per-hero library references (the role and launch-profile choices) are
+   type-to-filter boxes (tcl-986r2g), skinned as every such box is. Their
+   labelled row wrappers (.template-agent-roleref) read parchment-muted. */
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
 /* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
    variants read muted-parchment (missing = gilt-warning); the legacy notice

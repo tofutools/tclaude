@@ -151,10 +151,9 @@ test('+ start process starts a run scoped to the group and refreshes', async (t)
   const form = fe.querySelector('form.gp-start-form');
   assert.equal(form.getAttribute('aria-label'), 'Start a process in frontend-squad');
   assert.match(form.textContent, /group scope · frontend-squad/);
-  const select = form.querySelector('select[aria-label="Template"]');
-  assert.deepEqual([...select.options].map((o) => o.textContent), ['Alpha', 'Beta']);
-  Object.defineProperty(select, 'value', { configurable: true, writable: true, value: 'tpl_b' });
-  await harness.act(() => harness.fireEvent(select, 'change'));
+  const select = form.querySelector('.gp-start-template');
+  assert.deepEqual(await comboLabels(harness, select), ['Alpha', 'Beta']);
+  await comboPick(harness, select, 'tpl_b');
 
   fail = true;
   await harness.act(() => harness.fireEvent(form, 'submit'));

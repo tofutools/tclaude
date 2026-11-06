@@ -84,7 +84,7 @@ test("the spawn dialog on another node is the local dialog over that node's snap
   assert.equal(q('#agent-spawn-remote-intro'), null, 'no request-mode banner');
   assert.deepEqual(await comboKeys(harness, q('#agent-spawn-group')), ['build'], "the node's groups, not this node's");
   assert.ok(q('.saved-prompt-chip-manage'), 'Manage… saved prompts is there, as locally');
-  assert.ok([...q('.saved-prompt-chip-add').querySelectorAll('option')].some((o) => o.value === 'house-rules'), "the node's prompt library");
+  assert.ok((await comboKeys(harness, q('.saved-prompt-chip-add'))).includes('house-rules'), "the node's prompt library");
   for (const id of ['agent-spawn-cwd-browse', 'agent-spawn-wt-repo-browse']) {
     assert.equal(q(`#${id}`).disabled, true, `${id} stays with this machine`);
   }

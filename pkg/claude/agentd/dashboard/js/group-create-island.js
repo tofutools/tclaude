@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { TemplateCombobox } from './registry-picker.js';
 import { GroupCombobox, snapshotGroups } from './group-picker.js';
 import {
   createGroupCreateDraft,
@@ -295,12 +296,10 @@ function GroupCreateDialog({
     ${draft.origin === 'template' ? html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
         plain="Group template" wizard="Summoning circle" /></span>
-      <${Select} id="group-create-template" value=${draft.template}
-        data-current-value=${draft.template} disabled=${disabled}
-        onChange=${(event) => changeTemplate(event.currentTarget.value)}>
-        <option value="">${words('(blank group)', '(no circle — a blank party)')}</option>
-        ${templates.map((entry) => html`<option key=${entry.name} value=${entry.name}>${entry.name}</option>`)}
-      <//>
+      <${TemplateCombobox} id="group-create-template" value=${draft.template} disabled=${disabled}
+        noneLabel=${words('(blank group)', '(no circle — a blank party)')} ariaLabel=${words('Group template', 'Summoning circle')}
+        placeholder=${words('Type to find a template…', 'Type to find a circle…')}
+        entries=${templates} onChange=${changeTemplate} />
       <${Button} id="group-create-manage-templates"
         disabled=${disabled}
         title=${words(

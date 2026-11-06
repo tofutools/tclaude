@@ -7,6 +7,7 @@ import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { ProfileChips, UsageRulesDialog, useSpawnProfileUsageLink } from './usage-rules.js';
+import { RoleCombobox } from './registry-picker.js';
 import { ProfileCombobox } from './profile-picker.js';
 import { usageRulesApi } from './usage-rules-actions.js';
 import { ProfileReapplyControl } from './profile-reapply.js';
@@ -1425,7 +1426,9 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       <div class="agent-spawn-role-chips" id="profile-editor-role-refs">${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
         <button data-ui-exempt type="button" class="role-chip-inspect" title=${role.missing ? 'This role is missing from the library' : roleTitle(role)} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
         <button data-ui-exempt type="button" class="role-chip-remove" aria-label=${`Remove role ${role.name}`} onClick=${() => { setInspectedRole(inspectedRole === role.name ? '' : inspectedRole); change(setDraft, 'role_refs', draft.role_refs.filter((name) => name !== role.name)); }}>×</button>
-      </span>`)}<${UISelect} id="profile-editor-role-add" value="" aria-label="Add role" onChange=${(event) => { const value = event.currentTarget.value; if (value) change(setDraft, 'role_refs', [...draft.role_refs, value]); event.currentTarget.value = ''; }}><option value="">＋ Add role…</option>${roles.filter((role) => !draft.role_refs.includes(role.name)).map((role) => html`<option value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}<//></div>
+      </span>`)}<${RoleCombobox} id="profile-editor-role-add" className="profile-editor-role-add" action=${true} value="" ariaLabel="Add role" placeholder="＋ Add role…"
+        entries=${roles.filter((role) => !draft.role_refs.includes(role.name))} disabled=${roles.every((role) => draft.role_refs.includes(role.name))}
+        onChange=${(value) => { if (value) change(setDraft, 'role_refs', [...draft.role_refs, value]); }} /></div>
       <div class="spawn-field-hint ui-hint">Hover or click a role to inspect its brief and grants.</div>
       ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
     </div></${Row}>
@@ -1982,7 +1985,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const choices = sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name);
     return html`<div key=${index} class="sbx-row sbx-include-row"><${ProfileCombobox} className="sbx-inc-name" value=${name} profiles=${choices}
       noneLabel="— choose profile —" missing="not in the registry" ariaLabel=${`Include ${index + 1}`} placeholder="Type to find a sandbox profile…"
-      attrs=${{ 'aria-invalid': missing || null, 'aria-describedby': missing ? warningID : null }}
+      inputAttrs=${{ 'aria-invalid': missing ? 'true' : null, 'aria-describedby': missing ? warningID : null }}
       onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} />${missing && html`<span id=${warningID} class="sbx-global-warning sbx-include-warning" role="alert">⚠ "${name}" not found in registry</span>`}<${Button} size="sm" icon=${true} variant="ghost danger" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×<//></div>`;
   })}</div><${Button} size="sm" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile<//></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-agent-directories-section" label="Agent-owned directories"

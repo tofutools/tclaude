@@ -1614,10 +1614,10 @@ test('sandbox editor discloses missing includes and preserves their authored nam
     'the box keeps the authored value chosen');
   assert.equal(missing.querySelector('input').value, 'base-caches (not in the registry)');
   assert.ok(missing.classList.contains('missing'));
-  assert.equal(missing.getAttribute('aria-invalid'), 'true');
+  assert.equal(missing.querySelector('input').getAttribute('aria-invalid'), 'true', 'the box itself says it is invalid');
   const warning = missing.closest('.sbx-include-row').querySelector('.sbx-include-warning');
   assert.equal(warning.getAttribute('role'), 'alert');
-  assert.equal(missing.getAttribute('aria-describedby'), warning.id);
+  assert.equal(missing.querySelector('input').getAttribute('aria-describedby'), warning.id);
   assert.match(warning.textContent, /⚠ "base-caches" not found in registry/);
 
   host.querySelector('#sandbox-profile-editor-submit').click();
@@ -3865,9 +3865,7 @@ test('profile editor composes inspectable roles into its permission preview', as
   reviewer.click(); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('.agent-spawn-role-inspect').textContent, /Review the change/);
 
-  const add = host.querySelector('#profile-editor-role-add');
-  choose(add, 'maintainer');
-  add.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await comboPick(harness, host.querySelector('#profile-editor-role-add'), 'maintainer');
   await harness.act(() => Promise.resolve());
   assert.deepEqual([...host.querySelectorAll('.role-chip-inspect')].map((chip) => chip.textContent), ['reviewer', 'maintainer']);
 

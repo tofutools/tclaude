@@ -17,6 +17,7 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
+import { RoleCombobox } from './registry-picker.js';
 import { ProfileCombobox } from './profile-picker.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
@@ -1485,18 +1486,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
                 update('roleRefs', (draft.roleRefs || []).filter((name) => name !== role.name));
               }}>×</button>
           </span>`)}
-          <select data-ui-exempt id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
-            aria-label=${wizard ? 'Add class' : 'Add role'} onChange=${(event) => {
-              const next = event.currentTarget.value;
-              if (!next) return;
-              const before = draft.roleRefs || [];
-              update('roleRefs', [...before, next]);
-              event.currentTarget.value = '';
-            }}>
-            <option value="">${wizard ? '＋ Add class…' : '＋ Add role…'}</option>
-            ${(context.roles || []).filter((role) => !(draft.roleRefs || []).includes(role.name))
-              .map((role) => html`<option key=${role.name} value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}
-          </select>
+          <${RoleCombobox} id="agent-spawn-role-add" className="agent-spawn-role-add" action=${true} value=""
+            disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
+            attrs=${{ 'data-remote-spawn-field': 'roles' }}
+            ariaLabel=${wizard ? 'Add class' : 'Add role'} placeholder=${wizard ? '＋ Add class…' : '＋ Add role…'}
+            entries=${(context.roles || []).filter((role) => !(draft.roleRefs || []).includes(role.name))}
+            onChange=${(next) => { if (next) update('roleRefs', [...(draft.roleRefs || []), next]); }} />
         </div>
         ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>
           ${inspected.missing ? html`⚠ This role is no longer in the library.` : html`

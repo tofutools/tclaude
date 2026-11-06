@@ -324,13 +324,13 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   assert.equal(profileRow('reviewer').hasAttribute('aria-disabled'), false);
   assert.ok(profileRow('local:mine'), 'this node\'s profiles are offered too');
   await harness.act(() => harness.fireEvent(q('#agent-spawn-load-profile-input'), 'blur'));
-  assert.equal(q('#agent-spawn-role-add').disabled, true, 'adding roles waits for a per-field grant');
-  assert.ok([...q('#agent-spawn-role-add').querySelectorAll('option')].some((o) => o.getAttribute('value') === 'builder'), 'the peer\'s roles are listed');
+  assert.equal(q('#agent-spawn-role-add-input').disabled, true, 'adding roles waits for a per-field grant');
 
   // The source filter narrows both pickers.
   await harness.act(() => harness.fireEvent(q('#agent-spawn-source-local'), 'change'));
   await flush(harness);
-  assert.ok(![...q('.saved-prompt-chip-add').querySelectorAll('option')].some((o) => String(o.getAttribute('value')).startsWith('local:')));
+  assert.ok(!(await comboKeys(harness, q('.saved-prompt-chip-add'))).some((key) => key.startsWith('local:')));
+  await harness.act(() => harness.fireEvent(q('.saved-prompt-chip-add input'), 'blur'));
   await harness.act(() => harness.fireEvent(q('#agent-spawn-source-local'), 'change'));
   await flush(harness);
 
@@ -454,9 +454,12 @@ test('an unrestricted peer opens the dialog like a local spawn', async (t) => {
   for (const id of ['agent-spawn-cwd', 'agent-spawn-harness', 'agent-spawn-owner', 'agent-spawn-perms', 'agent-spawn-descr', 'agent-spawn-task',
     'agent-spawn-approval', 'agent-spawn-sandbox', 'agent-spawn-sandbox-impl', 'agent-spawn-sandbox-profile', 'agent-spawn-trust-dir',
     'agent-spawn-remote-control', 'agent-spawn-auto-memory', 'agent-spawn-group-context', 'agent-spawn-wt-repo', 'agent-spawn-role-add']) {
-    assert.ok(q(`#${id}`), id);
-    assert.equal(q(`#${id}`).disabled, false, `${id} is live under unrestricted trust`);
+    const el = q(`#${id}-input`) || q(`#${id}`);
+    assert.ok(el, id);
+    assert.equal(el.disabled, false, `${id} is live under unrestricted trust`);
   }
+  assert.ok((await comboKeys(harness, q('#agent-spawn-role-add'))).includes('builder'), 'the peer\'s roles are listed');
+  await harness.act(() => harness.fireEvent(q('#agent-spawn-role-add-input'), 'blur'));
   assert.equal(q('.sbx-add-row').disabled, false, 'environment overrides can be added');
   assert.ok([...q('#agent-spawn-sandbox-profile').querySelectorAll('option')].some((o) => o.getAttribute('value') === 'tight'), 'the peer\'s sandbox profiles are offered');
   const chip = q('#agent-spawn-prompt-refs .agent-spawn-role-chip .role-chip-remove');

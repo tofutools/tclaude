@@ -30,6 +30,7 @@
 //   missing     the word after a value the list lacks (default "missing")
 //   placeholder, emptyHint, ariaLabel, disabled, cap
 //   attrs       more attributes on the wrapper (a data-* hook)
+//   inputAttrs  more attributes on the box itself (aria-invalid, aria-describedby)
 import { h } from 'preact';
 import htm from 'htm';
 import { Button } from './ui-components.js';
@@ -43,7 +44,7 @@ export const CHOICE_CAP = 30;
 
 export function ChoiceCombobox({
   id, value = '', onChange, items = [], noneLabel = '', clearable = false, className = '', action = false, missing = 'missing', floating = true,
-  placeholder = 'Type to find…', emptyHint = 'No matches.', ariaLabel = 'Find', disabled = false, cap = CHOICE_CAP, attrs = {},
+  placeholder = 'Type to find…', emptyHint = 'No matches.', ariaLabel = 'Find', disabled = false, cap = CHOICE_CAP, attrs = {}, inputAttrs = {},
 }) {
   const chosen = !action && value ? items.find((item) => item.key === value) : null;
   // What the box shows while it is not being typed in, as a <select> shows
@@ -55,7 +56,7 @@ export function ChoiceCombobox({
     onKeyDown=${(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
     <${FilterCombobox} id=${id ? `${id}-list` : undefined} inputId=${id ? `${id}-input` : undefined} items=${items}
       value=${action ? '' : value || ''} multi=${false} cap=${cap} ariaLabel=${ariaLabel} disabled=${disabled}
-      selectedLabel=${selectedLabel} overlay=${floating} placeholder=${placeholder} emptyHint=${emptyHint}
+      selectedLabel=${selectedLabel} overlay=${floating} placeholder=${placeholder} emptyHint=${emptyHint} inputAttrs=${inputAttrs}
       onChange=${(key) => {
         // Picking the chosen row again keeps it, as a <select> does: only ×
         // empties a choice, and only where none is one.

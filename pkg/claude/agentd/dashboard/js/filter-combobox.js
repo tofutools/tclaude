@@ -132,7 +132,7 @@ export function comboGroupSummary(items) {
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
-  alwaysOpen = false, autoFocus = false, busy = false, selectedLabel = null, overlay = false, commitOnBlur = false,
+  alwaysOpen = false, autoFocus = false, busy = false, selectedLabel = null, overlay = false, commitOnBlur = false, inputAttrs = {},
 }) {
   const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
@@ -249,7 +249,7 @@ export function FilterCombobox({
   const standIn = selectedLabel !== null;
   const shownText = standIn && !openState && !query ? selectedLabel : query;
   return html`<div class=${`filter-combobox${overlay ? ' filter-combobox-floating' : ''}`} onClick=${(event) => event.preventDefault()}>
-    <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${shownText}
+    <input ...${inputAttrs} ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${shownText}
       placeholder=${standIn && openState && selectedLabel ? selectedLabel : placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
