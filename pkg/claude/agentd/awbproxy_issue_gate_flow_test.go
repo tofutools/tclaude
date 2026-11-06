@@ -49,7 +49,7 @@ func TestAWBProxy_EveryIssueVerbGatesItsIDBeforeTheNetwork(t *testing.T) {
 				code int
 				want string
 			}{
-				{"a3f9c1", http.StatusBadRequest, ""},
+				{"a3f9c1", http.StatusBadRequest, "A bare hash is not accepted here"},
 				{"secret-a3f9c1", http.StatusForbidden, "workspace_not_allowed"},
 			} {
 				body := map[string]any{"id": c.id}
@@ -58,9 +58,7 @@ func TestAWBProxy_EveryIssueVerbGatesItsIDBeforeTheNetwork(t *testing.T) {
 				}
 				res := w.post(v.path, body)
 				assert.Equal(t, c.code, res.Code, "%s id=%s: %s", v.path, c.id, res.Body.String())
-				if c.want != "" {
-					assert.Contains(t, res.Body.String(), c.want)
-				}
+				assert.Contains(t, res.Body.String(), c.want, "refused by the id gate itself")
 			}
 			assert.False(t, rec.sawAnyCall(), "the id is judged before any AWB call")
 		})

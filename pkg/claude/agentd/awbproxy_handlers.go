@@ -506,6 +506,17 @@ func decodeAWBProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
 // The workspace is checked BEFORE the call rather than after it, which is the
 // whole reason validateAWBIssueRef refuses a bare hash: a reference that names
 // no workspace could only be judged once the issue had already been fetched.
+func (s *awbProxySession) gateIssueRef(raw string) (string, *proxyFault) {
+	ref, fault := validateAWBIssueRef(raw)
+	if fault != nil {
+		return "", fault
+	}
+	if fault := s.requireAllowedWorkspace(workspaceKeyOf(ref)); fault != nil {
+		return "", fault
+	}
+	return ref, nil
+}
+
 // awbIssueAddressed is a request body addressed by one issue.
 type awbIssueAddressed interface{ issueID() string }
 
@@ -525,17 +536,6 @@ func openAWBIssueProxy(w http.ResponseWriter, r *http.Request, perm string, body
 		return nil, "", false
 	}
 	return s, ref, true
-}
-
-func (s *awbProxySession) gateIssueRef(raw string) (string, *proxyFault) {
-	ref, fault := validateAWBIssueRef(raw)
-	if fault != nil {
-		return "", fault
-	}
-	if fault := s.requireAllowedWorkspace(workspaceKeyOf(ref)); fault != nil {
-		return "", fault
-	}
-	return ref, nil
 }
 
 // identity is the AWB user the daemon authenticates as — the one identity an
