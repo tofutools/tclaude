@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -241,7 +242,31 @@ func FederationEnrollmentNodePreview(t *proto.EnrollmentToken, localKey []byte) 
 	defer func() { _ = tx.Rollback() }()
 	return enrollmentNodePreviewTx(tx, t, localKey)
 }
-func CompleteFederationEnrollment(t *proto.EnrollmentToken, localKey []byte, preview string) error {
+
+// FederationEnrollmentNodeBound reports whether this node already completed
+// enrollment with t's master under t.
+func FederationEnrollmentNodeBound(t *proto.EnrollmentToken) (bool, error) {
+	d, e := Open()
+	if e != nil {
+		return false, e
+	}
+	tx, e := d.Begin()
+	if e != nil {
+		return false, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	b, e := enrollmentBinding(tx, "node", t.Claims.TokenID, t.Claims.Master)
+	return b != nil, e
+}
+
+// CompleteFederationEnrollment trusts the master at trust, with grants, in one
+// transaction: what this node's operator gave it, on enroll restricted with no
+// grants. The token's own level is the master's request, never applied. A
+// retry of a completed enrollment changes no trust and no grants.
+func CompleteFederationEnrollment(t *proto.EnrollmentToken, localKey []byte, preview, trust string, grants []FederationPeerGrant) error {
+	if trust != FederationTrustRestricted && trust != FederationTrustUnrestricted {
+		return fmt.Errorf("invalid trust level %q", trust)
+	}
 	d, e := Open()
 	if e != nil {
 		return e
@@ -279,8 +304,18 @@ func CompleteFederationEnrollment(t *proto.EnrollmentToken, localKey []byte, pre
 	if exists != 0 {
 		return ErrEnrollmentRefused
 	}
-	if _, e = tx.Exec(`INSERT INTO federation_peers(instance_id,pubkey,label,name,trusted_at,trust_level) VALUES(?,?,?,?,?,?)`, t.Claims.Master, t.Claims.MasterKey, "master-"+t.Claims.Master, "", dbTime(time.Now()), t.Claims.TrustLevel); e != nil {
+	if _, e = tx.Exec(`INSERT INTO federation_peers(instance_id,pubkey,label,name,trusted_at,trust_level) VALUES(?,?,?,?,?,?)`, t.Claims.Master, t.Claims.MasterKey, "master-"+t.Claims.Master, "", dbTime(time.Now()), trust); e != nil {
 		return e
+	}
+	for _, g := range grants {
+		policy, e := json.Marshal(g.SpawnPolicy)
+		if e != nil {
+			return e
+		}
+		if _, e = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,?,?,?,?)
+ ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy`, t.Claims.Master, g.Slug, g.Scope, string(policy), dbTime(time.Now())); e != nil {
+			return e
+		}
 	}
 	if e = insertEnrollment(tx, "node", t, t.Claims.MasterKey, localKey); e != nil {
 		return e

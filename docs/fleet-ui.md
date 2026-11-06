@@ -574,10 +574,12 @@ sharing**, **Profiles & pools**, **Offers**, **Jobs & repos**, **Moves**,
   of the spawn requests and operator mail this node sent; decisions arrive in
   Messages. CLI: `tclaude federation spawn-request`, `requests`, `outbox`.
 - **Invites & joining** — **Create invite…** issues an enrollment token for a
-  node profile (uses, lifetime, the trust the joining node grants back) and
-  shows it once; revoke active tokens from the list. To join a master:
-  **Join with a token…**, pick the master, paste the token, check both
-  fingerprints in the preview, tick the check and **Enroll**.
+  node profile (uses, lifetime, and the trust to ask the joining node for,
+  which is only a request) and shows it once; revoke active tokens from the
+  list. To join a master: **Join with a token…**, pick the master, paste the
+  token, check both fingerprints in the preview, tick the check and
+  **Enroll**. Enroll gives the master restricted trust with no grants; to give
+  it permissions on this machine, use `tclaude federation become-node`.
 - **Peer grants** — pick a peer or a pool, see each grant with where it
   applies (a group, or all groups including future ones, flagged) and what it
   allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.

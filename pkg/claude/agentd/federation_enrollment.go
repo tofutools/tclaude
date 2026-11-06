@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -192,6 +193,22 @@ func registerFederationEnrollmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/enrollments", handleFederationEnrollments)
 	mux.HandleFunc("POST /v1/federation/enroll/preview", handleFederationEnroll)
 	mux.HandleFunc("POST /v1/federation/enroll", handleFederationEnroll)
+	mux.HandleFunc("POST /v1/federation/become-node", handleFederationEnroll)
+}
+
+// fedEnrollAuditDetail names what an enroll gave the master, exactly.
+func fedEnrollAuditDetail(tokenID string, becomeNode bool, gift fedBecomeNodeGift) string {
+	if !becomeNode {
+		return tokenID + " mode=enroll trust=restricted"
+	}
+	detail := tokenID + " mode=become-node trust=" + gift.trust
+	for _, g := range gift.grants {
+		detail += " give=" + g.Slug
+		if g.Scope != "" {
+			detail += "@" + g.Scope
+		}
+	}
+	return detail
 }
 func handleFederationEnrollments(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "list enrolled nodes") {
@@ -278,6 +295,109 @@ type fedEnrollmentInput struct {
 	Master  string `json:"master"`
 	Token   string `json:"token"`
 	Preview string `json:"preview_token"`
+	// The rest is become-node's only: what this node gives the master. A
+	// plain enroll that sets any of it is refused, never quietly dropped.
+	// Trust is decoded only to refuse it: no request names a trust level.
+	Trust              string               `json:"trust,omitempty"`
+	Unrestricted       bool                 `json:"unrestricted,omitempty"`
+	GivePermissions    []fedGivenPermission `json:"give_permissions,omitempty"`
+	ConfirmFingerprint string               `json:"confirm_fingerprint,omitempty"`
+	// CheckOnly answers what become-node would give, checked, without
+	// contacting the master: the CLI and dashboard warn from it.
+	CheckOnly bool `json:"check_only,omitempty"`
+}
+
+// fedGivenPermission is one peer grant become-node gives the master: a slug,
+// and for a group grant the group it is scoped to (group=<name>).
+type fedGivenPermission struct {
+	Slug  string `json:"slug"`
+	Scope string `json:"scope,omitempty"`
+}
+
+// fedBecomeNodeGiveLimit bounds one become-node's permission list.
+const fedBecomeNodeGiveLimit = 256
+
+// fedBecomeNodeGift is what become-node gives the master, checked: the trust
+// level and the peer grants, with group scopes resolved to group IDs.
+type fedBecomeNodeGift struct {
+	trust  string
+	grants []db.FederationPeerGrant
+}
+
+// fedCheckBecomeNode checks what an enroll request gives the master. A plain
+// enroll gives nothing: restricted trust, no grants. become-node gives exactly
+// what it names, after the master's fingerprint is confirmed: unrestricted
+// trust, or a list of peer grants, never both and never neither.
+func fedCheckBecomeNode(in fedEnrollmentInput, masterKey []byte, becomeNode bool) (fedBecomeNodeGift, error) {
+	gift := fedBecomeNodeGift{trust: db.FederationTrustRestricted}
+	if in.Trust != "" {
+		return gift, errors.New("an enroll names no trust level: plain enroll gives restricted; become-node gives unrestricted or a permission list")
+	}
+	if !becomeNode {
+		if in.Unrestricted || len(in.GivePermissions) > 0 || in.ConfirmFingerprint != "" {
+			return gift, errors.New("enroll gives the master nothing; to give it permissions on this node, use become-node")
+		}
+		return gift, nil
+	}
+	if in.ConfirmFingerprint != proto.Fingerprint(ed25519.PublicKey(masterKey)) {
+		return gift, errors.New("become-node needs the master's fingerprint confirmed (confirm_fingerprint), compared with its operator over another channel")
+	}
+	switch {
+	case in.Unrestricted && len(in.GivePermissions) > 0:
+		return gift, errors.New("give unrestricted trust or a permission list, not both")
+	case in.Unrestricted:
+		gift.trust = db.FederationTrustUnrestricted
+		return gift, nil
+	case len(in.GivePermissions) == 0:
+		return gift, errors.New("become-node gives the master permissions: name them, or unrestricted; to give nothing, use enroll")
+	case len(in.GivePermissions) > fedBecomeNodeGiveLimit:
+		return gift, fmt.Errorf("at most %d permissions", fedBecomeNodeGiveLimit)
+	}
+	seen := map[string]bool{}
+	for _, give := range in.GivePermissions {
+		grant, err := fedBecomeNodeGrant(give)
+		if err != nil {
+			return gift, err
+		}
+		if key := grant.Slug + " " + grant.Scope; !seen[key] {
+			seen[key] = true
+			gift.grants = append(gift.grants, grant)
+		}
+	}
+	return gift, nil
+}
+
+// fedBecomeNodeGrant checks one permission become-node gives: a peer grant
+// with its default policy. One that only means something with a policy of its
+// own (an agent permission allowlist, a model gateway) is given afterwards
+// with `federation grant`, as are a grant's limits.
+func fedBecomeNodeGrant(give fedGivenPermission) (db.FederationPeerGrant, error) {
+	slug, scope := strings.TrimSpace(give.Slug), strings.TrimSpace(give.Scope)
+	_, groupSlug := federationPeerSlugs[slug]
+	instanceSlug := fedInstancePeerSlug(slug)
+	switch {
+	case !groupSlug && !instanceSlug:
+		return db.FederationPeerGrant{}, fmt.Errorf("%q is not a permission a peer is given", slug)
+	case slug == PermAgentsReceivePermissions || slug == PermModelsProxy || slug == PermModelsProxyLeased:
+		return db.FederationPeerGrant{}, fmt.Errorf("%s takes a policy of its own: give it after enrolling, with federation grant", slug)
+	case instanceSlug && scope != "":
+		return db.FederationPeerGrant{}, fmt.Errorf("%s is an unscoped instance grant", slug)
+	case fedPeerSlugRequiresGroup(slug) && scope == "":
+		return db.FederationPeerGrant{}, fmt.Errorf("%s needs a group: %s@group=<local group>", slug, slug)
+	}
+	grant := db.FederationPeerGrant{Slug: slug}
+	if scope != "" {
+		name, ok := strings.CutPrefix(scope, "group=")
+		group, err := db.GetAgentGroupByName(name)
+		if !ok || err != nil || group == nil || group.IsArchived() {
+			return db.FederationPeerGrant{}, fmt.Errorf("%s: no active local group %q (scope is group=<name>)", slug, name)
+		}
+		grant.Scope = db.FederationGroupScope(group.ID)
+	}
+	if slug == PermGroupsMembersSpawn || slug == PermJobsRun {
+		grant.SpawnPolicy.MaxLive = 2
+	}
+	return grant, nil
 }
 
 func enrollmentPreview(rt *fedRuntime, in fedEnrollmentInput) (*proto.EnrollmentToken, string, error) {
@@ -308,6 +428,7 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "enroll this node") {
 		return
 	}
+	becomeNode := strings.HasSuffix(r.URL.Path, "/become-node")
 	var in fedEnrollmentInput
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in) != nil {
 		writeError(w, 400, "json", "invalid enrollment request")
@@ -324,8 +445,33 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/preview") {
-		writeJSON(w, 200, map[string]any{"claims": t.Claims, "preview_token": preview, "master_fingerprint": proto.Fingerprint(ed25519.PublicKey(t.Claims.MasterKey)), "node_fingerprint": proto.Fingerprint(rt.id.Pub), "consent": "Running enroll trusts the pinned master at the displayed level. Its profile controls this node's authority on the master. No default profile or config offer is applied locally."})
+		writeJSON(w, 200, map[string]any{"claims": t.Claims, "preview_token": preview, "master_fingerprint": proto.Fingerprint(ed25519.PublicKey(t.Claims.MasterKey)), "node_fingerprint": proto.Fingerprint(rt.id.Pub), "requested_trust": t.Claims.TrustLevel,
+			"consent": "Enroll accepts what the master offers this node (its profile, your authority on the master) and gives the master nothing here beyond restricted trust with no grants. The master's requested trust is only a request. To give it permissions on this node, use become-node."})
 		return
+	}
+	gift, e := fedCheckBecomeNode(in, t.Claims.MasterKey, becomeNode)
+	if e != nil {
+		writeError(w, 400, "enroll_gives", e.Error())
+		return
+	}
+	if in.CheckOnly {
+		if !becomeNode {
+			writeError(w, 400, "enroll_gives", "check_only is become-node's")
+			return
+		}
+		gives := make([]map[string]any, 0, len(in.GivePermissions))
+		for _, give := range in.GivePermissions {
+			slug := strings.TrimSpace(give.Slug)
+			gives = append(gives, map[string]any{"slug": slug, "scope": strings.TrimSpace(give.Scope), "sensitive": slugFederationReach[slug].Sensitive})
+		}
+		writeJSON(w, 200, map[string]any{"trust": gift.trust, "gives": gives, "master_fingerprint": proto.Fingerprint(ed25519.PublicKey(t.Claims.MasterKey))})
+		return
+	}
+	if becomeNode {
+		if bound, err := db.FederationEnrollmentNodeBound(t); err != nil || bound {
+			writeError(w, 409, "already_enrolled", "this node already enrolled with this token; give the master permissions with federation grant or federation trust")
+			return
+		}
 	}
 	if in.Preview == "" || in.Preview != preview {
 		writeError(w, 409, "stale_preview", "preview enrollment again")
@@ -372,7 +518,7 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 		if currentFederation() != rt {
 			e = errors.New("federation changed; retry enrollment")
 		} else {
-			e = db.CompleteFederationEnrollment(t, rt.id.Pub, in.Preview)
+			e = db.CompleteFederationEnrollment(t, rt.id.Pub, in.Preview, gift.trust, gift.grants)
 		}
 		finish()
 		fedNodeGroupsMu.Unlock()
@@ -380,7 +526,7 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "enrollment", e.Error())
 			return
 		}
-		recordFederationAudit("federation.enroll.complete", t.Claims.Master, "", "", t.Claims.TokenID, 200)
+		recordFederationAudit("federation.enroll.complete", t.Claims.Master, "", "", fedEnrollAuditDetail(t.Claims.TokenID, becomeNode, gift), 200)
 		broadcastFederationCatalogs()
 		// The master's first catalog may have arrived before its key was trusted.
 		go rt.sendControl(t.Claims.Master, proto.KindCatalogReq, "", nil)

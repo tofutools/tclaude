@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,7 +146,7 @@ func TestFederation_EnrollmentNodeRequiresPinnedPendingResult(t *testing.T) {
 	}
 	peer, e = db.GetFederationPeer(p.id.ID())
 	require.NoError(t, e)
-	require.Equal(t, "unrestricted", peer.TrustLevel)
+	require.Equal(t, db.FederationTrustRestricted, peer.TrustLevel, "the token requests unrestricted; the node chose nothing, so restricted")
 	fedEventually(t, "post-trust master catalog refresh", func() bool { return len(p.envelopes(proto.KindCatalogReq)) > 0 })
 	assignment, e := db.GetFederationNodeProfileAssignment(p.id.ID())
 	require.NoError(t, e)
@@ -166,4 +167,162 @@ func TestFederation_EnrollmentAPIsOperatorOnlyAndPinSelector(t *testing.T) {
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/enroll/preview", map[string]any{"master": fh.peer.id.ID(), "token": "tcle1.bad.secret"})
 	require.Equal(t, 409, rec.Code)
 	require.NotContains(t, rec.Body.String(), "bad.secret")
+}
+
+// fedEnrollPreviewed previews an enrollment with a token from the harness
+// peer and returns the enroll body, ready to send.
+func fedEnrollPreviewed(t *testing.T, fh *fedHarness, requested string) (map[string]any, *proto.EnrollmentToken) {
+	t.Helper()
+	p := fh.peer
+	_, e := db.UntrustFederationPeer(p.id.ID())
+	require.NoError(t, e)
+	bearer, tok, e := proto.NewEnrollmentToken(p.id, "profile-id", "rigs", 3, requested, time.Now().Add(time.Hour))
+	require.NoError(t, e)
+	in := map[string]any{"master": p.id.ID(), "token": bearer}
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/enroll/preview", in)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var preview struct {
+		Token     string `json:"preview_token"`
+		Requested string `json:"requested_trust"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+	require.Equal(t, requested, preview.Requested, "the request is shown as one")
+	in["preview_token"] = preview.Token
+	return in, tok
+}
+
+// fedEnrollAnswered sends body to path and answers the master's request.
+func fedEnrollAnswered(t *testing.T, fh *fedHarness, path string, body map[string]any, tok *proto.EnrollmentToken) *httptest.ResponseRecorder {
+	t.Helper()
+	p := fh.peer
+	seen := len(p.envelopes(proto.KindEnrollRequest))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- fedHuman(t, fh.f, http.MethodPost, path, body) }()
+	var request *proto.Envelope
+	fedEventually(t, "enrollment request", func() bool {
+		requests := p.envelopes(proto.KindEnrollRequest)
+		if len(requests) <= seen {
+			return false
+		}
+		request = requests[len(requests)-1]
+		return true
+	})
+	result := proto.EnrollmentResult{Accepted: true, TokenID: tok.Claims.TokenID, Node: p.agentdID, ProfileID: tok.Claims.ProfileID, ProfileRevision: 3, TrustLevel: tok.Claims.TrustLevel}
+	p.send(fedEnrollmentMessage(t, p, proto.KindEnrollResult, request.ID, result))
+	select {
+	case rec := <-done:
+		return rec
+	case <-time.After(10 * time.Second):
+		t.Fatal("enrollment did not complete")
+		return nil
+	}
+}
+
+// fedEnrollRefused sends each body to path and requires a 400 that never
+// reaches the master, so it spends no token use.
+func fedEnrollRefused(t *testing.T, fh *fedHarness, path string, in map[string]any, bads []map[string]any) {
+	t.Helper()
+	for _, bad := range bads {
+		body := maps.Clone(in)
+		maps.Copy(body, bad)
+		rec := fedHuman(t, fh.f, http.MethodPost, path, body)
+		require.Equal(t, 400, rec.Code, "%s %v: %s", path, bad, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "enroll_gives", "%v", bad)
+	}
+	require.Empty(t, fh.peer.envelopes(proto.KindEnrollRequest), "a refused enroll never reaches the master")
+	peer, e := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Nil(t, peer)
+}
+
+// Plain enroll accepts what the master offers and gives it nothing: no trust
+// level or permission rides on it, whatever the token requests.
+func TestFederation_EnrollGivesTheMasterNothing(t *testing.T) {
+	fh := newFedHarness(t)
+	in, tok := fedEnrollPreviewed(t, fh, db.FederationTrustUnrestricted)
+	fedEnrollRefused(t, fh, "/v1/federation/enroll", in, []map[string]any{
+		{"trust": "unrestricted"},
+		{"unrestricted": true, "confirm_fingerprint": proto.Fingerprint(fh.peer.id.Pub)},
+		{"give_permissions": []map[string]any{{"slug": agentd.PermHostRead}}},
+	})
+	rec := fedEnrollAnswered(t, fh, "/v1/federation/enroll", in, tok)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	peer, e := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Equal(t, db.FederationTrustRestricted, peer.TrustLevel, "the token's unrestricted request is not applied")
+	grants, e := db.ListFederationPeerGrants(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Empty(t, grants)
+}
+
+// become-node gives the master exactly the permissions it names, after the
+// master's fingerprint is confirmed, and nothing the token requests.
+func TestFederation_BecomeNodeGivesExactlyWhatItNames(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("builders")
+	in, tok := fedEnrollPreviewed(t, fh, db.FederationTrustUnrestricted)
+	fp := proto.Fingerprint(fh.peer.id.Pub)
+	spawn := map[string]any{"slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders"}
+	fedEnrollRefused(t, fh, "/v1/federation/become-node", in, []map[string]any{
+		{"give_permissions": []map[string]any{spawn}},
+		{"give_permissions": []map[string]any{spawn}, "confirm_fingerprint": "SHA256:not-the-master"},
+		{"confirm_fingerprint": fp},
+		{"confirm_fingerprint": fp, "unrestricted": true, "give_permissions": []map[string]any{spawn}},
+		{"confirm_fingerprint": fp, "trust": "unrestricted"},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": "no.such.slug"}}},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": agentd.PermAgentMorph}}},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": agentd.PermHostRead, "scope": "group=builders"}}},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": agentd.PermAgentsReceive}}},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": agentd.PermAgentsReceivePermissions, "scope": "group=builders"}}},
+		{"confirm_fingerprint": fp, "give_permissions": []map[string]any{{"slug": agentd.PermGroupsMembersSpawn, "scope": "group=nowhere"}}},
+	})
+
+	in["confirm_fingerprint"] = fp
+	in["give_permissions"] = []map[string]any{spawn, {"slug": agentd.PermHostRead}}
+	check := maps.Clone(in)
+	check["check_only"] = true
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/become-node", check)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var checked struct {
+		Trust string `json:"trust"`
+		Gives []struct {
+			Slug      string `json:"slug"`
+			Sensitive bool   `json:"sensitive"`
+		} `json:"gives"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &checked))
+	require.Equal(t, db.FederationTrustRestricted, checked.Trust)
+	require.Len(t, checked.Gives, 2)
+	require.True(t, checked.Gives[1].Sensitive, "host.read is named sensitive for the warning")
+	require.Empty(t, fh.peer.envelopes(proto.KindEnrollRequest), "a check never reaches the master")
+	rec = fedEnrollAnswered(t, fh, "/v1/federation/become-node", in, tok)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	peer, e := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Equal(t, db.FederationTrustRestricted, peer.TrustLevel, "a permission list is not unrestricted trust")
+	grants, e := db.ListFederationPeerGrants(fh.peer.id.ID())
+	require.NoError(t, e)
+	g, e := db.GetAgentGroupByName("builders")
+	require.NoError(t, e)
+	given := map[string]string{}
+	for _, grant := range grants {
+		given[grant.Slug] = grant.Scope
+	}
+	require.Equal(t, map[string]string{agentd.PermGroupsMembersSpawn: db.FederationGroupScope(g.ID), agentd.PermHostRead: ""}, given)
+
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/become-node", in)
+	require.Equal(t, 409, rec.Code, "a second become-node on the same token gives nothing more: %s", rec.Body.String())
+}
+
+// Unrestricted takes become-node with --yes-unrestricted and the fingerprint,
+// even when the token requests only restricted.
+func TestFederation_BecomeNodeUnrestricted(t *testing.T) {
+	fh := newFedHarness(t)
+	in, tok := fedEnrollPreviewed(t, fh, db.FederationTrustRestricted)
+	in["confirm_fingerprint"], in["unrestricted"] = proto.Fingerprint(fh.peer.id.Pub), true
+	rec := fedEnrollAnswered(t, fh, "/v1/federation/become-node", in, tok)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	peer, e := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Equal(t, db.FederationTrustUnrestricted, peer.TrustLevel)
 }

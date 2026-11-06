@@ -39,9 +39,11 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
   </${Dialog}>`;
 }
 
-// JoinDialog enrolls this node to a master with a token it received. It
-// previews first: both fingerprints, the profile, expiry and the trust level
-// this node would grant the master, and needs the fingerprint check ticked.
+// JoinDialog enrolls this node to a master with a token it received: it
+// accepts what the master offers and gives the master nothing here beyond
+// restricted trust with no grants. It previews first: both fingerprints, the
+// profile, expiry and the trust the master requests (shown as a request,
+// never applied), and needs the fingerprint check ticked.
 export function JoinDialog({ masters, actions, onClose, onDone }) {
   const [master, setMaster] = useState(masters[0]?.id || '');
   const [token, setToken] = useState('');
@@ -67,6 +69,7 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const c = preview?.claims || {};
+  const requested = preview?.requested_trust || c.trust_level || 'restricted';
   return html`<${Dialog} id="fleet-join-modal" onClose=${onClose} blocked=${busy} dirty=${!!token} title="Join a master with an invite token">
     <label class="cron-create-row"><span class="cron-create-label">Master</span>
       <${Select} size="sm" id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
@@ -82,9 +85,10 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       <span class="fa-k">This node</span><code class="fa-wrap">${preview.node_fingerprint}</code>
       <span class="fa-k">Profile</span><span>${c.profile_name} <span class="muted">(${c.profile_id} rev ${c.profile_revision})</span> — your authority on the master</span>
       <span class="fa-k">Expires</span><span>${c.expires_at}</span>
-      <span class="fa-k">You grant it</span><span class=${`fa-level ${c.trust_level}`}>${c.trust_level} trust on this node</span>
+      <span class="fa-k">It gets here</span><span><b>restricted trust, no grants</b></span>
+      <span class="fa-k">It asks for</span><span class=${`fa-level ${requested}`}>${requested} trust (a request; Enroll gives it nothing)</span>
     </div>
-    ${c.trust_level === 'unrestricted' && html`<div class="fa-consequence" role="note"><b>The master gets unrestricted trust here.</b> ${UNRESTRICTED_CONSEQUENCE}</div>`}
+    ${requested === 'unrestricted' && html`<div class="fa-request" role="note">The master asks for unrestricted trust on this node. Enroll gives it nothing beyond restricted. To give it permissions here, use <code>tclaude federation become-node</code>.</div>`}
     ${preview.consent && html`<div class="muted">${preview.consent}</div>`}
     <label class="fa-ack"><input id="fleet-join-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I compared the master fingerprint with its operator over another channel</span></label>`}
@@ -93,7 +97,7 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
       ${preview
-        ? html`<${Button} id="fleet-join-submit" variant=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</${Button}>`
+        ? html`<${Button} id="fleet-join-submit" variant="primary" disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</${Button}>`
         : html`<${Button} variant="primary" id="fleet-join-preview" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</${Button}>`}
     </div>
   </${Dialog}>`;
@@ -143,7 +147,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
       body: `Whoever holds this token and is on the hub can enroll ${n === 1 ? 'one node' : `up to ${n} nodes`} within ${ttlLabel}. `
         + `Each becomes a trusted peer here with profile ${chosen.name}'s pools, grants and worker defaults, at ${enrolledLevel} trust`
         + `${enrolledLevel === 'unrestricted' ? ` — ${UNRESTRICTED_CONSEQUENCE}` : '.'} `
-        + `The joining node grants this node ${trustLevel} trust${trustLevel === 'unrestricted' ? ' (every peer permission on all its groups, including future ones)' : ''}. `
+        + `The token asks the joining node for ${trustLevel} trust; that is only a request, which its operator gives or not. `
         + 'Revoking the token later stops new enrollments only.',
       okLabel: 'Create token',
       busyLabel: 'Creating…',
@@ -175,7 +179,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
         <label><span class="fa-k">Valid</span><${Select} size="sm" id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
           ${TOKEN_TTLS.map((x) => html`<option key=${x.seconds} value=${String(x.seconds)}>${x.label}</option>`)}
         <//></label>
-        <label title="The trust the joining node grants this node"><span class="fa-k">Node trusts us</span><${Select} size="sm" id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
+        <label title="The trust this node requests of the joining node: a request only, which its operator gives or not (become-node)"><span class="fa-k">Ask the node for</span><${Select} size="sm" id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
           <option value="restricted">restricted</option><option value="unrestricted">unrestricted</option>
         <//></label>
         <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
