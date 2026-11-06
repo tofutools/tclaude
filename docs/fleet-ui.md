@@ -579,13 +579,15 @@ sharing**, **Profiles & pools**, **Offers**, **Jobs & repos**, **Moves**,
   list. To join a master: **Join with a token…**, pick the master, paste the
   token, check both fingerprints in the preview, tick the check and
   **Enroll**. Enroll gives the master restricted trust with no grants, whatever
-  the token asks for; its request shows as a note. To give the master
+  the token asks for: the preview's "It asks for" line shows its requested
+  trust as a request, with a note pointing here when it asks for unrestricted. To give the master
   control of this machine, for a worker node of your own fleet, use **Become a
   worker node…** (the red button under Join): pick the master, paste the token
   and **Preview**. Then tick exactly the permissions to give from the
   filterable checklist (Sensitive ones are badged; nothing is preselected).
   Choose, for each group permission, one group or every group including future
-  ones, never defaulted. Or tick **Unrestricted**, which disables the list. A
+  ones (a permission that needs a group, such as `agents.receive`, takes one
+  specific group); nothing is defaulted. Or tick **Unrestricted**, which disables the list. A
   red warning names everything that will be given, with each permission's own
   caution, and the button stays disabled until something is ticked and the
   master fingerprint you paste, compared with its operator over another
