@@ -256,6 +256,82 @@ export function scopeDimOptions(snapshot, dim) {
   };
 }
 
+// SCOPE_COMBOBOX_DIMS are the dimensions whose catalogue the daemon serves on
+// demand (GET /api/permissions/scope-values) rather than on the snapshot. Any
+// other dimension switches from a plain select to the type-to-filter
+// combobox once its snapshot catalogue outgrows SCOPE_SELECT_MAX values.
+export const SCOPE_COMBOBOX_DIMS = ['resource'];
+export const SCOPE_SELECT_MAX = 8;
+// SCOPE_CHIPS_SHOWN is how many matcher chips a dimension shows before the
+// rest collapse into "+N more", which opens a searchable list of them.
+export const SCOPE_CHIPS_SHOWN = 6;
+
+export function scopeDimUsesCombobox(dim, options) {
+  return SCOPE_COMBOBOX_DIMS.includes(dim)
+    || (options?.values?.length || 0) + (options?.selectors?.length || 0) > SCOPE_SELECT_MAX;
+}
+
+// RESOURCE_KIND_LABELS heads the resource picker's sections.
+export const RESOURCE_KIND_LABELS = { board: 'Boards', process_template: 'Process templates' };
+
+// scopeComboItems is a dimension's catalogue as FilterCombobox items: the
+// resource catalogue's entries ({kind, id, title, groups}) keyed by the
+// kind:id a resource= matcher names, or a snapshot dimension's values and
+// @selectors keyed by themselves.
+export function scopeComboItems(dim, options, catalogue) {
+  if (catalogue) {
+    return catalogue.map((entry) => ({
+      key: `${entry.kind}:${entry.id}`, label: entry.title || entry.id, hint: `${entry.kind}:${entry.id}`,
+      kind: entry.kind, group: (entry.groups || []).join(', '), keywords: entry.id,
+    }));
+  }
+  return [...(options?.values || []), ...(options?.selectors || [])].map((value) => ({ key: value, label: value }));
+}
+
+// scopeValueLabel is how one matcher reads in a chip: a resource the
+// catalogue knows by its title, anything else as stored.
+export function scopeValueLabel(value, catalogue) {
+  if (!catalogue) return { kind: '', text: value };
+  const entry = catalogue.find((item) => `${item.kind}:${item.id}` === value);
+  return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
+}
+
+const SCOPE_COUNT_NOUNS = { group: ['group', 'groups'], resource: ['resource', 'resources'] };
+
+// scopeCountText says what a scope narrows to in counts, never names:
+// "3 groups and 41 resources". A hint about an umbrella's reach has to stay
+// one line however many resources the grant names.
+export function scopeCountText(scope) {
+  const parts = scopeChips(scope).map(({ dim, values }) => {
+    const [one, many] = SCOPE_COUNT_NOUNS[dim] || [`${dim} value`, `${dim} values`];
+    return `${values.length} ${values.length === 1 ? one : many}`;
+  });
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+// umbrellaCover is the umbrella that covers a row the operator left at
+// Default: the nearest slug up its umbrella chain (served per slug by the
+// registry, so resources.write → resources.read → boards.read is never
+// re-derived here) that is granted in this editor or held from a source.
+// null when nothing covers it, or the row itself is decided: a Deny of the
+// row wins over its umbrella, and a Grant needs no hint.
+export function umbrellaCover(row, rowsBySlug, effectOf, scopeOf) {
+  if (effectOf(row.slug) !== 'default') return null;
+  const seen = new Set([row.slug]);
+  for (let slug = row.umbrella; slug && !seen.has(slug); slug = rowsBySlug.get(slug)?.umbrella) {
+    seen.add(slug);
+    const umbrella = rowsBySlug.get(slug);
+    if (!umbrella) return null;
+    const effect = effectOf(slug);
+    // A deny of a step in the chain stops the chain there, as the resolver does.
+    if (effect === 'deny') return null;
+    if (effect === 'grant') return { slug, scope: scopeOf(slug), sources: [] };
+    if (umbrella.granted && umbrella.sources.length) return { slug, scope: null, sources: umbrella.sources };
+  }
+  return null;
+}
+
 // scopeChips flattens a scope into the row's read-at-a-glance chips, in the
 // same dimension order the daemon's provenance line uses so the editor and
 // `permissions ls` never disagree about what a grant says.

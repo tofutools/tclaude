@@ -230,5 +230,14 @@ export function createMessageAccessDialogActions({
     return { overrides: kept };
   }
 
-  return Object.freeze({ sendMessage, sendDirectMessages, sendOperatorMessage, replyHuman, grantSudo, sudoPolicy, extendSudo, revokeSudo, savePermissions });
+  // loadScopeValues reads a scope dimension's catalogue that the snapshot
+  // does not carry (the resource= picker's boards and templates), from the
+  // node whose permissions the editor is editing. It is read when a drawer
+  // opens, not polled.
+  async function loadScopeValues(descriptor, dim) {
+    const response = await requestJSON(on(descriptor.node), `/api/permissions/scope-values?dim=${encodeURIComponent(dim)}`);
+    return response.items || [];
+  }
+
+  return Object.freeze({ sendMessage, sendDirectMessages, sendOperatorMessage, replyHuman, grantSudo, sudoPolicy, extendSudo, revokeSudo, savePermissions, loadScopeValues });
 }

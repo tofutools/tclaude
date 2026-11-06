@@ -6527,6 +6527,36 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .perm-scope-dim-label code { color: #d2a8ff; }
 .perm-scope-dim-body { flex: 1; min-width: 0; }
 .perm-scope-hint { margin-top: 3px; }
+/* The shared type-to-filter dropdown (filter-combobox.js): the agent
+   picker's add-member rows, rendered in place under the box. */
+.filter-combobox { margin-top: 3px; max-width: 460px; }
+.filter-combobox .filter-combobox-input {
+  width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #d4d4d4; padding: 3px 8px; font: inherit; font-size: 12px;
+}
+.filter-combobox .filter-combobox-input:focus { outline: none; border-color: #58a6ff; }
+/* In the flow, under the box: the editor's list scrolls, and a popup laid
+   over it would be clipped by that scroll box. */
+.filter-combobox .filter-combobox-list {
+  min-height: 0; max-height: 320px; margin-top: 2px; border-color: #58a6ff;
+}
+.filter-combobox .add-member-row { padding: 3px 10px 3px 14px; }
+.filter-combobox .add-member-row.disabled { cursor: not-allowed; opacity: 0.55; }
+.filter-combobox-check { flex: 0 0 10px; color: #3fb950; }
+.filter-combobox .ui-eyebrow { padding: 5px 10px 1px; }
+.filter-combobox-group { padding: 2px 10px 0; color: #a9b1c0; font-size: 11px; }
+.filter-combobox-tip { padding: 4px 10px; color: var(--ui-muted-text); font-size: 11px; }
+.filter-combobox-foot { border-top: 1px solid #2a3340; padding: 4px 10px; color: #e3b341; font-size: 11px; }
+.perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font: inherit; }
+.perm-scope-sheet {
+  margin-top: 4px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 4px 8px; max-width: 460px;
+}
+.perm-scope-sheet-head { display: flex; justify-content: space-between; gap: 8px; color: #8b949e; font-size: 11px; margin-bottom: 3px; }
+.perm-scope-sheet-filter { background: #161b22; border: 1px solid #2a3340; border-radius: 3px; color: #d4d4d4; font: inherit; font-size: 11px; padding: 1px 6px; }
+.perm-scope-sheet-row { display: flex; gap: 6px; align-items: center; padding: 1px 0; }
+.perm-scope-sheet-pager { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
+.perm-row-covered { color: #8b949e; }
+.perm-row-covered b { color: #c9d1d9; font-weight: 600; }
 .perm-scope-add, .perm-scope-free {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
   font-size: 10px; font-family: inherit; padding: 2px 5px;

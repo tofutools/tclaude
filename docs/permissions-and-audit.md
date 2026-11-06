@@ -122,6 +122,35 @@ does: `groups.settings.owner-scopes`, `permissions.grant` and
 `permissions.revoke`. Before this, `templates.manage` alone could loosen the
 narrowing a template's author declared for every later deployment.
 
+### Resource umbrellas: `resources.read` and `resources.write`
+
+A manager agent that looks after resources across groups gets one grant
+instead of one per kind:
+
+- `resources.read` reads every board (`boards.read`), every process template
+  (`process.templates.read`) and every process run (`process.runs.read`).
+- `resources.write` changes every board (`boards.write`) and process template
+  (`process.templates.manage`), and implies `resources.read`. The per-kind
+  write slugs still do not imply their read slugs.
+
+Both are scoped like any grant. `group=` reaches the resources linked to
+those groups, `resource=kind:id` (`board:plan`, `process_template:ship`) the
+named ones, and no scope reaches every resource. A read passes through any
+one of a resource's groups; a write needs every one of them. Operations on
+the whole library (listing changes, imports, pinning, creating a new
+template) still need the unscoped per-kind slug.
+
+The umbrellas are never default-granted and never conferred by ownership or
+membership. A dedicated deny of a per-kind slug (or of `resources.read`)
+still wins over its umbrella. Neither passes an operator lock (see
+[The operator's lock on a resource](#the-operators-lock-on-a-resource)), and
+run mutations stay on `process.runs.manage`.
+
+```bash
+tclaude agent permissions grant ops-manager resources.write --scope group=crew,infra
+tclaude agent permissions grant ops-manager resources.read --scope resource=board:q4-roadmap
+```
+
 ## Scoped grants
 
 A grant can be narrowed to part of what its slug reaches:
@@ -146,7 +175,7 @@ evaluation rules:
   sources, and if none passes, the request gets a 403.
 
 The registry advertises which dimensions each slug supports (`group`,
-`spawn_profile`, `sandbox_profile`, `process_template`, `target_agent`, and proxy-specific
+`spawn_profile`, `sandbox_profile`, `process_template`, `resource`, `target_agent`, and proxy-specific
 dimensions). Two relational matchers exist on `agent.retire`,
 `groups.members.retire` and `agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
 and `@descendants` (its spawn lineage, up to 64 generations). Lineage is
