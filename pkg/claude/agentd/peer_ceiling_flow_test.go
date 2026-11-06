@@ -88,11 +88,11 @@ func TestPeerCeilingSlugsArePinned(t *testing.T) {
 		agentd.PermGroupsMembersContextInfo, agentd.PermGroupsMembersInterrupt, agentd.PermGroupsMembersPR,
 		agentd.PermGroupsMembersRemoteControl, agentd.PermGroupsMembersRename, agentd.PermGroupsMembersTags,
 		agentd.PermGroupsMembersTask, agentd.PermGroupsMembersUpdate, agentd.PermGroupsPresenceRead,
-		agentd.PermGroupsRename, agentd.PermGroupsResourcesLock, agentd.PermGroupsResourcesRead,
-		agentd.PermGroupsRosterRead, agentd.PermGroupsSettingsDefaultContext, agentd.PermGroupsSettingsDescription,
+		agentd.PermGroupsRename, agentd.PermGroupsResourcesRead,
+		agentd.PermGroupsRosterRead, agentd.PermGroupsSettingsDescription,
 		agentd.PermGroupsSettingsEnvironment, agentd.PermGroupsSettingsMaxMembers, agentd.PermGroupsSettingsNotifications,
 		agentd.PermGroupsSettingsRemoteControlPolicy, agentd.PermMessageAttachments, agentd.PermProcessAdvance,
-		agentd.PermProcessTemplatesRead, agentd.PermPromptsManage, agentd.PermRolesManage, agentd.PermUsageRead,
+		agentd.PermProcessTemplatesRead, agentd.PermPromptsManage, agentd.PermUsageRead,
 	}
 	sort.Strings(want)
 	require.Equal(t, want, got)

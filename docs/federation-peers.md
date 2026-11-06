@@ -319,13 +319,13 @@ bound of its own:
 - agent controls: `groups.members.interrupt`, `.context-info`, `.pr`,
   `.remote-control`, `.rename`, `.tags`, `.task`, `.update`;
 - a group's reads and plain settings: `groups.roster.read`,
-  `groups.presence.read`, `groups.resources.read`, `groups.resources.lock`,
-  `groups.settings.environment`, `.description`, `.default-context`,
-  `.max-members`, `.notifications`, `.remote-control-policy`,
-  `groups.attachment`, `groups.rename`, `groups.archive`,
-  `message.attachments`, `process.advance`;
-- this node's libraries and reads: `prompts.manage`, `roles.manage`,
-  `costs.read`, `usage.read`, `process.templates.read`.
+  `groups.presence.read`, `groups.resources.read`,
+  `groups.settings.environment`, `.description`, `.max-members`,
+  `.notifications`, `.remote-control-policy`, `groups.attachment`,
+  `groups.rename`, `groups.archive`, `message.attachments`,
+  `process.advance`;
+- this node's libraries and reads: `prompts.manage`, `costs.read`,
+  `usage.read`, `process.templates.read`.
 
 Every other slug stays this node's operator's to confer, even when the peer
 holds a grant of the same name. Some examples of why:
@@ -339,7 +339,15 @@ holds a grant of the same name. Some examples of why:
   one-shot jobs, permission carry);
 - it can put text into another agent's context (compact's focus,
   reincarnate's follow-up, cron jobs);
-- it is a global `agent.*` gate, which also reaches agents in no group.
+- it is a global `agent.*` gate, which also reaches agents in no group;
+- its local gate opens more than the peer route: the group context's gate
+  also sets default saved prompts, the resource lock's reaches resources in
+  no group, and the role library's lets an agent attach its own grants to
+  roles.
+
+A `group=` scope names a group by name, so a peer may not rename a group
+from or to a name that a permission it conferred names, nor delete such a
+group: the permission would follow the name onto another group.
 
 
 A peer view request is one exchange of at most 15 seconds. Longer operations,

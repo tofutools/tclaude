@@ -153,3 +153,33 @@ func TestPeerGroupOwnersHoldTheOwnerTier(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, owners, 1)
 }
+
+// A scope names a group by name, so a peer may not rename or delete a group
+// a permission it conferred names: the row would follow the name onto
+// another group, past the ceiling it was judged by.
+func TestPeerConferredScopesPinTheirGroupNames(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	h.f.HaveGroup("other")
+	for _, g := range []string{"crew", "other"} {
+		h.grant(t, agentd.PermGroupsRosterRead, "group="+g)
+		h.grant(t, agentd.PermGroupsSettings, "group="+g)
+		h.grant(t, agentd.PermGroupsDelete, "group="+g)
+	}
+	h.grant(t, agentd.PermGroupsSettingsMemberPermissions, "group=other")
+	code, body := h.call("PATCH", "/api/groups/other", map[string]any{"permissions": []any{
+		map[string]any{"slug": agentd.PermGroupsRosterRead, "scope": map[string]any{"group": []string{"crew"}}},
+	}})
+	require.Equal(t, 200, code, body)
+
+	for _, rename := range []struct{ group, to string }{{"crew", "crew-old"}, {"other", "crew"}} {
+		code, body = h.call("POST", "/api/groups/"+rename.group+"/rename", map[string]any{"new_name": rename.to})
+		require.Equal(t, 403, code, "%v: %s", rename, body)
+	}
+	code, body = h.call("DELETE", "/api/groups/crew", nil)
+	require.Equal(t, 403, code, body)
+	code, body = h.call("POST", "/api/groups/other/rename", map[string]any{"new_name": "elsewhere"})
+	require.Equal(t, 200, code, "a name no conferred row names: %s", body)
+	g, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+}

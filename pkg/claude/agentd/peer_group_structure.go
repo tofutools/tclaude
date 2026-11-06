@@ -404,6 +404,11 @@ func peerGroupDeleteFailure(v *peerView, _ *http.Request, g *db.AgentGroup, _ []
 	if fail := peerHoldsInGroup(v, g, PermGroupsDelete); fail != nil {
 		return fail
 	}
+	// A new group may take the freed name, and a peer-written permission
+	// naming it with it (peerNameBindsAGrant).
+	if bound, err := peerNameBindsAGrant(g.Name); err != nil || bound {
+		return peerStructureRefusal(http.StatusForbidden, "permission", "a permission a peer conferred names group:%s; only this node's operator may delete it", g.Name)
+	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the group's members")

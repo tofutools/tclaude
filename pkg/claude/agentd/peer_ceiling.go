@@ -49,6 +49,11 @@ import (
 //     (trigger instruction templates), or sends no text into another agent's
 //     context where the local verb may (compact's focus, reincarnate's
 //     follow-up, cron jobs);
+//   - grants whose local gate opens what the peer route keeps for another
+//     grant: the group context's gate also sets default saved prompts
+//     (spawn prompts for a peer), the resource lock's reaches resources in
+//     no group, and the role library's lets a local agent attach grants it
+//     holds to roles, which no peer may;
 //   - global agent.* gates, which also reach agents in no group, where no
 //     peer grant reaches; their group-scoped siblings are the grantable form;
 //   - anything outside the reach registry or still pending.
@@ -66,10 +71,8 @@ var peerCeilingSlugs = map[string]bool{
 	PermGroupsRosterRead:                  true,
 	PermGroupsPresenceRead:                true,
 	PermGroupsResourcesRead:               true,
-	PermGroupsResourcesLock:               true,
 	PermGroupsSettingsEnvironment:         true,
 	PermGroupsSettingsDescription:         true,
-	PermGroupsSettingsDefaultContext:      true,
 	PermGroupsSettingsMaxMembers:          true,
 	PermGroupsSettingsNotifications:       true,
 	PermGroupsSettingsRemoteControlPolicy: true,
@@ -80,7 +83,6 @@ var peerCeilingSlugs = map[string]bool{
 	PermProcessAdvance:                    true,
 	// This node's libraries and its reads, instance-wide.
 	PermPromptsManage:        true,
-	PermRolesManage:          true,
 	PermCostsRead:            true,
 	PermUsageRead:            true,
 	PermProcessTemplatesRead: true,

@@ -212,3 +212,33 @@ func groupPermissionsView(rows []db.AgentGroupPermission) ([]string, map[string]
 	}
 	return slugs, scopes, unreadable
 }
+
+// peerNameBindsAGrant reports whether a group permission row a peer wrote
+// names group name in its group= scope. A scope names a group by name, and a
+// rename keeps the name's grants where the name goes: a peer renaming or
+// deleting such a group could move a row it wrote onto another group, past
+// the ceiling it was judged by. An unreadable scope counts as naming it.
+func peerNameBindsAGrant(name string) (bool, error) {
+	scopes, err := db.ListPeerWrittenGroupPermissionScopes()
+	if err != nil {
+		return true, err
+	}
+	for _, raw := range scopes {
+		scope := permissionScopeFromJSON(raw)
+		if scope == nil || slices.Contains(scope[ScopeDimGroup], name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// peerRenameRebindsFailure refuses a peer's rename of a group from or to a
+// name a peer-written permission names.
+func peerRenameRebindsFailure(from, to string) error {
+	for _, name := range []string{from, to} {
+		if bound, err := peerNameBindsAGrant(name); err != nil || bound {
+			return fmt.Errorf("a permission a peer conferred names group %q; renaming onto or away from that name would move it to another group, so only this node's operator may", name)
+		}
+	}
+	return nil
+}
