@@ -76,6 +76,10 @@ func (f FedReach) peerGrantable() bool {
 	return false
 }
 
+// peerPagesWhy: a live page is served from this node's stage origin into
+// its local operator's own dashboard and to its agents.
+const peerPagesWhy = "a page is this node's stage origin, shown to the local operator's own dashboard and its agents; a peer has no view of it"
+
 // peerTriggersManageWhy: trigger rules are authored only on this node's
 // dashboard, by its operator; locally no agent creates or changes one either,
 // and the slug only revalidates an agent owner no path creates.
@@ -91,8 +95,8 @@ var slugFederationReach = map[string]FedReach{
 	PermDashboardMark:                     {Kind: FedLocal, Why: "points at the local operator's own open dashboard"},
 	PermFleetRead:                         {Kind: FedPeerInstance},
 	PermKnowledgeRead:                     {Kind: FedLocal, Why: "the docs and source of the build answering; a peer's agents read their own"},
-	PermBoardsRead:                        {Kind: FedPeerInstance, Pending: true},
-	PermBoardsWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermBoardsRead:                        {Kind: FedPeerAlias, Via: []string{PermGroupsResourcesRead}},
+	PermBoardsWrite:                       {Kind: FedPeerAlias, Via: []string{PermGroupsResourcesWrite}},
 	PermResourcesRead:                     {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermResourcesWrite:                    {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermHostRead:                          {Kind: FedPeerInstance, Pending: true, Sensitive: true},
@@ -123,9 +127,9 @@ var slugFederationReach = map[string]FedReach{
 	PermSelfDirRepair:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfProcess:                       {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfPage:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
-	PermGroupsPagesRead:                   {Kind: FedPeerGroup, Pending: true, Sensitive: true},
-	PermGroupsPagesPatch:                  {Kind: FedPeerGroup, Pending: true, Sensitive: true},
-	PermGroupsPagesManage:                 {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermGroupsPagesRead:                   {Kind: FedLocal, Why: peerPagesWhy},
+	PermGroupsPagesPatch:                  {Kind: FedLocal, Why: peerPagesWhy},
+	PermGroupsPagesManage:                 {Kind: FedLocal, Why: peerPagesWhy},
 	PermAgentProcess:                      {Kind: FedPeerAlias, Via: []string{PermGroupsMembersProcess}},
 	PermGroupsMembersProcess:              {Kind: FedPeerGroup, Cap: "member_process", Sensitive: true},
 	PermSelfMorph:                         {Kind: FedLocal, Why: "acts on the calling agent itself"},
@@ -261,7 +265,7 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsMembersSpawnAll:             {Kind: FedPeerGroup, Cap: "spawn_all", Sensitive: true},
 	PermGroupsMembersManage:               {Kind: FedPeerGroup, Cap: "member_manage"},
 	PermGroupsResourcesRead:               {Kind: FedPeerGroup, Cap: "resource_read"},
-	PermGroupsResourcesWrite:              {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermGroupsResourcesWrite:              {Kind: FedPeerGroup, Cap: "resource_write", Sensitive: true},
 	PermGroupsResourcesLock:               {Kind: FedPeerGroup, Cap: "resource_lock"},
 	PermGroupsSettings:                    {Kind: FedPeerGroup, Cap: "group_settings", Sensitive: true},
 	PermNodeSpawnRead:                     {Kind: FedPeerInstance, Sensitive: true},

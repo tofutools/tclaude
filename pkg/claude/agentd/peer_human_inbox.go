@@ -110,9 +110,9 @@ func localPendingAccessRequests() []dashboardAccessRequest {
 	return out
 }
 
-// peerHumanInboxHeld reports whether a restricted peer's operator holds slug
+// peerOperatorHoldsInSomeGroup reports whether a restricted peer's operator holds slug
 // in any active group, so the route is theirs at all.
-func peerHumanInboxHeld(v *peerView, slug string) bool {
+func peerOperatorHoldsInSomeGroup(v *peerView, slug string) bool {
 	if v.agent != nil {
 		return false
 	}
@@ -225,7 +225,7 @@ func pendingApproval(id string) *approvalRequest {
 
 func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	restricted := !v.unrestricted()
-	if restricted && !peerHumanInboxHeld(v, rule.requires) {
+	if restricted && !peerOperatorHoldsInSomeGroup(v, rule.requires) {
 		writeError(w, 403, "permission", "requires "+rule.requires)
 		return
 	}
@@ -292,7 +292,7 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 
 func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	answer := rule.requires == PermHumanInboxAnswer
-	if answer && !v.unrestricted() && !peerHumanInboxHeld(v, rule.requires) || !answer && !v.allows(rule, 0) {
+	if answer && !v.unrestricted() && !peerOperatorHoldsInSomeGroup(v, rule.requires) || !answer && !v.allows(rule, 0) {
 		writeError(w, 403, "permission", "requires "+rule.requires)
 		return
 	}

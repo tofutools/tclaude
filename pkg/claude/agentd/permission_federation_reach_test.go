@@ -39,24 +39,26 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermAgentsTeleportReceive:    proto.CapTeleportReceive,
 	PermGroupsMembersSpawn:       proto.CapSpawn,
 	// The launch settings a peer may choose on a spawn (federation_spawn_overrides.go).
-	PermGroupsMembersSpawnCwd:           "spawn_cwd",
-	PermGroupsMembersSpawnHarness:       "spawn_harness",
-	PermGroupsMembersSpawnModel:         "spawn_model",
-	PermGroupsMembersSpawnEffort:        "spawn_effort",
-	PermGroupsMembersSpawnProfile:       "spawn_profile",
-	PermGroupsMembersSpawnRoles:         "spawn_roles",
-	PermGroupsMembersSpawnSandbox:       "spawn_sandbox",
-	PermGroupsMembersSpawnPermissions:   "spawn_permissions",
-	PermGroupsMembersSpawnEnvironment:   "spawn_environment",
-	PermGroupsMembersSpawnOwner:         "spawn_owner",
-	PermGroupsMembersSpawnFeatures:      "spawn_features",
-	PermGroupsMembersSpawnPrompts:       "spawn_prompts",
-	PermGroupsMembersSpawnWorktree:      "spawn_worktree",
-	PermGroupsMembersSpawnAll:           "spawn_all",
-	PermGroupsSettings:                  "group_settings",
-	PermGroupsSettingsEnvironment:       "group_environment",
-	PermGroupsResourcesLock:             "resource_lock",
-	PermGroupsResourcesRead:             "resource_read",
+	PermGroupsMembersSpawnCwd:         "spawn_cwd",
+	PermGroupsMembersSpawnHarness:     "spawn_harness",
+	PermGroupsMembersSpawnModel:       "spawn_model",
+	PermGroupsMembersSpawnEffort:      "spawn_effort",
+	PermGroupsMembersSpawnProfile:     "spawn_profile",
+	PermGroupsMembersSpawnRoles:       "spawn_roles",
+	PermGroupsMembersSpawnSandbox:     "spawn_sandbox",
+	PermGroupsMembersSpawnPermissions: "spawn_permissions",
+	PermGroupsMembersSpawnEnvironment: "spawn_environment",
+	PermGroupsMembersSpawnOwner:       "spawn_owner",
+	PermGroupsMembersSpawnFeatures:    "spawn_features",
+	PermGroupsMembersSpawnPrompts:     "spawn_prompts",
+	PermGroupsMembersSpawnWorktree:    "spawn_worktree",
+	PermGroupsMembersSpawnAll:         "spawn_all",
+	PermGroupsSettings:                "group_settings",
+	PermGroupsSettingsEnvironment:     "group_environment",
+	PermGroupsResourcesLock:           "resource_lock",
+	PermGroupsResourcesRead:           "resource_read",
+	// Its collab boards, edited from the peer's dashboard (peer_boards.go).
+	PermGroupsResourcesWrite:            "resource_write",
 	PermGroupsMembersManage:             "member_manage",
 	PermGroupsMembersStop:               "stop",
 	PermGroupsMembersResume:             "resume",
@@ -333,7 +335,7 @@ func TestDashboardUngrantableSlugsMatchFederationReach(t *testing.T) {
 		require.Equal(t, FedLocal, reach.Kind, m[1])
 		require.Equal(t, reach.Why, strings.ReplaceAll(m[2], `\'`, `'`), "%s: the picker's reason is the registry's", m[1])
 	}
-	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage} {
+	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage} {
 		require.True(t, listed[slug], "%s is shown as not grantable", slug)
 	}
 }
