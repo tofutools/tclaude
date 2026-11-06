@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -63,6 +64,37 @@ type agentPeerViewRoute struct {
 	intoGroup bool
 	// destructive marks a route that ends sessions; granting its slugs warns.
 	destructive bool
+	// runScope marks a process run start, whose footprint and slug come
+	// from the body's scope (agentPeerViewRunScope); slugs lists both.
+	runScope bool
+}
+
+// agentPeerViewRunScope resolves a run start's route to the scope its body
+// names: a group (process.runs.start there) or one agent (agent.process, in
+// every group the agent is in). Any other route is returned as it is.
+func agentPeerViewRunScope(route agentPeerViewRoute, values map[string]string, body []byte) (agentPeerViewRoute, map[string]string, error) {
+	if !route.runScope {
+		return route, values, nil
+	}
+	var in struct {
+		Group string `json:"group"`
+		Agent string `json:"agent"`
+	}
+	_ = json.Unmarshal(body, &in)
+	group, agent := strings.TrimSpace(in.Group), strings.TrimSpace(in.Agent)
+	out := maps.Clone(values)
+	if out == nil {
+		out = map[string]string{}
+	}
+	switch {
+	case group != "" && agent == "":
+		route.target, route.slugs, out["name"] = agentViewGroup, []string{PermProcessRunsStart}, group
+	case agent != "" && group == "":
+		route.target, route.slugs, out["id"] = agentViewAgent, []string{PermAgentProcess}, agent
+	default:
+		return route, values, fmt.Errorf("a run an agent starts on a peer is scoped to one group or one agent")
+	}
+	return route, out, nil
 }
 
 // agentPeerViewRoutes are the peer view routes an agent principal may use,
@@ -114,6 +146,14 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /api/groups/{name}/rename":     {slugs: []string{PermGroupsRename}, target: agentViewGroup},
 	"GET /api/groups/{name}/attachment":  {slugs: []string{PermGroupsAttachment}, target: agentViewGroup},
 	"POST /api/groups/{name}/attachment": {slugs: []string{PermGroupsAttachment}, target: agentViewGroup},
+	// Process runs (process_peer_runs.go): reads node-wide and redacted; a
+	// start scoped to a group or one agent, owned by the agent's node.
+	"GET /v1/process/runs":                    {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"GET /v1/process/runs/{id}":               {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"GET /v1/process/runs/{id}/events":        {slugs: []string{PermProcessRunsRead}, target: agentViewNode},
+	"POST /v1/process/runs":                   {slugs: []string{PermProcessRunsStart, PermAgentProcess}, runScope: true},
+	"GET /api/groups/{name}/process":          {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
+	"POST /api/groups/{name}/process/advance": {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
@@ -379,7 +419,11 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 	}
 	// The body stays readable for an approval popup's preview and the proxy.
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	spec := agentPeerViewRoutes[pattern]
+	spec, values, err := agentPeerViewRunScope(agentPeerViewRoutes[pattern], values, body)
+	if err != nil {
+		refuse(http.StatusForbidden, "agent_run_scope", err.Error())
+		return
+	}
 	slugs, err := agentPeerViewRouteSlugs(spec, body)
 	if err != nil {
 		refuse(http.StatusForbidden, "agent_field_not_allowed", err.Error())
@@ -539,6 +583,10 @@ func agentPeerViewRefusal(instanceID, pattern string, r *http.Request, principal
 		return http.StatusBadRequest, "invalid_arg", "could not read request body"
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
+	spec, values, err := agentPeerViewRunScope(spec, map[string]string{"name": r.PathValue("name"), "id": r.PathValue("id")}, raw)
+	if err != nil {
+		return http.StatusForbidden, "agent_run_scope", err.Error()
+	}
 	if spec.fields != nil {
 		if _, err := agentPeerViewRouteSlugs(spec, raw); err != nil {
 			return http.StatusForbidden, "agent_field_not_allowed", err.Error()
@@ -547,10 +595,10 @@ func agentPeerViewRefusal(instanceID, pattern string, r *http.Request, principal
 	var touched []string
 	switch spec.target {
 	case agentViewGroup:
-		touched = append(touched, r.PathValue("name"))
+		touched = append(touched, values["name"])
 	case agentViewAgent:
 		// An unknown target is the rule's own 404.
-		if target, err := db.GetAgent(r.PathValue("id")); err == nil && target != nil && target.CurrentConvID != "" {
+		if target, err := db.GetAgent(values["id"]); err == nil && target != nil && target.CurrentConvID != "" {
 			groups, err := db.ListGroupsForConv(target.CurrentConvID)
 			if err != nil {
 				return http.StatusServiceUnavailable, "snapshot_unavailable", "could not read the target's groups"

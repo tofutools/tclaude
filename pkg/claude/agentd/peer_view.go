@@ -215,6 +215,16 @@ func peerViewRules() map[string]peerViewRule {
 	rules["POST /api/teleport-subscription"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, write: servePeerTeleportSubscription}
 	// The fleet brief, under an instance grant (fleet.go).
 	rules["GET /api/fleet"] = peerViewRule{feature: "fleet", requires: PermFleetRead, serve: servePeerFleet}
+	// Process runs (process_peer_runs.go): reads under the instance grant,
+	// redacted; a start under its group or member grant, owned by the peer.
+	rules["GET /v1/process/runs"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRuns}
+	rules["POST /v1/process/runs"] = peerViewRule{feature: "process.runs.start", requires: PermProcessRunsStart, group: true, write: servePeerProcessRuns}
+	rules["GET /v1/process/runs/{id}"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
+	rules["GET /v1/process/runs/{id}/events"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
+	// A group's advisory process: read by any peer that sees the group,
+	// advanced under process.advance there.
+	rules["GET /api/groups/{name}/process"] = withPeerInvoke("GET /api/groups/{name}/process", peerViewRule{feature: "groups.process", requires: PermGroupsVisibilityRead, group: true, visible: true, invoke: &peerInvokeSpec{param: "name"}})
+	rules["POST /api/groups/{name}/process/advance"] = withPeerInvoke("POST /api/groups/{name}/process/advance", peerViewRule{feature: "groups.process.advance", requires: PermProcessAdvance, group: true, invoke: &peerInvokeSpec{param: "name"}})
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota

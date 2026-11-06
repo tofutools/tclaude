@@ -138,6 +138,8 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.visibility.read` | a group's name, description and member count, with no message, presence, launch or roster grant. A grant that includes members also gives the roster. See [Group links](#group-links-and-peer-proposals) |
 | `groups.link.accept` | pre-authorize incoming group link proposals on that group |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
+| `process.runs.start`, `groups.members.process` | start a process run scoped to the group, or bound to one member agent (`groups.members.process` in every group the agent is in). The run is the peer's (owner `peer:<instance>`), never your operator's: it tasks only the members in its scope and spawns no performer. It cannot authorize program profiles, so a template with a program step is refused, and it cannot pick an older template version or a run ID. Every node prompt it delivers opens with an untrusted-content banner that names the peer, because the peer's params reach the prompt. Starting from the peer's dashboard also needs the template list, which no peer grant serves yet; use `tclaude process run --remote`. Unrestricted trust starts runs as your operator does |
+| `process.advance` | advance the group's advisory process to the next or a named phase. The transition is recorded as the peer's (`peer: the operator of linked node …`), and the members it nudges are told which node advanced it. Any peer that sees the group reads its process |
 | `groups.members.interrupt`, `.compact`, `.reincarnate`, `.context-info`, `.pr` | from the peer's dashboard: interrupt a member Codex agent's running turn, compact a member agent, ask it to reincarnate itself, read its context window use, and list or present its pull requests. Each needs the grant in every group the agent is in. No peer text is typed into the agent's pane: a peer's compact takes no follow-up, and a peer's reincarnate is the agent's own (mode `self`, no focus hint; the inbox request names your node and is not operator-authored). A peer presenting a PR names no repository directory. Unrestricted trust keeps every option |
 | `agents.receive` | offer agents into that group. See [Sharing an agent](federation-moving.md#sharing-an-agent-with-a-peer) |
 | `agents.receive.permissions` | opt-in permission carry into a receiving group, optionally limited to named slugs. It never transfers ownership or sensitive authority. See [permission carry](federation-moving.md#receiver-approved-permission-carry) |
@@ -146,6 +148,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `jobs.run` | one-shot remote jobs in that group, under a launch policy. See [Remote one-shot jobs](federation-work.md#remote-one-shot-jobs) |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `fleet.read` | the fleet brief: every active agent with its status, groups, task link and PRs, and what waits on the operator (unscoped only; read-only) |
+| `process.runs.read` | list and inspect every process run here (unscoped only; read-only). The peer's view leaves out how programs run: no program command lines, working directories or sandboxes, program authorizations or event payloads. It does show run params and performer reports, in every group. A group's `groups.resources.read` does not read runs |
 | `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see [The remote spawn dialog](federation-work.md#the-remote-spawn-dialog)) |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
 | `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
@@ -391,6 +394,9 @@ the dashboard. Two gates apply, and **both** must pass:
 |---|---|
 | `GET snapshot`, `groups`, `groups/{name}`, `agents/{id}` | `agents.status.read` |
 | `GET fleet` | `fleet.read` (scope `peer=<peer>`; the peer grants `fleet.read`) |
+| `GET v1/process/runs`, `v1/process/runs/{id}`, `…/events` | `process.runs.read` (scope `peer=<peer>`; the peer grants `process.runs.read`) |
+| `POST v1/process/runs` with `group` · with `agent` | `process.runs.start` (that group) · `agent.process` (every group the agent is in). The run is owned by your node's agent (`peer:<instance>/agent:<id>`) |
+| `GET groups/{name}/process` · `POST groups/{name}/process/advance` | `agents.status.read` · `process.advance` |
 | `POST agents/{id}/stop` · `resume` · `restart` · `retire` · `clone` | `agent.stop` · `agent.resume` · both for restart · `agent.retire` · `agent.clone` |
 | `POST agents/{id}/rename` · `tags` · `task` · `notify` | `agent.rename` · `agent.tags` · `agent.task` (notify too) |
 | `POST agents/{id}/interrupt` · `compact` · `reincarnate` | `agent.interrupt` · `agent.compact` · `agent.reincarnate` |
@@ -426,6 +432,9 @@ tclaude agent context-info --target builder@bob
 tclaude agent present-pr https://github.com/org/repo/pull/7 --target builder@bob
 tclaude agent reincarnate "unused" --target builder@bob
 tclaude agent fleet --remote bob
+tclaude process runs ls --remote bob
+tclaude process show run_0123 --remote bob
+tclaude process run release-check --group builders --param issue=42 --remote bob
 ```
 
 The same commands work for the operator, through the operator's own peer

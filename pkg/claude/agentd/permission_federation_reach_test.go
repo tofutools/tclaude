@@ -68,6 +68,9 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermGroupsMembersReincarnate:      "reincarnate",
 	PermGroupsMembersContextInfo:      "context_info",
 	PermGroupsMembersPR:               "pr",
+	PermGroupsMembersProcess:          "member_process",
+	PermProcessRunsStart:              "process_runs_start",
+	PermProcessAdvance:                "process_advance",
 	PermRoutesConsume:                 proto.CapRoutes,
 	PermJobsRun:                       proto.CapJobs,
 	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).
@@ -75,7 +78,7 @@ var pinnedFederationPeerSlugs = map[string]string{
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{
-	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermFleetRead: true, PermNodeHarnessesRead: true,
+	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermFleetRead: true, PermProcessRunsRead: true, PermNodeHarnessesRead: true,
 	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true,

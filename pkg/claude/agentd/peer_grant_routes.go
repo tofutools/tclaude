@@ -57,6 +57,9 @@ type peerGrantAuthority struct {
 	peer  string
 	group *db.AgentGroup
 	gates map[string]bool
+	// author names who acts (peerFollowUpAuthor), for what the route
+	// records or tells this node's agents.
+	author string
 }
 
 func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
@@ -179,7 +182,8 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 		peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 		return
 	}
-	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID)}
+	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID),
+		author: peerFollowUpAuthor(v, v.peer.InstanceID)}
 	if rule.invoke.extra != nil {
 		for _, slug := range rule.invoke.extra(v.peer.InstanceID, g) {
 			a.gates[slug] = true
@@ -191,7 +195,7 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 
 // peerGroupControlGrants are the grants behind a group's peer-invoked
 // controls, which peer_view.groups names per group.
-var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsResourcesLock, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell}
+var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsResourcesLock, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell, PermProcessAdvance}
 
 // peerGroupGrants names, per group, the peer grants of
 // peerGroupControlGrants (and the spawn grant, plus the spawn directory,

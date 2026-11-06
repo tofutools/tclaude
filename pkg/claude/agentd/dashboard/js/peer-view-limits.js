@@ -79,12 +79,13 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cleanup-group': ['feature:groups.manage.full'],
   // Removing a member from the group: unrestricted trust only.
   'remove-member': ['feature:agents.manage.full'],
+  // The group's advisory process advances under process.advance there.
+  'advance-phase': ['process.advance'],
   // What no peer grant covers, which unrestricted trust reaches as this
-  // node's operator does (the local_dashboard routes): its process, force
+  // node's operator does (the local_dashboard routes): its force
   // and ownership controls, the auto-join default, its member permissions, its
   // links within its node, new cron jobs, its standing orders, adding
   // members, its cross-harness spawn policy and saving it as a template there.
-  'advance-phase': ['feature:local_dashboard'],
   'rebrief-force': ['feature:local_dashboard'],
   'stand-down-force': ['feature:local_dashboard'],
   'grant-owner': ['feature:local_dashboard'],

@@ -45,6 +45,8 @@ var pinnedPeerGroupGates = map[string][]string{
 	// groups.members.manage covers. The member PATCH route a peer reaches
 	// gates none of them, so nothing it can do changed.
 	PermGroupsMembersManage: {"groups.members.rename", "groups.members.tags", "groups.members.task", "groups.members.update"},
+	// S6: process.advance answers its own gate on the group's advance route.
+	PermProcessAdvance: {"process.advance"},
 }
 
 // pinnedPeerSettingsWithCwdGates: the default directory also needs the
