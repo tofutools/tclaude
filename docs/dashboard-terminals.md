@@ -61,6 +61,13 @@ usual rules apply. Back on the page beside an open panel, for example, it goes
 after the usual delay. **Esc**, switching tabs and the panel's Hide button still
 work while the pointer is outside.
 
+A dialog open above the page freezes it the same way. This covers a
+confirmation that an action in the open panel asks for, such as moving an agent
+to another group. The panel stays while the dialog is up, even though the
+pointer is on the dialog and not on the panel. After the last dialog closes,
+the first move decides: on the panel it stays, and on the page it goes after the
+usual delay. **Esc** then belongs to the dialog.
+
 To turn this off, uncheck **Side panel at the edge** on the Config tab
 (`dashboard.side_panel_edge_reveal`). The peek and its growth have switches of
 their own there, and **Advanced** holds the values that tune them. None of

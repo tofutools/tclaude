@@ -1376,3 +1376,105 @@ test('the prediction judges the horizontal motion only, with no band where nothi
   s.flick({ x0: 900, x1: 950, steps: 5, stepMs: 10 });
   assert.equal(s.peeking() || s.revealed(), false, 'a short move near the edge travels too little');
 });
+
+// tcl-xxci6h: a modal or dialog open above the page freezes the reveal, as
+// leaving the window does. An action of the revealed panel's that asks to
+// confirm (dragging an agent to another group) puts the pointer on the modal,
+// not on the panel, and the panel must not go from under it. Tracking resumes
+// with the first move after the last modal closes.
+test('a modal open above the page freezes the revealed panel until the next move after it closes', async (t) => {
+  // modal opens a dashboard-style modal: an overlay showing, with an
+  // aria-modal dialog in it. It returns the overlay, to close it.
+  const modal = (s) => {
+    const overlay = s.doc.body.appendChild(s.doc.createElement('div'));
+    overlay.className = 'modal-overlay show';
+    const dialog = overlay.appendChild(s.doc.createElement('div'));
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    return overlay;
+  };
+  const offPanel = (s) => s.dock.dispatchEvent(new s.harness.window.Event('pointerleave', { bubbles: false }));
+
+  await t.test('a confirm opened from the panel keeps it; after it closes the hover-out delay starts at the next move', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+    const confirm = modal(s);
+    offPanel(s);
+    s.move(confirm.firstChild, WIDTH - 100);
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'under the confirm the panel stays');
+    confirm.classList.remove('show');
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'closing it decides nothing before the pointer moves');
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose - 1);
+    assert.equal(s.revealed(), true, 'back on the page, the delay starts from that move');
+    s.timers.advance(1);
+    assert.equal(s.revealed(), false, 'and then it goes');
+  });
+
+  await t.test('back on the panel after the modal, it stays', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    const confirm = modal(s);
+    offPanel(s);
+    s.move(confirm.firstChild, WIDTH - 100);
+    confirm.remove();
+    s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true);
+  });
+
+  await t.test('nested modals: frozen until the last one closes', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    const outer = modal(s);
+    const inner = s.doc.body.appendChild(s.doc.createElement('dialog'));
+    inner.setAttribute('open', '');
+    offPanel(s);
+    s.move(inner, 300);
+    outer.classList.remove('show');
+    s.move(inner, 310);
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'one still open holds it');
+    inner.removeAttribute('open');
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false, 'the last one closed, the page move lets it go');
+  });
+
+  await t.test('a hide already pending when the modal opens does not act under it', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    s.move(s.content, 300);
+    const confirm = modal(s);
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true);
+    confirm.remove();
+    s.move(s.content, 310);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false);
+  });
+
+  await t.test('Escape under a modal is the modal\'s, not the panel\'s', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    modal(s);
+    s.harness.fireEvent(s.doc, 'keydown', { key: 'Escape' });
+    assert.equal(s.revealed(), true);
+  });
+
+  await t.test('a closed dialog kept mounted, or one not laid out, freezes nothing', async (t) => {
+    const s = await shell(t);
+    s.openAtEdge();
+    const kept = s.doc.body.appendChild(s.doc.createElement('div'));
+    kept.className = 'modal-overlay';
+    const dialog = kept.appendChild(s.doc.createElement('div'));
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.getClientRects = () => [];
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false);
+  });
+});
