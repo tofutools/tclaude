@@ -34,6 +34,7 @@
 // when collapsed rather than overlaying dead area.
 
 import { $ } from './helpers.js';
+import { bindDockActions, syncDockActions } from './dock-actions.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
@@ -730,72 +731,17 @@ export function setDockOpen(open) {
 }
 
 // applyDockOpen follows every paint of the shared shell: it re-homes the
-// groups-toolbar globals (JOH-390 item 4) while the Groups palette is the one
-// open, re-syncs the dock top-inset, since the reserved space changes with the
+// groups-toolbar globals (dock-actions.js) while the Groups palette is the one
+// fully open, re-syncs the dock top-inset, since the reserved space changes with the
 // open state, and nudges the full-bleed bars.
 function applyDockOpen({ panel, open }) {
-  syncDockActions(open && panel?.name === 'groups');
+  syncDockActions(document);
   syncDockTop();
   // Toggling the dock changes the reserved width and whether the horizontal
   // clearance spacer should be parked (req 3), but mutates no <main> child — so
   // hscroll's MutationObserver won't fire. Nudge it directly so the spacer +
   // full-bleed bars re-fit in the same frame.
   syncFullBleedBars();
-}
-
-// The groups-toolbar globals re-homed into the open dock's head (JOH-390 item 4):
-// the "+ new group" primary, the ⚙ more-actions cog (+ its .action-menu) and the
-// 🧠 dashboard-default-profile chip and its 🛡 sandbox-profile peer. While the
-// dock is OPEN they live in the dock head (row 1 = new-group + cog; row 2 = the
-// two profile controls); collapsed, they go
-// back to their exact toolbar slots so the filter bar renders as before.
-//
-// We MOVE the live DOM nodes (not clones), so every listener rides along:
-// id-bound ones (#group-create-open's click), the cog's direct menu listener,
-// and the profile chips' cross-feature action route all remain valid. The toolbar
-// filter bar + the dock head are both STATIC markup (Preact owns #dock-body and
-// #groups-list), so nothing re-creates or clobbers the moved nodes.
-//
-// The cog's .action-menu still anchors to .filter-bar-cog (position:relative
-// rides along) and opens downward INTO the dock body; at the header's top it
-// stays within #agent-dock's box, so .dock-inner's overflow:hidden never clips it.
-const DOCK_ACTION_SPECS = [
-  { sel: '#group-create-open', dock: '#dock-actions-primary' },
-  { sel: '.filter-bar-cog', dock: '#dock-actions-primary' },
-  { sel: '#queued-spawns-control', dock: '#dock-actions-primary' },
-  { sel: '#dashboard-default-profile-control', dock: '#dock-actions-profile' },
-  { sel: '#dashboard-default-sandbox-profile-control', dock: '#dock-actions-profile' },
-];
-let dockActionHomes = null;
-let lastDockActionsOpen = null;
-function syncDockActions(open) {
-  // Only act when the dock-open bit actually FLIPPED — the class observer below
-  // fires on every body-class mutation (hscroll flags, dock-anim, wizard, …), so
-  // this guard keeps those to a cheap no-op and prevents a redundant re-append
-  // that could reorder the primary row.
-  if (open === lastDockActionsOpen) return;
-  lastDockActionsOpen = open;
-  // Capture each control's ORIGINAL toolbar slot once, before the first move.
-  // The nextSibling anchors are the inter-control whitespace text nodes, which
-  // never move — so insertBefore restores the exact slot regardless of the order
-  // we process the controls in.
-  if (!dockActionHomes) {
-    dockActionHomes = DOCK_ACTION_SPECS.map((s) => {
-      const el = $(s.sel);
-      if (!el) return null;
-      return { el, dock: $(s.dock), home: el.parentNode, next: el.nextSibling };
-    });
-  }
-  for (const h of dockActionHomes) {
-    if (!h || !h.el) continue;
-    if (open) {
-      // Append in spec order → primary row becomes [+ new group][⚙ cog]. Guarded
-      // so a repeat call (idempotent re-apply) doesn't re-append and reorder.
-      if (h.dock && h.el.parentNode !== h.dock) h.dock.appendChild(h.el);
-    } else if (h.home && h.el.parentNode !== h.home) {
-      h.home.insertBefore(h.el, h.next);
-    }
-  }
 }
 
 // The dock's top inset is the shared content-area inset (--dock-top), measured
@@ -806,12 +752,9 @@ const syncDockTop = () => syncChromeTopInset();
 
 export function bindDock() {
   if (!$('#agent-dock')) return;
-  // Re-home the toolbar globals off ANY change to body.dock-open, not only the
-  // side panel's paint (JOH-390 item 4), so the move can never desync from the
-  // visible open state. The change-guard in syncDockActions makes the extra
-  // body-class mutations a no-op.
-  new MutationObserver(() => syncDockActions(document.body.classList.contains('dock-open') && document.body.dataset.dockPanel === 'groups'))
-    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // Re-home the toolbar globals into the dock head while it is fully open
+  // (dock-actions.js).
+  bindDockActions(document);
   // The shared shell re-evaluates on every tab switch, offers the active tab's
   // panel, and wires the edge tab and the in-dock collapse (side-panel.js).
   onSidePanelApply(applyDockOpen);
