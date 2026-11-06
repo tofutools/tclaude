@@ -1,10 +1,12 @@
 import { h, render } from 'preact';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { shortId } from './helpers.js';
 import { Dialog } from './ui-dialog.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
+import { FilterCombobox } from './filter-combobox.js';
+import { PICKER_CAP, agentPickerItem } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -57,37 +59,28 @@ export function buildAddMemberCandidates({
     (candidate.groups || []).some((name) => name.toLowerCase().includes(needle)));
 }
 
-function CandidateRow({ candidate, index, highlighted, busy, onHighlight, onAdd }) {
-  const display = candidate.title || '(unnamed)';
-  return html`<div
-    id=${`add-member-option-${index}`}
-    class=${`add-member-row${highlighted ? ' highlighted' : ''}`}
-    role="option" aria-selected=${highlighted ? 'true' : 'false'}
-    aria-disabled=${busy ? 'true' : 'false'} data-i=${index}
-    onMouseMove=${() => onHighlight(candidate.conv_id)}
-    onClick=${() => { if (!busy) void onAdd(candidate); }}
-  >
-    <span class=${candidate.online ? 'online' : 'offline'} title=${candidate.online ? 'online' : 'offline'}>${candidate.online ? '●' : '○'}</span>
-    <span class="rowname">${display}</span>
-    <span class="id">${shortId(candidate.conv_id)}</span>
-    ${candidate._role ? html`<span class="role">${candidate._role}</span>` : null}
-    ${candidate._descr ? html`<span class="descr">${candidate._descr}</span>` : null}
-    ${(candidate.groups || []).length ? html`<span class="groups-tag"><span class="theme-copy-regular">in:</span><span class="theme-copy-wizard">parties:</span> ${(candidate.groups || []).join(', ')}</span>` : null}
-    ${candidate._promote ? html`<span class="groups-tag promote-tag" title="Not an agent / hero yet — adding it here promotes it"><span class="theme-copy-regular">promotes to agent</span><span class="theme-copy-wizard">awakens as hero</span></span>` : null}
-  </div>`;
+// addMemberItem is a candidate as the shared agent picker's row: its
+// conversation is what joins, and its role and description in another group
+// and whether adding promotes it to an agent trail the row.
+export function addMemberItem(candidate) {
+  // A promotion-pool conversation that says nothing of presence is offline.
+  const item = agentPickerItem({ ...candidate, online: !!candidate.online }, { identity: 'conv' });
+  return {
+    ...item,
+    hint: shortId(candidate.conv_id),
+    keywords: `${item.keywords} ${candidate._role || ''} ${candidate._descr || ''}`,
+    tail: html`${candidate._role ? html`<span class="role">${candidate._role}</span>` : null}${candidate._descr ? html`<span class="descr">${candidate._descr}</span>` : null}${item.tail}${candidate._promote
+      ? html`<span class="groups-tag promote-tag" title="Not an agent / hero yet — adding it here promotes it"><span class="theme-copy-regular">promotes to agent</span><span class="theme-copy-wizard">awakens as hero</span></span>` : null}`,
+  };
 }
 
 export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) {
-  // The descriptor key and local controls survive snapshot polling. Polls may
-  // change the candidate source, but never reset the user's query, toggle or
-  // keyboard selection while this transaction stays mounted. Selection is an
-  // identity, not an index: a same-length poll reorder cannot retarget Enter.
+  // The descriptor key and the picker's own query and highlight survive
+  // snapshot polling: the shared picker (agent-picker.js, on FilterCombobox)
+  // highlights a row by its conversation, so a poll that reorders the rows
+  // cannot retarget Enter, and one that removes the row leaves none.
   const [query, setQuery] = useState('');
   const [includeOffline, setIncludeOffline] = useState(false);
-  // null requests the legacy initial-first selection after an explicit filter
-  // gesture; '' means polling removed the selected identity and selection must
-  // stay empty until Arrow navigation or pointer hover chooses a row.
-  const [highlightConv, setHighlightConv] = useState(null);
   const [promotionPool, setPromotionPool] = useState([]);
   const [poolLoading, setPoolLoading] = useState(true);
   const [poolError, setPoolError] = useState('');
@@ -95,7 +88,6 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   const busyRef = useRef(false);
   const [addError, setAddError] = useState('');
   const [failedCandidate, setFailedCandidate] = useState(null);
-  const listRef = useRef(null);
   const poolRequest = useRef(0);
   const poolBusyRef = useRef(false);
   // Another node's group lists that node's agents, never the page's.
@@ -108,10 +100,8 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     promotionPool,
     group: descriptor.group,
     includeOffline,
-    query,
-  }).filter((candidate) => !added.has(candidate.conv_id)), [currentSnapshot, promotionPool, descriptor.group, includeOffline, query, added]);
-  const selectedIndex = candidates.findIndex(
-    (candidate) => candidate.conv_id === highlightConv);
+  }).filter((candidate) => !added.has(candidate.conv_id)), [currentSnapshot, promotionPool, descriptor.group, includeOffline, added]);
+  const items = useMemo(() => candidates.map(addMemberItem), [candidates]);
   const dirty = query !== '' || includeOffline;
 
   const loadPool = async () => {
@@ -133,35 +123,10 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     }
   };
 
-  const retryPool = () => {
-    if (!candidates.length && selectedIndex < 0) setHighlightConv(null);
-    void loadPool();
-  };
-
   useEffect(() => {
     void loadPool();
     return () => { poolRequest.current++; };
   }, []);
-
-  useEffect(() => {
-    if (!candidates.length) {
-      if (highlightConv === null && poolLoading) return;
-      if (highlightConv !== '') setHighlightConv('');
-      return;
-    }
-    if (highlightConv === null) {
-      setHighlightConv(candidates[0].conv_id);
-      return;
-    }
-    if (highlightConv && selectedIndex < 0) {
-      setHighlightConv('');
-    }
-  }, [candidates, highlightConv, poolLoading, selectedIndex]);
-
-  useLayoutEffect(() => {
-    listRef.current?.querySelector('.add-member-row.highlighted')
-      ?.scrollIntoView?.({ block: 'nearest' });
-  }, [highlightConv, candidates.length]);
 
   const addOne = async (candidate) => {
     if (!candidate || busyRef.current) return;
@@ -181,66 +146,32 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     }
   };
 
-  const navigate = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      if (!candidates.length) return;
-      let next;
-      if (selectedIndex < 0) {
-        next = event.key === 'ArrowDown' ? 0 : candidates.length - 1;
-      } else {
-        const delta = event.key === 'ArrowDown' ? 1 : -1;
-        next = (selectedIndex + delta + candidates.length) % candidates.length;
-      }
-      setHighlightConv(candidates[next].conv_id);
-      return;
-    }
-    if (event.key !== 'Enter' || event.target.closest('button')) return;
-    event.preventDefault();
-    if (!busyRef.current && selectedIndex >= 0) void addOne(candidates[selectedIndex]);
-  };
-
   const emptyRetry = includeOffline
     ? '(Try a different filter.)'
     : '(Try ticking "Include offline / archived" for a wider pool.)';
   const wizardEmptyRetry = includeOffline
     ? '(Try a different filter.)'
     : '(Try ticking "Include slumbering / archived" for a wider pool.)';
+  const emptyHint = !items.length && poolLoading
+    ? html`<span role="status">Loading conversations…</span>`
+    : html`<span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span>`;
   return html`<${Dialog}
     id="add-member-modal" dialogClass="add-member-modal" labelledby="add-member-title"
     onClose=${state.closeAddMember} dirty=${dirty} blocked=${busy}
     confirmDiscard=${confirmDiscard} guardBackdropDrag=${true}
   >
-    <div>
+    <div class="agent-picker">
       <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite hero into party</span> <span class="muted" id="add-member-group">${descriptor.group}</span></h3>
-      <input id="add-member-search" class="add-member-search" type="text"
-        value=${query} disabled=${busy} autofocus data-select-on-focus
-        placeholder="Filter by title / role or class / descr / conv-id…"
-        autocomplete="off" spellcheck=${false}
-        role="combobox" aria-autocomplete="list" aria-controls="add-member-list"
-        aria-expanded="true"
-        aria-activedescendant=${selectedIndex >= 0 ? `add-member-option-${selectedIndex}` : undefined}
-        onKeyDown=${navigate}
-        onInput=${(event) => { setQuery(event.currentTarget.value); setHighlightConv(null); }} />
-      <div
-        class="add-member-list" id="add-member-list" ref=${listRef}
-        role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
-      >
-        ${poolError ? html`<div class="ui-empty-block" role="alert">${poolError} <${Button} size="sm" id="add-member-pool-retry" disabled=${poolLoading || busy} onClick=${retryPool}>Retry<//></div>` : null}
-        ${candidates.map((candidate, index) => html`<${CandidateRow}
-          key=${candidate.conv_id} candidate=${candidate} index=${index}
-          highlighted=${index === selectedIndex} busy=${busy}
-          onHighlight=${setHighlightConv} onAdd=${addOne}
-        />`)}
-        ${!candidates.length && poolLoading ? html`<div class="ui-empty-block" role="status">Loading conversations…</div>` : null}
-        ${!candidates.length && !poolLoading ? html`<div class="ui-empty-block"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
-      </div>
+      <${FilterCombobox} id="add-member-list" inputId="add-member-search" items=${items} value="" multi=${false}
+        alwaysOpen autoFocus cap=${PICKER_CAP} ariaLabel="Filter conversations" disabled=${busy} busy=${busy || poolLoading}
+        placeholder="Filter by title / role or class / descr / conv-id…" emptyHint=${emptyHint} onQuery=${setQuery}
+        onChange=${(conv) => { if (conv) void addOne(candidates.find((candidate) => candidate.conv_id === conv)); }} />
+      ${poolError ? html`<div class="ui-empty-block" role="alert">${poolError} <${Button} size="sm" id="add-member-pool-retry" disabled=${poolLoading || busy} onClick=${() => void loadPool()}>Retry<//></div>` : null}
       ${addError ? html`<div class="cron-create-error ui-error-box" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <${Button} size="sm" id="add-member-retry" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry<//>` : null}</div>` : null}
       <div class="add-member-foot">
         <label title="Include archived / never-online conversations in the candidate list">
           <input id="add-member-all" type="checkbox" checked=${includeOffline} disabled=${busy}
-            onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlightConv(null); }} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
+            onChange=${(event) => setIncludeOffline(event.currentTarget.checked)} /><span class="theme-copy-regular">Include offline / archived</span><span class="theme-copy-wizard">Include slumbering / archived</span>
         </label>
         <span class="spacer"></span>
         <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>

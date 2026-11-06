@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
 
@@ -275,17 +276,18 @@ test('dropping a dock agent onto an outstanding agent node reassigns it', async 
   assert.equal(api.assignments.length, 1);
 });
 
+const reassignButton = (form) => [...form.querySelectorAll('button')].find((b) => /reassign/.test(b.textContent));
+
 test('the inspector reassigns by keyboard and addresses the stage', async (t) => {
   const api = assigningApi();
   const { harness, root } = await mountWithContext(t, withDispatch({ nodeId: 'checkout.review', agentId: 'agt_fe_forms', attempt: 2, state: 'delivered' }), api);
   await harness.act(() => harness.fireEvent(root.querySelector('[data-process-node="checkout"]'), 'click'));
   const form = root.querySelector('[data-run-reassign="checkout"]');
   assert.ok(form);
-  const select = form.querySelector('select');
-  assert.deepEqual([...select.querySelectorAll('option')].map((o) => o.value), ['agt_fe_lead', 'agt_fe_charts'], 'the current performer is not offered');
-  for (const option of select.querySelectorAll('option')) option.selected = option.value === 'agt_fe_charts';
-  await harness.act(() => harness.fireEvent(select, 'change'));
-  await harness.act(async () => { harness.fireEvent(form.querySelector('button'), 'click'); });
+  const box = form.querySelector('.agent-combobox');
+  assert.deepEqual(await comboKeys(harness, box), ['agt_fe_lead', 'agt_fe_charts'], 'the current performer is not offered');
+  await comboPick(harness, box, 'agt_fe_charts');
+  await harness.act(async () => { harness.fireEvent(reassignButton(form), 'click'); });
   await settle(harness);
   assert.deepEqual(api.assignments, [['run_release', 'checkout.review', 'agt_fe_charts']]);
 });
@@ -294,7 +296,7 @@ test('a refused reassign is shown, and a node with nothing outstanding offers no
   const refusing = assigningApi({ fail: 'the current performer is still being spawned' });
   const second = await mountWithContext(t, withDispatch(), refusing);
   await second.harness.act(() => second.harness.fireEvent(second.root.querySelector('[data-process-node="checkout"]'), 'click'));
-  await second.harness.act(async () => { second.harness.fireEvent(second.root.querySelector('[data-run-reassign] button'), 'click'); });
+  await second.harness.act(async () => { second.harness.fireEvent(reassignButton(second.root.querySelector('[data-run-reassign]')), 'click'); });
   await settle(second.harness);
   assert.match(second.root.querySelector('[data-run-reassign] [role="alert"]').textContent, /still being spawned/);
 

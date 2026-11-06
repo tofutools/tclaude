@@ -211,7 +211,7 @@ test('promotion-only retry restores initial keyboard selection after pool failur
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Plain worker',
     'the first promotion-only retry row inherits the re-armed selection sentinel');
-  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-list-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.equal(addedCandidate?.conv_id, 'plain-worker',
     'Enter activates the asynchronously initialized first row');
@@ -278,7 +278,7 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   assert.equal(list.hasAttribute('aria-activedescendant'), false,
     'active option ownership stays on the focused combobox');
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Alpha');
-  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-list-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo');
   await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
@@ -313,7 +313,7 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
     'Arrow navigation explicitly selects again after disappearance');
-  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-option-0');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'add-member-list-option-0');
   await harness.act(() => harness.fireEvent(search, 'keydown', {
     key: 'Enter', isComposing: true,
   }));

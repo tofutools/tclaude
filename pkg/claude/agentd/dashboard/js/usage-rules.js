@@ -14,6 +14,7 @@ import {
 } from './usage-rules-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -213,10 +214,8 @@ function AssignmentsTab({ overview, busy, onAssign }) {
     <h4 class="ui-eyebrow">Agents</h4>
     ${agentRows.map((id) => row('agent', id, agentTitle(overview, id) || id, agentTitle(overview, id) ? id : ''))}
     <div class="usage-assign-row">
-      <${Select} size="sm" aria-label="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} onChange=${(e) => setAgentPick(e.currentTarget.value)}>
-        <option value="">${pickable.length ? 'Pick an agent…' : 'No other agents'}</option>
-        ${pickable.map((a) => html`<option key=${a.id} value=${a.id}>${a.title || a.id}</option>`)}
-      <//>
+      <${AgentCombobox} ariaLabel="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} agents=${choiceAgents(pickable)}
+        placeholder=${pickable.length ? 'Pick an agent…' : 'No other agents'} onChange=${setAgentPick} />
       ${agentPick ? html`<${ProfileChips} names=${[]} profiles=${profiles} disabled=${busy} label=${agentTitle(overview, agentPick) || agentPick}
         onChange=${(next) => { setAgentPick(''); onAssign('agent', agentPick, next); }}/>` : null}
     </div>

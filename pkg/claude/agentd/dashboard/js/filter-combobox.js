@@ -34,6 +34,13 @@
 //   alwaysOpen   the list always shows (a picker dialog's own list), and
 //                Escape is left to the dialog
 //   autoFocus    focus the input on mount
+//   busy         marks the list aria-busy (still loading, or a write in
+//                flight); with disabled, nothing can be chosen meanwhile
+//
+// The highlight is a row's key, not its place: a poll that reorders the
+// items keeps it on the same row, and one that removes that row leaves
+// nothing highlighted (Enter does nothing) until ↑↓ or a hover picks again.
+// Typing, or a fresh list, highlights the first row.
 // An item may also carry lead and tail: what renders before its label (an
 // online dot) and after its hint (badges), for a picker whose rows say more.
 //   placeholder, emptyHint, ariaLabel, id (the listbox's)
@@ -110,13 +117,15 @@ export function comboGroupSummary(items) {
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
-  alwaysOpen = false, autoFocus = false,
+  alwaysOpen = false, autoFocus = false, busy = false,
 }) {
   const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
   const [openState, setOpen] = useState(false);
   const open = alwaysOpen || openState;
-  const [highlight, setHighlight] = useState(0);
+  // null: the first row, whichever it is; '': none; else the row's key.
+  const [highlightKey, setHighlightKey] = useState(null);
+  const resetHighlight = () => setHighlightKey(null);
   const inputRef = useRef(null);
   const highlightedRef = useRef(null);
   const listID = useMemo(() => id || `filter-combobox-${++nextComboboxID}`, [id]);
@@ -127,35 +136,39 @@ export function FilterCombobox({
   // that order, not the ranking's: ↓ always goes to the row below.
   const visible = summarize ? [] : comboSections(matches.slice(0, cap)).flatMap((section) => section.rows.map((row) => row.item));
   const choosable = (item) => item && !item.disabled;
-  const bounded = Math.max(0, Math.min(highlight, Math.max(0, visible.length - 1)));
-  const activeID = open && visible[bounded] ? `${listID}-option-${bounded}` : undefined;
-  useEffect(() => { if (bounded !== highlight) setHighlight(bounded); }, [bounded, highlight]);
+  const bounded = highlightKey === null ? (visible.length ? 0 : -1) : visible.findIndex((item) => item.key === highlightKey);
+  const activeID = open && bounded >= 0 ? `${listID}-option-${bounded}` : undefined;
+  // The highlighted row went away: nothing is highlighted, and a later list
+  // that has it again does not bring the highlight back unasked.
+  useEffect(() => { if (highlightKey && bounded < 0) setHighlightKey(''); }, [highlightKey, bounded]);
+  const highlightAt = (index) => setHighlightKey(visible[index]?.key ?? '');
   useEffect(() => { highlightedRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [bounded, open]);
   useEffect(() => { if (autoFocus) inputRef.current?.focus?.(); }, []);
 
   const choose = (item) => {
-    if (!choosable(item)) return;
+    if (!choosable(item) || disabled) return;
     if (multi) {
       const next = chosen.has(item.key) ? [...chosen].filter((key) => key !== item.key) : [...chosen, item.key];
       onChange(next);
     } else onChange(chosen.has(item.key) ? '' : item.key);
-    setQuery(''); setHighlight(0);
+    setQuery(''); resetHighlight();
     if (!multi) setOpen(false);
   };
   const add = (item) => {
-    if (!choosable(item)) return;
+    if (!choosable(item) || disabled) return;
     if (!chosen.has(item.key)) {
       if (multi) onChange([...chosen, item.key]); else onChange(item.key);
     }
-    setQuery(''); setHighlight(0);
+    setQuery(''); resetHighlight();
     if (!multi) setOpen(false);
   };
   const commitFree = () => {
+    if (disabled) return false;
     const key = freeText?.(query.trim()) || '';
     if (!key) return false;
     if (multi) { if (!chosen.has(key)) onChange([...chosen, key]); }
     else onChange(key);
-    setQuery(''); setHighlight(0);
+    setQuery(''); resetHighlight();
     return true;
   };
   const onKeyDown = (event) => {
@@ -163,9 +176,9 @@ export function FilterCombobox({
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       if (!open) { setOpen(true); return; }
-      setHighlight(Math.min(bounded + 1, visible.length - 1));
+      highlightAt(bounded < 0 ? 0 : Math.min(bounded + 1, visible.length - 1));
     } else if (event.key === 'ArrowUp') {
-      event.preventDefault(); setHighlight(Math.max(bounded - 1, 0));
+      event.preventDefault(); highlightAt(bounded < 0 ? visible.length - 1 : Math.max(bounded - 1, 0));
     } else if (event.key === 'Enter') {
       // Enter only ever adds. An exact key or label wins over the ranking, a
       // literal-shaped entry is taken as typed, and otherwise the highlighted
@@ -179,9 +192,9 @@ export function FilterCombobox({
       const exact = exacts.find((item) => item.key === typed) || (exacts.length === 1 ? exacts[0] : null);
       if (exact) { event.preventDefault(); add(exact); }
       else if (typed && freeText && literal?.(typed)) { event.preventDefault(); commitFree(); }
-      else if (open && visible[bounded]) { event.preventDefault(); add(visible[bounded]); }
+      else if (open && bounded >= 0) { event.preventDefault(); add(visible[bounded]); }
       else if (typed && freeText) { event.preventDefault(); commitFree(); }
-    } else if (event.key === 'Tab' && open && query.trim() && visible[bounded]) {
+    } else if (event.key === 'Tab' && open && query.trim() && bounded >= 0) {
       // Tab completes the typed text to the highlighted row's label, the way
       // a shell completes; a second Tab moves focus on as usual.
       const label = visible[bounded].label || visible[bounded].key;
@@ -203,15 +216,15 @@ export function FilterCombobox({
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
       onFocus=${() => setOpen(true)} onClick=${() => setOpen(true)} onBlur=${() => setOpen(false)}
-      onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); setOpen(true); }}
+      onInput=${(event) => { setQuery(event.currentTarget.value); resetHighlight(); setOpen(true); }}
       onKeyDown=${onKeyDown} />
-    ${open && html`<div class="add-member-list filter-combobox-list" id=${listID} role="listbox"
+    ${open && html`<div class="add-member-list filter-combobox-list" id=${listID} role="listbox" aria-busy=${busy ? 'true' : 'false'}
       aria-multiselectable=${multi ? 'true' : 'false'}
       onMouseDown=${(event) => event.preventDefault()}>
       ${summarize ? html`<div class="filter-combobox-tip">Type to search ${items.length} by name, id or group.</div>
         <div class="ui-eyebrow filter-combobox-kind">Groups</div>
         ${shownGroups.map(({ group, count }) => html`<div key=${group} class="add-member-row filter-combobox-group-sum"
-          data-group=${group} onMouseDown=${() => { if (group) { setQuery(`group:${group} `); setHighlight(0); } }}>
+          data-group=${group} onMouseDown=${() => { if (group) { setQuery(`group:${group} `); resetHighlight(); } }}>
           <span class="rowname">${group || '(no group)'}</span><span class="id">${count}</span></div>`)}
         ${summary.length > shownGroups.length ? html`<div class="filter-combobox-tip">… ${summary.length - shownGroups.length} more groups</div>` : null}`
     : visible.length === 0 ? html`<div class="ui-empty-block filter-combobox-empty">${query.trim() && freeText?.(query.trim())
@@ -226,6 +239,7 @@ export function FilterCombobox({
           aria-disabled=${item.disabled ? 'true' : undefined} title=${item.disabled ? item.reason || '' : item.key}
           data-key=${item.key}
           class=${`add-member-row filter-combobox-option${index === bounded ? ' highlighted' : ''}${item.disabled ? ' disabled' : ''}`}
+          onMouseMove=${() => { if (index !== bounded) setHighlightKey(item.key); }}
           onMouseDown=${() => choose(item)}>
           <span class="filter-combobox-check" aria-hidden="true">${chosen.has(item.key) ? '✓' : ''}</span>
           ${item.lead || null}

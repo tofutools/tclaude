@@ -6554,7 +6554,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .agent-picker .filter-combobox .filter-combobox-input { padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
 .agent-picker .filter-combobox .filter-combobox-list { flex: 1 1 auto; min-height: 80px; max-height: 50vh; margin-top: 0; border-color: #2a3340; }
 .agent-picker .filter-combobox .add-member-row { padding: 6px 10px; }
-.agent-combobox { flex: 1 1 auto; min-width: 0; }
+.agent-combobox { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.agent-combobox > .agent-combobox-chosen { order: -1; }
 .agent-combobox .filter-combobox { margin-top: 0; }
 .agent-combobox-chosen { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; font-size: 12px; }
 .agent-combobox-chosen .rowname { color: #d4d4d4; font-weight: bold; }

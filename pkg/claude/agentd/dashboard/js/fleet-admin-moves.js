@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { sentLanding } from './fleet-admin-landing.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -73,8 +74,8 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   };
   return html`<${Dialog} id="fleet-move-agent" onClose=${onClose} title="Move an agent to a peer">
     ${!agents.length || !peers.length ? html`<div class="muted">${!agents.length ? 'This node has no agent to move.' : 'Trust a peer first.'}</div>` : html`
-    <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
+    <div class="fa-of-row"><span class="fa-k">agent</span><${AgentCombobox} id="fleet-move-agent-agent" value=${form.agent} agents=${choiceAgents(agents)} ariaLabel="Agent"
+      onChange=${(agent) => set('agent')({ currentTarget: { value: agent, type: 'text' } })} /></div>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span>${picking

@@ -9,6 +9,7 @@ import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { relTime } from './helpers.js';
 import { findingsText, modelsFor, redactionText, spawnableHarnesses } from './paf-model.js';
 import { downloadBlob } from './download.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -66,8 +67,7 @@ function CreatePanel({ actions, preset, onDone, onError }) {
   };
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-create">
     <div class="ui-eyebrow paf-sec">Take a snapshot</div>
-    <${Field} label="Agent"><${Select} id="snapshot-create-agent" value=${agent} onChange=${(e) => setAgent(e.currentTarget.value)}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></${Field}>
+    <${Field} label="Agent"><${AgentCombobox} id="snapshot-create-agent" value=${agent} agents=${choiceAgents(agents)} ariaLabel="Agent" onChange=${setAgent} /></${Field}>
     <${Field} label="Name"><input id="snapshot-create-name" value=${name} placeholder="default: <agent>-<UTC time>" onInput=${(e) => setName(e.currentTarget.value)} /></${Field}>
     <${Field} label="Note"><input id="snapshot-create-note" value=${note} maxlength="1000" placeholder="optional, e.g. known good before the refactor" onInput=${(e) => setNote(e.currentTarget.value)} /></${Field}>
     <${Field} label="Expires"><input id="snapshot-create-expires" value=${expires} placeholder="e.g. 30d, 72h or never (default: library retention)" onInput=${(e) => setExpires(e.currentTarget.value)} /></${Field}>

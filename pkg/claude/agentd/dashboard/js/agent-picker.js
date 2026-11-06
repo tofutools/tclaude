@@ -56,10 +56,17 @@ export function agentPickerItem(agent, { identity = 'agent', sudo = null, group 
     hint: shortAgentId(agent.agent_id || agent.key, agent.conv_id),
     group: groups[0] || '',
     keywords: [agent.agent_id, agent.conv_id, ...groups, ...memberships.flatMap((item) => [item.role, item.descr])].filter(Boolean).join(' '),
-    lead: html`<span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>`,
+    // A list that does not say who is online (an {id, label} choice) shows no dot.
+    lead: agent.online === undefined ? null : html`<span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>`,
     tail: html`${grants ? html`<span class="sudo-badge" title=${`${grants} active sudo grant(s)`}>🔓</span>` : null}${groups.length
-      ? html`<span class="groups-tag" title=${idTooltip(agent.agent_id || agent.key, agent.conv_id)}>in: ${groups.join(', ')}</span>` : null}`,
+      ? html`<span class="groups-tag" title=${idTooltip(agent.agent_id || agent.key, agent.conv_id)}><span class="theme-copy-regular">in:</span><span class="theme-copy-wizard">parties:</span> ${groups.join(', ')}</span>` : null}`,
   };
+}
+
+// choiceAgents turns { id, label } (or { id, title }) choices, the shape
+// several dialogs list agents in, into the agents AgentCombobox takes.
+export function choiceAgents(choices = []) {
+  return choices.map((choice) => ({ agent_id: choice.id, title: choice.label ?? choice.title ?? choice.id, online: choice.online }));
 }
 
 // agentPickerItems are the snapshot's agents a picker offers: the online
@@ -100,21 +107,30 @@ export function AgentPickerDialog({ descriptor, snapshot, onChoose, onClose, con
 // agents or group members): the chosen one shows above the filter box, with
 // × to clear it. A value no agent has stays, marked missing. group names the
 // group agents are members of, when they do not say (a group's members).
-export function AgentCombobox({ id, value, onChange, agents, group = '', placeholder = 'Type to find an agent…', emptyHint = 'No agents.' }) {
+//   ariaLabel, disabled: the box's; attrs: more attributes on the wrapper
+//   (a data-* hook the surrounding view finds it by)
+export function AgentCombobox({
+  id, value, onChange, agents, group = '', placeholder = 'Type to find an agent…', emptyHint = 'No agents.',
+  ariaLabel = 'Find an agent', disabled = false, attrs = {},
+}) {
   const items = useMemo(() => agents.map((agent) => agentPickerItem(agent, { group })), [agents, group]);
   const chosen = value ? items.find((item) => item.key === value) : null;
   // A click on the chosen agent must not reach a <label> around the form
   // row either: it would hand it to the row's first radio (a standing
-  // order's "Everyone"), changing the target.
-  return html`<div class="agent-combobox" id=${id} data-value=${value || ''} onClick=${(event) => event.preventDefault()}>
+  // order's "Everyone"), changing the target. The chosen line comes after
+  // the box in the markup (CSS shows it above), so a <label> around the
+  // field hands its own clicks to the box, never to the × that clears it.
+  // Enter in the box never submits a form around it, as a <select> did not.
+  return html`<div ...${attrs} class="agent-combobox" id=${id} data-value=${value || ''} onClick=${(event) => event.preventDefault()}
+    onKeyDown=${(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
+    <${FilterCombobox} id=${id ? `${id}-list` : undefined} inputId=${id ? `${id}-input` : undefined} items=${items} value=${value || ''} multi=${false}
+      cap=${PICKER_CAP} ariaLabel=${ariaLabel} disabled=${disabled} placeholder=${value ? 'Type to change…' : placeholder} emptyHint=${emptyHint}
+      onChange=${(key) => onChange(key)} />
     ${value && html`<div class="agent-combobox-chosen">
       ${chosen ? html`${chosen.lead}<span class="rowname">${chosen.label}</span><span class="id">${chosen.hint}</span>`
         : html`<span class="rowname">${value}</span><span class="muted">(missing)</span>`}
-      <${Button} size="sm" variant="ghost" class="agent-combobox-clear" title="Clear" aria-label="Clear the agent" onClick=${() => onChange('')}>×<//>
+      ${!disabled && html`<${Button} size="sm" variant="ghost" class="agent-combobox-clear" title="Clear" aria-label="Clear the agent" onClick=${() => onChange('')}>×<//>`}
     </div>`}
-    <${FilterCombobox} id=${`${id}-list`} inputId=${`${id}-input`} items=${items} value=${value || ''} multi=${false}
-      cap=${PICKER_CAP} ariaLabel="Find an agent" placeholder=${value ? 'Type to change…' : placeholder} emptyHint=${emptyHint}
-      onChange=${(key) => onChange(key)} />
   </div>`;
 }
 

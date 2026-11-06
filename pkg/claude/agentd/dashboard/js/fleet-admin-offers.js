@@ -8,6 +8,7 @@ import { BundleInspectDialog } from './fleet-admin-bundle.js';
 import { ImportConfirmList } from './paf-dialogs.js';
 import { keepParams } from './paf-model.js';
 import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLanding } from './fleet-admin-landing.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -284,8 +285,8 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFindings(e.body?.findings || []); setError('The history looks like it contains credentials. Share without history, or send it anyway.'); } else setError(errText(e)); });
   };
   return html`<${Dialog} id="fleet-share-agent" onClose=${onClose} title="Offer an agent to a peer">
-    <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-share-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
+    <div class="fa-of-row"><span class="fa-k">agent</span><${AgentCombobox} id="fleet-share-agent-agent" value=${form.agent} agents=${choiceAgents(agents)} ariaLabel="Agent"
+      onChange=${(agent) => set('agent')({ currentTarget: { value: agent, type: 'text' } })} /></div>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
