@@ -477,19 +477,21 @@ func resolveClaudeModelTransport(
 		Provider:         "anthropic",
 		BaseURL:          baseURL,
 		ProviderResolved: true,
-		ClaudeLogin:      claudeLaunchLogin(baseURL, environment, runtime.GOOS),
+		ClaudeLogin:      claudeLaunchLogin(baseURL, environment, claudeLaunchConfigDir(), runtime.GOOS),
 	}, nil
 }
 
 // claudeLaunchLogin classifies what a first-party Claude Code launch signs in
-// with, for the sign-in refresh warning (harness.ClaudeLoginRefreshNotice). It
-// reads only whether the stored login carries a refresh token, never a token.
+// with, for the sign-in refresh warning (harness.ClaudeLoginRefreshNotice).
+// configDir is the directory the launch's Claude Code reads its credentials
+// from. Only whether the stored login has a refresh token is kept; the token
+// itself is never returned, logged or stored.
 // A launch through a moved ANTHROPIC_BASE_URL is a gateway, not a subscription
 // route, and is not classified.
 func claudeLaunchLogin(
 	baseURL string,
 	environment map[string]string,
-	goos string,
+	configDir, goos string,
 ) harness.ClaudeLogin {
 	if baseURL != "" && !claudeFirstPartyBaseURL(baseURL) {
 		return harness.ClaudeLoginNone
@@ -502,7 +504,7 @@ func claudeLaunchLogin(
 		}
 	}
 	login := harness.ClaudeLoginNone
-	switch hasRefresh, found := claudeStoredSubscriptionLogin(environment); {
+	switch hasRefresh, found := claudeStoredSubscriptionLogin(configDir); {
 	case hasRefresh:
 		login = harness.ClaudeLoginSubscription
 	case !found && goos == "darwin":
@@ -527,18 +529,24 @@ func claudeFirstPartyBaseURL(raw string) bool {
 		strings.EqualFold(parsed.Hostname(), "api.anthropic.com")
 }
 
-// claudeStoredSubscriptionLogin reports whether the launch's Claude Code
-// credentials file holds a subscription login with a refresh token, and
+// claudeLaunchConfigDir is the credentials directory of a tclaude Claude
+// launch: every launch pins CLAUDE_CONFIG_DIR to the harness state root
+// (ApplyClaudeConfigDirEnv), whatever the ambient value is.
+func claudeLaunchConfigDir() string {
+	dir, err := TclaudeLayerHarnessStateRoot(harness.DefaultName)
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// claudeStoredSubscriptionLogin reports whether the Claude Code credentials
+// file in configDir holds a subscription login with a refresh token, and
 // whether the file exists at all. An unreadable or malformed file counts as
 // no login: the warning is advisory, and Claude Code itself would not use it.
-func claudeStoredSubscriptionLogin(environment map[string]string) (hasRefresh, found bool) {
-	configDir := strings.TrimSpace(environment["CLAUDE_CONFIG_DIR"])
+func claudeStoredSubscriptionLogin(configDir string) (hasRefresh, found bool) {
 	if configDir == "" {
-		home := strings.TrimSpace(environment["HOME"])
-		if home == "" {
-			return false, false
-		}
-		configDir = filepath.Join(home, ".claude")
+		return false, false
 	}
 	data, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
 	if err != nil {
