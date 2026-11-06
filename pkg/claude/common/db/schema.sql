@@ -2349,3 +2349,9 @@ CREATE TABLE group_page_patches (
 			patch_seq INTEGER NOT NULL DEFAULT 0,
 			patches   TEXT NOT NULL DEFAULT '[]'
 		) STRICT;
+
+CREATE TABLE federation_peer_agent_views (
+			peer TEXT PRIMARY KEY,
+			policy TEXT NOT NULL CHECK (policy IN ('allow','deny')),
+			updated_at INTEGER NOT NULL
+		) STRICT;

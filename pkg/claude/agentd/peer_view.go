@@ -35,7 +35,7 @@ func PeerViewHandler(instanceID string) http.Handler {
 func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.Handler {
 	actor := "operator@" + instanceID
 	if principal != nil {
-		actor = "agent:" + principal.Name + "@" + instanceID
+		actor = "agent:" + principal.Name + "/" + principal.ID + "@" + instanceID
 	}
 	mux := http.NewServeMux()
 	for pattern, rule := range peerViewRules() {
@@ -54,7 +54,7 @@ func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.
 			out := &peerViewResponse{header: make(http.Header)}
 			view := &peerView{peer: p, agent: principal}
 			if principal != nil {
-				if status, code, msg := agentPeerViewRefusal(instanceID, pattern, r); status != 0 {
+				if status, code, msg := agentPeerViewRefusal(instanceID, pattern, r, principal); status != 0 {
 					writeError(w, status, code, msg)
 					if r.Method != http.MethodGet && r.Method != http.MethodHead {
 						recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (agent refused)", status)

@@ -71,7 +71,7 @@ func acceptOutboundPeerView(t *testing.T, p *fedPeer, after int) *stream.Conn {
 	require.NoError(t, env.DecodePayload(&payload))
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
-	answer := p.envelope(proto.KindPeerViewAnswer, proto.Endpoint{}, proto.PeerViewAnswerPayload{Stream: payload.Stream, OK: true, Key: kp.Pub})
+	answer := p.envelope(proto.KindPeerViewAnswer, proto.Endpoint{}, proto.PeerViewAnswerPayload{Stream: payload.Stream, OK: true, Key: kp.Pub, AgentPrincipal: payload.Agent != nil})
 	answer.InReplyTo = "wrong-request"
 	p.send(answer)
 	answer.InReplyTo = env.ID

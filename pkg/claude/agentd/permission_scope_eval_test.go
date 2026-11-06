@@ -345,16 +345,6 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 	}
 }
 
-// Enforcement checklist. Every slug that declares ScopeDims must have a
-// named authorization path that actually evaluates the scope — otherwise an
-// operator can write a grant that reads as narrow in `permissions ls` and is
-// a wildcard at the gate. This map is that checklist, and adding ScopeDims to
-// a slug fails the test until its gate is listed here (which is the moment to
-// check the gate really does evaluate).
-//
-// It is a review prompt, not a proof: it cannot verify the named gate. The
-// gap it closes is the one that shipped routes.publish/routes.consume with a
-// bespoke, scope-blind gate for the better part of a phase.
 // Every agent peer view route's slug takes a peer= scope, which
 // servePeerViewForAgent evaluates over the route's footprint on the peer.
 func init() {
@@ -365,6 +355,16 @@ func init() {
 	}
 }
 
+// Enforcement checklist. Every slug that declares ScopeDims must have a
+// named authorization path that actually evaluates the scope — otherwise an
+// operator can write a grant that reads as narrow in `permissions ls` and is
+// a wildcard at the gate. This map is that checklist, and adding ScopeDims to
+// a slug fails the test until its gate is listed here (which is the moment to
+// check the gate really does evaluate).
+//
+// It is a review prompt, not a proof: it cannot verify the named gate. The
+// gap it closes is the one that shipped routes.publish/routes.consume with a
+// bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",

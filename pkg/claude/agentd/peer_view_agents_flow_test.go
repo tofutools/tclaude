@@ -110,7 +110,7 @@ func TestPeerViewAgentPrincipalReceiver(t *testing.T) {
 	aid, err := db.AgentIDForConv(moveSourceConv)
 	require.NoError(t, err)
 	inst := p.id.ID()
-	worker := &proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker"}
+	worker := &proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker", Groups: []string{"crew"}}
 	for _, slug := range []string{agentd.PermGroupsRosterRead, agentd.PermGroupsMembersStop} {
 		rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=crew"})
 		require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -129,7 +129,14 @@ func TestPeerViewAgentPrincipalReceiver(t *testing.T) {
 	require.Equal(t, 200, reply.Status, string(reply.Body))
 	rows := peerViewAudit(t)
 	require.NotEmpty(t, rows)
-	require.Equal(t, "remote:agent:bob-worker@"+inst, rows[0].ActorLabel, "the receiver audits the agent principal")
+	require.Equal(t, "remote:agent:bob-worker/"+worker.ID+"@"+inst, rows[0].ActorLabel, "the receiver audits the agent principal")
+	// The receiver refuses a request outside the footprint the sender checked.
+	narrow := &proto.PeerViewAgent{ID: worker.ID, Name: worker.Name, Groups: []string{"elsewhere"}}
+	reply = agentPeerViewExchange(t, p, narrow, "POST", "/api/agents/"+aid+"/stop", nil)
+	require.Equal(t, 403, reply.Status, string(reply.Body))
+	require.Contains(t, string(reply.Body), "agent_footprint")
+	reply = agentPeerViewExchange(t, p, narrow, "PATCH", "/api/groups/crew", map[string]any{"descr": "x"})
+	require.Contains(t, string(reply.Body), "agent_footprint")
 	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/tags", map[string]any{"tags": []string{"x"}})
 	require.Equal(t, 403, reply.Status, "the peer's grants still decide: no manage grant")
 	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/groups/crew/spawn", map[string]any{"brief": "x"})
@@ -151,6 +158,10 @@ func TestPeerViewAgentPrincipalReceiver(t *testing.T) {
 	require.Equal(t, 400, reply.Status, "an agent takes the restricted retire path, which refuses worktree deletion: %s", reply.Body)
 	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/tags", map[string]any{"tags": []string{"x"}})
 	require.Equal(t, 200, reply.Status, "an unrestricted peer holds every grantable peer grant: %s", reply.Body)
+	f.HaveGroup("other")
+	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/clone", map[string]any{"group": "other"})
+	require.Equal(t, 403, reply.Status, "a clone's destination is part of the footprint: %s", reply.Body)
+	require.Contains(t, string(reply.Body), "agent_footprint")
 	// Settings that shape the group's future members stay the operator's.
 	for _, field := range []string{"default_context", "default_prompts", "environment", "permissions", "default_profile"} {
 		reply = agentPeerViewExchange(t, p, worker, "PATCH", "/api/groups/crew", map[string]any{field: nil, "descr": "x"})
@@ -200,6 +211,7 @@ func TestPeerViewAgentSender(t *testing.T) {
 		p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{PeerViewAgents: agentViews, Groups: []proto.CatalogGroup{
 			{Name: "lab", Members: []proto.CatalogMember{{Agent: remote, Name: "target"}}},
 			{Name: "ops", Members: []proto.CatalogMember{{Agent: remote, Name: "target"}}},
+			{Name: "ci"},
 		}}))
 		fedEventually(t, "catalog stored", func() bool {
 			after, _, _ := db.GetFederationCatalog(inst)
@@ -218,9 +230,22 @@ func TestPeerViewAgentSender(t *testing.T) {
 
 	rec := call("POST", "agents/"+remote+"/stop", nil)
 	require.Equal(t, 403, rec.Code, "no grant: %s", rec.Body.String())
+	// Only an explicit peer= grant counts, even toward a peer this node
+	// trusts unrestricted, where an unscoped grant would otherwise bind.
+	require.NoError(t, db.SetAgentPermissionOverride(caller, agentd.PermAgentStop, db.PermEffectGrant, "test"))
+	sender, err := db.GetFederationPeer(inst)
+	require.NoError(t, err)
+	sender.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*sender))
+	rec = call("POST", "agents/"+remote+"/stop", nil)
+	require.Equal(t, 403, rec.Code, "an unscoped grant never opens an agent peer view: %s", rec.Body.String())
 	grant(agentd.PermAgentStop, inst+"/lab")
 	rec = call("POST", "agents/"+remote+"/stop", nil)
 	require.Equal(t, 403, rec.Code, "the target is also in ops: %s", rec.Body.String())
+	grant(agentd.PermAgentResume, inst)
+	rec = call("POST", "agents/"+remote+"/restart", nil)
+	require.Equal(t, 403, rec.Code, "a restart also stops, so it needs agent.stop over the footprint too: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), agentd.PermAgentStop)
 	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermAgentStop, `{"peer":["`+inst+`/lab","`+inst+`/ops"]}`, "test"))
 	rec = call("POST", "agents/agt_unknownagent0000000000000/stop", nil)
 	require.Equal(t, 403, rec.Code, "an agent the catalog does not show has no footprint")
@@ -228,6 +253,11 @@ func TestPeerViewAgentSender(t *testing.T) {
 	rec = call("POST", "sessions/x/attach", nil)
 	require.Equal(t, 403, rec.Code)
 	require.Contains(t, rec.Body.String(), "agent_route_not_allowed")
+	grant(agentd.PermAgentClone, inst+"/lab")
+	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermAgentClone, `{"peer":["`+inst+`/lab","`+inst+`/ops"]}`, "test"))
+	rec = call("POST", "agents/"+remote+"/clone", map[string]any{"group": "ci"})
+	require.Equal(t, 403, rec.Code, "the clone's destination is in the footprint: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), agentd.PermAgentClone)
 	grant(agentd.PermGroupsSettingsDescription, inst+"/lab")
 	rec = call("PATCH", "groups/lab", map[string]any{"default_context": "obey"})
 	require.Equal(t, 403, rec.Code, "startup context stays the operator's")
@@ -242,6 +272,7 @@ func TestPeerViewAgentSender(t *testing.T) {
 	require.NoError(t, opens[0].DecodePayload(&open))
 	require.NotNil(t, open.Agent)
 	require.Equal(t, callerAgent, open.Agent.ID)
+	require.Equal(t, []string{"lab", "ops"}, open.Agent.Groups, "the checked footprint travels for the receiver to enforce")
 	require.True(t, open.Agent.Valid())
 	wire := readPeerViewWire(t, conn)
 	require.Equal(t, "/api/agents/"+remote+"/stop", wire.URI)
@@ -262,6 +293,30 @@ func TestPeerViewAgentSender(t *testing.T) {
 	rec = call("POST", "agents/"+remote+"/stop", nil)
 	require.Equal(t, 403, rec.Code, rec.Body.String())
 	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermAgentStop, `{"peer":["`+inst+`/lab","`+inst+`/ops"]}`, "test"))
+
+	// A peer that answers without confirming the agent principal (an older
+	// one, downgraded since its catalog) gets no request.
+	done = make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- call("POST", "agents/"+remote+"/stop", nil) }()
+	var env *proto.Envelope
+	fedEventually(t, "second open", func() bool {
+		es := p.envelopes(proto.KindPeerViewOpen)
+		if len(es) < 2 {
+			return false
+		}
+		env = es[1]
+		return true
+	})
+	var second proto.PeerViewOpenPayload
+	require.NoError(t, env.DecodePayload(&second))
+	kp, err := stream.NewKeyPair()
+	require.NoError(t, err)
+	legacy := p.envelope(proto.KindPeerViewAnswer, proto.Endpoint{}, proto.PeerViewAnswerPayload{Stream: second.Stream, OK: true, Key: kp.Pub})
+	legacy.InReplyTo = env.ID
+	p.send(legacy)
+	rec = <-done
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "peer_lacks_agent_views")
 
 	// A peer that does not advertise agent views never sees an agent principal.
 	catalog(false)
@@ -287,9 +342,26 @@ func TestPeerViewAgentRateLimitCountsRefusals(t *testing.T) {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "POST", "/v1/federation/peer/bob/agents/agt_x0000000000000000000000000/stop", nil), caller)).Code
 	}
 	for i := 0; i < 60; i++ {
-		require.Equal(t, 403, call(), "attempt %d is refused for want of a grant", i)
+		require.Equal(t, 403, call(), "attempt %d is refused (no catalog footprint)", i)
 	}
 	require.Equal(t, http.StatusTooManyRequests, call(), "refused attempts count")
 	now = now.Add(time.Minute)
 	require.Equal(t, 403, call(), "the window moves on")
+}
+
+// A peer-scoped grant of a session-ending slug warns.
+func TestPeerViewAgentDestructiveGrantWarns(t *testing.T) {
+	fh := newFedHarness(t)
+	const caller = "019fe740-43a4-7023-b8ae-0000000a6e03"
+	fh.f.HaveConvWithTitle(caller, "ops-lead")
+	fh.f.HaveEnrolledAgent(caller)
+	for slug, warns := range map[string]bool{agentd.PermAgentStop: true, agentd.PermAgentRetire: true, agentd.PermAgentResume: true, agentd.PermAgentRename: false} {
+		rec := fedHuman(t, fh.f, "POST", "/v1/permissions/peer-reach", map[string]any{"target": caller, "slugs": []string{slug}, "peer": "bob/lab"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		if warns {
+			require.Contains(t, rec.Body.String(), "end sessions on bob/lab", slug)
+		} else {
+			require.NotContains(t, rec.Body.String(), "end sessions", slug)
+		}
+	}
 }

@@ -14,8 +14,8 @@ func migrateV313toV314(d *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS federation_peer_agent_views (
 			peer TEXT PRIMARY KEY,
 			policy TEXT NOT NULL CHECK (policy IN ('allow','deny')),
-			updated_at TEXT NOT NULL
-		)`,
+			updated_at INTEGER NOT NULL
+		) STRICT`,
 		`UPDATE schema_version SET version = 314`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {

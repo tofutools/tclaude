@@ -45,6 +45,9 @@ const (
 var (
 	errPeerViewOffline = errors.New("peer is offline")
 	errPeerViewBusy    = errors.New("peer view is busy")
+	// errPeerViewNoAgents: the peer answered an agent's open without
+	// confirming the agent principal, so no request is sent.
+	errPeerViewNoAgents = errors.New("peer does not serve agent peer views")
 )
 
 type fedPeerViewRequest struct {
@@ -218,6 +221,9 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 			}
 			return nil, fmt.Errorf("peer refused view: %s", proto.StripControls(a.Reason))
 		}
+		if peerViewPrincipalFrom(ctx) != nil && !a.AgentPrincipal {
+			return nil, errPeerViewNoAgents
+		}
 		conn, err := rt.joinStream(ctx, peer.InstanceID, sid, kp, a.Key, true)
 		if err != nil {
 			return nil, err
@@ -266,7 +272,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 			answer(false, nil, "unavailable")
 			return
 		}
-		answer(true, kp.Pub, "")
+		rt.sendControl(peer.InstanceID, proto.KindPeerViewAnswer, env.ID, proto.PeerViewAnswerPayload{Stream: p.Stream, OK: true, Key: kp.Pub, AgentPrincipal: p.Agent != nil})
 		conn, err := rt.joinStream(ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 		if err != nil {
 			return

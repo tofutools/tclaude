@@ -90,6 +90,10 @@ type ActionContext struct {
 	// Keeping the check inside the evaluator means an uncovered footprint is
 	// still eligible for the ordinary one-shot human approval path.
 	bulkGroupMemberCoverage bool
+	// strictPeerScope admits, for a remote action, only grants whose scope
+	// names a peer: no unscoped grant bound to an unrestricted peer, and no
+	// agent default. An agent's peer view needs an explicit peer= grant.
+	strictPeerScope bool
 	// alternatePermission is an ordinary second slug that may authorize the
 	// same action. Group-wide views use it to preserve a global agent.* grant
 	// while also accepting the dedicated groups.members.* capability.
