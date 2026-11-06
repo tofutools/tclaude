@@ -257,19 +257,13 @@ export function scopeDimOptions(snapshot, dim) {
 }
 
 // SCOPE_COMBOBOX_DIMS are the dimensions whose catalogue the daemon serves on
-// demand (GET /api/permissions/scope-values) rather than on the snapshot. Any
-// other dimension switches from a plain select to the type-to-filter
-// combobox once its snapshot catalogue outgrows SCOPE_SELECT_MAX values.
+// demand (GET /api/permissions/scope-values) rather than on the snapshot.
+// Every dimension is edited in the same type-to-filter box either way.
 export const SCOPE_COMBOBOX_DIMS = ['resource'];
-export const SCOPE_SELECT_MAX = 8;
 // SCOPE_CHIPS_SHOWN is how many matcher chips a dimension shows before the
 // rest collapse into "+N more", which opens a searchable list of them.
 export const SCOPE_CHIPS_SHOWN = 6;
 
-export function scopeDimUsesCombobox(dim, options) {
-  return SCOPE_COMBOBOX_DIMS.includes(dim)
-    || (options?.values?.length || 0) + (options?.selectors?.length || 0) > SCOPE_SELECT_MAX;
-}
 
 // RESOURCE_KIND_LABELS heads the resource picker's sections.
 export const RESOURCE_KIND_LABELS = { board: 'Boards', process_template: 'Process templates' };

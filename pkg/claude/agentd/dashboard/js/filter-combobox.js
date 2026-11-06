@@ -25,6 +25,9 @@
 //   literal      opt-in: (text) → bool — typed text of this shape (a whole
 //                kind:id, say) is meant as typed, so Enter commits it through
 //                freeText instead of the fuzzy-highlighted row
+//   commitOnBlur opt-in, with freeText: leaving the box with text in it adds
+//                that text, as Enter would (the catalogue's row when it names
+//                one exactly, else as typed), so a typed value is not lost
 //   onQuery      (text) → void — the typed text as it changes, so a caller can
 //                treat what is left in the box as an uncommitted value
 //   inputId      the input's id, so a <label for> can name it
@@ -125,7 +128,7 @@ export function comboGroupSummary(items) {
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
-  alwaysOpen = false, autoFocus = false, busy = false, selectedLabel = null, overlay = false,
+  alwaysOpen = false, autoFocus = false, busy = false, selectedLabel = null, overlay = false, commitOnBlur = false,
 }) {
   const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
@@ -179,6 +182,17 @@ export function FilterCombobox({
     setQuery(''); resetHighlight();
     return true;
   };
+  // commitTyped adds the typed text as a leaving Enter does: the row whose
+  // key or label it names exactly (when only one does), else as typed.
+  const commitTyped = () => {
+    const typed = query.trim();
+    if (!typed) return false;
+    const exacts = items.filter((item) => !item.disabled
+      && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase()));
+    const exact = exacts.find((item) => item.key === typed) || (exacts.length === 1 ? exacts[0] : null);
+    if (exact) { add(exact); return true; }
+    return commitFree();
+  };
   const onKeyDown = (event) => {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'ArrowDown') {
@@ -225,7 +239,7 @@ export function FilterCombobox({
       placeholder=${standIn && openState && selectedLabel ? selectedLabel : placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
-      onFocus=${() => { if (!standIn) setOpen(true); }} onClick=${() => setOpen(true)} onBlur=${() => { setOpen(false); if (standIn && query) setQuery(''); }}
+      onFocus=${() => { if (!standIn) setOpen(true); }} onClick=${() => setOpen(true)} onBlur=${() => { setOpen(false); if (commitOnBlur && freeText) commitTyped(); else if (standIn && query) setQuery(''); }}
       onInput=${(event) => {
         // A stand-in box shows the chosen label while closed: what is typed
         // into it then is the start of a search, not more of that label.

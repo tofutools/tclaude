@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 // The permission editor's scope chips and dimension pickers (TCL-1072).
 //
@@ -44,11 +45,10 @@ async function openEditor(harness, snapshot, actions, descriptor = null) {
 
 // The test DOM exposes select.value as a getter only, so a choice is made the
 // way a browser records one: by moving the selected attribute.
-function pickOption(harness, select, value) {
-  [...select.options].forEach((option) => option.removeAttribute('selected'));
-  select.querySelector(`option[value="${value}"]`).setAttribute('selected', '');
-  return select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-}
+// dimBox is one dimension's type-to-filter box (its .perm-scope-dim row);
+// dimInput the box's input.
+const dimBox = (host, dim) => host.querySelector(`.perm-scope-dim[data-dim="${dim}"]`);
+const dimInput = (host, dim) => dimBox(host, dim).querySelector('input[role="combobox"]');
 
 const noopActions = {
   sendMessage: async () => {}, replyHuman: async () => {},
@@ -76,8 +76,7 @@ test('group and buffered profile editors use the same scoped permission controls
   } });
   assert.match(opened.host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent, /group=alpha/);
   await harness.act(() => opened.host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click());
-  await harness.act(() => pickOption(harness,
-    opened.host.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add'), 'beta'));
+  await comboPick(harness, dimBox(opened.host, 'group'), 'beta');
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(groupSaved[0].scopes, { 'groups.members.spawn': { group: ['alpha', 'beta'] } });
   assert.equal(groupSaved[0].ownerScopes, null, 'grant scopes are separate from owner-bypass narrowing');
@@ -124,8 +123,7 @@ test('role grants use the shared scoped editor in grant-only regular and wizard 
     /group=dev/);
 
   await harness.act(() => opened.host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click());
-  await harness.act(() => pickOption(harness,
-    opened.host.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add'), 'ops'));
+  await comboPick(harness, dimBox(opened.host, 'group'), 'ops');
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(saved.length, 1);
   assert.equal(saved[0].selection['groups.members.spawn'], 'grant');
@@ -282,8 +280,7 @@ test('the drawer offers one editor per advertised dimension and saves what was p
     'the drawer renders exactly the dimensions the slug advertised, in that order',
   );
 
-  const groupSelect = drawer.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add');
-  await harness.act(() => pickOption(harness, groupSelect, 'beta'));
+  await comboPick(harness, dimBox(drawer, 'group'), 'beta');
   assert.match(host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent, /group=beta/,
     'the row chips track the drawer edit live');
 
@@ -305,10 +302,10 @@ test('a value can be typed for a dimension the daemon has no catalogue for', asy
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
   await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
-  // No catalogue means no picker to offer — free text is the whole control,
-  // and it is the same input the CLI's --scope takes.
-  assertAbsent(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-add'));
-  const free = host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  // No catalogue means no rows to offer — what is typed is the value, the
+  // same input the CLI's --scope takes.
+  assert.deepEqual(await comboKeys(harness, dimBox(host, 'process_template')), []);
+  const free = dimInput(host, 'process_template');
   await harness.input(free, 'release-train');
   await harness.act(() => harness.fireEvent(free, 'keydown', { key: 'Enter' }));
   assert.match(host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
@@ -319,12 +316,12 @@ test('a value can be typed for a dimension the daemon has no catalogue for', asy
   await mounted.unmount();
 });
 
-// A dimension with no catalogue is typed into and nothing else, so the three
-// gestures an operator actually makes after typing — Enter (above), the +
-// button, blur, or straight to Save — must all keep the value. Dropping it
+// A dimension with no catalogue is typed into and nothing else, so the
+// gestures an operator actually makes after typing — Enter, blur, or
+// straight to Save — must all keep the value. Dropping it
 // posts the grant back as {}, which is not "no change" but an explicit
 // widening to unscoped: the exact way a narrowing appears to have "no effect".
-test('a typed matcher survives the + button, a blur, and a straight Save', async (t) => {
+test('a typed matcher survives Enter, a blur, and a straight Save', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
   const actions = { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } };
@@ -332,16 +329,16 @@ test('a typed matcher survives the + button, a blur, and a straight Save', async
 
   let opened = await openEditor(harness, snapshot, actions);
   await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
-  let free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  let free = dimInput(opened.host, 'process_template');
   await harness.input(free, 'release-train');
-  await harness.act(() => { opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free-add').click(); });
+  await harness.act(() => harness.fireEvent(free, 'keydown', { key: 'Enter' }));
   assert.match(opened.host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
-    /process_template=release-train/, '+ commits the typed value');
+    /process_template=release-train/, 'Enter commits the typed value');
   await opened.mounted.unmount();
 
   opened = await openEditor(harness, snapshot, actions);
   await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
-  free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  free = dimInput(opened.host, 'process_template');
   await harness.input(free, 'release-train');
   await harness.act(() => harness.fireEvent(free, 'blur'));
   assert.match(opened.host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
@@ -351,7 +348,7 @@ test('a typed matcher survives the + button, a blur, and a straight Save', async
   // The unforgiving one: type, then click Save without ever leaving the box.
   opened = await openEditor(harness, snapshot, actions);
   await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
-  free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  free = dimInput(opened.host, 'process_template');
   await harness.input(free, 'release-train');
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved.at(-1), { 'process.runs.manage': { process_template: ['release-train'] } },
@@ -373,8 +370,7 @@ test('a typed matcher withdrawn from the screen is not resurrected by Save', asy
   const saved = [];
   const actions = { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } };
   const snapshot = scopeSnapshot({ slugs: [TEMPLATES], dimOptions: { process_template: {} } });
-  const typeInto = async (host, dim, value) => harness.input(
-    host.querySelector(`.perm-scope-dim[data-dim="${dim}"] .perm-scope-free`), value);
+  const typeInto = async (host, dim, value) => harness.input(dimInput(host, dim), value);
 
   let opened = await openEditor(harness, snapshot, actions);
   let twisty = opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty');
@@ -428,12 +424,12 @@ test('a flushed matcher clears the box it was typed into', async (t) => {
   }), { ...noopActions, savePermissions: async () => { throw new Error('daemon said no'); } });
 
   await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
-  await harness.input(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free'), 'release-train');
+  await harness.input(dimInput(host, 'process_template'), 'release-train');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
 
   assert.match(host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
     /process_template=release-train/);
-  assert.equal(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free').value, '',
+  assert.equal(dimInput(host, 'process_template').value, '',
     'the box is empty; the value lives in the chip now');
   assert.match(host.querySelector('#perm-edit-error').textContent, /daemon said no/);
   await mounted.unmount();
@@ -470,10 +466,9 @@ test('a dimension this build has never heard of is still editable', async (t) =>
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
   await harness.act(() => { host.querySelector('[data-slug="proxy.git.push"] button.perm-scope-twisty').click(); });
-  const select = host.querySelector('.perm-scope-dim[data-dim="git_remote"] .perm-scope-add');
-  assert.deepEqual(Array.from(select.options).map((option) => option.value), ['', 'origin', '@launch-repo'],
+  assert.deepEqual((await comboKeys(harness, dimBox(host, 'git_remote'))).sort(), ['@launch-repo', 'origin'],
     'advertised values and selectors are both offered, with no frontend knowledge of the dimension');
-  await harness.act(() => pickOption(harness, select, '@launch-repo'));
+  await comboPick(harness, dimBox(host, 'git_remote'), '@launch-repo');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0], { 'proxy.git.push': { git_remote: ['@launch-repo'] } });
   await mounted.unmount();
@@ -566,8 +561,7 @@ test('HTTP proxy permission can be granted and scoped to a configured instance',
   });
   await harness.act(() => host.querySelector('[data-slug="proxy.http"] [data-effect="grant"]').click());
   await harness.act(() => host.querySelector('[data-slug="proxy.http"] button.perm-scope-twisty').click());
-  await harness.act(() => pickOption(harness,
-    host.querySelector('.perm-scope-dim[data-dim="http_proxy"] .perm-scope-add'), 'inventory'));
+  await comboPick(harness, dimBox(host, 'http_proxy'), 'inventory');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(saved[0].selection['proxy.http'], 'grant');
   assert.deepEqual(saved[0].scopes, { 'proxy.http': { http_proxy: ['inventory'] } });
@@ -792,7 +786,8 @@ test('a long snapshot catalogue switches the dimension to the searchable box', a
     slugs: [SPAWN], dimOptions: { group: { values: groups }, spawn_profile: { values: ['reviewer'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => saved.push(scopes) });
   await harness.act(() => host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click());
-  assert.ok(host.querySelector('.perm-scope-dim[data-dim="spawn_profile"] select.perm-scope-add'), 'a short catalogue stays a select');
+  assert.deepEqual(await comboKeys(harness, dimBox(host, 'spawn_profile')), ['reviewer'],
+    'a short catalogue is the type-to-filter box too');
   const box = host.querySelector('.perm-scope-dim[data-dim="group"] input[role="combobox"]');
   await harness.act(() => harness.fireEvent(box, 'focus'));
   await harness.input(box, 'group-17');
