@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-// A folded side panel floats in when the pointer rests at the right edge and
-// goes when the pointer leaves it (side-panel-reveal.js). These drive the real
-// shell (side-panel.js) and the real watcher with fake timers, so the dwell and
-// the hover-out delay are counted, not waited for.
+// A folded side panel peeks in when the pointer heads for the right edge,
+// floats in when the pointer moves onto the peek, and goes when the pointer
+// leaves it (side-panel-reveal.js). These drive the real shell (side-panel.js)
+// and the real watcher with fake timers, so the peek's retract and the
+// hover-out delay are counted, not waited for.
 
 const WIDTH = 1000;
 // REST is a long rest: no edge dwell opens the panel any more (tcl-bg5qm1).
@@ -144,9 +145,9 @@ test('a pass through the edge zone that does not stay is not a reveal', async (t
 test('no reveal with a button held, during a drag, on a coarse pointer, or when the panel is unfolded', async (t) => {
   for (const [why, run] of [
     ['a button held', (s) => s.atEdge({ buttons: 1 })],
-    ['a button pressed during the dwell', (s) => { s.atEdge(); s.harness.fireEvent(s.content, 'pointerdown'); }],
-    // No pointer events fire during an HTML5 drag: a dwell under way stops at
-    // its start, and dragging over the edge zone is not a reveal.
+    ['a button pressed at the edge', (s) => { s.atEdge(); s.harness.fireEvent(s.content, 'pointerdown'); }],
+    // No pointer events fire during an HTML5 drag: dragging over the edge
+    // zone is not a reveal.
     ['an HTML5 drag under way', (s) => { s.atEdge(); s.harness.fireEvent(s.content, 'dragstart');
       s.harness.fireEvent(s.content, 'dragover', { clientX: WIDTH - 4, clientY: 300 }); }],
     ['a touch pointer', (s) => s.atEdge({ pointerType: 'touch' })],
@@ -340,7 +341,7 @@ test('on the handle the panel neither opens nor closes by itself; its click pins
   const handle = () => s.doc.getElementById('dock-toggle');
   s.move(handle(), WIDTH - 4);
   s.timers.advance(REST * 4);
-  assert.equal(s.revealed(), false, 'no dwell reveal on the folded handle');
+  assert.equal(s.revealed(), false, 'resting on the folded handle opens nothing');
   s.harness.fireEvent(handle(), 'click');
   assert.equal(s.side.isSidePanelOpen('groups'), true, 'and its click pins the panel');
 
@@ -577,7 +578,7 @@ test('the pointer on the page scrollbar, under the edge zone, opens nothing, and
   onScrollbar();
   assert.equal(s.revealed(), true, 'an open panel stays with the pointer on the scrollbar beside it');
   // The loop was: on the scrollbar, not "over" the panel, so it went after the
-  // hover-out delay, and the dwell brought it straight back.
+  // hover-out delay, and the old edge dwell brought it straight back.
   for (let i = 0; i < 10; i++) {
     onScrollbar({ clientY: 300 + (i % 2 ? 3 : -3) });
     s.timers.advance(s.hoverClose);
@@ -834,7 +835,7 @@ test('no peek for a move that is not a fling at the edge', async (t) => {
     ['an ordinary move across the page', (s) => s.flick({ x0: 600, x1: 800, steps: 20 })],
     ['one jump', (s) => { s.move(s.content, 300); s.timers.advance(16); s.move(s.content, 900); }],
     ['a fling with a button held (a selection or a drag)', (s) => s.flick({ ...FLING, init: { buttons: 1 } })],
-    ['a fling from right beside the edge (the zone’s own dwell)', (s) => s.flick({ x0: 900, x1: 955, steps: 4, stepMs: 10 })],
+    ['a fling from right beside the edge (too short to count)', (s) => s.flick({ x0: 900, x1: 955, steps: 4, stepMs: 10 })],
   ]) {
     const s = await shell(t);
     run(s);
@@ -907,7 +908,7 @@ test('a fling to the page scrollbar peeks, and a press there takes it back with 
   s.harness.fireEvent(s.doc.documentElement, 'pointerdown');
   assert.equal(s.peeking(), false, 'grabbing the scrollbar ends the peek');
   s.timers.advance(REST * 4);
-  assert.equal(s.revealed(), false, 'and is no reveal: the dwell it would have needed was cancelled, as without a peek');
+  assert.equal(s.revealed(), false, 'and is no reveal');
 });
 
 test('a peek is not a reveal: it runs no hover-out, so repeated short flings never loop it into a reveal', async (t) => {
@@ -1187,9 +1188,7 @@ test('the peek is never wider than the panel', async (t) => {
 
 
 // A snap (tcl-bg5qm1): the operator's fast move from the left is over in a
-// few frames, too few for the prediction's readings, and used to be left to
-// the dwell, which a snap that moves on or runs off the window never waits
-// out. An arrival that travelled far, fast, peeks the panel (it opens only
+// few frames, too few for the prediction's readings. An arrival that travelled far, fast, peeks the panel (it opens only
 // from a peek): moving onto the peek opens it.
 const snap = (s, xs, { from = 60, frameMs = 16, y = 300 } = {}) => {
   s.move(s.content, from, { clientY: y });
@@ -1268,6 +1267,27 @@ test('a peek holds while the pointer rests on the handle, and nothing that reach
   s.move(s.doc.getElementById('dock-toggle'), 990);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
   assert.equal(s.revealed() || s.peeking(), false, 'nor does one leaving the window through the handle');
+});
+
+// Cold review: a peek that holds by the edge always has a way to run out.
+test('a snap\'s peek runs out away from the edge with the prediction off, and into a frame', async (t) => {
+  const { PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  let s = await shell(t);
+  s.reveal.setSidePanelTuning({ predictive_peek: false }, s.doc);
+  t.after(() => s.reveal.setSidePanelTuning(null, s.doc));
+  snap(s, [420, 860, 990]);
+  assert.equal(s.peeking(), true, 'with the prediction off, a snap still peeks');
+  s.move(s.content, 300);
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), false, 'and its peek runs out once the pointer moves away');
+
+  s = await shell(t);
+  snap(s, [420, 860, 990]);
+  assert.equal(s.peeking(), true);
+  const frame = s.doc.body.appendChild(s.doc.createElement('iframe'));
+  s.harness.fireEvent(s.content, 'pointerout', { relatedTarget: frame });
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), false, 'into a frame, where the page sees no more moves, it runs out too');
 });
 
 test('a snap that runs past the window’s edge peeks when its next frame would have reached the zone', async (t) => {

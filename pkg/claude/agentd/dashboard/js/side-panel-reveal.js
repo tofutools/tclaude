@@ -404,7 +404,12 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // motion restarts when it turns left or pauses.
   const predict = (event) => {
     const c = C();
-    if (!c.PREDICTIVE) return;
+    if (!c.PREDICTIVE) {
+      // No prediction, but a snap's peek still runs out once the pointer
+      // leaves the edge zone without opening it.
+      if (isSidePanelPeeking() && !retract) armRetract();
+      return;
+    }
     const t = now();
     const x = event.clientX;
     const y = event.clientY;
@@ -435,7 +440,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // braking at all: content under the would-be panel is what a braking
     // move there is aimed at.
     const steady = c.GROWING && crossingHolds(prediction, c);
-    if (steady && inBand && x >= fullLeft) {
+    // Only a peek opens the panel (tcl-bg5qm1): a crossing needs one showing.
+    if (steady && inBand && x >= fullLeft && isSidePanelPeeking()) {
       revealFromPeek();
       return;
     }
@@ -548,7 +554,11 @@ export function bindEdgeReveal(doc = globalThis.document, {
   // one is no rest, and the next move starts a new motion where it is.
   const isFrame = (el) => /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(el?.tagName || '');
   doc.addEventListener('pointerout', (event) => {
-    if (isFrame(event.relatedTarget)) motion = null;
+    if (!isFrame(event.relatedTarget)) return;
+    motion = null;
+    // Into a frame the page sees no more moves: a peek held by the edge zone
+    // runs out from here.
+    if (isSidePanelPeeking() && !retract) armRetract();
   }, true);
   // Back in from outside straight over a frame, the page sees no move, only
   // the frame's over: the pointer is back, and away from the panel.
