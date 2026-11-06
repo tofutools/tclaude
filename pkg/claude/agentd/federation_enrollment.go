@@ -468,7 +468,12 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if becomeNode {
-		if bound, err := db.FederationEnrollmentNodeBound(t); err != nil || bound {
+		bound, err := db.FederationEnrollmentNodeBound(t)
+		if err != nil {
+			writeError(w, 500, "enrollment", "could not read this node's enrollments")
+			return
+		}
+		if bound {
 			writeError(w, 409, "already_enrolled", "this node already enrolled with this token; give the master permissions with federation grant or federation trust")
 			return
 		}

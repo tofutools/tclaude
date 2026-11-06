@@ -224,7 +224,7 @@ func becomeNodeWarn(in map[string]any, p *enrollmentParams, become *becomeNodePa
 	} else {
 		fmt.Fprintln(cliStderr, "!!  It will hold, on this machine, exactly:")
 		for _, g := range check.Gives {
-			where, mark := "every group", ""
+			where, mark := "every group, including future ones", ""
 			if g.Scope != "" {
 				where = g.Scope
 			}
@@ -236,7 +236,7 @@ func becomeNodeWarn(in map[string]any, p *enrollmentParams, become *becomeNodePa
 	}
 	fmt.Fprintf(cliStderr, "!!  Take it back with tclaude federation revoke or untrust.\n%s\n\n", bar)
 	if !p.Preview && become.ConfirmFingerprint == "" {
-		return fail(cliStderr, fmt.Errorf("become-node needs --confirm-fingerprint %s, compared with the master's operator over another channel", masterFingerprint))
+		return fail(cliStderr, fmt.Errorf("become-node needs --confirm-fingerprint <master fingerprint>: get it from the master's operator over another channel and compare it with the one shown above"))
 	}
 	in["confirm_fingerprint"] = become.ConfirmFingerprint
 	return 0

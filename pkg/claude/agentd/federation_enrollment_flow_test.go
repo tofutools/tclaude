@@ -312,6 +312,7 @@ func TestFederation_BecomeNodeGivesExactlyWhatItNames(t *testing.T) {
 
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/become-node", in)
 	require.Equal(t, 409, rec.Code, "a second become-node on the same token gives nothing more: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "already_enrolled")
 }
 
 // Unrestricted takes become-node with --yes-unrestricted and the fingerprint,
