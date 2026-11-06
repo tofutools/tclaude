@@ -135,13 +135,18 @@ func TestPeerBoardsHonorOperatorLocks(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.SetCollabBoardGroup("plan", h.group.ID))
 	require.NoError(t, db.SetGroupResourceLocked(db.GroupResourceBoard, "plan", true))
+	code, body := h.call("PATCH", "/api/boards/plan", map[string]any{"elements": []map[string]any{}})
+	require.Equal(t, 404, code, "a board the peer cannot read stays unknown, locked or not: %s", body)
+	h.f.HaveGroup("other")
 	h.grant(t, agentd.PermGroupsResourcesWrite, "group=crew")
+	h.grant(t, agentd.PermGroupsResourcesWrite, "group=other")
 	changes := []struct {
 		method, path string
 		body         map[string]any
 	}{
 		{"PATCH", "/api/boards/plan", map[string]any{"elements": []map[string]any{rect("card", 1, 1, 0)}}},
 		{"POST", "/api/boards/plan/title", map[string]any{"title": "Mine"}},
+		{"POST", "/api/boards/plan/group", map[string]any{"group": "other"}},
 	}
 	refused := func(why string) {
 		t.Helper()
@@ -154,9 +159,10 @@ func TestPeerBoardsHonorOperatorLocks(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "plan", b.Title)
 		require.Zero(t, b.ElementCount)
+		require.Equal(t, "crew", b.GroupName, "not moved")
 	}
 	refused("restricted")
-	code, body := h.call("GET", "/api/boards/plan", nil)
+	code, body = h.call("GET", "/api/boards/plan", nil)
 	require.Equal(t, 200, code, "a locked board still reads: %s", body)
 	h.trustUnrestricted(t)
 	refused("unrestricted")
