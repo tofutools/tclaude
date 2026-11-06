@@ -44,11 +44,12 @@ export function namedItems(entries = [], { hint = null } = {}) {
   return items;
 }
 
-// named builds one registry's choice: what it is called, for the box's words.
-function named(noun, nouns) {
-  return function NamedCombobox({ entries = [], hint = null, items = null, placeholder = `Type to find a ${noun}…`, emptyHint = `No ${nouns}.`, ariaLabel = noun[0].toUpperCase() + noun.slice(1), missing = 'missing', ...props }) {
+// named builds one registry's choice: what it is called, for the box's words,
+// and how many rows it lists at once (cap; ChoiceCombobox's by default).
+function named(noun, nouns, { cap: listCap } = {}) {
+  return function NamedCombobox({ entries = [], hint = null, items = null, cap = listCap, placeholder = `Type to find a ${noun}…`, emptyHint = `No ${nouns}.`, ariaLabel = noun[0].toUpperCase() + noun.slice(1), missing = 'missing', ...props }) {
     const built = useMemo(() => items || namedItems(entries, { hint }), [items, entries, hint]);
-    return html`<${ChoiceCombobox} ...${props} items=${built} placeholder=${placeholder} emptyHint=${emptyHint} ariaLabel=${ariaLabel} missing=${missing} />`;
+    return html`<${ChoiceCombobox} ...${props} ...${cap === undefined ? {} : { cap }} items=${built} placeholder=${placeholder} emptyHint=${emptyHint} ariaLabel=${ariaLabel} missing=${missing} />`;
   };
 }
 
@@ -58,4 +59,6 @@ export const PromptCombobox = named('prompt', 'saved prompts');
 export const PeerCombobox = named('peer', 'peers');
 export const NodeCombobox = named('node', 'nodes');
 export const BoardCombobox = named('board', 'boards');
-export const ModelCombobox = named('model', 'models');
+// A model list has no groups to narrow by, so nothing typed lists every model,
+// as the <select> did, down to a "Custom model id…" row after them.
+export const ModelCombobox = named('model', 'models', { cap: Infinity });

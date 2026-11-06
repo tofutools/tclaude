@@ -8731,6 +8731,8 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .import-confirm-reveal:hover { background: var(--ui-bg-hover); }
 .import-confirm-value { display: block; margin-left: 22px; overflow-wrap: anywhere; }
 .paf-landing-selects { display: inline-flex; gap: 6px; }
+/* A model box is as wide as a model id, as its <select> was (tcl-saada2). */
+.paf-landing-selects .choice-combobox { min-width: 14em; }
 .paf-rung.native { background: #12301d; color: #3fb950; border-color: #238636; }
 .paf-rung.translated { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
 .paf-rung.none { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }

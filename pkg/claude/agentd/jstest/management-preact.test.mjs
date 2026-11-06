@@ -635,6 +635,11 @@ test('management island renders keyed profile list and explicit editor state', a
   assert.equal(host.querySelector('#profile-editor-disabled-reason').value, 'provider outage');
   const model = host.querySelector('#profile-editor-model'); assert.ok((await comboKeys(harness, model)).includes('sonnet'));
   assert.equal((await comboKeys(harness, model)).at(-1), '__custom__', 'a custom model id is the last choice');
+  const many = harness.document.createElement('div'); harness.document.body.append(many);
+  const { ModelCombobox } = await harness.importDashboardModule('js/registry-picker.js');
+  const longList = await harness.mount(harness.html`<${ModelCombobox} id="many-models" value="" onChange=${() => {}} entries=${[...Array.from({ length: 80 }, (_, i) => `provider/model-${i}`), { name: '__custom__', label: 'Custom model id…' }]} noneLabel="Default" />`, many);
+  assert.equal((await comboKeys(harness, many.querySelector('#many-models'))).length, 81, 'a long model catalog still lists every model and the custom row');
+  await longList.unmount(); many.remove();
   await comboPick(harness, model, '__custom__');
   assert.ok(host.querySelector('#profile-editor-model-custom'), 'choosing a custom model opens its text field');
   const askTimeout = host.querySelector('#profile-editor-ask-timeout'); assert.equal([...askTimeout.options].find((option) => option.value === 'inherit').textContent.includes('recommended'), true);
