@@ -5,6 +5,7 @@ import { Button, Select } from './ui-components.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
+import { ModelCombobox } from './registry-picker.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
 import {
@@ -214,10 +215,8 @@ function LandingSelects({ harness, model, onChange, idPrefix, sameLabel = '(own 
       <option value="">${sameLabel}</option>
       ${harnesses.map((item) => html`<option key=${item.name} value=${item.name}>${item.display_name || item.name}</option>`)}
     <//>
-    <${Select} id=${`${idPrefix}-model`} value=${model} onChange=${(event) => onChange({ harness, model: event.currentTarget.value })}>
-      <option value="">(model: default)</option>
-      ${models.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-    <//>
+    <${ModelCombobox} id=${`${idPrefix}-model`} value=${model} onChange=${(next) => onChange({ harness, model: next })} entries=${models}
+      noneLabel="(model: default)" />
   </span>`;
 }
 

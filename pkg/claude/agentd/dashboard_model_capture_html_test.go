@@ -65,13 +65,14 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			}
 		}
 	}
-	// The Preact profile editor retains the curated dropdown for harnesses with
-	// a model catalog, plus a controlled custom-ID fallback. Harnesses without a
+	// The Preact profile editor keeps a curated choice (a type-to-filter box,
+	// tcl-saada2) for harnesses with a model catalog, plus a controlled
+	// custom-ID fallback. Harnesses without a
 	// catalog use the free-text branch directly.
 	for _, needle := range []string{
 		`const modelID = 'profile-editor-model'`,
 		`const modelControl = hasModelList ? html`,
-		`['__custom__', 'Custom model id…']`,
+		`{ name: '__custom__', label: 'Custom model id…', descr: 'custom other' }`,
 		`setCustomModel(true)`,
 		"id=${`${modelID}-custom`}",
 		`onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)}`,

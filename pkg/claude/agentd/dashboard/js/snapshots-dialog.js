@@ -11,7 +11,7 @@ import { findingsText, modelsFor, redactionText, spawnableHarnesses } from './pa
 import { downloadBlob } from './download.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { GroupCombobox } from './group-picker.js';
-import { BoardCombobox, namedItems } from './registry-picker.js';
+import { BoardCombobox, ModelCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -112,8 +112,8 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
       <${Select} id="snapshot-spawn-harness" value=${harness} onChange=${(e) => { setHarness(e.currentTarget.value); setModel(''); }}>
         <option value="">${snap.harness || 'own harness'} (as captured)</option>
         ${spawnableHarnesses(snapshot).map((x) => html`<option key=${x.name} value=${x.name}>${x.display_name || x.name}</option>`)}<//>
-      <${Select} id="snapshot-spawn-model" value=${model} onChange=${(e) => setModel(e.currentTarget.value)}>
-        <option value="">(model: default)</option>${modelsFor(snapshot, harness).map((m) => html`<option key=${m} value=${m}>${m}</option>`)}<//>
+      <${ModelCombobox} id="snapshot-spawn-model" value=${model} onChange=${setModel} entries=${modelsFor(snapshot, harness)}
+        noneLabel="(model: default)" />
     </span></div>
     <label class="paf-check"><input type="checkbox" id="snapshot-spawn-confirm-loss" checked=${confirmCut} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} />
       <span>Allow cutting the conversation<span class="paf-hint ui-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
