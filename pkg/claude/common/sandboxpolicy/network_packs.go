@@ -25,9 +25,13 @@ var networkPackRegistry = []NetworkPack{
 		Warning: "OpenCode local-provider launches proceed without model-endpoint coverage validation: the authored rules are the entire egress authority.",
 	},
 	{
-		ID: "net-anthropic", Label: "Anthropic API", Group: "Cloud model APIs",
-		Entries: []NetworkAllowEntry{{Domain: "api.anthropic.com", Ports: []int{443}}},
-		Note:    "Anthropic documents the direct Claude API at https://api.anthropic.com.",
+		ID: "net-anthropic", Label: "Anthropic (API key or Claude subscription)", Group: "Cloud model APIs",
+		Entries: []NetworkAllowEntry{
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "platform.claude.com", Ports: []int{443}},
+		},
+		Note:    "Claude Code's model traffic goes to api.anthropic.com, with an API key or a Claude subscription sign-in; a subscription login also refreshes its access token at platform.claude.com, per the Claude Code 2.1.318 OAuth config.",
+		Warning: "The first browser sign-in, a moved endpoint (ANTHROPIC_BASE_URL, CLAUDE_CODE_CUSTOM_OAUTH_URL), Bedrock, Vertex, Foundry, web tools and MCP servers need their own destinations.",
 	},
 	{
 		ID: "net-openai-codex", Label: "OpenAI API", Group: "Cloud model APIs",

@@ -1378,6 +1378,7 @@ cause, not a restored pre-flight contract.
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |
 | Agent reached something the profile denied | Check MCP, which bypasses the sandbox |
+| Claude Code loses the model hours into a filtered session | A Claude subscription login refreshes its token at `platform.claude.com`; include `net-anthropic` (see [Network filtering](network-filtering.md#the-model-transport-gate)). The rotated token is written back to `~/.claude/.credentials.json` from inside tclaude’s sandbox |
 | `/config`, `/permissions`, or `/model` write fails in the pane | The harness-config floor — reopen the one path, or set `harness_config: "write"` |
 
 ## See also

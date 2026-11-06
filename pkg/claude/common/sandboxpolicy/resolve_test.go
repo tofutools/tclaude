@@ -112,6 +112,7 @@ func TestResolveMaterializesNetworkPacksBeforeSnapshotHandoff(t *testing.T) {
 	assert.Empty(t, effective.Network.Packs)
 	assert.Equal(t, []NetworkAllowEntry{
 		{Domain: "api.anthropic.com", Ports: []int{443}},
+		{Domain: "platform.claude.com", Ports: []int{443}},
 		{Loopback: true},
 	}, effective.Network.Allow)
 	assert.Equal(t, []NetworkAllowEntry{

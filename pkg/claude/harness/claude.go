@@ -16,7 +16,6 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // init registers the Claude Code harness as the default. Claude Code is
@@ -35,12 +34,10 @@ func init() {
 		OneShotReplay:             OneShotReplayDirect,
 		Models:                    claudeModels{},
 		ModelTransport: staticModelTransport{
-			provider:    "anthropic",
-			template:    "net-anthropic",
-			baseURLHost: "api.anthropic.com",
-			destinations: []sandboxpolicy.NetworkAllowEntry{{
-				Domain: "api.anthropic.com", Ports: []int{443},
-			}},
+			provider:     "anthropic",
+			template:     ClaudeNetworkPack,
+			baseURLHost:  claudeAPIHost,
+			destinations: ClaudeAPIDestinations(),
 		},
 		Life:       claudeLifecycle{},
 		Convs:      claudeConvStore{},

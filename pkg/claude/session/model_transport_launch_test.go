@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,10 +28,17 @@ func TestResolveTclaudeLayerClaudeModelTransportFromExactLaunchInputs(t *testing
 			},
 		})
 	require.NoError(t, err)
+	// No stored login: nothing refreshes, except that on macOS the login may
+	// sit in the keychain tclaude does not read.
+	wantLogin := harness.ClaudeLoginNone
+	if runtime.GOOS == "darwin" {
+		wantLogin = harness.ClaudeLoginUnknown
+	}
 	assert.Equal(t, harness.ResolvedModelTransport{
 		Model:            "sonnet",
 		Provider:         "anthropic",
 		ProviderResolved: true,
+		ClaudeLogin:      wantLogin,
 	}, resolved)
 
 	resolved, err = ResolveTclaudeLayerModelTransport(
@@ -508,6 +516,12 @@ func isolateModelTransportLaunch(t *testing.T) (home, cwd string) {
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	for _, variable := range []string{
+		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+		harness.ClaudeCustomOAuthURLEnvVar,
+	} {
+		t.Setenv(variable, "")
+	}
+	for _, variable := range []string{
 		"HTTPS_PROXY", "https_proxy",
 		"HTTP_PROXY", "http_proxy",
 		"ALL_PROXY", "all_proxy",
@@ -643,4 +657,59 @@ func TestResolveTclaudeLayerCodexProbeSelectsTheLaunchPermissionProfile(t *testi
 		})
 	require.NoError(t, err)
 	assert.Equal(t, "tclaude-agent", observed)
+}
+
+func TestClaudeLaunchLoginClassifiesTheSignIn(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(configDir, 0o700))
+	writeCredentials := func(body string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(
+			filepath.Join(configDir, ".credentials.json"), []byte(body), 0o600))
+	}
+	env := func(pairs ...string) map[string]string {
+		out := map[string]string{}
+		for i := 0; i+1 < len(pairs); i += 2 {
+			out[pairs[i]] = pairs[i+1]
+		}
+		return out
+	}
+
+	assert.Equal(t, harness.ClaudeLoginNone, claudeLaunchLogin("", env(), configDir, "linux"),
+		"no stored login on Linux means nothing to refresh")
+	assert.Equal(t, harness.ClaudeLoginUnknown, claudeLaunchLogin("", env(), configDir, "darwin"),
+		"no file on macOS may still be a keychain login")
+
+	writeCredentials(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}`)
+	assert.Equal(t, harness.ClaudeLoginSubscription, claudeLaunchLogin("", env(), configDir, "linux"))
+	assert.Equal(t, harness.ClaudeLoginSubscription, claudeLaunchLogin("", env(), configDir, "darwin"))
+	assert.Equal(t, harness.ClaudeLoginSubscription,
+		claudeLaunchLogin("https://api.anthropic.com", env(), configDir, "linux"),
+		"naming the default endpoint is still the first-party route")
+	assert.Equal(t, harness.ClaudeLoginSubscription,
+		claudeLaunchLogin("", env("CLAUDE_CONFIG_DIR", t.TempDir()), configDir, "linux"),
+		"the pinned state root decides, not an ambient CLAUDE_CONFIG_DIR")
+
+	for _, variable := range []string{
+		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+	} {
+		assert.Equalf(t, harness.ClaudeLoginNone,
+			claudeLaunchLogin("", env(variable, "set"), configDir, "linux"),
+			"%s replaces the refreshing login", variable)
+	}
+	assert.Equal(t, harness.ClaudeLoginNone,
+		claudeLaunchLogin("https://gateway.example/v1", env(), configDir, "linux"),
+		"a gateway route is not a subscription route")
+	assert.Equal(t, harness.ClaudeLoginCustomOAuth,
+		claudeLaunchLogin("", env(harness.ClaudeCustomOAuthURLEnvVar, "https://oauth.example"), configDir, "linux"))
+
+	writeCredentials(`{"mcpOAuth":{"server":{"accessToken":"x"}}}`)
+	assert.Equal(t, harness.ClaudeLoginNone, claudeLaunchLogin("", env(), configDir, "linux"),
+		"MCP-only credentials are not a Claude login")
+	assert.Equal(t, harness.ClaudeLoginNone, claudeLaunchLogin("", env(), configDir, "darwin"),
+		"an existing file without a Claude login is not a keychain guess")
+	writeCredentials(`{"claudeAiOauth":{"accessToken":"a"}}`)
+	assert.Equal(t, harness.ClaudeLoginNone, claudeLaunchLogin("", env(), configDir, "linux"),
+		"a login without a refresh token cannot refresh")
 }

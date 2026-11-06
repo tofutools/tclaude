@@ -50,6 +50,11 @@ type ResolvedModelTransport struct {
 	// route (OpenCode) could not resolve it, for the launch notice. It never
 	// gates anything.
 	UnresolvedReason string `json:"unresolved_reason,omitempty"`
+	// ClaudeLogin says whether a Claude Code launch signs in with a Claude
+	// subscription, whose token refresh needs a host besides the model
+	// endpoint. It only drives the launch warning (ClaudeLoginRefreshNotice);
+	// coverage never gates on it.
+	ClaudeLogin ClaudeLogin `json:"claude_login,omitempty"`
 }
 
 // ModelTransportResolver is deliberately separate from ModelCatalog. A model
