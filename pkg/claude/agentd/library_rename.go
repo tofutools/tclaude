@@ -143,6 +143,10 @@ func renameTemplate(from, to string) *spawnFailure {
 		return fail
 	}
 	t.ID = existing.ID
+	// Carry the owner scopes verbatim: the wire round-trip renders a stored map
+	// it cannot decode as empty, and a rename must not drop a narrowing that
+	// changing needs groups.settings.owner-scopes for (tcl-yjjbfh).
+	t.OwnerScopesJSON = existing.OwnerScopesJSON
 	if err := db.UpdateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
 		return renameTaken(err)
 	} else if err != nil {

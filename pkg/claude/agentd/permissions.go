@@ -454,7 +454,7 @@ var permissionRegistry = []PermSlug{
 		Slug:         PermGroupsSettingsOwnerScopes,
 		OwnerImplied: true,
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
-		Description:  "Set or clear a group's owner-grant constraints. Also requires permissions.grant and permissions.revoke.",
+		Description:  "Set or clear a group's owner-grant constraints, or change or remove a group template's (which every group later deployed from it inherits). Also requires permissions.grant and permissions.revoke.",
 	},
 	{
 		Slug:         PermGroupsMembersAdd,
@@ -607,7 +607,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermTemplatesManage,
-		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
+		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). Changing or removing an existing template's owner scopes also needs groups.settings.owner-scopes, permissions.grant and permissions.revoke. A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
 	},
 	{
 		Slug:         PermTemplatesUse,
