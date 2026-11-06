@@ -187,11 +187,11 @@ func handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := roleConferralFailure(caller, nil, rl); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateRole(rl)
@@ -252,11 +252,11 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := roleConferralFailure(caller, existing, rl); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		rl.ID = existing.ID

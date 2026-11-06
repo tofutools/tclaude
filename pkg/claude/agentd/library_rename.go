@@ -63,13 +63,13 @@ func handleLibraryRename(w http.ResponseWriter, r *http.Request) {
 			renamed := *existing
 			renamed.Name = req.To
 			if fail := roleConferralFailure(caller, existing, &renamed); fail != nil {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				writeSpawnFailure(w, fail)
 				return
 			}
 		}
 	}
 	if fail := rename(req.Name, req.To); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, libraryRenameResp{Kind: req.Kind, Name: req.To, From: req.Name})

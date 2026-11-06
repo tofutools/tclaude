@@ -202,7 +202,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	mode, fail := assignedHarnessBuiltinMode(h, current, body.Sandbox, implementation)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 
@@ -213,11 +213,11 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	// implementation instead of discovering at wake time that the agent no longer
 	// starts — with no relaunch-side override to rescue it.
 	if fail := sandboxImplementationPostureFailure(h.Name, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if fail := sandboxImplementationHostFailure(h.Name, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	planned, _, err := resolveCurrentSandboxChainForConv(convID)
@@ -227,7 +227,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	if fail := sandboxProfileCapabilityFailure(
 		h.Name, mode, planned, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// The gate that carries ValidateResourceLimitTarget, among others. Without it
@@ -242,7 +242,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		session.ModelTransportLaunchContext{Model: current.Model, Cwd: current.Cwd},
 		false,
 	); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if err := preflightAssignedResourceCgroup(convID, planned, implementation); err != nil {
@@ -254,7 +254,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	// assignment would refuse anyway, and before a running agent is stopped.
 	if !body.ConfirmMoveOut && !isTclaudeLayer(implementation) {
 		if fail := openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 	}
@@ -292,7 +292,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	if !online {
 		if fail := persist(); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		writeSandboxImplementationResponse(w, convID, previous, nil, note)
@@ -330,7 +330,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
 			fail.Msg += "; restoring the stopped agent also failed: " + resume.Detail
 		}
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)

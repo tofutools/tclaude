@@ -487,11 +487,8 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	update := r.URL.Query().Get("update") == "true"
 
 	res, existed, fail := importTemplateEnvelope(caller, env, asName, update, httpTemplateOwnerScopesGate(w, r))
-	if fail == errTemplateGateResponded {
-		return
-	}
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// A collision without update is a 409 here — the import verb never

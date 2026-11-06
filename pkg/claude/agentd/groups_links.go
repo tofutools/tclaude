@@ -263,7 +263,7 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	}
 	out, fail := addGroupLink(g, toGroup, body, auditedCaller(caller, PermGroupsLinkAdd))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -396,7 +396,7 @@ func removeGroupLink(link *db.AgentGroupLink) *spawnFailure {
 func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
 	link, fail := loadScopedGroupLink(g, idStr)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Auth: now that we know which side of the link g is on, apply
@@ -406,7 +406,7 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	}
 	out, fail := updateGroupLinkMode(r, link)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -419,7 +419,7 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	}
 	link, fail := loadScopedGroupLink(g, idStr)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Auth: owner-bypass-only-when-g-is-FROM. Owners of the TO side
@@ -429,7 +429,7 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return
 	}
 	if fail := removeGroupLink(link); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

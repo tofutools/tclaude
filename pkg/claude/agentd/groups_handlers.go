@@ -318,7 +318,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := defaultProfileConferralFailure(r, creator, body.Name, groupProfile); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		// Validate the optional remote-control policy up front (JOH-262); a bad
@@ -867,7 +867,7 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 		// partial settings update behind.
 		var fail *spawnFailure
 		if u.defaultPrompts, fail = resolveSavedPromptRefs(*u.body.DefaultPrompts); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return false
 		}
 	}
@@ -914,7 +914,7 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 		var failure *spawnFailure
 		u.normalizedPermissions, failure = normalizeBlueprintGrants(*u.body.Permissions)
 		if failure != nil {
-			writeError(w, failure.Status, failure.Kind, failure.Msg)
+			writeSpawnFailure(w, failure)
 			return false
 		}
 		sort.Slice(u.normalizedPermissions, func(i, j int) bool {
@@ -967,7 +967,7 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 			return false
 		}
 		if fail := defaultProfileConferralFailure(u.r, u.caller, u.g.Name, u.profile); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return false
 		}
 	}

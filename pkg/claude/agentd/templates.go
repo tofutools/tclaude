@@ -739,22 +739,18 @@ func templateOwnerScopesChange(existing *db.GroupTemplate, next string) bool {
 	return before != after
 }
 
-// errTemplateGateResponded is the failure a templateOwnerScopesGate returns
-// when it has already written the refusal; the handler only returns.
-var errTemplateGateResponded = &spawnFailure{}
-
 // templateOwnerScopesGate authorizes a template write that changes an
 // existing template's owner scopes. It returns nil to allow the write.
 type templateOwnerScopesGate func() *spawnFailure
 
 // httpTemplateOwnerScopesGate gates on the request's caller through
 // requirePermission, so an agent can still ask the human; a refusal is written
-// to w and reported as errTemplateGateResponded.
+// to w and reported as errSpawnResponseWritten.
 func httpTemplateOwnerScopesGate(w http.ResponseWriter, r *http.Request) templateOwnerScopesGate {
 	return func() *spawnFailure {
 		for _, slug := range templateOwnerScopesSlugs {
 			if _, ok := requirePermission(w, r, slug); !ok {
-				return errTemplateGateResponded
+				return errSpawnResponseWritten
 			}
 		}
 		return nil
@@ -826,7 +822,7 @@ func handleTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		t, fail := buildTemplateFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateGroupTemplate(t)
@@ -889,13 +885,11 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 		}
 		t, fail := buildTemplateFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
-			if fail != errTemplateGateResponded {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
-			}
+			writeSpawnFailure(w, fail)
 			return
 		}
 		t.ID = existing.ID
@@ -917,9 +911,7 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, ""); fail != nil {
-			if fail != errTemplateGateResponded {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
-			}
+			writeSpawnFailure(w, fail)
 			return
 		}
 		n, err := db.DeleteGroupTemplate(name)

@@ -286,7 +286,7 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 		// dropped the field would render a profile the real save refuses,
 		// which is the same silent divergence the gate exists to prevent.
 		if fail := rejectBreakGlassPayload("save", body); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		accessNotices, err := db.SandboxProfileCompositionNotices(p)
@@ -405,7 +405,7 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		// See the create handler: the preview is gated too, so it can never
 		// show an edit the save will refuse.
 		if fail := rejectBreakGlassPayload("save", body); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		accessNotices, err := db.SandboxProfileCompositionNotices(p)
@@ -500,7 +500,7 @@ func handleSandboxProfileDirectories(w http.ResponseWriter, r *http.Request) {
 	// from a silently narrowed profile — and, on the create action, actually
 	// mkdir for it. The refusal has to come before any of that.
 	if fail := rejectBreakGlassPayload("inspect directories for", body); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Directory inspection/creation is independent of the draft's name and
@@ -590,7 +590,7 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := rejectBreakGlassAssignment("global", body.BreakGlassAcknowledged); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		accessNotices, err := globalSandboxAssignmentCompositionNotices(body.Name)
@@ -666,7 +666,7 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fail := rejectBreakGlassAssignment(fmt.Sprintf("group %q", g.Name), body.BreakGlassAcknowledged); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		accessNotices, err := groupSandboxAssignmentCompositionNotices(g.Name, body.Name)
@@ -855,11 +855,11 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if fail := validateSandboxProfileExportVersionContent(env); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if fail := rejectBreakGlassEnvelope(env); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	conflict := strings.ToLower(strings.TrimSpace(env.OnConflict))
@@ -946,11 +946,11 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if fail := validateSandboxProfileExportVersionContent(env); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if fail := rejectBreakGlassEnvelope(env); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	profiles := make([]sandboxProfileJSON, 0, len(env.Profiles))

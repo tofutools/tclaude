@@ -223,9 +223,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		// the curated value when refreshing a template from its running group.
 		t.PerAgentWorktrees = existing.PerAgentWorktrees
 		if fail := checkTemplateOwnerScopes(httpTemplateOwnerScopesGate(w, r), existing, t.OwnerScopesJSON); fail != nil {
-			if fail != errTemplateGateResponded {
-				writeError(w, fail.Status, fail.Kind, fail.Msg)
-			}
+			writeSpawnFailure(w, fail)
 			return
 		}
 		t.ID = existing.ID

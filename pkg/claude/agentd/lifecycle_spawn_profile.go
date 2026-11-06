@@ -611,6 +611,21 @@ type spawnFailure struct {
 	Msg    string
 }
 
+// errSpawnResponseWritten is the failure a step or gate returns when a shared
+// helper it called has already written the response (a refusal, or an
+// ask-human approval in flight). writeSpawnFailure writes nothing more for it.
+var errSpawnResponseWritten = &spawnFailure{}
+
+// writeSpawnFailure writes a refusal as the HTTP error response. A handler
+// writes a spawnFailure through it, never field by field, so a failure whose
+// response is already written is never answered twice.
+func writeSpawnFailure(w http.ResponseWriter, fail *spawnFailure) {
+	if fail == errSpawnResponseWritten {
+		return
+	}
+	writeError(w, fail.Status, fail.Kind, fail.Msg)
+}
+
 // asyncSpawnInlineGrace bounds how long a non-blocking (Async) spawn waits
 // for the conv-id before returning a PENDING agent. CC reports its conv-id
 // via an immediate launch hook, and a trusted-dir Codex — self-starting its

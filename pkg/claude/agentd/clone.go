@@ -2085,12 +2085,12 @@ func (co *cloneOrchestration) checkPolicy(w http.ResponseWriter) bool {
 		policyCaller = ""
 	}
 	if fail := spawnHarnessPolicyFailureForGroups(policyGroups, policyCaller, co.srcHarness); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return false
 	}
 	// A clone is a new agent, so a usage limit blocking spawns blocks it too.
 	if fail := checkUsageSpawnBlockForGroups(policyGroups); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return false
 	}
 

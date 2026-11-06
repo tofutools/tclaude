@@ -69,7 +69,7 @@ var errGroupArchived = errors.New("group is archived; unarchive it first or pick
 // reject all writes.
 func requireGroupActive(w http.ResponseWriter, g *db.AgentGroup) bool {
 	if fail := groupActiveFailure(g); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return false
 	}
 	return true

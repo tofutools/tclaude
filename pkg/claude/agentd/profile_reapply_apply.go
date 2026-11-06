@@ -138,7 +138,7 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if fail := profileSpawnFailure(prof, caller); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 
@@ -153,14 +153,14 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 	// be overwritten by a copy read before it committed.
 	next, grants, fail := reapplyCopyFor(r, caller, agentID, prof)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	res := profileReapplyResult{AgentID: agentID, ConvID: convID}
 	var kept []spawnCopyKept
 	if pickAliveSession(convID) == nil {
 		if fail := applySpawnCopyLocked(agentID, convID, next, caller, &kept, grants); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		auditReappliedGrants(r, agentID, convID, prof.Name, grants)
@@ -194,7 +194,7 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, res)
 			return
 		}
-		writeError(w, restartFail.Status, restartFail.Kind, restartFail.Msg)
+		writeSpawnFailure(w, restartFail)
 		return
 	case restartFail != nil:
 		msg := restartFail.Msg

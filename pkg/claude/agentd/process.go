@@ -279,7 +279,7 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 
 	target, fail := resolveAdvanceTarget(st, strings.TrimSpace(body.To))
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 
