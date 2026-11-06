@@ -71,26 +71,13 @@ type glProxyMRMergeRequest struct {
 func openGLProxy(w http.ResponseWriter, r *http.Request, perm string, body any, remoteOf func() string) (
 	*glProxySession, bool,
 ) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return nil, false
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, perm)
-	if !ok {
-		return nil, false
-	}
-	if body != nil && !decodeGitProxyBody(w, r, body) {
-		return nil, false
-	}
-	g, fault := newGLProxySession(r.Context(), convID, remoteOf(), deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return nil, false
-	}
-	if !finishProxyPermission(w, r, convID, perm, g.remoteKey, deferred) {
-		return nil, false
-	}
-	return g, true
+	return openRemoteProxy(w, r, perm, body, func(ctx context.Context, convID string, deferred bool) (*glProxySession, string, *proxyFault) {
+		g, fault := newGLProxySession(ctx, convID, remoteOf(), deferred)
+		if fault != nil {
+			return nil, "", fault
+		}
+		return g, g.remoteKey, nil
+	})
 }
 
 // ---------------------------------------------------------------------------
