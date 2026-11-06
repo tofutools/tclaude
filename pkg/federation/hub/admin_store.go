@@ -476,41 +476,32 @@ func wrapAdminError(err error) *AdminError {
 	return &AdminError{500, "hub", fmt.Sprintf("hub operation failed: %v", err)}
 }
 
-// A terminal job is reconciled again at startup. Keep outcome inserts
-// idempotent across a crash between durable job completion and audit commit.
+// The outcome tables record which job outcomes are audited; fixed names,
+// never caller input, as auditJobOutcome builds its SQL from them.
+const (
+	execOutcomeAudits   = "hub_exec_outcome_audits"
+	updateOutcomeAudits = "hub_update_outcome_audits"
+)
+
 func (s *Store) auditExecOutcome(instance, id, detail string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	result, err := tx.Exec(`INSERT OR IGNORE INTO hub_exec_outcome_audits(job_id,at) VALUES(?,?)`, id, ts(time.Now()))
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return tx.Commit()
-	}
-	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,'exec',200,?)`, ts(time.Now()), instance, id, detail); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(`DELETE FROM hub_admin_audit WHERE sequence < (SELECT coalesce(max(sequence),0)-10000 FROM hub_admin_audit)`); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.auditJobOutcome(execOutcomeAudits, "exec", instance, id, detail)
 }
 
 func (s *Store) auditUpdateOutcome(instance, id, detail string) error {
+	return s.auditJobOutcome(updateOutcomeAudits, "update", instance, id, detail)
+}
+
+// auditJobOutcome audits a terminal job's outcome once. A terminal job is
+// reconciled again at startup, so the insert stays idempotent across a crash
+// between durable job completion and audit commit. table and operation are
+// the constants above.
+func (s *Store) auditJobOutcome(table, operation, instance, id, detail string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.Exec(`INSERT OR IGNORE INTO hub_update_outcome_audits(job_id,at) VALUES(?,?)`, id, ts(time.Now()))
+	result, err := tx.Exec(`INSERT OR IGNORE INTO `+table+`(job_id,at) VALUES(?,?)`, id, ts(time.Now()))
 	if err != nil {
 		return err
 	}
@@ -521,7 +512,7 @@ func (s *Store) auditUpdateOutcome(instance, id, detail string) error {
 	if n == 0 {
 		return tx.Commit()
 	}
-	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,'update',200,?)`, ts(time.Now()), instance, id, detail); err != nil {
+	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,?,200,?)`, ts(time.Now()), instance, id, operation, detail); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM hub_admin_audit WHERE sequence < (SELECT coalesce(max(sequence),0)-10000 FROM hub_admin_audit)`); err != nil {
