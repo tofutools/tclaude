@@ -768,16 +768,17 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 	return n, nil
 }
 
-// ListPeerWrittenGroupPermissionScopes returns the stored scopes of the
-// group permission rows a federation peer wrote (granted_by "peer:<id>"),
-// so a peer's group rename or delete can be refused when it would move what
-// such a row names.
-func ListPeerWrittenGroupPermissionScopes() ([]string, error) {
+// ListPeerWrittenPermissionScopes returns the stored scopes of the group
+// permission rows and agent permission overrides a federation peer wrote
+// (granted_by "peer:<id>"), so a peer's group rename or delete can be refused
+// when it would move what such a row names.
+func ListPeerWrittenPermissionScopes() ([]string, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT scope_json FROM agent_group_permissions WHERE granted_by LIKE 'peer:%' AND scope_json != ''`)
+	rows, err := d.Query(`SELECT scope_json FROM agent_group_permissions WHERE granted_by LIKE 'peer:%' AND scope_json != ''
+		UNION ALL SELECT scope_json FROM agent_permissions WHERE granted_by LIKE 'peer:%' AND scope_json != ''`)
 	if err != nil {
 		return nil, err
 	}

@@ -94,6 +94,9 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermJobsRun:                         proto.CapJobs,
 	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).
 	PermUsageRulesEnforce: "usage_enforce",
+	// An agent's own permission overrides, held in every group of the agent
+	// and within the peer ceiling (peer_agent_permissions.go).
+	PermPermissionsGrant: "permissions_grant", PermPermissionsRevoke: "permissions_revoke",
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{

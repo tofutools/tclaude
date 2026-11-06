@@ -56,8 +56,15 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	// The permission editor builds its rows from the slug catalogue, so a
 	// peer shown a group's member permissions gets it too: without it the
 	// editor would list no rows and save an empty list over them.
-	if v.agent == nil && peerReadsAnyGroupPermissions(v.peer.InstanceID, groups) {
+	// So does a peer shown an agent's own overrides, which come with the
+	// scope picker's group names: only the groups the peer sees.
+	editsAgents, err := projectPeerAgentsPermissions(v, &out, agents)
+	if err != nil {
+		return snapshotPayload{}, err
+	}
+	if v.agent == nil && (editsAgents || peerReadsAnyGroupPermissions(v.peer.InstanceID, groups)) {
 		out.Slugs = visiblePermissionRegistry(configuredProxyVisibility())
+		sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
 	}
 	emptyPeerCollections(reflect.ValueOf(&out).Elem())
 	// The restricted projection always sends its (small) registry fields. Never
