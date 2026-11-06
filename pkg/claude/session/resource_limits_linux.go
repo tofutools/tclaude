@@ -834,9 +834,9 @@ func resourceLimitExecCmd() *cobra.Command {
 // not have.
 func runWithoutResourceBoundary(sessionID, command string, cause error) error {
 	if err := recordResourceCgroupUnavailableForExec(sessionID, cause); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: record missing per-agent resource accounting: %v\n", err)
+		fmt.Fprintf(cliStderr, "Warning: record missing per-agent resource accounting: %v\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "Warning: %v; launching without per-agent resource accounting\n", cause)
+	fmt.Fprintf(cliStderr, "Warning: %v; launching without per-agent resource accounting\n", cause)
 	argv := append(clcommon.BootstrapShellArgv(), "-c", command)
 	return resourceLimitExecReplaceProcess(argv[0], argv, os.Environ())
 }
@@ -926,15 +926,15 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 		switch {
 		case optionalBoundary:
 			if persistErr := recordResourceCgroupUnavailableForExec(sessionID, noticeErr); persistErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: record missing per-agent resource accounting: %v\n", persistErr)
+				fmt.Fprintf(cliStderr, "Warning: record missing per-agent resource accounting: %v\n", persistErr)
 			}
-			fmt.Fprintf(os.Stderr, "Warning: %v; launching without per-agent resource accounting\n", noticeErr)
+			fmt.Fprintf(cliStderr, "Warning: %v; launching without per-agent resource accounting\n", noticeErr)
 			_, moveErr = io.WriteString(gateWrite, "go\n")
 		case allowUnenforced:
 			if persistErr := recordResourceLimitRuntimeOverrideForExec(sessionID, noticeErr); persistErr != nil {
 				moveErr = fmt.Errorf("record required resource-limit override disclosure: %w", persistErr)
 			} else {
-				fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
+				fmt.Fprintf(cliStderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
 				_, moveErr = io.WriteString(gateWrite, "go\n")
 			}
 		}
@@ -948,7 +948,7 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 	waitErr := child.Wait()
 	if ResourceCgroupOOMDeath(cgroupDir, oomBaseline, waitErr) {
 		if err := recordResourceLimitOOMForExec(sessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: record resource-limit OOM outcome: %v\n", err)
+			fmt.Fprintf(cliStderr, "Warning: record resource-limit OOM outcome: %v\n", err)
 		}
 	}
 	// The workload is gone, but a descendant it double-forked may not be, and
@@ -958,11 +958,11 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 	// other member is the live managed server itself.
 	if !sharedBoundary {
 		if err := KillResourceCgroupMembers(cgroupDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: reap resource cgroup %s: %v\n", cgroupDir, err)
+			fmt.Fprintf(cliStderr, "Warning: reap resource cgroup %s: %v\n", cgroupDir, err)
 		}
 		if !preserveBoundary {
 			if err := os.Remove(cgroupDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-				fmt.Fprintf(os.Stderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)
+				fmt.Fprintf(cliStderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)
 			}
 		}
 	}

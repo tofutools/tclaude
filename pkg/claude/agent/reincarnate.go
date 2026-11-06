@@ -73,7 +73,7 @@ func reincarnateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reincarnateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReincarnate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runReincarnate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

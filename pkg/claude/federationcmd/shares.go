@@ -35,7 +35,7 @@ type sharesParams struct {
 
 func sharesCmd() *cobra.Command {
 	return boa.CmdT[sharesParams]{Use: "shares", Short: "Usage sharing: model gateways peers let this node use (--given: what it shares)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sharesParams, _ *cobra.Command, _ []string) {
-		os.Exit(runShares(p, os.Stdout, os.Stderr))
+		os.Exit(runShares(p, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 

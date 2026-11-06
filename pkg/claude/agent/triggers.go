@@ -27,7 +27,7 @@ func triggersCmd() *cobra.Command {
 }
 
 func triggersLsCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{Use: "ls", Short: "List trigger rules", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) { os.Exit(runTriggersLs(os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[struct{}]{Use: "ls", Short: "List trigger rules", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) { os.Exit(runTriggersLs(cliStdout, cliStderr)) }}.ToCobra()
 }
 func runTriggersLs(stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -61,7 +61,7 @@ type triggersShowParams struct {
 
 func triggersShowCmd() *cobra.Command {
 	return boa.CmdT[triggersShowParams]{Use: "show", Short: "Show one trigger and its recent firing ledger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersShowParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTriggersShow(os.Stdout, os.Stderr, p.Selector))
+		os.Exit(runTriggersShow(cliStdout, cliStderr, p.Selector))
 	}}.ToCobra()
 }
 func runTriggersShow(stdout, stderr io.Writer, selector string) int {
@@ -121,7 +121,7 @@ type triggersExplainParams struct {
 
 func triggersExplainCmd() *cobra.Command {
 	return boa.CmdT[triggersExplainParams]{Use: "explain", Short: "Dry-run an event or agent fact against every trigger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersExplainParams, _ *cobra.Command, _ []string) {
-		os.Exit(runTriggersExplain(os.Stdout, os.Stderr, p))
+		os.Exit(runTriggersExplain(cliStdout, cliStderr, p))
 	}}.ToCobra()
 }
 func runTriggersExplain(stdout, stderr io.Writer, p *triggersExplainParams) int {

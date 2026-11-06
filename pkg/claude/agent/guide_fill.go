@@ -38,7 +38,7 @@ func guideFillCmd() *cobra.Command {
 			"Example: tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer --set agent-spawn-harness=codex",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideFillParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGuideFill(p, os.Stdout, os.Stderr))
+			os.Exit(runGuideFill(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

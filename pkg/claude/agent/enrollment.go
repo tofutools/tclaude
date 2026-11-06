@@ -50,7 +50,7 @@ func promoteCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *promoteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPromote(p, os.Stdout, os.Stderr))
+			os.Exit(runPromote(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -131,7 +131,7 @@ func retireCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *retireParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRetire(p, os.Stdout, os.Stderr))
+			os.Exit(runRetire(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -258,7 +258,7 @@ func reinstateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reinstateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReinstate(p, os.Stdout, os.Stderr))
+			os.Exit(runReinstate(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

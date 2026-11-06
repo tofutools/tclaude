@@ -65,7 +65,7 @@ func rolesLsCmd() *cobra.Command {
 		Long:        "Returns every role with its permission count and one-line description.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesLs(os.Stdout, os.Stderr))
+			os.Exit(runRolesLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -114,7 +114,7 @@ func rolesShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runRolesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -182,7 +182,7 @@ func rolesCreateCmd() *cobra.Command {
 			"than via flags.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *rolesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runRolesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -225,7 +225,7 @@ func rolesEditCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runRolesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -297,7 +297,7 @@ func rolesRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *rolesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRolesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runRolesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -56,11 +56,11 @@ func uploadAgentArchive(path string, f *os.File, out any) error {
 	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", "application/zip")
 	client := httpClientWithTimeout(bundletransfer.DefaultTTL)
-	policy, err := retryPolicyForRequest(client, req, os.Stderr)
+	policy, err := retryPolicyForRequest(client, req, cliStderr)
 	if err != nil {
 		return err
 	}
-	resp, err := doDaemonRequest(client, req, os.Stderr, policy)
+	resp, err := doDaemonRequest(client, req, cliStderr, policy)
 	if err != nil {
 		return err
 	}

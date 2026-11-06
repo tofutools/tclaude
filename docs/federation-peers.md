@@ -171,7 +171,11 @@ Rows marked unscoped only are instance-wide and refuse a scope. For the rest,
 prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
 its spawn launch policy. Revoking the scoped row leaves any unscoped grant
-in force.
+in force. `agents.receive`, `agents.teleport.receive` and
+`agents.receive.permissions` require a group scope. An unscoped one, which a
+node profile saved by an older tclaude can still hold, authorizes nothing:
+`federation grants` and the dashboard's grant list mark it inert, and
+`federation profile show` warns about it, until it is granted per group.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's

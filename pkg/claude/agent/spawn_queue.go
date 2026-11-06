@@ -71,7 +71,7 @@ func queueLsCmd() *cobra.Command {
 		Short:       "List queued spawns you can see, and the capacity they wait for",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *queueLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runQueueLs(p, os.Stdout, os.Stderr))
+			os.Exit(runQueueLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -182,7 +182,7 @@ func queueRmCmd() *cobra.Command {
 		Short:       "Cancel a queued spawn (its requester, an owner of its group, or the operator)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *queueRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runQueueRm(p, os.Stdout, os.Stderr))
+			os.Exit(runQueueRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

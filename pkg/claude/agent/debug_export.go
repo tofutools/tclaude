@@ -30,7 +30,7 @@ func debugExportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *debugExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDebugExport(p, os.Stdout, os.Stderr))
+			os.Exit(runDebugExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

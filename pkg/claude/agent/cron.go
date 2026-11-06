@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -84,7 +85,7 @@ func cronLsCmd() *cobra.Command {
 		Long:        "Returns all jobs the caller can see: humans see everything, agents see jobs they own, jobs targeting them, and jobs targeting any conv in a group they own.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *cronLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronLs(os.Stdout, os.Stderr))
+			os.Exit(runCronLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -205,7 +206,7 @@ func cronAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *cronAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronAdd(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runCronAdd(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -365,7 +366,7 @@ func cronRmCmd() *cobra.Command {
 		Long:        "Removes a job by ID. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronRm(p, os.Stdout, os.Stderr))
+			os.Exit(runCronRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -401,7 +402,7 @@ func cronEnableCmd() *cobra.Command {
 		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronEnable(p, true, os.Stdout, os.Stderr))
+			os.Exit(runCronEnable(p, true, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -413,7 +414,7 @@ func cronDisableCmd() *cobra.Command {
 		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronEnable(p, false, os.Stdout, os.Stderr))
+			os.Exit(runCronEnable(p, false, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -425,7 +426,7 @@ func cronRunNowCmd() *cobra.Command {
 		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronRunNow(p, os.Stdout, os.Stderr))
+			os.Exit(runCronRunNow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -491,7 +492,7 @@ func cronLogsCmd() *cobra.Command {
 		Long:        "Returns the most-recent fires for a job (newest first), one row per scheduler tick that picked it up. Visibility: caller must be owner, target, or owner of a group containing the target.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronLogsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronLogs(p, os.Stdout, os.Stderr))
+			os.Exit(runCronLogs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -544,12 +545,23 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// truncate shortens s to at most n bytes, ending in "..." when it cuts. It
+// cuts on a rune boundary, so a multi-byte character at the cut is dropped
+// whole rather than split into invalid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	if n <= 3 {
-		return s[:n]
+		return s[:runeBoundary(s, n)]
 	}
-	return s[:n-3] + "..."
+	return s[:runeBoundary(s, n-3)] + "..."
+}
+
+// runeBoundary is the largest index at most i that starts a rune in s.
+func runeBoundary(s string, i int) int {
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
 }

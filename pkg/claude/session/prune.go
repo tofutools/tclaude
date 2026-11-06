@@ -24,7 +24,7 @@ func PruneCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *PruneParams, cmd *cobra.Command, args []string) {
 			if err := runPrune(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -68,15 +68,15 @@ func runPrune(params *PruneParams) error {
 	}
 
 	if len(toDelete) == 0 {
-		fmt.Println("No exited sessions to prune")
+		fmt.Fprintln(cliStdout, "No exited sessions to prune")
 		return nil
 	}
 
 	if params.DryRun {
-		fmt.Printf("Would delete %d exited session(s):\n", len(toDelete))
+		fmt.Fprintf(cliStdout, "Would delete %d exited session(s):\n", len(toDelete))
 		for _, state := range toDelete {
 			age := FormatDuration(time.Since(state.Updated))
-			fmt.Printf("  %s  (exited %s ago)\n", pruneLabel(state), age)
+			fmt.Fprintf(cliStdout, "  %s  (exited %s ago)\n", pruneLabel(state), age)
 		}
 		return nil
 	}
@@ -84,13 +84,13 @@ func runPrune(params *PruneParams) error {
 	deleted := 0
 	for _, state := range toDelete {
 		if err := DeleteSessionState(state.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", pruneLabel(state), err)
+			fmt.Fprintf(cliStderr, "Failed to delete %s: %v\n", pruneLabel(state), err)
 			continue
 		}
 		deleted++
 	}
 
-	fmt.Printf("Pruned %d exited session(s)\n", deleted)
+	fmt.Fprintf(cliStdout, "Pruned %d exited session(s)\n", deleted)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,25 @@ func TestMessageSenderLabel_TruncatesLongName(t *testing.T) {
 	assert.LessOrEqual(t, len(name), nudgeSenderNameMax, "name capped at nudgeSenderNameMax")
 	assert.Contains(t, name, "...", "truncated name carries an ellipsis")
 	assert.Contains(t, label, "("+agentID[:12]+")", "stable short id survives intact")
+}
+
+// A long title with multi-byte characters is cut on a rune boundary: the
+// label stays valid UTF-8, so delivery can still name the sender.
+func TestMessageSenderLabel_TruncatesOnARuneBoundary(t *testing.T) {
+	setupTestDB(t)
+	const senderConv = "cccccccc-1111-2222-3333-555555555555"
+	upsertConvIndex(t, senderConv, "コードレビュー担当エージェント", "", "")
+	agentID, _, err := db.EnsureAgentForConv(senderConv, "spawn")
+	require.NoError(t, err)
+	label := MessageSenderLabel(senderConv, agentID)
+	assert.True(t, utf8.ValidString(label), "label %q is valid UTF-8", label)
+	assert.Contains(t, label, "...")
+	for _, s := range []string{"åäöåäö", "🙂🙂x", "abé"} {
+		for n := 0; n <= len(s)+1; n++ {
+			assert.True(t, utf8.ValidString(truncate(s, n)), "truncate(%q, %d)", s, n)
+			assert.LessOrEqual(t, len(truncate(s, n)), n, "truncate(%q, %d) stays within n bytes", s, n)
+		}
+	}
 }
 
 // TestMessageSenderLabel_SanitizesControlChars pins the send-keys safety

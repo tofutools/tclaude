@@ -398,7 +398,7 @@ func NewCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *NewParams, cmd *cobra.Command, args []string) {
 			if err := RunNewFromCommand(params, cmd); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -518,7 +518,7 @@ func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
-		harness.PrintContextFeatureCatalog(os.Stdout)
+		harness.PrintContextFeatureCatalog(cliStdout)
 		return nil
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
@@ -771,7 +771,7 @@ func runNew(params *NewParams) error {
 	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
-			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 
@@ -922,7 +922,7 @@ func runNew(params *NewParams) error {
 		InitialPrompt:                  params.InitialPrompt,
 	}
 	extensionReadPaths, err := FinishHarnessSpawnSpec(
-		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, os.Stderr)
+		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, cliStderr)
 	if err != nil {
 		return err
 	}
@@ -1312,14 +1312,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
-	// The shape gate runs on the RENDERED rules, not the authored profile: the
-	// launch contract above adds reopens of its own, so `deny ~` on its own
-	// still emits a split policy and must still be refused where Codex cannot
-	// enforce it. The conv resume runs the same gate in planResumeDirs.
-	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
-		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
-		return "", "", nil, err
-	}
 	return EnsureCodexManagedLaunchProfile(CodexManagedProfileRules{
 		ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs,
 	}, effectiveSandbox, launchID)
@@ -1332,14 +1324,21 @@ type CodexManagedProfileRules struct {
 }
 
 // EnsureCodexManagedLaunchProfile is the managed-Codex profile step that
-// `session new` and the conv resume share. When the rules reopen a path
-// beneath a denied ancestor, it verifies Codex's split-policy backend, the one
-// that can honor that shape, and adds the Codex executable to the reads when
-// the backend needs it. It then writes the launch-unique profile with the
-// snapshot's network posture and Unix-socket allowlist.
+// `session new` and the conv resume share. It first runs the reopen-under-deny
+// gate on the rules: a reopen beneath a deny is refused where Codex cannot
+// enforce it. The gate runs on the RENDERED rules, not the authored profile:
+// the launch contract adds reopens of its own, so `deny ~` on its own still
+// emits a split policy. It runs here, whatever the sandbox implementation,
+// because the profile is written whatever the implementation; an unconfined
+// resume skips the gate in planResumeDirs (awb tcl-jyd8zy).
 //
-// The caller runs harness.ValidateSandboxReopenUnderDeny on the same rules
-// first, removes path after the pane exits, and revalidates a non-nil
+// When the rules reopen a path beneath a denied ancestor, it then verifies
+// Codex's split-policy backend, the one that can honor that shape, and adds
+// the Codex executable to the reads when the backend needs it. It writes the
+// launch-unique profile with the snapshot's network posture and Unix-socket
+// allowlist.
+//
+// The caller removes path after the pane exits, and revalidates a non-nil
 // capability immediately before the exec boundary, pinning its
 // ExecutablePath.
 func EnsureCodexManagedLaunchProfile(
@@ -1347,6 +1346,10 @@ func EnsureCodexManagedLaunchProfile(
 	effectiveSandbox *sandboxpolicy.Snapshot,
 	launchID string,
 ) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+		sandboxpolicy.GrantsFromDirs(rules.ReadDirs, rules.WriteDirs, rules.DenyDirs)); err != nil {
+		return "", "", nil, err
+	}
 	readDirs := append([]string(nil), rules.ReadDirs...)
 	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
 		sandboxpolicy.GrantsFromDirs(readDirs, rules.WriteDirs, rules.DenyDirs))
@@ -1967,7 +1970,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// this process's terminal. `new-session -d` prints nothing on success (bar the -P id), and
 	// on failure ("bad session name", "can't create socket") the message is the
 	// whole explanation — attaching it to the error keeps it with the caller
-	// that can render it. Writing it to os.Stderr instead would land it
+	// that can render it. Writing it to cliStderr instead would land it
 	// wherever this process's stderr happens to point, which since
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
@@ -2125,15 +2128,15 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 // the harness-specific "Created …" headline (a coding session vs a shell
 // session). Shared launch tail of runNew and runNewShell.
 func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
-	fmt.Println(createdLine)
-	fmt.Printf("  Directory: %s\n", cwd)
+	fmt.Fprintln(cliStdout, createdLine)
+	fmt.Fprintf(cliStdout, "  Directory: %s\n", cwd)
 
 	if detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
+		fmt.Fprintf(cliStdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 

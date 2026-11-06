@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // SortDirection for column sorting
@@ -72,8 +74,16 @@ func (t *Table) SetTerminalWidth(width int) {
 	}
 }
 
-// AddRow adds a row to the table and invalidates cached widths
+// AddRow adds a row to the table and invalidates cached widths. Every cell
+// is made terminal-safe and single-line (termtext.Line): tables show agent-
+// and peer-authored text, and a control sequence in a cell would otherwise be
+// interpreted by the operator's terminal.
 func (t *Table) AddRow(row Row) {
+	cells := make([]string, len(row.Cells))
+	for i, cell := range row.Cells {
+		cells[i] = termtext.Line(cell)
+	}
+	row.Cells = cells
 	t.Rows = append(t.Rows, row)
 	t.calculatedWidths = nil // Content changed, recalculate widths
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,7 +52,7 @@ func SearchCmd() *cobra.Command {
 		Short:       "Search within Claude conversations",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *SearchParams, cmd *cobra.Command, args []string) {
-			exitCode := RunSearch(params, os.Stdout, os.Stderr)
+			exitCode := RunSearch(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -59,7 +60,7 @@ func SearchCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
+func RunSearch(params *SearchParams, stdout, stderr io.Writer) int {
 	// Compile regex (case insensitive by default)
 	pattern := params.Pattern
 	if !params.CaseSensitive {

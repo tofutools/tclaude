@@ -50,7 +50,7 @@ func groupAttachmentSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentSet(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -82,7 +82,7 @@ func groupAttachmentClearCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentClearParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentClear(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentClear(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -136,7 +136,7 @@ func groupAttachmentShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupAttachmentShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupAttachmentShow(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupAttachmentShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

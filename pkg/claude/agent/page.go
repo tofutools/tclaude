@@ -49,7 +49,7 @@ func showCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *pageShowParams, _ *cobra.Command, args []string) {
-			os.Exit(runPageShow(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runPageShow(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 	return cmd
@@ -73,7 +73,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.ExactArgs(1),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageShowParams, _ *cobra.Command, args []string) {
-					os.Exit(runPageShow(p, args[0], os.Stdout, os.Stderr))
+					os.Exit(runPageShow(p, args[0], cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pageLsParams]{
@@ -82,7 +82,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.NoArgs,
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageLsParams, _ *cobra.Command, _ []string) {
-					os.Exit(runPageLs(p, os.Stdout, os.Stderr))
+					os.Exit(runPageLs(p, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[struct{}]{
@@ -92,7 +92,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.ExactArgs(1),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
-					os.Exit(runPageClose(args[0], os.Stdout, os.Stderr))
+					os.Exit(runPageClose(args[0], cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pageMarksParams]{
@@ -105,7 +105,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.ExactArgs(1),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageMarksParams, _ *cobra.Command, args []string) {
-					os.Exit(runPageMarks(p, args[0], os.Stdout, os.Stderr))
+					os.Exit(runPageMarks(p, args[0], cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pageSnapshotParams]{
@@ -117,7 +117,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.ExactArgs(1),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageSnapshotParams, _ *cobra.Command, args []string) {
-					os.Exit(runPageSnapshot(p, args[0], os.Stdout, os.Stderr))
+					os.Exit(runPageSnapshot(p, args[0], cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pageDOMParams]{
@@ -134,7 +134,7 @@ func pageCmd() *cobra.Command {
 					p.setText = cmd.Flags().Changed("set-text")
 					p.setAttr = cmd.Flags().Changed("set-attr")
 					p.insertHTML = cmd.Flags().Changed("insert-html")
-					os.Exit(runPageDOM(p, args[0], args[1], os.Stdout, os.Stderr))
+					os.Exit(runPageDOM(p, args[0], args[1], cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pagePatchParams]{
@@ -146,7 +146,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.MinimumNArgs(2),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pagePatchParams, _ *cobra.Command, args []string) {
-					os.Exit(runPagePatch(p, args[0], map[string]any{"kind": "css", "css": strings.Join(args[1:], "\n")}, os.Stdout, os.Stderr))
+					os.Exit(runPagePatch(p, args[0], map[string]any{"kind": "css", "css": strings.Join(args[1:], "\n")}, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pagePatchParams]{
@@ -158,7 +158,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.ExactArgs(2),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pagePatchParams, _ *cobra.Command, args []string) {
-					os.Exit(runPageEval(p, args[0], args[1], os.Stdin, os.Stdout, os.Stderr))
+					os.Exit(runPageEval(p, args[0], args[1], os.Stdin, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pagePatchesParams]{
@@ -169,7 +169,7 @@ func pageCmd() *cobra.Command {
 				Args:        cobra.RangeArgs(1, 2),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pagePatchesParams, _ *cobra.Command, args []string) {
-					os.Exit(runPagePatches(p, args, os.Stdout, os.Stderr))
+					os.Exit(runPagePatches(p, args, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 		},

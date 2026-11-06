@@ -570,6 +570,8 @@
        per open state; dock.js keeps its title/aria in sync. -->
   <button data-ui-exempt id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
     <span class="dock-toggle-chevron" aria-hidden="true">›</span>
+    <!-- The Collab panel's background count while it is folded (collab-rail.js renders it). -->
+    <span id="dock-toggle-count"></span>
   </button>
   <div class="dock-inner">
     <!-- Dock header (JOH-388 req 6 dropped the decorative "Palette" title). It

@@ -31,7 +31,7 @@ func inboxAttachmentCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *inboxAttachmentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxAttachment(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxAttachment(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

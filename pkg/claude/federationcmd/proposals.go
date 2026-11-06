@@ -28,7 +28,7 @@ type proposalsParams struct {
 
 func proposalsCmd() *cobra.Command {
 	return boa.CmdT[proposalsParams]{Use: "proposals", Short: "Propose and decide peer group sharing and communication links (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *proposalsParams, _ *cobra.Command, _ []string) {
-		os.Exit(runProposals(p, os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(runProposals(p, os.Stdin, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runProposals(p *proposalsParams, stdin io.Reader, stdout, stderr io.Writer) int {

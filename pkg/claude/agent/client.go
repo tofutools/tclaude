@@ -294,7 +294,7 @@ type DaemonOpts struct {
 	// popup wait happens in the daemon BEFORE the endpoint runs, so a
 	// request that needs both waits for both.
 	Timeout time.Duration
-	// RetryOutput receives retry notices. Nil writes to os.Stderr. This is
+	// RetryOutput receives retry notices. Nil writes to cliStderr. This is
 	// primarily useful to callers that already expose an injectable stderr.
 	RetryOutput io.Writer
 	// NoRetry disables both connection and HTTP 5xx retries. Use it for
@@ -512,7 +512,7 @@ func daemonGetRaw(path string) ([]byte, http.Header, error) {
 		return nil, nil, err
 	}
 	attachCallerIdentity(req)
-	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, os.Stderr, defaultRetryPolicy())
+	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, cliStderr, defaultRetryPolicy())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -580,7 +580,7 @@ func retryOutput(out io.Writer) io.Writer {
 	if out != nil {
 		return out
 	}
-	return os.Stderr
+	return cliStderr
 }
 
 // doDaemonRequest retries transient failures at the single shared agentd

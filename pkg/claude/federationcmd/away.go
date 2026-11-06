@@ -27,13 +27,13 @@ func awayCmd() *cobra.Command {
 		}
 		if p.Cover == "" {
 			if p.Until != "" {
-				os.Exit(fail(os.Stderr, fmt.Errorf("--until requires --cover")))
+				os.Exit(fail(cliStderr, fmt.Errorf("--until requires --cover")))
 			}
-			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 				os.Exit(rc)
 			}
 			if err := agent.DaemonGet("/v1/federation/away", &out); err != nil {
-				os.Exit(fail(os.Stderr, err))
+				os.Exit(fail(cliStderr, err))
 			}
 		} else {
 			until := time.Time{}
@@ -45,34 +45,34 @@ func awayCmd() *cobra.Command {
 					until, err = time.Parse(time.RFC3339, p.Until)
 				}
 				if err != nil || !until.After(time.Now()) {
-					os.Exit(fail(os.Stderr, fmt.Errorf("--until must be a positive duration or future RFC3339 time")))
+					os.Exit(fail(cliStderr, fmt.Errorf("--until must be a positive duration or future RFC3339 time")))
 				}
 			}
-			if rc := post(os.Stderr, "/v1/federation/away", map[string]any{"cover": p.Cover, "until": until}, &out); rc != 0 {
+			if rc := post(cliStderr, "/v1/federation/away", map[string]any{"cover": p.Cover, "until": until}, &out); rc != 0 {
 				os.Exit(rc)
 			}
 		}
 		if out.Away == nil {
-			fmt.Println("Present; no covering peer")
+			fmt.Fprintln(cliStdout, "Present; no covering peer")
 		} else {
-			fmt.Printf("Away; cover %s", out.Away.Cover)
+			fmt.Fprintf(cliStdout, "Away; cover %s", out.Away.Cover)
 			if !out.Away.Until.IsZero() {
-				fmt.Printf(" until %s", out.Away.Until.Local().Format(time.RFC3339))
+				fmt.Fprintf(cliStdout, " until %s", out.Away.Until.Local().Format(time.RFC3339))
 			}
-			fmt.Println()
+			fmt.Fprintln(cliStdout)
 		}
 		for _, w := range out.Warnings {
-			fmt.Fprintln(os.Stderr, "Warning:", w)
+			fmt.Fprintln(cliStderr, "Warning:", w)
 		}
 	}}.ToCobra()
 }
 func returnCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "return", Short: "End away forwarding and delegated approval authority", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 		var out any
-		if rc := post(os.Stderr, "/v1/federation/return", struct{}{}, &out); rc != 0 {
+		if rc := post(cliStderr, "/v1/federation/return", struct{}{}, &out); rc != 0 {
 			os.Exit(rc)
 		}
-		fmt.Println("Present; coverage ended")
+		fmt.Fprintln(cliStdout, "Present; coverage ended")
 	}}.ToCobra()
 }
 
@@ -87,9 +87,9 @@ func answerCmd() *cobra.Command {
 			EnvelopeID string `json:"envelope_id"`
 			State      string `json:"state"`
 		}
-		if rc := post(os.Stderr, "/v1/federation/answer", map[string]any{"ticket": p.Ticket, "decision": p.Decision}, &out); rc != 0 {
+		if rc := post(cliStderr, "/v1/federation/answer", map[string]any{"ticket": p.Ticket, "decision": p.Decision}, &out); rc != 0 {
 			os.Exit(rc)
 		}
-		fmt.Printf("%s (envelope %s); receipt and final decision are in federation outbox\n", out.State, out.EnvelopeID)
+		fmt.Fprintf(cliStdout, "%s (envelope %s); receipt and final decision are in federation outbox\n", out.State, out.EnvelopeID)
 	}}.ToCobra()
 }

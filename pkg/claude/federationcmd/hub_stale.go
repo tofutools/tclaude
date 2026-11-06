@@ -29,7 +29,7 @@ type hubStalePreview struct {
 
 func hubStaleCmd() *cobra.Command {
 	return boa.CmdT[hubStaleParams]{Use: "cleanup-stale", Short: "Preview and confirm removal of stale hub admissions", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubStaleParams, _ *cobra.Command, _ []string) {
-		os.Exit(runHubStale(p, os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(runHubStale(p, os.Stdin, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 func runHubStale(p *hubStaleParams, stdin io.Reader, stdout, stderr io.Writer) int {

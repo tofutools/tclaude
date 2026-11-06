@@ -72,7 +72,7 @@ func cloneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *cloneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runClone(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runClone(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

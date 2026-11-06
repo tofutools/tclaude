@@ -48,10 +48,10 @@ func discloseSpawnPosture(h *harness.Harness, approvalPolicy, harnessBuiltinMode
 	// never a refusal: the human is the trust root here.
 	if !outerLayer || h.Name == harness.OpenCodeName {
 		for _, info := range harness.SpawnSandboxInfo(h, harnessBuiltinMode) {
-			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
+			fmt.Fprintf(cliStderr, "ℹ %s\n", info)
 		}
 		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, harnessBuiltinMode, cwd, outerLayer) {
-			fmt.Fprintf(os.Stderr, "%s\n", warning)
+			fmt.Fprintf(cliStderr, "%s\n", warning)
 		}
 	}
 }

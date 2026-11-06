@@ -51,7 +51,7 @@ func inboxLsCmd() *cobra.Command {
 		Short:       "List messages in this conversation's inbox",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxLs(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -156,7 +156,7 @@ func inboxSentCmd() *cobra.Command {
 		Long:        "Outbox view: messages this conv-id is the sender of, most recent first. Shows delivery + read state from the recipient's side.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxSentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxSent(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxSent(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -254,7 +254,7 @@ func inboxReadCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *inboxReadParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxRead(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxRead(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -523,7 +523,7 @@ func inboxPruneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *inboxPruneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxPrune(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxPrune(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

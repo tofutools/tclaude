@@ -91,7 +91,7 @@ func externalStewardLsCmd() *cobra.Command {
 		Long:        externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *externalStewardLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExternalStewardLs(p, os.Stdout, os.Stderr))
+			os.Exit(runExternalStewardLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -164,7 +164,7 @@ func externalStewardAddCmd() *cobra.Command {
 		Long:        externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *externalStewardAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExternalStewardAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runExternalStewardAdd(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -196,7 +196,7 @@ func externalStewardRenewCmd() *cobra.Command {
 		Long:        "The old credentials keep working until they expire, unless --revoke-old ends them now.\n\n" + externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *externalStewardRenewParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExternalStewardRenew(p, os.Stdout, os.Stderr))
+			os.Exit(runExternalStewardRenew(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -229,7 +229,7 @@ func externalStewardRevokeCmd() *cobra.Command {
 		Long:        "It takes effect on the next request, and works with external stewards turned off.\n\n" + externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *externalStewardRevokeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExternalStewardRevoke(p, os.Stdout, os.Stderr))
+			os.Exit(runExternalStewardRevoke(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -286,7 +286,7 @@ func externalStewardSpawnCmd() *cobra.Command {
 			"until you do.\n\n" + externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *externalStewardSpawnParams, _ *cobra.Command, _ []string) {
-			os.Exit(runExternalStewardSpawn(p, os.Stdout, os.Stderr))
+			os.Exit(runExternalStewardSpawn(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

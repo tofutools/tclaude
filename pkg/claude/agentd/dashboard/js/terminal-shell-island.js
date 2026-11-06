@@ -23,7 +23,7 @@ import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
-  BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
+  backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
 } from './background-terminals.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
@@ -34,8 +34,8 @@ import {
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
-import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
-import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
+import { BoardEditor, BoardsGate } from './board-island.js';
+import { BoardDeleteHost, askDeleteBoard, onBoardDeleted } from './board-manage.js';
 import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
@@ -58,18 +58,14 @@ import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
 import { agentRunBounds } from './process-agent-stepper.js';
-import { useDismissablePopover } from './hover-popover.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere, paneShellAgent } from './terminal-here.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
 import {
   dockProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, stripProcesses,
 } from './process-editor-place.js';
 import { ProcessPane } from './process-pane.js';
-import { ProcessMenuList } from './process-collab-menu.js';
-import { isWizardActive } from './slop.js';
 import { PagePane } from './page-view.js';
 import { pagePaneKey, registerPageStrip, revealPageWindow, unseenPages, watchLivePages } from './page-place.js';
 import { processesAvailable } from './feature-availability.js';
@@ -615,54 +611,6 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     id=${pane.id}
     role=${solo ? null : 'tabpanel'}
   >${solo ? editor : html`<${BoardsGate}>${editor}<//>`}</div>`;
-}
-
-// BoardMenu is the strip's ＋ button: open a board or, with Processes on, a
-// process template as a tab, or make a new one. It reads the snapshot itself so
-// the strip does not re-render on each poll.
-const ADD_MENU_SECTION_PREF = 'tclaude.dash.collabAdd.section';
-
-function readAddMenuSection() {
-  try { return globalThis.localStorage?.getItem(ADD_MENU_SECTION_PREF) === 'processes' ? 'processes' : 'boards'; } catch { return 'boards'; }
-}
-
-function BoardMenu({ state, snapshot }) {
-  const [open, setOpen] = useState(false);
-  const [picking, setPicking] = useState(false);
-  const [section, setSection] = useState(readAddMenuSection);
-  const rootRef = useRef(null);
-  const request = state.boardMenuRequest.value;
-  useEffect(() => {
-    if (!request) return;
-    if (state.boardMenuSection?.peek()) setSection(state.boardMenuSection.peek());
-    setOpen(true);
-  }, [request]);
-  // The delete dialog and the file picker are outside the menu, and the menu is
-  // waiting for them.
-  useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
-  if (onPeerPage()) return null;
-  const processes = processesAvailable(snapshot?.value);
-  const shown = processes ? section : 'boards';
-  const wizard = isWizardActive();
-  const pick = (next) => {
-    setSection(next);
-    try { globalThis.localStorage?.setItem(ADD_MENU_SECTION_PREF, next); } catch { /* a convenience only */ }
-  };
-  return html`<div ref=${rootRef} class="mux-board-slot">
-    <button data-ui-exempt type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
-      title=${processes ? 'Open a board or a process in a tab, or create one' : 'Open a board in a tab, or create one'}
-      aria-label=${processes ? 'Open or create a board or a process' : 'Open or create a board'}
-      onClick=${() => setOpen((value) => !value)}>＋</button>
-    ${open ? html`<div class="mux-board-menu" role="dialog" aria-label=${shown === 'processes' ? 'Processes' : 'Boards'}>
-      ${processes ? html`<${Tabs} variant="seg" class="mux-add-sections" label="Open in a tab" value=${shown} onSelect=${pick}
-        items=${[{ key: 'boards', label: 'Boards' }, { key: 'processes', label: wizard ? 'Rites' : 'Processes' }]} />` : null}
-      ${shown === 'processes'
-        ? html`<${ProcessMenuList} fetchImpl=${fetchFromPage} notify=${shellToast} wizard=${wizard}
-          onOpen=${(id, label) => { setOpen(false); void openProcessTab(id, label); }} />`
-        : html`<${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
-          onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />`}
-    </div>` : null}
-  </div>`;
 }
 
 // PaneProcessOverlay reads the snapshot signal itself so only this small
@@ -1860,7 +1808,7 @@ function TerminalTabs({
   return html`
     <div ref=${shellRef} class=${rootClass}>
       ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}
-        floatsOf=${floatsOf} />` : null}
+        floatsOf=${floatsOf} menuRequest=${state.boardMenuRequest} menuSection=${state.boardMenuSection} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
@@ -1961,8 +1909,6 @@ function TerminalTabs({
               onDrop=${dropOnEnd}
             />` : null}
         </div><//>
-        <${BoardMenu} state=${state} snapshot=${snapshot} />
-        ${hasBackground ? html`<div class="mux-bg-slot"><${BackgroundTerminalsChip} rows=${backgroundRows} snapshot=${snapshot} /></div>` : null}
         </div>
         ${detachArmed && !joining ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
@@ -1975,9 +1921,9 @@ function TerminalTabs({
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
           ${hasBackground
-            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
+            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. The panel's Filter counts them; tick Background to list and attach them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
+          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the panel's ＋ New.</div><//>` : null}
         </div><//>
       ` : null}
       ${hasPanes || !empty ? html`

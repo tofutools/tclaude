@@ -44,7 +44,7 @@ func clipboardCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *clipboardParams, _ *cobra.Command, _ []string) {
-			os.Exit(runClipboard(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runClipboard(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

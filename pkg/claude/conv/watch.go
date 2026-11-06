@@ -2176,29 +2176,29 @@ func RunConvWatchMode(global bool, since, before string) error {
 
 		if result.CreateWorktree {
 			if err := createWorktreeForConv(result.Conv, result.WorktreeBranch); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error creating worktree: %v\n", err)
 			}
 			return nil
 		}
 
 		if result.ShouldCreate {
 			if err := createSessionForConv(result.Conv); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error creating session: %v\n", err)
 				continue
 			}
 		} else {
 			sessState := findSessionForConv(result.Conv.SessionID)
 			if sessState == nil {
-				fmt.Fprintf(os.Stderr, "Session not found, creating new...\n")
+				fmt.Fprintf(cliStderr, "Session not found, creating new...\n")
 				if err := createSessionForConv(result.Conv); err != nil {
-					fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+					fmt.Fprintf(cliStderr, "Error creating session: %v\n", err)
 					continue
 				}
 			} else {
 				if result.ForceAttach {
-					fmt.Printf("Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", sessState.ID)
+					fmt.Fprintf(cliStdout, "Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", sessState.ID)
 				} else {
-					fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", sessState.ID)
+					fmt.Fprintf(cliStdout, "Attaching to %s... (Ctrl+B D to detach)\n", sessState.ID)
 				}
 				if err := session.AttachToSession(sessState.ID, sessState.TmuxSession, result.ForceAttach); err != nil {
 					continue
@@ -2624,10 +2624,10 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if !outerLayer && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
-		// The step `session new` takes. planResumeDirs has already run the
-		// reopen-under-deny gate on these rendered rules, except for an
-		// unconfined implementation (off, resource-only), which it skips there
-		// as it did before this step was shared.
+		// The step `session new` takes. It runs the reopen-under-deny gate on
+		// these rendered rules itself, so an unconfined implementation (off,
+		// resource-only), whose gate planResumeDirs skips, is still refused a
+		// shape Codex cannot enforce, as `session new` refuses it.
 		profileLaunchID := session.GenerateSessionID()
 		profileName, profilePath, capability, err := session.EnsureCodexManagedLaunchProfile(
 			session.CodexManagedProfileRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs},
@@ -3158,7 +3158,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 
-	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
+	session.EnsureHooksInstalled(false, cliStdout, cliStderr)
 
 	// Sync the configured Claude Code transcript-retention override
 	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
@@ -3197,7 +3197,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
 
 	// The agent's sandbox, prepared as an ordinary resume prepares it.
-	relaunch, err := prepareStandaloneRelaunch(sessionID, os.Stderr)
+	relaunch, err := prepareStandaloneRelaunch(sessionID, cliStderr)
 	if err != nil {
 		return err
 	}
@@ -3223,7 +3223,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	if launchEffectiveSandbox != nil {
 		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
-			fmt.Printf("Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 	// The same gate `tclaude conv resume` applies, for the same reason: this
@@ -3237,7 +3237,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 	if driveNotice != "" {
-		fmt.Println(driveNotice)
+		fmt.Fprintln(cliStdout, driveNotice)
 	}
 	approvalState, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
@@ -3245,7 +3245,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
 	if notice := describeResumedApproval(h, approvalState); notice != "" {
-		fmt.Println(notice)
+		fmt.Fprintln(cliStdout, notice)
 	}
 	// Read the postures this resume must reproduce BEFORE it creates any row of
 	// its own — including the row the resumed pane's own SessionStart hook may
@@ -3339,8 +3339,8 @@ func createSessionForConv(conv *SessionEntry) error {
 	session.RecordLaunchPosture(sessionID, h,
 		resumeLaunchPosture(autoMemory, peerMessaging, contextFeatures, autoCompactWindow, remoteControl))
 
-	fmt.Printf("Created session %s\n", tmuxSession)
-	fmt.Println("Attaching... (Ctrl+B D to detach)")
+	fmt.Fprintf(cliStdout, "Created session %s\n", tmuxSession)
+	fmt.Fprintln(cliStdout, "Attaching... (Ctrl+B D to detach)")
 
 	return session.AttachToSession(sessionID, tmuxSession, false)
 }

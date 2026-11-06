@@ -34,7 +34,7 @@ func notifyHumanDismissCmd() *cobra.Command {
 			"--all dismisses every decision of yours still open; ones answered meanwhile are skipped.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *notifyHumanDismissParams, _ *cobra.Command, _ []string) {
-			os.Exit(runNotifyHumanDismiss(p, os.Stdout, os.Stderr))
+			os.Exit(runNotifyHumanDismiss(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

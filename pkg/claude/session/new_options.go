@@ -3,7 +3,6 @@ package session
 import (
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 
@@ -494,7 +493,7 @@ func resolveNewLaunch(params *NewParams, launchSandbox *sandboxpolicy.Snapshot) 
 	// marker the posture write reads, and clearing a port the drive no longer needs
 	// — lives inside the applier rather than here, so they are testable without a
 	// pane and cannot be separated from each other by a tidy-up.
-	if err := applyCopilotAPIDriveDecision(params, h, os.Stderr); err != nil {
+	if err := applyCopilotAPIDriveDecision(params, h, cliStderr); err != nil {
 		return nil, err
 	}
 	copilotAPIPort, err := ResolveCopilotAPIPort(params.CopilotAPI, params.CopilotAPIPort)

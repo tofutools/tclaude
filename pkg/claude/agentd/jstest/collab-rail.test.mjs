@@ -47,8 +47,8 @@ test('rail model: agents under their group first, live before closed, never-star
       { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
       { kind: 'agent', tmux_session: 'old-gen', label: 'superseded' }],
   });
-  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group'],
-    'groups with something open here first; a group with only a closed shell is not there');
+  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group', 'Other sessions'],
+    'groups with something open here first; a group with only a closed shell is not there; sessions that cannot be attached last');
   const tclaude = all.sections[0].items.map((i) => i.key);
   assert.equal(tclaude[0], 'pane:agent:x', 'the agent spawned into tclaude is listed there, first');
   assert.ok(tclaude.includes('shell:tclaude'), 'a running group shell is listed');
@@ -58,7 +58,8 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.equal(all.sections[1].items[0].key, 'overlay:term:y', 'an agent with no spawn group goes under its first group');
   assert.deepEqual(all.sections[2].items.map((i) => [i.key, i.bucket]), [['bg::tc-z', 'background']], 'an agent in no group is under Not in a group');
   assert.ok(!flat.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
-  assert.ok(!flat.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
+  assert.deepEqual(all.sections[3].items.map((i) => [i.title, i.bucket, i.group]), [['superseded', 'background', '']],
+    'a session that cannot be attached is listed under Other sessions, in the background, in no group');
 
   const active = m.filterRail(all);
   assert.equal(active.hidden, 2, 'the default leaves the two closed items out');
@@ -184,7 +185,8 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
 
   // A strip tab comes forward on click, and offers pop out and close.
   const launch = root.querySelector('[data-rail-item="board:launch"]');
-  assert.equal(launch.querySelectorAll('.cr-tool').length, 2);
+  assert.equal(launch.querySelectorAll('.cr-tool:not(.cr-more)').length, 2);
+  assert.ok(launch.querySelector('.cr-more'), 'and a ⋯ for the rest');
   await harness.act(async () => { harness.fireEvent(launch.querySelector('.cr-name'), 'click'); await wait(); });
   assert.deepEqual(activated, ['board:launch']);
 

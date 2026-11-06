@@ -31,7 +31,7 @@ func preflightNewLaunch(dir string) (string, error) {
 	}
 
 	// Check if hooks are installed (warn if not)
-	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
+	EnsureHooksInstalled(false, cliStdout, cliStderr)
 
 	// Sync the configured Claude Code transcript-retention override
 	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
@@ -177,7 +177,7 @@ func claimLaunchIdentity(ctx context.Context, params *NewParams, id *launchIdent
 	id.tmuxSession = UniqueTmuxSessionName(TmuxNameBase(id.sessionID, params.Label, id.cwd))
 
 	if params.WaitForRateLimit {
-		if ratelimit.WaitForRateLimit(ctx, os.Stdout, id.sessionID, id.cwd) {
+		if ratelimit.WaitForRateLimit(ctx, cliStdout, id.sessionID, id.cwd) {
 			return nil, fmt.Errorf("interrupted")
 		}
 	}

@@ -2,6 +2,7 @@ package conv
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -41,7 +42,7 @@ func ResumeCmd() *cobra.Command {
 			return clcommon.GetConversationCompletions(global), cobra.ShellCompDirectiveKeepOrder | cobra.ShellCompDirectiveNoFileComp
 		},
 		RunFunc: func(params *ResumeParams, cmd *cobra.Command, args []string) {
-			exitCode := RunResume(params, os.Stdout, os.Stderr)
+			exitCode := RunResume(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -141,7 +142,7 @@ func resolveAgentForResume(selector, cwd string) (*resolvedConv, error) {
 	return rc, nil
 }
 
-func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
+func RunResume(params *ResumeParams, stdout, stderr io.Writer) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
@@ -176,7 +177,7 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 	return runResumeWithSession(rc, !params.Detached, params.SendKeys, stdout, stderr)
 }
 
-func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr *os.File) int {
+func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr io.Writer) int {
 	// Check tmux is installed
 	if err := session.CheckTmuxInstalled(); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

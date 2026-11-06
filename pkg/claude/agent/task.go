@@ -58,7 +58,7 @@ func taskSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskSet(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -91,7 +91,7 @@ func taskClearCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskClearParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskClear(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskClear(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -148,7 +148,7 @@ func taskShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

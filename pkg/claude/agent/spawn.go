@@ -1123,9 +1123,9 @@ func spawnCmd() *cobra.Command {
 			// explicit false remains distinguishable from omission.
 			recordSpawnFlagPresence(p, cmd)
 			if p.FromSnapshot != "" || cmd.Flags().Changed("count") {
-				os.Exit(runSpawnFromSnapshot(p, cmd, os.Stdout, os.Stderr))
+				os.Exit(runSpawnFromSnapshot(p, cmd, cliStdout, cliStderr))
 			}
-			_, rc := RunSpawn(p, os.Stdout, os.Stderr, os.Stdin)
+			_, rc := RunSpawn(p, cliStdout, cliStderr, os.Stdin)
 			os.Exit(rc)
 		},
 	}.ToCobra()

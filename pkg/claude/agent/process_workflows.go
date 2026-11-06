@@ -55,7 +55,7 @@ func processTemplatesExportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesExport(p, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -259,7 +259,7 @@ func processTemplatesInspectCmd() *cobra.Command {
 		Long:        "Checks the file's integrity, templates and signatures and prints what the workflow needs: params, roles, the commands it would run, and steps naming a specific agent. Needs no daemon and changes nothing.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processTemplatesInspectParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesInspect(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesInspect(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -328,7 +328,7 @@ type workflowImportJSON struct {
 	Problems   []string          `json:"problems"`
 	Paths      []pwf.PathFinding `json:"paths"`
 	Signatures []importSignature `json:"signatures"`
-	Templates []struct {
+	Templates  []struct {
 		Ref        string `json:"ref"`
 		ID         string `json:"id"`
 		ImportRef  string `json:"importRef"`
@@ -388,7 +388,7 @@ func processTemplatesImportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesImport(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

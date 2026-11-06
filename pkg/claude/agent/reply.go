@@ -35,7 +35,7 @@ func replyCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *replyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReply(p, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runReply(p, cliStdout, cliStderr, os.Stdin))
 		},
 	}.ToCobra()
 }

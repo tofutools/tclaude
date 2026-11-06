@@ -3,6 +3,7 @@ package conv
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -30,7 +31,7 @@ func IndexEmbeddingsCmd() *cobra.Command {
 		Long:        "Chunks conversations and generates embeddings via Ollama for semantic search.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *IndexEmbeddingsParams, cmd *cobra.Command, args []string) {
-			exitCode := RunIndexEmbeddings(params, os.Stdout, os.Stderr)
+			exitCode := RunIndexEmbeddings(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -38,7 +39,7 @@ func IndexEmbeddingsCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr *os.File) int {
+func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr io.Writer) int {
 	client := NewOllamaClient(params.URL, params.Model)
 
 	// Test connection
@@ -223,7 +224,7 @@ func SearchEmbeddingsCmd() *cobra.Command {
 		Long:        "Search conversations by meaning using local embeddings (requires prior index-embeddings).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *SearchEmbeddingsParams, cmd *cobra.Command, args []string) {
-			exitCode := RunSearchEmbeddings(params, os.Stdout, os.Stderr)
+			exitCode := RunSearchEmbeddings(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -231,7 +232,7 @@ func SearchEmbeddingsCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr *os.File) int {
+func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr io.Writer) int {
 	if params.Query == "" {
 		fmt.Fprintf(stderr, "Query is required\n")
 		return 1

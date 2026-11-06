@@ -37,7 +37,7 @@ func renameCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *renameParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRename(p, os.Stdout, os.Stderr))
+			os.Exit(runRename(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -3,6 +3,7 @@ package conv
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func DeleteCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunFunc: func(params *DeleteParams, cmd *cobra.Command, args []string) {
-			exitCode := RunDelete(params, os.Stdout, os.Stderr, os.Stdin)
+			exitCode := RunDelete(params, cliStdout, cliStderr, os.Stdin)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -45,7 +46,7 @@ func DeleteCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) int {
+func RunDelete(params *DeleteParams, stdout, stderr io.Writer, stdin *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 

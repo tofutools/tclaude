@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -35,7 +36,7 @@ func CpCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveDefault
 		},
 		RunFunc: func(params *CpParams, cmd *cobra.Command, args []string) {
-			exitCode := RunCp(params, os.Stdout, os.Stderr, os.Stdin)
+			exitCode := RunCp(params, cliStdout, cliStderr, os.Stdin)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -43,7 +44,7 @@ func CpCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
+func RunCp(params *CpParams, stdout, stderr io.Writer, stdin *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 

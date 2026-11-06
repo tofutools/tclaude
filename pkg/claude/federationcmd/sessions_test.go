@@ -13,6 +13,9 @@ func TestSessionsWaitingNotifications(t *testing.T) {
 	var out bytes.Buffer
 	at := time.Now().UTC()
 	s := remoteSession{CatalogSession: proto.CatalogSession{Agent: "agt_remote", Session: "runtime", Name: "remote", State: "working"}, Address: "agt_remote@bob", Instance: "inst_bob"}
+	prevBell := sessionBell
+	sessionBell = &out
+	t.Cleanup(func() { sessionBell = prevBell })
 	previous := notifySessionTransitions(&out, []remoteSession{s}, nil, true)
 	if out.Len() != 0 {
 		t.Fatal("initial listing must not alert")
