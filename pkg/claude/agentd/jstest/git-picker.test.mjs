@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
-import { comboKeys, comboPick } from './combobox-helpers.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 // The worktree and branch choices (git-picker.js, tcl-2a1ihf): a big repo has
 // hundreds of branches, so these are type-to-filter boxes, not <select>s.
@@ -34,7 +34,9 @@ test('a branch is found by typing among hundreds, and a stale one stays, marked'
   const mounted = await harness.mount(harness.html`<${Holder} initial="gone" />`, host);
   const box = host.querySelector('#base');
   assert.ok(box.classList.contains('missing'), 'a branch the repo no longer has is kept and marked');
-  assert.ok((await comboKeys(harness, box)).length < branches.length, 'the list is capped, not 300 rows');
+  await harness.input(box.querySelector('input[role="combobox"]'), 'topic');
+  const shown = box.querySelectorAll('[role="option"]').length;
+  assert.ok(shown > 0 && shown <= 30, `a query lists its best matches up to the cap, not all 300 (${shown})`);
   await harness.input(box.querySelector('input[role="combobox"]'), 'topic-217');
   await comboPick(harness, box, 'feat/topic-217');
   assert.deepEqual(changes, ['feat/topic-217']);

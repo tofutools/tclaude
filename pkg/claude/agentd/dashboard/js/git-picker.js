@@ -28,10 +28,13 @@ export function worktreeItems(worktrees = [], { newKey = '' } = {}) {
 
 // WorktreeCombobox chooses one of worktrees, or none ('' — what noneLabel
 // says it means here), or newKey's new worktree when newKey is set.
-export function WorktreeCombobox({ worktrees = [], newKey = '', noneLabel, ...props }) {
+// Closed, the box shows the chosen worktree's branch; its tooltip keeps the
+// path, so two detached worktrees still tell apart.
+export function WorktreeCombobox({ worktrees = [], newKey = '', noneLabel, attrs = {}, ...props }) {
   const items = useMemo(() => worktreeItems(worktrees, { newKey }), [worktrees, newKey]);
+  const chosen = props.value ? items.find((item) => item.key === props.value) : null;
   return html`<${ChoiceCombobox} placeholder="Type to find a worktree…" emptyHint="No worktrees." ariaLabel="Worktree"
-    missing="no such worktree" ...${props} items=${items} noneLabel=${noneLabel} />`;
+    missing="no such worktree" ...${props} attrs=${{ title: chosen?.title || undefined, ...attrs }} items=${items} noneLabel=${noneLabel} />`;
 }
 
 // BranchCombobox chooses one of branches (names). It cannot be cleared, as

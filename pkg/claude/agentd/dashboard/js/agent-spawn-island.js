@@ -1417,7 +1417,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
       <${GroupCombobox} id="agent-spawn-group" value=${draft.group} disabled=${busy}
-        groups=${snapshotGroups(context)} onChange=${changeGroup} />
+        groups=${snapshotGroups(context)} onChange=${(group) => { claimField('spawn', 'agent-spawn-group'); changeGroup(group); }} />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
@@ -1869,6 +1869,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         worktrees=${worktrees.worktrees || []} newKey=${worktreeUsable ? WT_NEW : ''} noneLabel=${worktreeEmptyLabel}
         attrs=${{ 'data-remote-spawn-field': 'worktree' }}
         onChange=${(value) => {
+          // A pick is a click on a row, which form-fill's watch does not see:
+          // claim the field, so an agent's fill of a field that resets it is refused.
+          claimField('spawn', 'agent-spawn-worktree');
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
           setDraft((before) => selectSpawnWorktree(before, value));
@@ -1911,7 +1914,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">Base branch</span>
       <${BranchCombobox} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
         branches=${worktrees.branches || []} attrs=${{ 'data-remote-spawn-field': 'worktree' }}
-        onChange=${(value) => update('worktreeBase', value)} />
+        onChange=${(value) => { claimField('spawn', 'agent-spawn-wt-base'); update('worktreeBase', value); }} />
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>

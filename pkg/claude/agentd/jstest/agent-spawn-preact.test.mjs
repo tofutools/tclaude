@@ -2395,6 +2395,36 @@ test('undoing an agent\'s fill gives the fields back to the group: cwd follows a
   }
 });
 
+test('a worktree picked from the box is the operator\'s: a fill that would reset it is refused', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    for (let attempt = 0; !(await comboKeys(harness, host.querySelector('#agent-spawn-worktree'))).includes('__new__'); attempt += 1) {
+      if (attempt > 300) assert.fail('timed out waiting for the worktrees to load');
+      await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    }
+    const worktree = host.querySelector('#agent-spawn-worktree');
+    await comboPick(harness, worktree, '__new__');
+    assert.equal(worktree.dataset.value, '__new__');
+    const tick = () => flush(harness);
+    const fill = (field, value) => fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } });
+    assert.equal((await fill('agent-spawn-cwd', '/elsewhere')).fields[0].status, 'operator_edited',
+      'a CWD fill would clear the picked worktree');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
+    assert.equal((await fill('agent-spawn-worktree', '')).fields[0].status, 'not_fillable',
+      'the box itself is not a field a value is written into');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
 test('spawn provenance restores the record, but not for a field the operator holds', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
