@@ -27,9 +27,7 @@
 //    (body.dock-peeking). Moving onto that strip reveals the panel at once;
 //    the page scrollbar beside it, the one part of the edge zone the strip
 //    does not cover, takes the usual dwell, which a press still cancels, so a
-//    flick to grab the scrollbar is no worse than without the peek. A landing
-//    at the folded handle's height does not peek: the peek would move the
-//    handle out from under the click that pins the panel. A press on a strip
+//    flick to grab the scrollbar is no worse than without the peek. A press on a strip
 //    that is still only peeking means it slid under a still pointer, a wrong
 //    prediction: the press ends the peek and is swallowed, so it acts on
 //    nothing in the panel. Sustained motion keeps the peek; when the
@@ -47,9 +45,19 @@
 //    of the peek. A braking move refuses the prediction, so a stop on content
 //    under the would-be panel, which a pointer brakes into, does not reveal.
 //    A prediction that stops holding shrinks the peek back to PEEK_MIN_PX
-//    before it retracts. A motion is judged from where it started: one that
-//    starts within NEAR_BAND_PX of the panel is never predicted, and the
-//    further out it starts the more speed it needs (side-panel-predict.js).
+//    before it retracts. A motion is judged from where it started (the rest
+//    point it left): the further out it starts the more rightward speed it
+//    needs, and it has to have travelled MIN_TRAVEL_PX (side-panel-predict.js).
+//    No band near the edge refuses outright (tcl-bg5qm1).
+//  - A snap (tcl-bg5qm1): an arrival in the edge zone that travelled
+//    ARRIVAL_MIN_TRAVEL_PX or more at the speed its start needs reveals the
+//    panel at once, without the dwell; a snap is over in a few frames, too few
+//    for the prediction. One that runs past the window's right edge counts
+//    when its next frame would have reached the edge zone. A slow approach
+//    still takes the dwell.
+//  - The folded handle is no exception: resting on it takes the dwell like
+//    anywhere in the edge zone. Pinning stays one click: on the handle before
+//    the dwell ends, or on the revealed panel's handle.
 //  - A debug overlay draws each prediction (side-panel-predict-debug.js):
 //    ?side_panel_predict_debug=1 in the URL, or localStorage
 //    tclaude.dash.sidePanelPredictDebug = "1".
@@ -63,7 +71,7 @@ import {
   canRevealSidePanel, concealSidePanel, isSidePanelPeeking, isSidePanelRevealed, peekSidePanel, revealSidePanel, unpeekSidePanel,
 } from './side-panel.js';
 import {
-  PREDICT, crossingHolds, peekWidthFor, predictEdgeLanding, recentSamples, stopReveals,
+  PREDICT, arrivalReveals, crossingHolds, peekWidthFor, predictEdgeLanding, recentSamples, stopReveals,
 } from './side-panel-predict.js';
 import { mountPredictDebug, predictDebug, predictDebugOn } from './side-panel-predict-debug.js';
 
@@ -106,7 +114,7 @@ export function setSidePanelTuning(t, doc = globalThis.document) {
     RUNWAY_FULL_PX: pick('RUNWAY_FULL_PX', num(t?.predict_speed_distance_px)),
     MIN_VX_FLOOR: pick('MIN_VX_FLOOR', num(t?.predict_min_speed_floor, 1000)),
     MIN_SAMPLES: pick('MIN_SAMPLES', num(t?.predict_min_readings)),
-    NEAR_BAND_PX: pick('NEAR_BAND_PX', num(t?.near_edge_band_px)),
+    MIN_TRAVEL_PX: pick('MIN_TRAVEL_PX', num(t?.min_travel_px)),
     BRAKE_RATIO: pick('BRAKE_RATIO', num(t?.brake_percent, 100)),
     PEEK_MIN_PX: pick('PEEK_MIN_PX', num(t?.peek_min_px)),
   };
@@ -176,7 +184,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let retract = null; // a peek's retract timer
   let last = null; // the last pointermove's position
   let swallowClick = false; // the click after a press a peek swallowed
-  let origin = null; // where the current rightward motion started
+  let motion = null; // where the current rightward motion started: { x, t }
+  let lastT = 0; // when the last pointermove came
   let peekStartX = 0; // where the pointer was when the peek started
   let peekW = 0; // the peek's width now
   let stop = null; // a peek's stop timer
@@ -234,7 +243,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     cancelRetract();
     cancelStop();
     samples = [];
-    origin = null;
+    motion = null;
     revealSidePanel(doc);
     setPeekWidth(0);
   };
@@ -297,19 +306,23 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // a still pointer (the strip sliding in): that is not the pointer going
     // anywhere.
     const moved = !last || last.x !== event.clientX || last.y !== event.clientY;
+    const t = now();
+    // The motion restarts at any leftward move (so a rightward one starts from
+    // its low point) and after a pause (from where it rested, a frame before
+    // this move).
+    if (!motion || !last || event.clientX < last.x) motion = { x: event.clientX, t };
+    else if (t - lastT > C().WINDOW_MS) motion = { x: last.x, t: t - C().FRAME_MS };
     last = { x: event.clientX, y: event.clientY };
+    lastT = t;
     if (isSidePanelRevealed()) {
       samples = [];
-      origin = null;
+      motion = null;
       overPanel = onPanel(event);
       if (overPanel) cancelHide();
       else scheduleHide();
       return;
     }
-    // The folded handle sits in the edge zone: aiming at it must not slide the
-    // panel in under the click.
-    const onHandle = !!doc.getElementById('dock-toggle')?.contains(event.target);
-    const allowed = enabled && !event.buttons && !dragging && !onHandle && finePointer() && canRevealSidePanel(doc);
+    const allowed = enabled && !event.buttons && !dragging && finePointer() && canRevealSidePanel(doc);
     if (!allowed) {
       cancelDwell();
       if (isSidePanelPeeking()) endPeek();
@@ -326,8 +339,14 @@ export function bindEdgeReveal(doc = globalThis.document, {
       predict(event);
       return;
     }
-    // In the edge zone the dwell decides, peeking or not; a peek waits for it
-    // rather than running out under it, or stopping it short.
+    // A snap arriving here reveals at once; otherwise the dwell decides,
+    // peeking or not, and a peek waits for it rather than running out under
+    // it, or stopping it short.
+    if (snapArrived(event.clientX, t)) {
+      cancelDwell();
+      revealNow();
+      return;
+    }
     if (isSidePanelPeeking()) {
       cancelRetract();
       cancelStop();
@@ -339,10 +358,29 @@ export function bindEdgeReveal(doc = globalThis.document, {
       }, C().DWELL_MS);
     }
   });
+  // fullLeftNow is where the open panel's left edge would be: the dock keeps
+  // its full width while folded (only translated).
+  const fullLeftNow = () => {
+    const width = dock()?.getBoundingClientRect?.()?.width || 0;
+    const right = contentRight();
+    return width ? right - width : right - C().EDGE_PX;
+  };
+  // snapArrived is whether the motion that brought the pointer to x at t is a
+  // snap (arrivalReveals).
+  const snapArrived = (x, t) => !!motion && arrivalReveals({ startX: motion.x, startT: motion.t, x, t, fullLeft: fullLeftNow() }, C());
+  const revealNow = () => {
+    cancelRetract();
+    cancelStop();
+    samples = [];
+    motion = null;
+    revealSidePanel(doc);
+    setPeekWidth(0);
+    if (debugOn) predictDebug.value = { prediction: { peek: true, reason: 'snap', vx: 0, px: 0, landingX: NaN }, edgeX: contentRight() - C().EDGE_PX, fullLeft: fullLeftNow() };
+  };
   // predict records the move and peeks, grows, keeps or lets go of a peek.
   // Only moves the reveal would act on count, and the band is the panel's
   // vertical extent, which a peek's slide does not change. The motion's
-  // origin restarts when it turns left or pauses.
+  // motion restarts when it turns left or pauses.
   const predict = (event) => {
     const c = C();
     if (!c.PREDICTIVE) return;
@@ -350,7 +388,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const x = event.clientX;
     const y = event.clientY;
     const prev = samples[samples.length - 1];
-    if (!origin || !prev || x < prev.x || t - prev.t > c.WINDOW_MS) origin = { x, y };
+    // A turn or a pause starts a new motion: its old moves are not this one's.
+    if (prev && (x < prev.x || t - prev.t > c.WINDOW_MS)) samples = [];
     samples = recentSamples([...samples, { t, x, y }], t, c);
     const rect = dock()?.getBoundingClientRect?.();
     const band = rect?.height ? { top: rect.top, bottom: rect.bottom } : null;
@@ -360,9 +399,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // width says where the open panel's left edge would be.
     const panelW = rect?.width || 0;
     const fullLeft = panelW ? right - panelW : edgeX;
-    const handleRect = doc.getElementById('dock-toggle')?.getBoundingClientRect?.();
-    const handle = handleRect?.height ? { top: handleRect.top, bottom: handleRect.bottom } : null;
-    const prediction = predictEdgeLanding(samples, edgeX, band, c, handle, { x: origin.x, fullLeft });
+    const prediction = predictEdgeLanding(samples, edgeX, band, c, { x: motion?.x ?? x, fullLeft });
     if (debugOn) predictDebug.value = { prediction, edgeX, fullLeft };
     if (!prediction.peek) {
       cancelStop();
@@ -439,8 +476,25 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.documentElement?.addEventListener('pointerleave', () => {
     cancelDwell();
     cancelStop();
+    // A snap that runs past the window's right edge, within the panel's
+    // height, never sends a move inside the edge zone: it counts when its next
+    // frame would have got there.
+    const c = C();
+    const rect = dock()?.getBoundingClientRect?.();
+    const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
+    if (motion && last && inBand && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
+      const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
+      const next = last.x + speed * c.FRAME_MS;
+      const edgeX = contentRight() - c.EDGE_PX;
+      if (next >= edgeX && snapArrived(next, lastT + c.FRAME_MS)) {
+        revealNow();
+        overPanel = false;
+        scheduleHide();
+        return;
+      }
+    }
     samples = [];
-    origin = null;
+    motion = null;
     if (isSidePanelPeeking() && !retract) armRetract();
     overPanel = false;
     scheduleHide();

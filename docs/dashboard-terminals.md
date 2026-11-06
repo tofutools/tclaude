@@ -37,8 +37,11 @@ A pointer flung at the edge peeks the panel's leading edge in before it gets
 there. The peek widens as the pointer closes in. Moving onto it, crossing
 where the open panel's edge would be, or stopping there reveals the panel. A
 motion that brakes, as one aimed at something on the page does, lets the peek
-shrink back and go. A motion that starts close to the panel is left to the
-edge zone. The closer to the panel a motion starts, the less speed it needs.
+shrink back and go. Only the rightward part of a motion counts. The closer to
+the panel a motion starts, the less speed it needs, and a small move by the
+edge is too short to count. A fast snap into the edge zone from further out
+reveals the panel at once, without the short wait, even if it runs past the
+window's edge.
 
 To turn this off, uncheck **Side panel at the edge** on the Config tab
 (`dashboard.side_panel_edge_reveal`). The peek and its growth have switches of

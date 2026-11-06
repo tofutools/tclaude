@@ -37,8 +37,8 @@ export function PredictDebugOverlay() {
   return html`<div class=${`spp-overlay${prediction.peek ? ' peek' : ''}`} aria-hidden="true">
     <div class="spp-edge" style=${{ transform: `translateX(${edgeX}px)` }}></div>
     ${Number.isFinite(fullLeft) && fullLeft !== edgeX ? html`<div class="spp-edge spp-full" style=${{ transform: `translateX(${fullLeft}px)` }}></div>` : null}
-    ${known ? html`<div class="spp-dot" style=${{ transform: `translate(${prediction.landingX}px, ${prediction.landingY}px)` }}></div>` : null}
-    <div class="spp-label">${prediction.reason} vx=${prediction.vx.toFixed(2)} vy=${prediction.vy.toFixed(2)}${Number.isFinite(prediction.minVx)
+    ${known ? html`<div class="spp-dot" style=${{ transform: `translate(${prediction.landingX}px, ${prediction.y ?? 0}px)` }}></div>` : null}
+    <div class="spp-label">${prediction.reason} vx=${(prediction.vx || 0).toFixed(2)}${Number.isFinite(prediction.travel) ? ` travel=${Math.round(prediction.travel)}` : ''}${Number.isFinite(prediction.minVx)
       ? ` need=${prediction.minVx.toFixed(2)}` : ''}${known
       ? ` land=${Math.round(prediction.landingX)}` : ''}</div>
   </div>`;
