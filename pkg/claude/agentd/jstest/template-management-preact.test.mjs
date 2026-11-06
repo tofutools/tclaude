@@ -209,7 +209,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     host.querySelector('#template-editor-name'),
     'the editor autofocuses its declared initial field',
   );
-  assert.equal(host.querySelector('.ta-role-ref').tagName, 'SELECT');
+  assert.ok(host.querySelector('.ta-role-ref').classList.contains('choice-combobox'));
   assert.ok(host.querySelector('.ta-profile-select').classList.contains('choice-combobox'));
   assert.match(
     host.querySelector('.ta-role-inspect').textContent,
@@ -393,10 +393,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-mission'),
     'the deploy dialog honors mission autofocus instead of the first control',
   );
-  assert.equal(
-    host.querySelector('#template-deploy-template').tagName,
-    'SELECT',
-  );
+  assert.ok(host.querySelector('#template-deploy-template').classList.contains('choice-combobox'));
   assert.ok(host.querySelector('#template-deploy-default-profile').classList.contains('choice-combobox'));
   assert.equal(
     host.querySelector('#template-deploy-wt-per-agent').type,
@@ -413,11 +410,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     /owner/,
   );
   await comboPick(harness, host.querySelector('#template-deploy-source'), 'team');
-  const templateSelect = host.querySelector('#template-deploy-template');
-  templateSelect.querySelector('option[value="review-force"]').selected = true;
-  templateSelect.dispatchEvent(
-    new harness.window.Event('change', { bubbles: true }),
-  );
+  await comboPick(harness, host.querySelector('#template-deploy-template'), 'review-force');
   await harness.act(() => Promise.resolve());
   assert.equal(
     host.querySelector('#template-deploy-group').value,

@@ -8,6 +8,7 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
 import { ProfileCombobox } from './profile-picker.js';
+import { RoleCombobox, TemplateCombobox } from './registry-picker.js';
 import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
@@ -585,16 +586,12 @@ export function TemplateFromGroupDialog({
       <label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Group" wizard="Party" /></span
-        ><${Select}
+        ><${GroupCombobox}
           id="template-from-group-group"
           value=${group}
-          onChange=${(event) => setGroup(event.currentTarget.value)}
-        >
-          ${descriptor.groups.map(
-            (value) =>
-              html`<option key=${value} value=${value}>${value}</option>`,
-          )}
-        <//></label
+          groups=${descriptor.groups}
+          onChange=${setGroup}
+        /></label
       ><label class="cron-create-row"
         ><span class="cron-create-label">Template name</span
         ><input
@@ -1656,18 +1653,12 @@ export function TemplateDeployDialog({
       </div>`}<label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Template" wizard="Circle" /></span
-        ><${Select}
+        ><${TemplateCombobox}
           id="template-deploy-template"
           value=${templateName}
-          onChange=${(event) => chooseTemplate(event.currentTarget.value)}
-        >
-          ${current.templates.map(
-            (item) =>
-              html`<option key=${item.name} value=${item.name}>
-                ${item.name}
-              </option>`,
-          )}
-        <//></label
+          entries=${current.templates}
+          onChange=${chooseTemplate}
+        /></label
       ><label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Mission" wizard="Quest" /></span
@@ -2120,13 +2111,6 @@ function AgentRow({
       },
     );
   };
-  const roleOptions = [
-    '',
-    ...roles.map((role) => role.name),
-    ...(agent.role_ref && !roles.some((role) => role.name === agent.role_ref)
-      ? [agent.role_ref]
-      : []),
-  ];
   return html`<div class="template-agent-row" data-idx=${index}>
     <div class="template-agent-row-head">
       <span class="template-agent-num"
@@ -2180,22 +2164,14 @@ function AgentRow({
       class="template-agent-roleref"
       title="Reference a role from the library: the agent inherits that role's canonical brief and default permissions. Launch settings remain independent."
       ><span>Role library</span
-      ><${Select}
-        class="ta-role-ref"
-        value=${agent.role_ref}
-        onChange=${(event) => update({ role_ref: event.currentTarget.value })}
-      >
-        ${roleOptions.map(
-          (name) =>
-            html`<option key=${name} value=${name}>
-              ${name
-                ? roles.some((role) => role.name === name)
-                  ? name
-                  : `⚠ ${name} (missing)`
-                : '(none)'}
-            </option>`,
-        )}
-      <//></label
+      ><${RoleCombobox}
+        className="ta-role-ref"
+        value=${agent.role_ref || ''}
+        entries=${roles}
+        noneLabel="(none)"
+        ariaLabel="Role library"
+        onChange=${(value) => update({ role_ref: value })}
+      /></label
     >
     <div class="ta-role-inspect">
       <${RoleInspect} roleName=${agent.role_ref} roles=${roles} />

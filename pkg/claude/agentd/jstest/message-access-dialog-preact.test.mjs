@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { comboPick } from './combobox-helpers.mjs';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -897,9 +898,7 @@ test('terminal message saved prompt inserts into the editable draft without send
   const body = host.querySelector('#operator-message-body');
   await harness.input(body, 'Task: ');
   body.selectionStart = 6; body.selectionEnd = 6;
-  const picker = host.querySelector('[aria-label="Insert saved prompt"]');
-  Object.defineProperty(picker, 'value', { configurable: true, writable: true, value: 'review' });
-  await harness.act(() => harness.fireEvent(picker, 'change'));
+  await comboPick(harness, host.querySelector('[aria-label="Insert saved prompt"]').closest('.choice-combobox'), 'review');
   assert.equal(host.querySelector('#operator-message-body'), body);
   assert.equal(body.value, 'Task: Please review.');
   assert.equal(sent.length, 0);

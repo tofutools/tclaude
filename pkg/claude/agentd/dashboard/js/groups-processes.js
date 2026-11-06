@@ -20,6 +20,7 @@ import {
   normalizeRunFilter, processContext, processRunApi, runDetailApi, runFilterHas, runFilterKinds, runNeedsYou,
   unauthorizedProfiles, withPerformerNames,
 } from './process-context.js';
+import { TemplateCombobox, namedItems } from './registry-picker.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
@@ -43,7 +44,7 @@ import { takeProcessStart } from './process-start-handoff.js';
 import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { AgentCombobox } from './agent-picker.js';
 
 const html = htm.bind(h);
@@ -202,9 +203,10 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ? html`<span class="gp-start-note">Loading templates…</span>`
     : templates.length === 0 && !error
       ? html`<span class="gp-start-note">${wizard ? 'No rites written yet.' : 'No saved processes yet.'}</span>`
-      : html`<${Select} size="sm" aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
-        ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
-      <//>`}
+      : html`<${TemplateCombobox} className="gp-start-template" ariaLabel="Template" value=${templateId} disabled=${busy}
+        placeholder=${wizard ? 'Type to find a rite…' : 'Type to find a process…'} emptyHint=${wizard ? 'No rites.' : 'No processes.'}
+        items=${namedItems(templates.map((template) => ({ name: template.id, label: template.name, descr: template.description })))}
+        onChange=${setTemplateId} />`}
     <${Button} size="sm" variant="primary" type="submit" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
       title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}<//>
     <${Button} size="sm" disabled=${busy} onClick=${onClose}>cancel<//>

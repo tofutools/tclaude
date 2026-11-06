@@ -13135,13 +13135,9 @@ body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
-/* The per-hero library-reference selects — the role-library dropdown
-   (JOH-351) and the launch-profile picker (JOH-350) — share the send-to
-   select's arcane coat. Their labelled row wrappers (.template-agent-roleref)
-   already read parchment-muted, so only the control itself needs skinning.
-   Options render on the OS layer: dark ink on parchment for legibility, same
-   as tw-sendto. */
-body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+/* The per-hero library references (the role and launch-profile choices) are
+   type-to-filter boxes (tcl-986r2g), skinned as every such box is. Their
+   labelled row wrappers (.template-agent-roleref) read parchment-muted. */
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
 /* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
    variants read muted-parchment (missing = gilt-warning); the legacy notice

@@ -395,7 +395,7 @@ test('Preact group-create switches Blank, Group, and Template in one visible for
 
   [...form.querySelectorAll('.group-create-origin-options button')][2].click();
   await flush(harness);
-  assert.equal(form.querySelector('#group-create-template').dataset.currentValue, 'builders');
+  assert.equal(form.querySelector('#group-create-template').dataset.value, 'builders');
   assert.equal(form.querySelector('#group-create-group-source'), null);
   assert.equal(form.querySelector('#group-create-placement').dataset.currentValue, '');
   await mounted.cleanup();

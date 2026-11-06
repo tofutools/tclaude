@@ -819,20 +819,19 @@ test('spawn role chips compose multiple roles, inspect details, and feed the per
     'Roles remains a normal row directly above display identity');
 
   let add = host.querySelector('#agent-spawn-role-add');
-  assert.equal(add.options[0].textContent, '＋ Add role…');
+  assert.equal(add.querySelector('input').getAttribute('placeholder'), '＋ Add role…');
   harness.document.body.classList.add('wizard');
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } }));
   await flush(harness);
   add = host.querySelector('#agent-spawn-role-add');
-  assert.equal(add.options[0].textContent, '＋ Add class…');
-  assert.equal(add.getAttribute('aria-label'), 'Add class');
+  assert.equal(add.querySelector('input').getAttribute('placeholder'), '＋ Add class…');
+  assert.equal(add.querySelector('input').getAttribute('aria-label'), 'Add class');
   harness.document.body.classList.remove('wizard');
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: false } }));
   await flush(harness);
-  add = host.querySelector('#agent-spawn-role-add');
   for (const role of ['reviewer', 'go-maintainer']) {
-    setValue(add, role);
-    await harness.act(() => harness.fireEvent(add, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-role-add'), role);
+    await flush(harness);
   }
   assert.deepEqual([...host.querySelectorAll('.agent-spawn-role-chip .role-chip-inspect')]
     .map((button) => button.textContent), ['reviewer', 'go-maintainer']);
@@ -2094,9 +2093,7 @@ test('spawn saved prompts are chips sent as prompt_refs, separate from the typed
     setValue(name, 'worker');
     await harness.act(() => harness.fireEvent(name, 'input'));
     await harness.input(host.querySelector('#agent-spawn-init-msg'), 'Task: ship it');
-    const add = host.querySelector('#agent-spawn-prompt-refs [aria-label="Add saved prompt"]');
-    setValue(add, 'brief');
-    await harness.act(() => harness.fireEvent(add, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-prompt-refs .saved-prompt-chip-add'), 'brief');
     await flush(harness);
     assert.match(host.querySelector('#agent-spawn-prompt-refs').textContent, /brief/);
     assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'Task: ship it', 'adding a prompt leaves the brief alone');

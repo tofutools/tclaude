@@ -22,7 +22,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"run: () => openRolesManageModal(),",
 		// template-management-island/model — the controlled per-agent role
 		// dropdown reads/writes role_ref and renders its transparency panel.
-		`<${Select} class="ta-role-ref" value=${agent.role_ref}`,
+		`className="ta-role-ref"`,
 		"role_ref: agent.role_ref.trim(),",
 		"function RoleInspect({ roleName, roles })",
 		`<div class="ta-role-inspect">`,

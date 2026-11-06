@@ -1938,9 +1938,8 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 		}
 	}
 
-	// Template editor residue: number/checkbox inputs + the role-library
-	// select (the launch-profile choice is a ProfileCombobox now, tcl-986r2g).
-	must("body.wizard #template-editor-modal select.ta-role-ref", "the role-library dropdown gets the arcane select skin")
+	// Template editor residue: number/checkbox inputs. The role and
+	// launch-profile choices are type-to-filter boxes now (tcl-986r2g).
 	// Role-inspect panel (JOH-351 deferred): void + chips + slugs + footer.
 	must("body.wizard #template-editor-modal .role-inspect {", "the role-inspect panel void is re-skinned")
 	must("body.wizard #template-editor-modal .role-inspect-slug {", "the role-inspect permission slugs get the gilt-on-violet coat")
