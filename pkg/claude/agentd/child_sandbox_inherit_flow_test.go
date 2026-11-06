@@ -205,3 +205,63 @@ func fedAutoSpawn(t *testing.T, fh *fedHarness, group, name string) string {
 	f.AssertGroupMember(group, actor.CurrentConvID, name, 5*time.Second)
 	return actor.CurrentConvID
 }
+
+// A spawn grant scoped to a sandbox profile is judged against the target
+// group's assignment, so the child it admits gets that assignment: it does
+// not inherit a parent profile the grant never named (cold review).
+func TestChildSandboxDoesNotInheritPastASandboxProfileScopedGrant(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	shared, extra := testutil.CanonicalTempDir(t), testutil.CanonicalTempDir(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "restricted",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: shared, Access: "read"}}})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "wide",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: shared, Access: "write"}, {Path: extra, Access: "write"}}})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "restricted")
+	require.NoError(t, err)
+	parent := spawnWithSandboxProfile(t, f, "wide")
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(parent, agentd.PermAgentSpawn, db.PermEffectGrant,
+		`{"group":["crew"],"sandbox_profile":["restricted"]}`, "test"))
+
+	child := f.AsAgent(parent).SpawnWith("crew", map[string]any{"name": "child", "cwd": t.TempDir()})
+	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+	assertSnapshotGrants(t, child.ConvID, shared, "read")
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(child.ConvID)
+	require.NoError(t, err)
+	for _, grant := range snapshot.Effective.Filesystem {
+		assert.NotEqual(t, extra, grant.Path, "the parent's wider profile is not inherited past the grant's scope")
+	}
+}
+
+// The parent's launch-time access notices, an operator's one-launch override
+// among them, are not part of what its child inherits, even under reuse
+// (cold review).
+func TestChildSandboxDoesNotInheritTheParentsLaunchOverrides(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "mine",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: "v1"}}})
+	require.NoError(t, err)
+	parent := spawnParentWithProfile(t, f, "mine")
+	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")
+	agentID, err := db.AgentIDForConv(parent)
+	require.NoError(t, err)
+	stored, err := db.AgentEffectiveSandboxConfigForConv(parent)
+	require.NoError(t, err)
+	stored.Effective.AccessNotices = append(stored.Effective.AccessNotices, sandboxpolicy.AccessNotice{
+		Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "network",
+		Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+		Effect: "widened", Detail: "operator allowed an unenforced launch",
+	})
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, stored))
+
+	child := f.AsAgent(parent).SpawnWith("crew", map[string]any{"name": "child", "cwd": t.TempDir()})
+	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+	policy := childPolicy(t, f, child.ConvID)
+	assert.Equal(t, "v1", profileEnvValue(t, policy), "reuse: the stored contents")
+	for _, notice := range policy.Effective.AccessNotices {
+		assert.NotEqual(t, sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride, notice.Reason)
+	}
+}

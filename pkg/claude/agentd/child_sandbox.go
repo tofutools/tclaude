@@ -20,6 +20,11 @@ type childSandboxInput struct {
 	harnessConfig       string
 	spawnerConvID       string // the spawning agent, or "" for a human
 	externalSpawn       bool   // the spawner is an external steward (a principal)
+	// sandboxScopePinned says the grant that admitted the spawn is scoped to
+	// a sandbox profile. It was judged against the target group's assignment
+	// (resolvedSandboxProfileNameForScope), so such a child gets that
+	// assignment rather than inheriting a profile the grant never named.
+	sandboxScopePinned bool
 }
 
 // resolveChildSandbox is the rule a spawned child's sandbox comes from
@@ -66,7 +71,7 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 	if !sandboxProfilesDisabled(in.harnessName, in.harnessBuiltinMode, in.implementation) &&
 		!in.omitSandboxProfiles {
 		inherited, ok := sandboxpolicy.Snapshot{}, false
-		if parent != nil && in.sandboxProfile == "" {
+		if parent != nil && in.sandboxProfile == "" && !in.sandboxScopePinned {
 			inherited, ok = parent.inheritedProfiles(in.group.ID)
 		}
 		if ok {
@@ -124,10 +129,11 @@ type childSandboxParent struct {
 // The chain is what the parent's next relaunch would resolve, by its
 // sandbox_profile_contents row: the current contents of its selected profiles
 // (re-resolve, the default), or the contents stored at its last launch
-// (reuse). It carries the profiles only. The parent's own explicit
-// harness-config posture is not inherited (the child's request decides its
-// own), and the launch environment and group are set for the child by the
-// spawn.
+// (reuse). It carries the profiles only: none of the parent's launch-time
+// access notices (an operator's override for that one launch must not become
+// the child's authority), and not the parent's own explicit
+// harness-config posture (the child's request decides its own). The launch
+// environment and group are set for the child by the spawn.
 func (p *childSandboxParent) inheritedProfiles(groupID int64) (sandboxpolicy.Snapshot, bool) {
 	s := p.stored
 	if s == nil || s.ProfilesOmitted || s.GroupBinding != nil || s.ResolutionGroupID == 0 || s.ResolutionGroupID != groupID {
@@ -154,6 +160,8 @@ func (p *childSandboxParent) inheritedProfiles(groupID int64) (sandboxpolicy.Sna
 			}
 		}
 	}
+	inherited.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
+		sandboxpolicy.ReplaceAccessDegradationNotices(inherited.Effective.AccessNotices))
 	inherited.GroupBinding = nil
 	inherited.LaunchEnvironment = nil
 	inherited.LaunchEnvironmentOverrides = nil
@@ -165,11 +173,16 @@ func (p *childSandboxParent) inheritedProfiles(groupID int64) (sandboxpolicy.Sna
 // profile it is the parent's stored launch snapshot with its agent-owned
 // directories re-probed. Otherwise it is the parent's configuration resolved
 // now (parentSandboxNow), falling back to that stored snapshot when the
-// parent's chain cannot be read now, as the parent's own relaunch would.
+// parent's chain cannot be used now, as the parent's own relaunch would. Any
+// other failure refuses: it says nothing about which policy is the parent's.
 func (p *childSandboxParent) bound(explicitProfile bool) (sandboxpolicy.Snapshot, *spawnFailure) {
 	if !explicitProfile {
-		if now, err := parentSandboxNow(p.conv, p.stored); err == nil {
+		now, err := parentSandboxNow(p.conv, p.stored)
+		if err == nil {
 			return now, nil
+		}
+		if !isRelaunchChainUnusable(err) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusInternalServerError, "io", "resolve the parent's sandbox: " + err.Error()}
 		}
 	}
 	validated, err := ensureAgentDirectoriesForRelaunch(*p.stored)
