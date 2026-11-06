@@ -72,6 +72,7 @@ var peerStructureChecks = map[string]func(*peerView, *http.Request, *db.AgentGro
 func servePeerGroupStructure(pattern string) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
 	return func(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
 		if v.unrestricted() {
+			v.groupName = r.PathValue("name")
 			peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
 			return
 		}
@@ -201,7 +202,13 @@ func peerLeaveLaunchFailure(v *peerView, left *db.AgentGroup, next []*db.AgentGr
 			return nil
 		}
 		for _, g := range next {
-			if differs(g) && !fedSpawnFieldGranted(peer, g.ID, field) {
+			// An archived group grants nothing, yet stays a membership the
+			// agent may take its settings from.
+			if differs(g) && (g.IsArchived() || !fedSpawnFieldGranted(peer, g.ID, field)) {
+				if g.IsArchived() || !fedPeerGroupVisible(peer, g.ID) {
+					// A group the peer does not see stays unnamed.
+					return peerStructureRefusal(http.StatusForbidden, "permission", "the agent may take its %s from a group you cannot see instead: it takes %s and %s there", field, PermGroupsMembersSpawn, fedSpawnFieldSlugs[field])
+				}
 				return peerStructureRefusal(http.StatusForbidden, "permission", "the agent may take its %s from group:%s instead: it takes %s and %s there", field, g.Name, PermGroupsMembersSpawn, fedSpawnFieldSlugs[field])
 			}
 		}
@@ -218,23 +225,29 @@ func peerLeaveLaunchFailure(v *peerView, left *db.AgentGroup, next []*db.AgentGr
 	return nil
 }
 
-// peerRemainingGroups are conv's active groups other than left.
-func peerRemainingGroups(conv string, left int64) ([]*db.AgentGroup, *peerStructureFailure) {
-	names, err := activeGroupNamesForConvs(conv)
+// peerRemainingGroups are the groups other than left the agent is a member
+// of, archived ones included: the rebind picks its next settings source from
+// every membership (db.rebindSandboxResolutionGroup).
+func peerRemainingGroups(agentID string, left int64) ([]*db.AgentGroup, *peerStructureFailure) {
+	groups, err := db.ListGroupsForAgent(agentID)
 	if err != nil {
 		return nil, peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the agent's groups")
 	}
 	var out []*db.AgentGroup
-	for _, name := range names {
-		g, err := db.GetAgentGroupByName(name)
-		if err != nil || g == nil {
-			return nil, peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the agent's groups")
-		}
+	for _, g := range groups {
 		if g.ID != left {
 			out = append(out, g)
 		}
 	}
 	return out, nil
+}
+
+func peerStructureAgentID(conv string) (string, *peerStructureFailure) {
+	agentID, err := db.AgentIDForConv(conv)
+	if err != nil || agentID == "" {
+		return "", peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the agent")
+	}
+	return agentID, nil
 }
 
 func peerMemberAddFailure(v *peerView, _ *http.Request, g *db.AgentGroup, body []byte) *peerStructureFailure {
@@ -262,7 +275,11 @@ func peerMemberRemoveFailure(v *peerView, r *http.Request, g *db.AgentGroup, _ [
 	if fail != nil {
 		return fail
 	}
-	next, fail := peerRemainingGroups(conv, g.ID)
+	agentID, fail := peerStructureAgentID(conv)
+	if fail != nil {
+		return fail
+	}
+	next, fail := peerRemainingGroups(agentID, g.ID)
 	if fail != nil {
 		return fail
 	}
@@ -375,9 +392,10 @@ func peerLinkRemoveFailure(v *peerView, r *http.Request, g *db.AgentGroup, _ []b
 	return peerHoldsInGroup(v, from, PermGroupsLinkRemove)
 }
 
-// Deleting a group takes groups.delete there; each member leaves it, so the
-// sandbox and environment it may take from its other groups are checked as
-// on a remove.
+// Deleting a group takes groups.delete there. Each member leaves it, and an
+// agent that moved away keeping a setting on it loses that setting, so the
+// sandbox and environment each may take from its other groups are checked
+// as on a remove.
 func peerGroupDeleteFailure(v *peerView, _ *http.Request, g *db.AgentGroup, _ []byte) *peerStructureFailure {
 	if fail := peerHoldsInGroup(v, g, PermGroupsDelete); fail != nil {
 		return fail
@@ -386,8 +404,20 @@ func peerGroupDeleteFailure(v *peerView, _ *http.Request, g *db.AgentGroup, _ []
 	if err != nil {
 		return peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the group's members")
 	}
+	agents, err := db.AgentsWithSettingsFromGroup(g.ID)
+	if err != nil {
+		return peerStructureRefusal(http.StatusServiceUnavailable, "io", "read the group's members")
+	}
 	for _, m := range members {
-		next, fail := peerRemainingGroups(m.ConvID, g.ID)
+		agentID, fail := peerStructureAgentID(m.ConvID)
+		if fail != nil {
+			return fail
+		}
+		agents = append(agents, agentID)
+	}
+	slices.Sort(agents)
+	for _, agentID := range slices.Compact(agents) {
+		next, fail := peerRemainingGroups(agentID, g.ID)
 		if fail != nil {
 			return fail
 		}

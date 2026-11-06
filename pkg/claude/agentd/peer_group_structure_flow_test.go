@@ -113,6 +113,13 @@ func TestPeerGroupLinksHoldBothEnds(t *testing.T) {
 	require.NotZero(t, link.ID, body)
 	id := strconv.FormatInt(link.ID, 10)
 
+	code, body = h.call("PATCH", "/api/groups/squad/links/"+id, map[string]any{"mode": "cc"})
+	require.NotEqual(t, 403, code, "a mode change under both ends' grants: %s", body)
+	h.revoke(t, agentd.PermGroupsLinkAdd, "group=squad")
+	code, body = h.call("PATCH", "/api/groups/crew/links/"+id, map[string]any{"mode": "cc"})
+	require.Equal(t, 403, code, "a mode change takes both ends: %s", body)
+	require.Contains(t, body, "group:squad")
+
 	code, body = h.call("DELETE", "/api/groups/squad/links/"+id, nil)
 	require.Equal(t, 403, code, "removal takes the grant in the source: %s", body)
 	require.Contains(t, body, "group:crew")
@@ -152,4 +159,38 @@ func TestPeerGroupArchiveAndDelete(t *testing.T) {
 	g, err = db.GetAgentGroupByName("temp")
 	require.NoError(t, err)
 	require.Nil(t, g)
+}
+
+// The settings an agent may take from its other groups count its archived
+// memberships too, and a delete counts agents that moved away keeping a
+// setting on the group: the rebind reaches both.
+func TestPeerLeaveChecksEveryGroupTheRebindReaches(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	h.f.HaveGroup("attic")
+	havePerformerAgent(t, h.f, "crew", "arch-conv", "arch", "dev", "offline")
+	h.f.HaveMemberWithRole("attic", "arch-conv", "dev")
+	_, err := db.SetAgentGroupEnvironment("attic", []sandboxpolicy.EnvironmentEntry{{Name: "A", Value: "b"}})
+	require.NoError(t, err)
+	require.NoError(t, db.ArchiveAgentGroup("attic"))
+	h.grant(t, agentd.PermGroupsMembersRemove, "group=crew")
+	h.grant(t, agentd.PermGroupsMembersSpawn, "")
+	code, body := h.call("DELETE", "/api/groups/crew/members/arch-conv", nil)
+	require.Equal(t, 403, code, "an archived group may become its source: %s", body)
+	require.Contains(t, body, "a group you cannot see")
+	require.NotContains(t, body, "attic")
+
+	temp := h.f.HaveGroup("temp")
+	squad := h.f.HaveGroup("squad")
+	_, err = db.SetAgentGroupEnvironment("squad", []sandboxpolicy.EnvironmentEntry{{Name: "A", Value: "b"}})
+	require.NoError(t, err)
+	agentID := havePerformerAgent(t, h.f, "squad", "pinned-conv", "pinned", "dev", "offline")
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion, ResolutionGroupID: temp.ID}))
+	_ = squad
+	h.grant(t, agentd.PermGroupsDelete, "group=temp")
+	code, body = h.call("DELETE", "/api/groups/temp", nil)
+	require.Equal(t, 403, code, "an agent keeping a setting on temp takes squad's next: %s", body)
+	require.Contains(t, body, "group:squad", "squad is visible under the unscoped spawn grant")
+	h.grant(t, agentd.PermGroupsMembersSpawnEnvironment, "group=squad")
+	code, body = h.call("DELETE", "/api/groups/temp", nil)
+	require.Less(t, code, 300, body)
 }
