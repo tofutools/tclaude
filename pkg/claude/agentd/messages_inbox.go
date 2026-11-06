@@ -142,9 +142,11 @@ func pasteSafe(s string) bool {
 }
 
 // pasteSafeLine is pasteSafe for a one-line field of the nudge header (the
-// subject, the sender, an attachment name), which may not break the line.
+// subject, the sender, an attachment name), which may not break the line:
+// no newline or tab, and no Unicode line or paragraph separator, which some
+// renderers also break on.
 func pasteSafeLine(s string) bool {
-	return !strings.ContainsAny(s, "\n\t") && pasteSafe(s)
+	return !strings.ContainsAny(s, "\n\t\u2028\u2029") && pasteSafe(s)
 }
 
 // messageInlineText returns a complete server-authored nudge only for bounded,

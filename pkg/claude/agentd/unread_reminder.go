@@ -296,7 +296,9 @@ func isTmuxInputBlocked(status string) bool {
 func unreadReminderText(list []*db.AgentMessage) string {
 	if len(list) == 1 {
 		m := list[0]
-		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
+		// Pasted into the recipient's pane like the nudge, so the sender is
+		// named only when the label is paste-safe.
+		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" && pasteSafeLine(sender) {
 			return fmt.Sprintf(
 				"[system: reminder — unread agent message #%d from %s is still unread. read it with: tclaude agent inbox read %d]",
 				m.ID, sender, m.ID)

@@ -86,3 +86,43 @@ func TestInlineNudgeKeepsOrdinaryUnicodeInline(t *testing.T) {
 	assert.Contains(t, nudge, "; delivery: inline")
 	assert.Contains(t, nudge, "] "+body)
 }
+
+// A long sender title with multi-byte characters still names the sender
+// inline: the label is cut on a rune boundary, so it stays paste-safe.
+func TestInlineNudgeKeepsALongMultiByteSenderTitle(t *testing.T) {
+	setupTestDB(t)
+	const sender = "cjk-sender-conv"
+	_, _, err := db.EnsureAgentForConv(sender, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: sender, CustomTitle: "\u30b3\u30fc\u30c9\u30ec\u30d3\u30e5\u30fc\u62c5\u5f53\u30a8\u30fc\u30b8\u30a7\u30f3\u30c8",
+	}))
+	id, err := db.InsertAgentMessage(&db.AgentMessage{FromConv: sender, ToConv: "me", Body: "hello"})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "; delivery: inline")
+	assert.Contains(t, nudge, "\u30b3\u30fc\u30c9", "the sender is named")
+}
+
+// A sender whose title carries a format character (the Summary/FirstPrompt
+// fallback is not charset-gated like /rename) is not named in anything pasted
+// into the recipient's pane: not the nudge, not the pointer, not the unread
+// reminder.
+func TestPastedTextNeverNamesAPasteHostileSender(t *testing.T) {
+	setupTestDB(t)
+	const sender = "bidi-sender-conv"
+	_, _, err := db.EnsureAgentForConv(sender, "test")
+	require.NoError(t, err)
+	const hostile = "invoice\u202egpj.exe"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: sender, FirstPrompt: hostile}))
+	id, err := db.InsertAgentMessage(&db.AgentMessage{FromConv: sender, ToConv: "me", Body: "hello"})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "tclaude agent inbox read")
+	assert.NotContains(t, nudge, "\u202e")
+	m, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	reminder := unreadReminderText([]*db.AgentMessage{m})
+	assert.Contains(t, reminder, "tclaude agent inbox read")
+	assert.NotContains(t, reminder, "\u202e")
+}

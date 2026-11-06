@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -544,12 +545,23 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// truncate shortens s to at most n bytes, ending in "..." when it cuts. It
+// cuts on a rune boundary, so a multi-byte character at the cut is dropped
+// whole rather than split into invalid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	if n <= 3 {
-		return s[:n]
+		return s[:runeBoundary(s, n)]
 	}
-	return s[:n-3] + "..."
+	return s[:runeBoundary(s, n-3)] + "..."
+}
+
+// runeBoundary is the largest index at most i that starts a rune in s.
+func runeBoundary(s string, i int) int {
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
 }
