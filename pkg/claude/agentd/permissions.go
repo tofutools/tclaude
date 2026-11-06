@@ -57,6 +57,11 @@ type PermSlug struct {
 	// explicit deny, not an endpoint-specific bypass.
 	MemberImplied bool `json:"member_implied,omitempty"`
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
+	// Umbrella is the slug that implies this one (permissionUmbrellaFor):
+	// groups.admin for the groups.* namespace, resources.read or
+	// resources.write for a per-kind resource slug. The editor shows a row its
+	// umbrella covers as covered, so the chain is served, never re-derived.
+	Umbrella string `json:"umbrella,omitempty"`
 	// Risky marks a slug the editors call out: see riskySlugs.
 	Risky bool `json:"risky,omitempty"`
 	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
@@ -79,6 +84,7 @@ func initPermissionRegistryEntries(registry []PermSlug) {
 		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
 		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
 		registry[i].NotCountableWhy = sudoUseLimitRefusal(registry[i].Slug)
+		registry[i].Umbrella = permissionUmbrellaFor(registry[i].Slug)
 	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {

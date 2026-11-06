@@ -3,6 +3,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { FilterCombobox } from './filter-combobox.js';
 import { TransferTray } from './transfer-card.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
@@ -13,6 +14,8 @@ import { LockReason, NodeChip } from './lock-reason.js';
 import {
   DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
+  RESOURCE_KIND_LABELS, SCOPE_CHIPS_SHOWN, SCOPE_COMBOBOX_DIMS, scopeComboItems, scopeCountText,
+  scopeCatalogueIndex, scopeDimUsesCombobox, scopeValueLabel, umbrellaCover,
   scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
   sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
 } from './message-access-dialog-model.js';
@@ -575,8 +578,11 @@ function ScopeSummary({ scope }) {
     // The title carries the full text: a long matcher (a git remote pattern,
     // a long group name) is ellipsized in the row rather than allowed to
     // squeeze the slug column, and hover has to still answer "narrowed to what?".
+    // Past three matchers the chip counts the rest, and its title stops at
+    // twenty: a grant naming hundreds of resources is still one chip.
     ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"
-      title=${`${chip.dim} = ${chip.values.join(', ')}`}><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
+      title=${`${chip.dim} = ${chip.values.slice(0, 20).join(', ')}${chip.values.length > 20 ? `, … (${chip.values.length} in all)` : ''}`}><span class="dim">${chip.dim}=</span>${chip.values.length > 3
+        ? `${chip.values.slice(0, 2).join(', ')} +${chip.values.length - 2} more` : chip.values.join(', ')}</span>`)
     : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — add a scope to narrow it">unscoped</span>`}
   </span>`;
 }
@@ -628,7 +634,120 @@ const holdFocus = (event) => event.preventDefault();
 // instead of silently discarding it. A box that leaves the screen without
 // committing withdraws its draft (the unmount cleanup below), so what Save
 // writes is always what the dialog was showing.
-function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDraft }) {
+function ScopeDimEditor(props) {
+  return scopeDimUsesCombobox(props.dim, props.options)
+    ? html`<${ScopeDimCombobox} ...${props} />` : html`<${ScopeDimSelect} ...${props} />`;
+}
+
+function ScopeDimLabel({ dim, declared }) {
+  return html`<span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
+      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>`;
+}
+
+// ScopeDimCombobox edits a dimension whose catalogue can be long: the
+// resource= catalogue the daemon serves on demand, loaded once when the
+// drawer opens, or a snapshot catalogue past SCOPE_SELECT_MAX values. It is
+// the shared FilterCombobox, so nothing here renders more than a handful of
+// rows however many values there are. A value the catalogue does not list is
+// typed and committed with Enter, which the daemon validates on save.
+//
+// Text left in the box is reported as this dimension's draft, as the plain
+// box's is, so Save folds it in rather than writing the grant wider than the
+// operator meant: it becomes the matching catalogue key when the text names
+// one exactly, and is otherwise taken as typed for the daemon to accept or
+// refuse. Either way the grant is never saved unscoped by accident.
+function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loadValues, onDraft }) {
+  const served = SCOPE_COMBOBOX_DIMS.includes(dim);
+  const [catalogue, setCatalogue] = useState(served ? null : []);
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    if (!served) return undefined;
+    if (!loadValues) { setCatalogue([]); return undefined; }
+    let live = true;
+    Promise.resolve().then(() => loadValues(dim)).then(
+      (items) => { if (live) setCatalogue(Array.isArray(items) ? items : []); },
+      (cause) => { if (live) { setCatalogue([]); setLoadError(errorText(cause)); } });
+    return () => { live = false; };
+  }, [dim, served]);
+  const known = useMemo(() => (served ? scopeCatalogueIndex(catalogue || []) : null), [served, catalogue]);
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
+  const items = useMemo(() => scopeComboItems(dim, options, served ? (catalogue || []) : null),
+    [dim, served, catalogue, options.values.join('\u0000'), options.selectors.join('\u0000')]);
+  const set = (next) => onChange([...new Set(next)].sort());
+  return html`<div class="perm-scope-dim perm-scope-dim-combo" data-dim=${dim}>
+    <${ScopeDimLabel} dim=${dim} declared=${declared} />
+    <div class="perm-scope-dim-body">
+      <${ScopeChips} dim=${dim} values=${values} catalogue=${known}
+        remove=${(value) => set(values.filter((item) => item !== value))} />
+      <${FilterCombobox} items=${items} value=${values} onChange=${set}
+        kindLabels=${RESOURCE_KIND_LABELS} ariaLabel=${`Find a ${dim} value`}
+        placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
+        emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
+        freeText=${(text) => text}
+        literal=${served ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:') : null}
+        onQuery=${(text) => {
+    const typed = text.trim();
+    const exact = typed && items.find((item) => item.key === typed
+      || String(item.label || '').toLowerCase() === typed.toLowerCase());
+    onDraft?.(dim, exact ? exact.key : typed);
+  }} />
+      ${loadError ? html`<div class="perm-scope-hint ui-hint perm-scope-load-error">Could not load the catalogue (${loadError}). Type a value and press Enter.</div>` : null}
+      ${values.length ? null : html`<div class="perm-scope-hint ui-hint">empty — unconstrained on this dimension</div>`}
+    </div>
+  </div>`;
+}
+
+// ScopeChips are one dimension's matcher chips. Past SCOPE_CHIPS_SHOWN the
+// rest collapse into "+N more", which opens a searchable, paged list of just
+// those, so a grant naming hundreds of resources stays a few lines tall.
+function ScopeChips({ dim, values, catalogue, remove }) {
+  const [sheet, setSheet] = useState(false);
+  const shown = values.slice(0, SCOPE_CHIPS_SHOWN);
+  const hidden = values.slice(SCOPE_CHIPS_SHOWN);
+  useEffect(() => { if (!hidden.length && sheet) setSheet(false); }, [hidden.length, sheet]);
+  return html`<span class="perm-scope-chips">
+      ${shown.map((value) => html`<${ScopeChip} key=${value} dim=${dim} value=${value} catalogue=${catalogue} remove=${remove} />`)}
+      ${hidden.length ? html`<button data-ui-exempt type="button" class="perm-scope-chip perm-scope-more"
+        aria-expanded=${sheet ? 'true' : 'false'} onClick=${() => setSheet(!sheet)}>${sheet ? 'hide' : `+${hidden.length} more`}</button>` : null}
+    </span>
+    ${sheet && hidden.length ? html`<${ScopeChipSheet} dim=${dim} values=${hidden} catalogue=${catalogue} remove=${remove} />` : null}`;
+}
+
+function ScopeChip({ dim, value, catalogue, remove }) {
+  const label = scopeValueLabel(value, catalogue);
+  return html`<span class="perm-scope-chip" title=${value}>${label.kind ? html`<span class="dim">${label.kind}</span> ` : null}${label.text}
+    <button data-ui-exempt type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`;
+}
+
+const SCOPE_SHEET_PAGE = 8;
+
+function ScopeChipSheet({ dim, values, catalogue, remove }) {
+  const [filter, setFilter] = useState('');
+  const [page, setPage] = useState(0);
+  const needle = filter.trim().toLowerCase();
+  const matched = values.filter((value) => !needle
+    || `${value} ${scopeValueLabel(value, catalogue).text}`.toLowerCase().includes(needle));
+  const pages = Math.max(1, Math.ceil(matched.length / SCOPE_SHEET_PAGE));
+  const at = Math.min(page, pages - 1);
+  const rows = matched.slice(at * SCOPE_SHEET_PAGE, (at + 1) * SCOPE_SHEET_PAGE);
+  return html`<div class="perm-scope-sheet" data-dim=${dim}>
+    <div class="perm-scope-sheet-head"><span>${values.length} more ${dim} values</span>
+      <input type="text" class="perm-scope-sheet-filter" value=${filter} placeholder="filter…" autocomplete="off"
+        spellcheck=${false} aria-label=${`Filter the selected ${dim} values`}
+        onInput=${(event) => { setFilter(event.currentTarget.value); setPage(0); }} /></div>
+    ${rows.length ? rows.map((value) => html`<div key=${value} class="perm-scope-sheet-row">
+      <${ScopeChip} dim=${dim} value=${value} catalogue=${catalogue} remove=${remove} />
+      ${scopeValueLabel(value, catalogue).kind ? html`<span class="ui-hint">${value}</span>` : null}</div>`)
+    : html`<div class="ui-hint">No selected value matches.</div>`}
+    ${pages > 1 ? html`<div class="perm-scope-sheet-pager ui-hint">${at * SCOPE_SHEET_PAGE + 1}–${at * SCOPE_SHEET_PAGE + rows.length} of ${matched.length}
+      <button data-ui-exempt type="button" aria-label="Previous page" disabled=${at === 0} onClick=${() => setPage(at - 1)}>‹</button>
+      <button data-ui-exempt type="button" aria-label="Next page" disabled=${at >= pages - 1} onClick=${() => setPage(at + 1)}>›</button></div>` : null}
+  </div>`;
+}
+
+function ScopeDimSelect({ dim, values, options, onChange, declared = true, onDraft }) {
   const [draft, setDraft] = useState('');
   const remove = (value) => onChange(values.filter((item) => item !== value));
   const add = (value) => {
@@ -657,8 +776,7 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
   useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
   const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
   return html`<div class="perm-scope-dim" data-dim=${dim}>
-    <span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
-      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>
+    <${ScopeDimLabel} dim=${dim} declared=${declared} />
     <div class="perm-scope-dim-body">
       <span class="perm-scope-chips">
         ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
@@ -687,7 +805,7 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
   </div>`;
 }
 
-function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
+function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft, loadValues }) {
   const dims = scopeDimRows(row, scope);
   const setDim = (dim, values) => {
     const next = { ...scope };
@@ -704,7 +822,7 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
       ${effective ? html`<span class=${`perm-row-eff ${effective.granted ? 'granted' : 'denied'}`}>${effective.text}</span>` : null}
     </div>
     ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
-      values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
+      values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)} loadValues=${loadValues}
       onDraft=${onDraft} onChange=${(values) => setDim(dim, values)} />`)}
   </div>`;
 }
@@ -834,6 +952,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const matching = rows.filter((row) => !filter.trim() || [row.slug, row.description, row.descr]
     .some((value) => String(value || '').toLowerCase().includes(filter.trim().toLowerCase())));
   const visible = sudoMode ? rowsByArea(matching) : matching;
+  const rowsBySlug = new Map(rows.map((row) => [row.slug, row]));
   const activeSudo = sudoMode ? (sudoByAgent(snapshot).get(descriptor.agentID) || []) : [];
   const currentEffect = (slug) => selection[slug] || 'default';
   const baselineEffect = (slug) => baseline[slug] || 'default';
@@ -1094,6 +1213,12 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
       : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
         : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
+    // A row left at Default that an umbrella covers says so, with the
+    // umbrella's reach in counts: a resources.read scoped to 41 resources is
+    // one line here, not 41 names.
+    const cover = umbrellaCover(row, rowsBySlug, currentEffect, scopeOf);
+    const coverReach = !cover ? '' : cover.sources.length ? ` (${cover.sources.join(' + ')})`
+      : scopeCountText(cover.scope) ? `, scoped to ${scopeCountText(cover.scope)}` : ', unscoped';
     const stewardSource = stewardAccess && (fromConfig ? 'Reads and Writes'
       : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
@@ -1102,7 +1227,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
-        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
+        : row.granted ? `✓ ${row.sources.join(' + ')}`
+          // The umbrella is a source here as at the gate: a row it covers is
+          // not "denied (no source)", only as narrow as the umbrella's scope.
+          : cover ? `✓ via ${cover.slug}${cover.scope && scopeCountText(cover.scope) ? ' (scoped)' : ''}` : '✗ denied (no source)';
+    const effGranted = row.granted || (!sudoMode && !groupMode && !(stewardAccess && picked) && !!cover);
     return html`<${Fragment} key=${row.slug}>${sudoMode && row.area !== visible[index - 1]?.area
       ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
@@ -1110,7 +1239,8 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
         ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
-        ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}</div>
+        ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}
+        ${cover ? html`<span class="perm-row-desc perm-row-covered">covered by <b>${cover.slug}</b>${coverReach}</span>` : null}</div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
@@ -1131,12 +1261,13 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // neighbours', and a column of buttons that steps sideways row by row
     // reads as a rendering bug. The text itself lives in the drawer.
     ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
-    : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
+    : html`<span class=${`perm-row-eff ${effGranted ? 'granted' : 'denied'}`}>${effText}</span>`}
     </div>
     ${scopable && openScope === row.slug && html`<${ScopeDrawer} key=${`${row.slug}:${draftEpoch}`}
       row=${row} scope=${scopeOf(row.slug)}
       snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
       onDraft=${(dim, value) => noteScopeDraft(row.slug, dim, value)}
+      loadValues=${actions.loadScopeValues ? (dim) => actions.loadScopeValues(descriptor, dim) : null}
       effective=${{ granted: row.granted, text: effText }} />`}
     </${Fragment}>`;
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>

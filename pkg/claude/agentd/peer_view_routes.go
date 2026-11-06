@@ -242,6 +242,9 @@ var peerViewLocalRoutes = []string{
 	"POST /api/plugins/{name}/steps/{idx}/run",
 	"POST /api/plugins/{name}/steps/{idx}/stop",
 	"/api/permissions",
+	// The resource catalogue the permission editor's resource= picker
+	// searches: every board and template with its groups, like the editor.
+	"GET /api/permissions/scope-values",
 	"/api/power-on",
 	"/api/pr-checks",
 	"/api/pr-details",
