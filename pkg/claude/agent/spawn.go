@@ -286,6 +286,11 @@ type SpawnRequest struct {
 	// blank SandboxProfile, which still inherits the ambient tiers, and is
 	// human-only because dropping inherited denies can widen authority.
 	OmitSandboxProfiles bool `json:"omit_sandbox_profiles,omitempty"`
+	// SandboxDeny is the spawn-time deny overlay: absolute paths the child may
+	// not reach at all, on top of whatever sandbox profiles it resolves. Each
+	// covers its whole subtree. It is stored with the child, kept across its
+	// relaunches and inherited by its own children, so it only ever narrows.
+	SandboxDeny []string `json:"sandbox_deny,omitempty"`
 	// UsageProfiles names usage profiles (budgets and alerts) for the new
 	// agent, replacing whatever its spawn profile, group or the global default
 	// would apply. Human-only: an agent must not pick a laxer budget for the
@@ -891,6 +896,7 @@ type SpawnParams struct {
 	// first free letter in field order, never hands it Profile's pinned -p.
 	Prompts                   []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
 	SandboxProfile            string   `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
+	SandboxDeny               []string `long:"sandbox-deny" optional:"true" help:"Deny the child a path and everything beneath it, on top of its sandbox profiles (repeatable; ~ is your home). Stored with the child, kept across its relaunches and inherited by its own children. A grant beneath the path is removed, and the launch says what was removed"`
 	OmitSandboxProfiles       bool     `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
 	UsageProfiles             []string `long:"usage-profile" optional:"true" help:"Human-only: usage profile (budget and alerts, see 'tclaude usage rules') for this agent. Repeatable. Replaces the profiles its spawn profile, group or the global default would apply"`
 	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
@@ -1457,6 +1463,7 @@ type spawnRun struct {
 	explicitMessage       string
 	timeoutSeconds        int
 	runTimeoutSeconds     int64
+	sandboxDeny           []string
 	prof                  *profileJSON
 	merged                resolvedSpawnFields
 	initialMessage        string
@@ -1542,6 +1549,18 @@ func (r *spawnRun) refuseFlagConflicts() bool {
 		r.spawned, r.exitCode = nil, rcInvalidArg
 		return false
 	}
+	if r.p.OmitSandboxProfiles && len(r.p.SandboxDeny) > 0 {
+		fmt.Fprintln(r.stderr, "Error: --sandbox-deny needs the sandbox profiles --omit-sandbox-profiles leaves out")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
+	}
+	deny, err := absoluteSandboxDenyPaths(r.p.SandboxDeny)
+	if err != nil {
+		fmt.Fprintln(r.stderr, "Error:", err)
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
+	}
+	r.sandboxDeny = deny
 	if r.p.Owner && r.p.NoOwner {
 		fmt.Fprintln(r.stderr, "Error: --owner and --no-owner are mutually exclusive")
 		r.spawned, r.exitCode = nil, rcInvalidArg
@@ -1984,6 +2003,7 @@ func (r *spawnRun) buildRequest() bool {
 		Profile:             strings.TrimSpace(r.p.Profile),
 		SandboxProfile:      strings.TrimSpace(r.p.SandboxProfile),
 		OmitSandboxProfiles: r.p.OmitSandboxProfiles,
+		SandboxDeny:         r.sandboxDeny,
 		UsageProfiles:       trimmedNonEmpty(r.p.UsageProfiles),
 		HarnessConfig:       strings.TrimSpace(r.p.HarnessConfig),
 		Name:                r.name,
@@ -2484,4 +2504,30 @@ func trimmedNonEmpty(in []string) []string {
 		}
 	}
 	return out
+}
+
+// absoluteSandboxDenyPaths makes each --sandbox-deny path absolute where the
+// caller typed it: "~" is the caller's home, and a relative path is taken from
+// the current directory. The daemon canonicalizes them.
+func absoluteSandboxDenyPaths(paths []string) ([]string, error) {
+	out := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			return nil, fmt.Errorf("--sandbox-deny needs a path")
+		}
+		if path == "~" || strings.HasPrefix(path, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("--sandbox-deny %s: %w", raw, err)
+			}
+			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("--sandbox-deny %s: %w", raw, err)
+		}
+		out = append(out, abs)
+	}
+	return out, nil
 }

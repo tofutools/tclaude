@@ -46,7 +46,7 @@ var externalStewardSpawnFields = map[string]bool{
 	"ModelProxy": false, "NoQueue": false, "NonInteractive": false, "OmitSandboxProfiles": false, "PeerMessaging": false,
 	"PermissionOverrides": false, "PiDrive": false, "PromptRefs": false, "RemoteControl": false,
 	"ReplyTo": false, "Role": false, "RoleRef": false, "RoleRefs": false, "RunTimeoutSeconds": false,
-	"SSHWorkaround": false, "SandboxImplementation": false, "SandboxProfile": false,
+	"SSHWorkaround": false, "SandboxDeny": false, "SandboxImplementation": false, "SandboxProfile": false,
 	"TimeoutSeconds": false, "ToolGovernance": false, "TrustDir": false, "UsageProfiles": false,
 	"Attachments": false, "AutoCompactWindow": false, "autoFocusSpecified": false, "autoReviewSpecified": false, "ContextFeatures": false, "ContextWindowMax": false, "descrSpecified": false, "FastMode": false, "IncludeGroupContext": false, "initialMessageSpecified": true, "isOwnerSpecified": false, "nameSpecified": true, "permissionOverridesSpecified": false, "promptRefsSpecified": false, "roleRefSpecified": false, "roleRefsSpecified": false, "roleSpecified": false, "trustDirSpecified": false, "WorktreeBranch": false, "WorktreePath": false, "WriteProofToken": false,
 }

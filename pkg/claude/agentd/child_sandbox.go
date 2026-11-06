@@ -25,6 +25,9 @@ type childSandboxInput struct {
 	// (resolvedSandboxProfileNameForScope), so such a child gets that
 	// assignment rather than inheriting a profile the grant never named.
 	sandboxScopePinned bool
+	// denies is the spawn request's deny overlay (sandbox_deny). The child's
+	// overlay is its parent's plus these.
+	denies []string
 }
 
 // resolveChildSandbox is the rule a spawned child's sandbox comes from
@@ -38,8 +41,9 @@ type childSandboxInput struct {
 //   - Any other child resolves fresh: the explicit profile, otherwise the
 //     target group's or the global assignment, with their current contents.
 //
-// Then the requested harness-config posture is applied, and an agent
-// spawner's child must fit inside the spawner:
+// Then the requested harness-config posture is applied, then the deny overlay
+// (the parent's plus the request's, see sandboxpolicy.ApplyDenyOverlay), and
+// an agent spawner's child must fit inside the spawner:
 //
 //   - with no explicit profile, inside the parent's configuration resolved
 //     now, so an operator's edit to the parent's profiles does not refuse its
@@ -92,6 +96,22 @@ func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFa
 		return sandboxpolicy.Snapshot{}, fail
 	} else {
 		effectiveSandbox = applied
+	}
+	// The deny overlay is laid on last, over whatever the child resolved: its
+	// parent's overlay, which every child of that parent keeps, plus the
+	// request's own. It only removes, so it is applied before the cap and the
+	// cap still holds.
+	denies := append([]string(nil), in.denies...)
+	if parent != nil && parent.stored != nil {
+		denies = append(denies, parent.stored.DenyOverlay...)
+	}
+	if overlaid, err := sandboxpolicy.ApplyDenyOverlay(effectiveSandbox, denies); err != nil {
+		if errors.Is(err, sandboxpolicy.ErrDenyOverlayUnenforced) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+		}
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny", err.Error()}
+	} else {
+		effectiveSandbox = overlaid
 	}
 	if parent == nil {
 		return effectiveSandbox, nil

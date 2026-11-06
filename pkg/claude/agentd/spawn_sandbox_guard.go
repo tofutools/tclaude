@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -1075,4 +1076,45 @@ func launchPostureFailure(spawnerConv string, h *harness.Harness, harnessName, m
 		return &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
 	}
 	return nil
+}
+
+// denyOverlayLaunchFailure refuses a launch that carries a deny overlay it
+// would not enforce. The overlay promises that nothing under a denied path is
+// reachable, so it fails closed:
+//
+//   - an implementation that stands the OS boundary down (off, resource-only),
+//     or a mode that omits the profile tiers, confines nothing;
+//   - a denied path covering the working directory would be reopened by the
+//     launch itself, which always grants the agent its workspace.
+func denyOverlayLaunchFailure(
+	snapshot *sandboxpolicy.Snapshot, cwd, harnessName, harnessBuiltinMode, sandboxImplementation string,
+) *spawnFailure {
+	if snapshot == nil || len(snapshot.DenyOverlay) == 0 {
+		return nil
+	}
+	if sandboxProfileTierInert(harnessName, harnessBuiltinMode, sandboxImplementation) {
+		return &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+			"this launch carries a sandbox deny overlay (" + strings.Join(snapshot.DenyOverlay, ", ") +
+				"), and its sandbox mode would not enforce it"}
+	}
+	if deny := denyOverlayCoveringDir(snapshot.DenyOverlay, cwd); deny != "" {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny",
+			"sandbox deny " + deny + " covers the working directory " + cwd + ", which the launch always opens to the agent"}
+	}
+	return nil
+}
+
+// denyOverlayCoveringDir is the overlay path covering dir, compared on both
+// its spelling and its symlink-resolved path, or "".
+func denyOverlayCoveringDir(overlay []string, dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if deny := sandboxpolicy.DenyOverlayCovers(overlay, filepath.Clean(dir)); deny != "" {
+		return deny
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return sandboxpolicy.DenyOverlayCovers(overlay, resolved)
+	}
+	return ""
 }

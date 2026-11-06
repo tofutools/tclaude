@@ -861,6 +861,42 @@ checked with the profiles. A parent's own explicit posture is not inherited.
 Spawns by a peer, a federation request or an external steward have no parent
 sandbox here: they take the target group's assignment.
 
+### Denying a child more: `--sandbox-deny`
+
+A spawner can deny its child paths on top of whatever profiles the child
+resolves:
+
+```bash
+tclaude agent spawn crew --name worker --sandbox-deny ~/secrets --sandbox-deny /srv/keys
+```
+
+The API field is `sandbox_deny` (absolute paths); the CLI expands `~` and
+makes relative paths absolute.
+
+- **A denied path covers its whole subtree.** A more specific grant beneath
+  it, which profile composition alone would keep (the most specific rule
+  wins), is removed. The same goes for a temporary filesystem or agent-owned
+  directory there. A composition notice on the launch names what was removed.
+- **It is the agent's configuration.** The overlay is stored with the child
+  and reapplied at every resume and reincarnation, under re-resolve and reuse
+  alike. A later profile edit that adds a grant beneath a denied path is
+  removed again at the next relaunch rather than reopening it.
+- **It is inherited.** A child's overlay is its parent's plus its own, into
+  the parent's group or another, so denies only accumulate down a lineage.
+  A child can never drop its parent's.
+- **It fails closed.** A spawn or relaunch whose launch would not enforce
+  the overlay is refused: a sandbox implementation of `off` or
+  `resource-only`, or a mode that omits the sandbox profiles
+  (`--omit-sandbox-profiles` is refused alongside `--sandbox-deny`). So is a
+  denied path that covers the working directory, which every launch opens to
+  the agent.
+
+The overlay denies filesystem paths only. It governs the grants the profiles
+compose, not the paths a launch itself must open: besides the working
+directory, those are the workspace's Git administrative directories and the
+harness's own state. A denied path covering one of those is still opened for
+it. External steward spawns cannot set the overlay.
+
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a
 single-use challenge (`write_proof_required`); the parent must create the
