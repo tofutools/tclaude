@@ -2635,6 +2635,12 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if err != nil {
 			return "", "", nil, err
 		}
+		// From here a failure, here or before the pane starts, leaves the
+		// file to the relaunch's settle(false); nil (tests) leaves it to the
+		// caller.
+		if relaunch != nil {
+			relaunch.profilePath = profilePath
+		}
 		// And, as `session new` does, join an installed native registry, so
 		// Codex's requirements allow the profile the pane is started with
 		// rather than falling back to another one. The relaunch carries the
@@ -3279,59 +3285,60 @@ func createSessionForConv(conv *SessionEntry) error {
 	codexImplementation, _ := resumeSandboxImplementation(conv.SessionID)
 	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
 		resumeHarnessBuiltinMode(conv.SessionID), cwd, codexEnvironment)
-	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
-		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
-		return err
-	}
-	launched = true
-	relaunch.settle(true)
+	launched, err = commitResumeLaunch(relaunch, func() error {
+		return session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
+			session.CodexProfileMarkerArgs(profilePath)...)
+	}, func() error {
+		pid := session.ParsePIDFromTmux(tmuxSession)
+		// Carry the resolved harness onto the saved row so a non-claude tag is not
+		// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
+		// watch-resume path now that codex resume lands here.
+		// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+		// confines it rather than carrying the predecessor's verdict, because the
+		// operator may have changed settings.json since (TCL-729).
+		resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
+		resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
+		resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
+		if err != nil {
+			return err
+		}
+		launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
+		if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+			launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
+		}
+		if codexChecked {
+			launchOSSandbox = codexVerdict
+		}
+		state := &session.SessionState{
+			ID:                       sessionID,
+			TmuxSession:              tmuxSession,
+			PID:                      pid,
+			Cwd:                      cwd,
+			ConvID:                   conv.SessionID,
+			Status:                   session.StatusIdle,
+			Harness:                  h.Name,
+			HarnessBuiltinMode:       resumeMode,
+			SandboxImplementation:    string(resumeImplementation),
+			HarnessBuiltinModeSource: resumeChosenBy,
+			OSSandboxState:           launchOSSandbox.State,
+			OSSandboxSource:          launchOSSandbox.Source,
+			OSSandboxUnverified:      launchOSSandbox.Unverified,
+			EffectiveSandbox:         launchEffectiveSandbox,
+			ApprovalPolicy:           approvalPolicy,
+			ApprovalAutoReview:       autoReview,
+			AskUserQuestionTimeout:   askTimeout,
+			Created:                  launchStarted,
+			Updated:                  time.Now(),
+		}
 
-	pid := session.ParsePIDFromTmux(tmuxSession)
-	// Carry the resolved harness onto the saved row so a non-claude tag is not
-	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
-	// watch-resume path now that codex resume lands here.
-	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
-	// confines it rather than carrying the predecessor's verdict, because the
-	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
-	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
-	resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
+		if err := session.SaveSessionStateAfterLaunch(state); err != nil {
+			return fmt.Errorf("failed to save session state: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
-	}
-	if codexChecked {
-		launchOSSandbox = codexVerdict
-	}
-	state := &session.SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		PID:                      pid,
-		Cwd:                      cwd,
-		ConvID:                   conv.SessionID,
-		Status:                   session.StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       resumeMode,
-		SandboxImplementation:    string(resumeImplementation),
-		HarnessBuiltinModeSource: resumeChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         launchEffectiveSandbox,
-		ApprovalPolicy:           approvalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchStarted,
-		Updated:                  time.Now(),
-	}
-
-	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
-		return fmt.Errorf("failed to save session state: %w", err)
-	}
-	relaunch.activateNativeProfile()
 	// resumeLaunchCmd already applied these to the pane's environment; this
 	// write is what keeps them alive for the NEXT resume, since the fresh row
 	// otherwise reports "nothing recorded". What this surface may and may not

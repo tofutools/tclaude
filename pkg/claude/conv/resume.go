@@ -1,6 +1,7 @@
 package conv
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -177,6 +178,9 @@ func RunResume(params *ResumeParams, stdout, stderr io.Writer) int {
 	return runResumeWithSession(rc, !params.Detached, params.SendKeys, stdout, stderr)
 }
 
+// errResumeReported is a resume failure already printed to the operator.
+var errResumeReported = errors.New("resume failure already reported")
+
 func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr io.Writer) int {
 	// Check tmux is installed
 	if err := session.CheckTmuxInstalled(); err != nil {
@@ -310,64 +314,67 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	codexImplementation, _ := resumeSandboxImplementation(rc.ConvID)
 	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
 		resumeHarnessBuiltinMode(rc.ConvID), rc.ProjectPath, codexEnvironment)
-	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
-		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
-		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
-		return 1
-	}
-	launched = true
-	// Settled now, not when the attach below returns: the outcome is known,
-	// and a closed terminal would otherwise never settle it.
-	relaunch.settle(true)
+	launched, err = commitResumeLaunch(relaunch, func() error {
+		return session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
+			session.CodexProfileMarkerArgs(profilePath)...)
+	}, func() error {
+		// Get PID and save state (starts as idle, waiting for user input).
+		// Carry the resolved harness onto the saved row so a non-claude tag is
+		// not coalesced back to "claude" by the DB layer (JOH-218).
+		pid := session.ParsePIDFromTmux(tmuxSession)
+		// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+		// confines it rather than carrying the predecessor's verdict, because the
+		// operator may have changed settings.json since (TCL-729).
+		resumeMode := resumeHarnessBuiltinMode(rc.ConvID)
+		resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
+		resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
+		if err != nil {
+			return err
+		}
+		launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
+		if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+			launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
+		}
+		if codexChecked {
+			launchOSSandbox = codexVerdict
+		}
+		state := &session.SessionState{
+			ID:                       sessionID,
+			TmuxSession:              tmuxSession,
+			PID:                      pid,
+			Cwd:                      rc.ProjectPath,
+			ConvID:                   rc.ConvID,
+			Status:                   session.StatusIdle,
+			Harness:                  h.Name,
+			HarnessBuiltinMode:       resumeMode,
+			SandboxImplementation:    string(resumeImplementation),
+			HarnessBuiltinModeSource: resumeChosenBy,
+			OSSandboxState:           launchOSSandbox.State,
+			OSSandboxSource:          launchOSSandbox.Source,
+			OSSandboxUnverified:      launchOSSandbox.Unverified,
+			EffectiveSandbox:         launchEffectiveSandbox,
+			ApprovalPolicy:           approvalPolicy,
+			ApprovalAutoReview:       autoReview,
+			AskUserQuestionTimeout:   askTimeout,
+			Created:                  launchStarted,
+			Updated:                  time.Now(),
+		}
 
-	// Get PID and save state (starts as idle, waiting for user input).
-	// Carry the resolved harness onto the saved row so a non-claude tag is
-	// not coalesced back to "claude" by the DB layer (JOH-218).
-	pid := session.ParsePIDFromTmux(tmuxSession)
-	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
-	// confines it rather than carrying the predecessor's verdict, because the
-	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeHarnessBuiltinMode(rc.ConvID)
-	resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
-	resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
+		if err := session.SaveSessionStateAfterLaunch(state); err != nil {
+			fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
+			return errResumeReported
+		}
+		return nil
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
+		switch {
+		case !launched:
+			fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
+		case !errors.Is(err, errResumeReported):
+			fmt.Fprintf(stderr, "%v\n", err)
+		}
 		return 1
 	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
-	}
-	if codexChecked {
-		launchOSSandbox = codexVerdict
-	}
-	state := &session.SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		PID:                      pid,
-		Cwd:                      rc.ProjectPath,
-		ConvID:                   rc.ConvID,
-		Status:                   session.StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       resumeMode,
-		SandboxImplementation:    string(resumeImplementation),
-		HarnessBuiltinModeSource: resumeChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         launchEffectiveSandbox,
-		ApprovalPolicy:           approvalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchStarted,
-		Updated:                  time.Now(),
-	}
-
-	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
-		fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
-		return 1
-	}
-	relaunch.activateNativeProfile()
 	// Carry the posture onto the row this resume just created. Out-of-band,
 	// like the spawn path: SaveSession's UPSERT does not own these columns.
 	// Best-effort — the pane is already running with the right env, and a lost

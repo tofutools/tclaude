@@ -3,6 +3,7 @@
 package conv
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -179,13 +180,92 @@ func TestResumeCodexManagedProfileLeavesTheRegistryWhenNotLaunched(t *testing.T)
 	}
 	opts, _ := setupCodexManagedResume(t)
 	relaunch := &standaloneRelaunch{convID: resumeConvCodex}
-	_, _, _, err := resumeLaunchCmdWithEffectiveSandbox(
+	_, profilePath, _, err := resumeLaunchCmdWithEffectiveSandbox(
 		harness.CodexName, resumeConvCodex, resumeConvCodex, nil, nil, relaunch)
 	require.NoError(t, err)
 	profiles := requireNativeProfiles(t)
 	require.Len(t, profiles, 1)
+	require.FileExists(t, profilePath)
 
 	relaunch.settle(false)
 	assert.Empty(t, requireNativeProfiles(t))
 	assert.NotContains(t, readNativeRequirements(t, opts), profiles[0].ProfileName)
+	// Nor does its generated profile file stay in CODEX_HOME: only the pane
+	// removes it when it exits, and this pane never started (tcl-tqdry1).
+	assert.NoFileExists(t, profilePath)
+}
+
+// The launch boundary both resume entry points share (runResumeWithSession
+// and createSessionForConv), in the order that keeps the native registry and
+// the generated profile right (tcl-npmmcm): launch the pane, settle it as
+// launched at once, save its row, then activate its profile. Each case runs
+// the entry points' deferred settle(launched) as they do.
+func TestResumeLaunchBoundaryOrder(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("native Codex registry targets Linux and macOS")
+	}
+	prepare := func(t *testing.T) (*standaloneRelaunch, string, db.CodexNativePermissionProfile) {
+		t.Helper()
+		setupCodexManagedResume(t)
+		relaunch := &standaloneRelaunch{convID: resumeConvCodex}
+		_, profilePath, _, err := resumeLaunchCmdWithEffectiveSandbox(
+			harness.CodexName, resumeConvCodex, resumeConvCodex, nil, nil, relaunch)
+		require.NoError(t, err)
+		profiles := requireNativeProfiles(t)
+		require.Len(t, profiles, 1)
+		return relaunch, profilePath, profiles[0]
+	}
+	ready := func(t *testing.T, generation string) bool {
+		t.Helper()
+		stored, err := db.GetCodexNativePermissionProfile(generation)
+		require.NoError(t, err)
+		require.NotNil(t, stored)
+		return stored.LaunchReady
+	}
+
+	t.Run("launched and saved: the profile is ready", func(t *testing.T) {
+		relaunch, profilePath, registered := prepare(t)
+		var order []string
+		launched, err := commitResumeLaunch(relaunch,
+			func() error { order = append(order, "launch"); return nil },
+			func() error {
+				order = append(order, "save")
+				assert.True(t, relaunch.nativeLaunched, "settled as launched before the row is saved")
+				assert.False(t, ready(t, registered.Generation), "not ready before its row is saved")
+				return nil
+			})
+		relaunch.settle(launched)
+		require.NoError(t, err)
+		assert.True(t, launched)
+		assert.Equal(t, []string{"launch", "save"}, order)
+		assert.True(t, ready(t, registered.Generation), "activated once its row is saved")
+		assert.FileExists(t, profilePath, "the running pane owns its profile file now")
+	})
+
+	t.Run("the pane never starts: registry and file are left as found", func(t *testing.T) {
+		relaunch, profilePath, _ := prepare(t)
+		saved := false
+		launched, err := commitResumeLaunch(relaunch,
+			func() error { return errors.New("tmux refused") },
+			func() error { saved = true; return nil })
+		relaunch.settle(launched)
+		require.Error(t, err)
+		assert.False(t, launched)
+		assert.False(t, saved, "no row is saved for a pane that never started")
+		assert.Empty(t, requireNativeProfiles(t))
+		assert.NoFileExists(t, profilePath)
+	})
+
+	t.Run("the pane runs but its row is not saved: the profile stays, not ready", func(t *testing.T) {
+		relaunch, profilePath, registered := prepare(t)
+		launched, err := commitResumeLaunch(relaunch,
+			func() error { return nil },
+			func() error { return errors.New("db locked") })
+		relaunch.settle(launched)
+		require.Error(t, err)
+		assert.True(t, launched)
+		require.Len(t, requireNativeProfiles(t), 1, "the running pane keeps its registration")
+		assert.False(t, ready(t, registered.Generation), "and later reconciliation decides it")
+		assert.FileExists(t, profilePath)
+	})
 }

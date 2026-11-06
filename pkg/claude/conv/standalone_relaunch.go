@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"os"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -71,6 +73,10 @@ type standaloneRelaunch struct {
 	nativeGeneration string
 	// nativeLaunched is set once the pane has started with that profile.
 	nativeLaunched bool
+	// profilePath is the resume's generated Codex profile file, or "". The
+	// pane removes it when it exits; a pane that never starts leaves it to
+	// settle.
+	profilePath string
 }
 
 // prepareStandaloneRelaunch prepares convID's relaunch sandbox when it belongs
@@ -127,26 +133,57 @@ func (r *standaloneRelaunch) remoteControl(h *harness.Harness, convID string) (b
 }
 
 // settle reports the launch's outcome to agentd, once. A resume whose pane
-// never started also leaves the native Codex registry: nothing runs with its
-// profile.
+// never started also leaves the native Codex registry, and removes its
+// generated profile file: nothing runs with that profile, and only the pane
+// would have removed the file.
 func (r *standaloneRelaunch) settle(launched bool) {
 	if r == nil {
 		return
 	}
 	if launched {
 		r.nativeLaunched = true
-	} else if r.nativeGeneration != "" && !r.nativeLaunched {
-		if err := session.UnregisterCodexNativePermissionProfile(r.nativeGeneration); err != nil {
-			slog.Warn("could not remove the resume's generated Codex profile from the native registry",
-				"conv_id", r.convID, "generation", r.nativeGeneration, "error", err)
+		r.profilePath = ""
+	} else if !r.nativeLaunched {
+		if r.nativeGeneration != "" {
+			if err := session.UnregisterCodexNativePermissionProfile(r.nativeGeneration); err != nil {
+				slog.Warn("could not remove the resume's generated Codex profile from the native registry",
+					"conv_id", r.convID, "generation", r.nativeGeneration, "error", err)
+			}
+			r.nativeGeneration = ""
 		}
-		r.nativeGeneration = ""
+		if r.profilePath != "" {
+			if err := os.Remove(r.profilePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				slog.Warn("could not remove the resume's generated Codex profile file",
+					"conv_id", r.convID, "path", r.profilePath, "error", err)
+			}
+			r.profilePath = ""
+		}
 	}
 	if !r.pending || StandaloneRelaunchSettle == nil {
 		return
 	}
 	r.pending = false
 	r.warn(StandaloneRelaunchSettle(r.convID, launched)...)
+}
+
+// commitResumeLaunch is the launch boundary both resume entry points share
+// (runResumeWithSession, createSessionForConv), in the order that keeps the
+// native registry and the generated profile right: start the pane; settle it
+// as launched at once (the outcome is known, and a closed terminal would
+// otherwise never settle it); save its session row; then activate its
+// profile, which the row keeps live. launched reports whether the pane
+// started, for the caller's deferred settle(launched), which also covers
+// every failure before this point.
+func commitResumeLaunch(r *standaloneRelaunch, launch, save func() error) (launched bool, err error) {
+	if err := launch(); err != nil {
+		return false, err
+	}
+	r.settle(true)
+	if err := save(); err != nil {
+		return true, err
+	}
+	r.activateNativeProfile()
+	return true, nil
 }
 
 // activateNativeProfile marks the resume's registered Codex profile ready
