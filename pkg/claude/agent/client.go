@@ -832,9 +832,15 @@ func MapDaemonErrorToRC(err error) int {
 		return rcAmbiguous
 	case "invalid_arg", "route_invalid_argument", "route_invalid_name", "route_invalid_target", "route_invalid_transport", "route_group":
 		return rcInvalidArg
-	case "auth":
+	case "auth", "permission":
 		return rcAuth
 	default:
+		// Every 403 is a refusal, whatever its code: the daemon understood the
+		// request and will not do it for this caller. It is not an I/O
+		// failure, so a caller can tell "not allowed" from "agentd is down".
+		if de.Status == http.StatusForbidden {
+			return rcAuth
+		}
 		return rcIOFailure
 	}
 }

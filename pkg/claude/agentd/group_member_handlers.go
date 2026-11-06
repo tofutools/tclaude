@@ -420,7 +420,7 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	// Kept permissions outlive the membership that showed them, so only the
 	// operator can choose them; an agent manager moves with the defaults.
 	if body.KeepPermissions && classify(peerFromContext(r.Context())) != classHuman {
-		writeError(w, http.StatusForbidden, "permission_denied", "keep_permissions is operator-only")
+		writeError(w, http.StatusForbidden, "permission", "keep_permissions is operator-only")
 		return
 	}
 	if body.To == "" {

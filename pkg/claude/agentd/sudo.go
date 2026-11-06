@@ -346,7 +346,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	defer approvals.release(slot)
 	approved := requestHumanApproval(req, popupBaseURL)
 	if !approved {
-		writeError(w, http.StatusForbidden, "denied",
+		writeError(w, http.StatusForbidden, "permission",
 			"sudo request denied by human (or popup timed out)")
 		return
 	}
