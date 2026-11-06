@@ -251,121 +251,57 @@ func resolveBwrapServerBinary(
 	return binary, nil
 }
 
-func tclaudeLayerCommand(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	harnessCommand string,
-) (string, error) {
-	command, err := bwrapCommand(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		harnessCommand,
-	)
+// tclaudeLayerCommand renders a pane launch's bubblewrap boundary. Linux has
+// no route slots; a group-route helper runs as a supervised wrapper around
+// the harness; a loopback bind needs no exception, as the private network
+// namespace permits it intrinsically.
+func tclaudeLayerCommand(in tclaudeLayerRenderInput, opts tclaudeLayerLaunchOpts, harnessCommand string) (string, error) {
+	if len(opts.RouteSlots) != 0 {
+		return "", fmt.Errorf("darwin route slots are unsupported on Linux")
+	}
+	if opts.RouteHelper != nil {
+		return tclaudeLayerRouteHelperLaunchCommand(in, *opts.RouteHelper, harnessCommand)
+	}
+	command, err := bwrapLayerCommand(in, harnessCommand)
 	if err != nil {
 		return "", err
 	}
 	relay := tclaudeLayerRelayPrefix()
-	engine, err := tclaudeLayerEnginePrefix(plan)
+	engine, err := tclaudeLayerEnginePrefix(in.Plan)
 	if err != nil {
 		return "", err
 	}
 	return relay + engine + " -- " + command, nil
 }
 
-func tclaudeLayerCommandWithLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	_ int,
-	harnessCommand string,
-) (string, error) {
-	return tclaudeLayerCommand(binary, phase0WriteDirs, privateWriteDirs,
-		finalHideDirs, readOnlyBinds, socketPaths, plan, harnessCommand)
+// bwrapLayerCommand is bwrapCommand over one render input.
+func bwrapLayerCommand(in tclaudeLayerRenderInput, command string) (string, error) {
+	return bwrapCommand(in.Binary, in.Phase0WriteDirs, in.PrivateWriteDirs,
+		in.FinalHideDirs, in.ReadOnlyBinds, in.SocketPaths, in.Plan, command)
 }
 
-func tclaudeLayerCommandWithRouteSlots(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	routeSlots []int,
-	_ *DarwinRouteSlotReservation,
-	_ *TclaudeLayerRouteHelper,
-	harnessCommand string,
-) (string, error) {
-	if len(routeSlots) != 0 {
-		return "", fmt.Errorf("darwin route slots are unsupported on Linux")
-	}
-	return tclaudeLayerCommand(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand)
-}
-
-func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	routeSlots []int,
-	preReservation *DarwinRouteSlotReservation,
-	routeHelper *TclaudeLayerRouteHelper,
-	_ int,
-	harnessCommand string,
-) (string, error) {
-	return tclaudeLayerCommandWithRouteSlots(binary, phase0WriteDirs, privateWriteDirs,
-		finalHideDirs, readOnlyBinds, socketPaths, plan, routeSlots,
-		preReservation, routeHelper, harnessCommand)
-}
-
-func tclaudeLayerCommandWithRouteHelper(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
+func tclaudeLayerRouteHelperLaunchCommand(
+	in tclaudeLayerRenderInput,
 	helper TclaudeLayerRouteHelper,
 	harnessCommand string,
 ) (string, error) {
-	credentialFD := tclaudeLayerRouteHelperGuestFD(plan)
+	credentialFD := tclaudeLayerRouteHelperGuestFD(in.Plan)
 	helper.CredentialFD = credentialFD
-	wrapper, err := wrapTclaudeLayerRouteHelper(binary, helper, harnessCommand)
+	wrapper, err := wrapTclaudeLayerRouteHelper(in.Binary, helper, harnessCommand)
 	if err != nil {
 		return "", err
 	}
-	command, err := bwrapCommand(binary, phase0WriteDirs, privateWriteDirs,
-		finalHideDirs, readOnlyBinds, socketPaths, plan, wrapper)
+	command, err := bwrapLayerCommand(in, wrapper)
 	if err != nil {
 		return "", err
 	}
 	// The relay passes the credential via ExtraFiles. Bubblewrap inherits
 	// non-CLOEXEC descriptors natively and has no --preserve-fds option.
-	engine, err := tclaudeLayerEnginePrefix(plan)
+	engine, err := tclaudeLayerEnginePrefix(in.Plan)
 	if err != nil {
 		return "", err
 	}
-	routeFlags := tclaudeLayerRouteAuthorityRelayFlags(plan, helper)
+	routeFlags := tclaudeLayerRouteAuthorityRelayFlags(in.Plan, helper)
 	return tclaudeLayerRouteHelperBootstrapPrefix(helper) +
 		tclaudeLayerRelayPrefix() + " --preserve-fds 1" + engine + routeFlags + " -- " + command, nil
 }
@@ -412,49 +348,18 @@ func tclaudeLayerRouteHelperBootstrapPrefix(helper TclaudeLayerRouteHelper) stri
 		clcommon.ShellQuoteArg(helper.HandoffSocketPath) + " -- "
 }
 
-func tclaudeLayerServerCommand(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	serverCommand string,
-) (string, error) {
-	return tclaudeLayerServerCommandWithLoopbackBind(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, 0, serverCommand)
-}
-
-func tclaudeLayerServerCommandWithLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	loopbackBindPort int,
-	serverCommand string,
-) (string, error) {
+// tclaudeLayerServerCommand renders an agentd-owned server's bubblewrap
+// boundary. A loopback bind exception is Darwin-only: Linux's filtered
+// OpenCode control plane is an inherited Unix listener, not a TCP bind.
+func tclaudeLayerServerCommand(in tclaudeLayerRenderInput, loopbackBindPort int, serverCommand string) (string, error) {
 	if loopbackBindPort != 0 {
 		return "", fmt.Errorf("loopback server bind exceptions are Darwin-only")
 	}
-	command, err := bwrapCommand(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		serverCommand,
-	)
+	command, err := bwrapLayerCommand(in, serverCommand)
 	if err != nil {
 		return "", err
 	}
-	engine, err := tclaudeLayerEnginePrefix(plan)
+	engine, err := tclaudeLayerEnginePrefix(in.Plan)
 	if err != nil {
 		return "", err
 	}
@@ -468,10 +373,11 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 	spec TclaudeLayerLaunchSpec,
 	bwrapArgv []string,
 ) ([]string, error) {
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	rendered, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, err
 	}
+	plan := rendered.Plan
 	if plan.NetworkPosture != sandboxpolicy.NetworkFiltered {
 		return bwrapArgv, nil
 	}

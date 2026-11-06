@@ -145,148 +145,64 @@ func resolveBwrapServerBinary(
 	return resolveBwrapBinary(posture, root)
 }
 
-func tclaudeLayerCommand(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	harnessCommand string,
-) (string, error) {
-	return tclaudeLayerDarwinCommand(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0)
-}
-
-func tclaudeLayerCommandWithLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	loopbackBindPort int,
-	harnessCommand string,
-) (string, error) {
-	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
-		loopbackBindPort = 0
+// tclaudeLayerCommand renders a pane launch's Seatbelt boundary. A route-slot
+// pool carries its pre-reservation and group-route authority to the renderer;
+// a group-route helper without a pool is the Linux helper, which macOS does
+// not run. A host-open floor needs no loopback bind exception.
+func tclaudeLayerCommand(in tclaudeLayerRenderInput, opts tclaudeLayerLaunchOpts, harnessCommand string) (string, error) {
+	if len(opts.RouteSlots) == 0 {
+		if opts.RouteHelper != nil {
+			return "", fmt.Errorf("linux group-route helper is unavailable")
+		}
+		// A reservation belongs to a route-slot pool: without one there is
+		// nothing of this launch's for the renderer to release.
+		opts.RouteReservation = nil
 	}
-	return tclaudeLayerDarwinCommand(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPort)
-}
-
-func tclaudeLayerCommandWithRouteSlots(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	routeSlots []int,
-	preReservation *DarwinRouteSlotReservation,
-	routeHelper *TclaudeLayerRouteHelper,
-	harnessCommand string,
-) (string, error) {
-	return tclaudeLayerDarwinCommandWithRouteSlots(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation, routeHelper)
-}
-
-func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	routeSlots []int,
-	preReservation *DarwinRouteSlotReservation,
-	routeHelper *TclaudeLayerRouteHelper,
-	loopbackBindPort int,
-	harnessCommand string,
-) (string, error) {
-	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
-		loopbackBindPort = 0
+	if tclaudeLayerPlanFloorPosture(in.Plan) == sandboxpolicy.NetworkHostOpen {
+		opts.LoopbackBindPort = 0
 	}
-	return tclaudeLayerDarwinCommandWithRouteSlots(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPort,
-		routeSlots, preReservation, routeHelper)
+	return tclaudeLayerDarwinCommand(in, opts, harnessCommand)
 }
 
 func tclaudeLayerDarwinCommand(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
+	in tclaudeLayerRenderInput,
+	opts tclaudeLayerLaunchOpts,
 	harnessCommand string,
-	preserveFDs int,
-	loopbackBindPort int,
 ) (string, error) {
-	return tclaudeLayerDarwinCommandWithRouteSlots(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand,
-		preserveFDs, loopbackBindPort, nil, nil, nil)
-}
-
-func tclaudeLayerDarwinCommandWithRouteSlots(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	harnessCommand string,
-	preserveFDs int,
-	loopbackBindPort int,
-	routeSlots []int,
-	preReservation *DarwinRouteSlotReservation,
-	routeHelper *TclaudeLayerRouteHelper,
-) (string, error) {
-	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
+	if err := ValidateDarwinRouteSlots(opts.RouteSlots); err != nil {
 		return "", err
 	}
-	if len(routeSlots) > 0 && !tclaudeLayerPlanDeploysProxy(plan) && preReservation == nil {
-		reservation, reserveErr := ReserveDarwinRouteSlotsAt(routeSlots)
+	if len(opts.RouteSlots) > 0 && !tclaudeLayerPlanDeploysProxy(in.Plan) && opts.RouteReservation == nil {
+		reservation, reserveErr := ReserveDarwinRouteSlotsAt(opts.RouteSlots)
 		if reserveErr != nil {
 			return "", fmt.Errorf("reserve Darwin route slots before Seatbelt rendering: %w", reserveErr)
 		}
 		defer func() { _ = reservation.Release() }()
 	}
-	if tclaudeLayerPlanDeploysProxy(plan) {
-		if preReservation != nil {
-			if err := preReservation.Release(); err != nil {
+	if tclaudeLayerPlanDeploysProxy(in.Plan) {
+		if opts.RouteReservation != nil {
+			if err := opts.RouteReservation.Release(); err != nil {
 				return "", fmt.Errorf("release Darwin route slots for proxy launcher: %w", err)
 			}
 		}
 		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
-			Binary:           binary,
-			Phase0WriteDirs:  phase0WriteDirs,
-			PrivateWriteDirs: privateWriteDirs,
-			FinalHideDirs:    finalHideDirs,
-			ReadOnlyBinds:    readOnlyBinds,
-			SocketPaths:      socketPaths,
-			Plan:             plan,
+			Binary:           in.Binary,
+			Phase0WriteDirs:  in.Phase0WriteDirs,
+			PrivateWriteDirs: in.PrivateWriteDirs,
+			FinalHideDirs:    in.FinalHideDirs,
+			ReadOnlyBinds:    in.ReadOnlyBinds,
+			SocketPaths:      in.SocketPaths,
+			Plan:             in.Plan,
 			HarnessCommand:   harnessCommand,
-			PreserveFDs:      preserveFDs,
-			LoopbackBindPort: loopbackBindPort,
-			RouteSlots:       append([]int(nil), routeSlots...),
-			RouteAuthority:   proxyRouteAuthorityConfigFromHelper(routeHelper),
+			LoopbackBindPort: opts.LoopbackBindPort,
+			RouteSlots:       append([]int(nil), opts.RouteSlots...),
+			RouteAuthority:   proxyRouteAuthorityConfigFromHelper(opts.RouteHelper),
 		})
 	}
 	return renderDarwinSeatbeltCommandWithRouteSlots(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, loopbackBindPort, routeSlots)
+		in.Binary, in.Phase0WriteDirs, in.PrivateWriteDirs, in.FinalHideDirs,
+		in.ReadOnlyBinds, in.SocketPaths, in.Plan, harnessCommand, netip.AddrPort{},
+		opts.LoopbackBindPort, opts.RouteSlots)
 }
 
 func renderDarwinSeatbeltCommand(
@@ -440,56 +356,13 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	return command, nil
 }
 
-func tclaudeLayerServerCommand(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	serverCommand string,
-) (string, error) {
-	return tclaudeLayerDarwinCommand(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		serverCommand,
-		2,
-		0,
-	)
-}
-
-func tclaudeLayerServerCommandWithLoopbackBind(
-	binary string,
-	phase0WriteDirs []string,
-	privateWriteDirs []TclaudeLayerPrivateWriteDir,
-	finalHideDirs []string,
-	readOnlyBinds []TclaudeLayerReadOnlyBind,
-	socketPaths []string,
-	plan sandboxpolicy.MountPlan,
-	loopbackBindPort int,
-	serverCommand string,
-) (string, error) {
-	// The Darwin OpenCode server uses an authenticated TCP control endpoint,
-	// not the inherited Unix listener and relay executable used by the v4
-	// Linux server boundary. Nothing above this launcher supplies fd 3 or 4.
-	return tclaudeLayerDarwinCommand(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		serverCommand,
-		0,
-		loopbackBindPort,
-	)
+// tclaudeLayerServerCommand renders an agentd-owned server's Seatbelt
+// boundary. The Darwin OpenCode server uses an authenticated TCP control
+// endpoint, not the inherited Unix listener and relay executable used by the
+// v4 Linux server boundary, so nothing above this launcher supplies fd 3 or
+// 4; loopbackBindPort is that control endpoint's listener.
+func tclaudeLayerServerCommand(in tclaudeLayerRenderInput, loopbackBindPort int, serverCommand string) (string, error) {
+	return tclaudeLayerDarwinCommand(in, tclaudeLayerLaunchOpts{LoopbackBindPort: loopbackBindPort}, serverCommand)
 }
 
 func tclaudeLayerUnixRelayServerCommandArgs(

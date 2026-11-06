@@ -620,11 +620,11 @@ func HTTPProxyCLIForLayerSpec(spec *TclaudeLayerLaunchSpec) (string, error) {
 	if spec == nil || runtime.GOOS != "linux" || loadErr != nil || !cfg.HTTPProxyConfigured() {
 		return clcommon.SelfTclaudePath(), nil
 	}
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(*spec)
+	rendered, err := tclaudeLayerSpecRenderInput(*spec)
 	if err != nil {
 		return "", err
 	}
-	return httpProxyCLIForPlan(plan), nil
+	return httpProxyCLIForPlan(rendered.Plan), nil
 }
 
 func httpProxyCLIForPlan(plan sandboxpolicy.MountPlan) string {
