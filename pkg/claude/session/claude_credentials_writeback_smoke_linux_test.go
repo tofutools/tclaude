@@ -38,6 +38,10 @@ func TestTclaudeLayerClaudeCredentialWriteBackSmoke(t *testing.T) {
 		t.Skip("set TCLAUDE_FILTERED_PROXY_SMOKE=1 on the executing Linux CI boundary")
 	}
 	fixture := proxySmokeRunnerFixture(t)
+	// proxySmokeRules authors loopback rows on these ports, so they must be
+	// live listeners, as runProxySmokeLaunch starts them.
+	fixture.HostAllowed = proxySmokeLoopbackServer(t)
+	fixture.HostDenied = proxySmokeLoopbackServer(t)
 	var credentials string
 	helperBinaryName := "credential-writeback-helper"
 	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
