@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,7 @@ func TestPeerProcessManagePins(t *testing.T) {
 	code, body := h.call("POST", "/v1/process/runs/"+run+"/pause", map[string]any{})
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, `"changed":true`)
+	require.Contains(t, body, `"by":"human:operator"`, "unrestricted trust acts as this node's operator")
 	code, body = h.call("POST", "/v1/process/runs/"+run+"/decide", map[string]any{"nodeId": "choose", "verdict": "approve"})
 	require.Equal(t, http.StatusAccepted, code, body)
 }
@@ -123,9 +125,10 @@ func TestPeerProcessManageUnderTheProgramFreeRule(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, code, body)
 	agentd.WaitForProcessDispatchForTest()
 	var decided *performerEvent
-	for i, e := range runEvents(t, h, gate) {
+	for _, e := range runEvents(t, h, gate) {
 		if e.Kind == "decision_recorded" {
-			decided = &runEvents(t, h, gate)[i]
+			e := e
+			decided = &e
 		}
 	}
 	require.NotNil(t, decided)
@@ -199,4 +202,75 @@ func TestPeerProcessManageAsAgentPrincipal(t *testing.T) {
 	code, body = call("/v1/process/runs/"+gate+"/pause", map[string]any{})
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, `"by":"peer:`+h.peer.id.ID()+`/agent:`+worker.ID+`"`)
+	code, body = call("/v1/process/runs/"+gate+"/resume", map[string]any{})
+	require.Equal(t, http.StatusAccepted, code, "an agent resumes a program-free run: %s", body)
+	// The assignee is in the body, outside the footprint the agent's node
+	// checked: assign is the peer operator's.
+	code, body = call("/v1/process/runs/"+gate+"/nodes/choose/assign", map[string]any{"agent": h.member})
+	require.Equal(t, 403, code, body)
+}
+
+// A run of this node's whose agent steps may fall back to a spawn would
+// spawn on this node's authority at the peer's word: only pause reaches it.
+// A peer-owned run never spawns, so its own spawn fallback does not matter.
+func TestPeerProcessManageRefusesRunsThatCanSpawn(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	root := filepath.Join(h.f.World.HomeDir, ".tclaude", "process-runtime-authoring")
+	performer := devPerformer()
+	performer.Spawn = model.SpawnAllowed
+	putProcessRuntimeTemplate(t, root, performerTemplate("spawny", performer, nil))
+	tmpl := performerTemplate("spawny-default", devPerformer(), nil)
+	tmpl.Fallback = &model.PerformerFallback{Action: model.FallbackSpawn}
+	putProcessRuntimeTemplate(t, root, tmpl)
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	h.grant(t, agentd.PermProcessRunsManage, "")
+	h.grant(t, agentd.PermProcessRunsStart, "group=crew")
+	for _, template := range []string{"spawny", "spawny-default"} {
+		run := startOperatorRun(t, h, "run_"+template, template, map[string]any{"group": "crew"})
+		code, body := h.call("POST", "/v1/process/runs/"+run+"/pause", map[string]any{})
+		require.Equal(t, 200, code, body)
+		code, body = h.call("POST", "/v1/process/runs/"+run+"/resume", map[string]any{})
+		require.Equal(t, http.StatusConflict, code, "%s: %s", template, body)
+		require.Contains(t, body, "process_run_spawns")
+	}
+	code, body := h.call("POST", "/v1/process/runs", map[string]any{"templateId": "spawny", "group": "crew", "authorizeProgramProfiles": []string{}})
+	require.Equal(t, http.StatusCreated, code, body)
+	own := peerRunDoc(t, body)["id"].(string)
+	code, body = h.call("POST", "/v1/process/runs/"+own+"/pause", map[string]any{})
+	require.Equal(t, 200, code, body)
+	code, body = h.call("POST", "/v1/process/runs/"+own+"/resume", map[string]any{})
+	require.Equal(t, http.StatusAccepted, code, "the peer's own run: %s", body)
+}
+
+// A peer resolves a parked branch of a program-free run: the resolution is
+// its own and its note carries the banner; a note that leaves no room for
+// the banner is refused with how much room there is.
+func TestPeerProcessManageResolvesABlockedBranch(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	root := filepath.Join(h.f.World.HomeDir, ".tclaude", "process-runtime-authoring")
+	putProcessRuntimeTemplate(t, root, performerTemplate("once", devPerformer(), &model.RetryPolicy{MaxAttempts: 1}))
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	h.grant(t, agentd.PermProcessRunsManage, "")
+	run := startOperatorRun(t, h, "run_once", "once", map[string]any{"group": "crew"})
+	failed := reportAs(t, h.f, "proc-crew-member", map[string]any{"outcome": "failed", "note": "could not"})
+	require.Equal(t, http.StatusOK, failed.Code, failed.Body.String())
+	view := showPerformerRun(t, h.f, run)
+	require.Equal(t, "blocked", view.Action, "%+v", view)
+
+	resolve := "/v1/process/runs/" + run + "/resolve-blocked"
+	code, body := h.call("POST", resolve, map[string]any{"nodeId": performerNode, "attempt": 1, "action": "skip", "note": strings.Repeat("x", 4000)})
+	require.Equal(t, 400, code, body)
+	require.Contains(t, body, "the untrusted-content banner takes the rest")
+	code, body = h.call("POST", resolve, map[string]any{"nodeId": performerNode, "attempt": 1, "action": "skip", "note": "skip it, nobody checks"})
+	require.Equal(t, http.StatusAccepted, code, body)
+	var resolved *performerEvent
+	for _, e := range runEvents(t, h, run) {
+		if e.Kind == "blocked_resolved" {
+			e := e
+			resolved = &e
+		}
+	}
+	require.NotNil(t, resolved)
+	require.Equal(t, "peer:"+h.peer.id.ID(), resolved.Actor)
+	require.Contains(t, string(resolved.Payload), "[remote request from the operator of linked node bob")
 }

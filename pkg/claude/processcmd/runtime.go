@@ -578,7 +578,7 @@ func processReissueCmd() *cobra.Command {
 type processRunMutationParams struct {
 	RunID    string `pos:"true" help:"Process run id"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
-	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 type processReissueParams struct {
@@ -688,7 +688,7 @@ type processDecideParams struct {
 	// attemptSet records that --attempt was given, so --attempt 0 pins a
 	// loop decision's first window instead of meaning "current".
 	attemptSet bool
-	Remote     string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs"`
+	Remote     string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processDecideCmd() *cobra.Command {
@@ -755,7 +755,7 @@ type processResolveBlockedParams struct {
 	Action   string `long:"action" help:"retry, skip, or cancel"`
 	Note     string `long:"note" optional:"true" help:"Human-facing note recorded with the resolution"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
-	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processResolveBlockedCmd() *cobra.Command {
@@ -1040,7 +1040,7 @@ type processAssignParams struct {
 	Node     string `long:"node" help:"Agent node whose outstanding attempt to reassign"`
 	Agent    string `long:"agent" help:"New performer: agent name, agent id, or conv id"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
-	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs"`
+	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }
 
 func processAssignCmd() *cobra.Command {

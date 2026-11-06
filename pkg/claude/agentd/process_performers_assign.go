@@ -203,7 +203,15 @@ func processAssignCandidate(scope processRunScope, actor, selector string) (*pro
 		if err != nil || group == nil || group.IsArchived() {
 			return nil, "the run's group is unavailable"
 		}
-		for _, member := range processGroupCandidates(scope.GroupID) {
+		members := processGroupCandidates(scope.GroupID)
+		// An exact agent id names that agent, before any member whose
+		// name or conversation happens to read the same.
+		for _, member := range members {
+			if member.AgentID == strings.TrimSpace(selector) {
+				return &member, ""
+			}
+		}
+		for _, member := range members {
 			if processCandidateMatches(member, selector) {
 				return &member, ""
 			}
