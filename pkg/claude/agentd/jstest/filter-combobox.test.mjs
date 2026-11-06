@@ -192,6 +192,15 @@ test('commitOnBlur keeps what was typed when the box is left', async (t) => {
   await harness.act(() => harness.fireEvent(opened.input, 'blur'));
   assert.deepEqual(opened.changes.at(-1), ['beta', 'gamma'], 'free text is taken as typed');
   assert.equal(opened.input.value, '', 'the box empties once it commits');
+  await harness.act(() => harness.fireEvent(opened.input, 'focus'));
+  await harness.input(opened.input, 'alp');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.deepEqual(opened.changes.at(-1), ['beta', 'gamma'], 'a fragment of a row is a search, not a value');
+  assert.equal(opened.input.value, 'alp', 'the fragment stays in the box');
+  await harness.act(() => harness.fireEvent(opened.input, 'keydown', { key: 'Escape' }));
+  assert.equal(opened.input.value, '', 'Escape backs out of what was typed');
+  await harness.act(() => harness.fireEvent(opened.input, 'blur'));
+  assert.equal(opened.changes.length, 2, 'so leaving the box then adds nothing');
   await opened.mounted.unmount();
 
   opened = await mountCombobox(harness, { items, value: [], freeText: (text) => text });

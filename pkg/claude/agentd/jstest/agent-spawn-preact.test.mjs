@@ -119,6 +119,17 @@ async function flush(harness, turns = 8) {
   });
 }
 
+// settleUntil lets the dialog's async loads land until cond holds, failing
+// with what was awaited after a time limit rather than trusting one sleep.
+async function settleUntil(harness, cond, what, limitMs = 3000) {
+  const deadline = Date.now() + limitMs;
+  while (!cond()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    await flush(harness);
+  }
+}
+
 async function settleWorktrees(harness) {
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   await flush(harness);
@@ -1079,9 +1090,8 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
   const { harness, host, state } = mounted;
   try {
     state.open({ groupName: 'alpha' });
-    await flush(harness);
-    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
-    await flush(harness);
+    await settleUntil(harness, () => host.querySelector('#agent-spawn-sandbox')?.closest('.cron-create-row')?.hidden === false,
+      'the resolved Claude launch defaults');
     const claudeMode = host.querySelector('#agent-spawn-sandbox');
     assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
       'the initial Claude implementation row is untouched');
@@ -1092,7 +1102,9 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
     const harnessSelect = host.querySelector('#agent-spawn-harness');
     setValue(harnessSelect, 'codex');
     await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
-    await flush(harness);
+    await settleUntil(harness, () => /Codex CLI built-in/.test(host.querySelector('#agent-spawn-sandbox-impl')?.options[0]?.textContent || '')
+      && /Codex sandbox mode/.test(host.querySelector('#agent-spawn-sandbox')?.closest('.cron-create-row')?.textContent || ''),
+      'the resolved Codex launch defaults');
 
     assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
       'the row is untouched — this is the resolved-default path, not an explicit pick');

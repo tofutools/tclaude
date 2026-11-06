@@ -521,18 +521,15 @@ function PermissionFilter({ value, onChange }) {
 // selectors all arrive from the daemon, so a dimension added by a later phase
 // is editable here the moment the daemon advertises it.
 //
-// The free-text field is the ONLY way to narrow a dimension the daemon has no
-// catalogue for (remote, process_template, target_agent), so a value typed
-// there must not depend on the operator knowing to press Enter. The rule is:
-// a typed value commits whenever the box is left (Enter, the + button, blur),
-// and onDraft reports whatever is still uncommitted so Save can flush it
-// instead of silently discarding it. A box that leaves the screen without
-// committing withdraws its draft (the unmount cleanup below), so what Save
+// Every dimension, however short its catalogue, is one type-to-filter box
+// (tcl-4wt1wu) that also takes a typed value: the ONLY way to narrow a
+// dimension the daemon has no catalogue for (remote, process_template,
+// target_agent). So a typed value must not depend on the operator knowing to
+// press Enter: it commits on Enter or when the box is left, and onDraft
+// reports whatever is still uncommitted so Save can flush it instead of
+// silently discarding it. A box that leaves the screen without committing
+// withdraws its draft (ScopeDimCombobox's unmount cleanup), so what Save
 // writes is always what the dialog was showing.
-// ScopeDimEditor edits one dimension of a grant's scope: one type-to-filter
-// box over the values the daemon offers (tcl-4wt1wu), however few, which
-// also takes a typed value. A short catalogue used to be a "+ add…" <select>
-// beside a free-text box; the box is both now.
 function ScopeDimEditor(props) {
   return html`<${ScopeDimCombobox} ...${props} />`;
 }

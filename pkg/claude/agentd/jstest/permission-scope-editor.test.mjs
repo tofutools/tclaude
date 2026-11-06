@@ -43,8 +43,6 @@ async function openEditor(harness, snapshot, actions, descriptor = null) {
   return { host, mounted, state };
 }
 
-// The test DOM exposes select.value as a getter only, so a choice is made the
-// way a browser records one: by moving the selected attribute.
 // dimBox is one dimension's type-to-filter box (its .perm-scope-dim row);
 // dimInput the box's input.
 const dimBox = (host, dim) => host.querySelector(`.perm-scope-dim[data-dim="${dim}"]`);
@@ -778,7 +776,7 @@ test('a per-kind row an umbrella covers says so, in counts', async (t) => {
   await opened.mounted.unmount();
 });
 
-test('a long snapshot catalogue switches the dimension to the searchable box', async (t) => {
+test('every dimension, short catalogue or long, is the searchable box', async (t) => {
   const harness = await createPreactHarness(t);
   const groups = Array.from({ length: 30 }, (_, i) => `group-${i}`);
   const saved = [];
