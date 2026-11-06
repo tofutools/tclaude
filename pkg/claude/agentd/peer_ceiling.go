@@ -58,7 +58,11 @@ import (
 //     holds to roles, which no peer may;
 //   - global agent.* gates, which also reach agents in no group, where no
 //     peer grant reaches; their group-scoped siblings are the grantable form;
-//   - anything outside the reach registry or still pending.
+//   - anything outside the reach registry or still pending;
+//   - a group-scoped slug whose gate runs once per group in one request: a
+//     peer's one-shot ask-human approval (peer_human_inbox.go) is checked
+//     against the first gate's scope and then passes the slug's later gates
+//     in that request, so it would reach the other groups too.
 var peerCeilingSlugs = map[string]bool{
 	// An agent's controls, held in every group of the agent.
 	PermGroupsMembersInterrupt:     true,

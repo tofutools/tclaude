@@ -193,7 +193,10 @@ export function approveConsequence(r, node) {
 
 function InboxReader({ item, onClose, actions, confirm, toast }) {
   const { node, label, kind, data, markable = true, answers = true } = item;
-  // An older node sends no approvable flag; it serves only unrestricted trust.
+  // An older node sends no approvable or answerable flag; it serves only
+  // unrestricted trust. A request this node may not answer (the answer grant
+  // missing in one of the requester's groups) is answered where it is.
+  const decides = answers && data.answerable !== false;
   const approvable = data.approvable !== false;
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
@@ -217,11 +220,11 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
       ${(data.target_group || data.target_conv_title) && html`<div class="muted">target: ${data.target_group ? `group ${data.target_group}` : ''}${data.target_conv_title ? ` ${data.target_conv_title}` : ''}</div>`}
       ${data.body && html`<pre class="remote-inbox-body">${data.body}</pre>`}
       <div class="muted">One answer for this one request; the call runs with all its effects. "Always allow" stays on ${label}'s own dashboard.</div>
-      ${!answers ? html`<div class="muted">Answer this one on ${label}'s own dashboard.</div>`
+      ${!decides ? html`<div class="muted">Answer this one on ${label}'s own dashboard.</div>`
         : !approvable && html`<div class="muted" id="remote-inbox-approve-reason">Approve stays on ${label}: ${data.approve_reason || 'not yours to approve'}</div>`}
       <div class="modal-buttons"><span class="spacer"></span>
-        ${answers && html`<${Button} id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</${Button}>`}
-        ${answers && html`<${Button} variant="primary" id="remote-inbox-approve" disabled=${busy || !approvable} title=${approvable ? '' : data.approve_reason || ''} onClick=${approve}>Approve once…</${Button}>`}
+        ${decides && html`<${Button} id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</${Button}>`}
+        ${decides && html`<${Button} variant="primary" id="remote-inbox-approve" disabled=${busy || !approvable} title=${approvable ? '' : data.approve_reason || ''} onClick=${approve}>Approve once…</${Button}>`}
         <${Button} onClick=${onClose}>Close</${Button}></div>`
     : html`
       <h3 id="remote-inbox-title">${data.subject || '(no subject)'} <span class="muted">@${label}</span></h3>

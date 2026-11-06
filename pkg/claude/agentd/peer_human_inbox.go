@@ -75,7 +75,9 @@ type peerAccessRequest struct {
 	Deadline        string `json:"deadline,omitempty"`
 	// Approvable says whether this peer may approve the request now; when it
 	// may not, ApproveReason says why (it may still deny).
-	Approvable    bool   `json:"approvable"`
+	Approvable bool `json:"approvable"`
+	// Answerable says whether this peer may deny it (and so answer it at all).
+	Answerable    bool   `json:"answerable"`
 	ApproveReason string `json:"approve_reason,omitempty"`
 }
 
@@ -258,6 +260,11 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		body, cut := capText(m.Body, peerHumanInboxBodyMax)
 		pm := peerHumanMessage{ID: m.ID, FromAgent: m.FromAgent, FromTitle: m.FromTitle, Group: m.GroupName, Subject: m.Subject,
 			Body: body, Truncated: cut, CreatedAt: m.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"), Read: !m.ReadAt.IsZero(), Replyable: humanInboxReplyable(m)}
+		if restricted && pm.Replyable {
+			// Read in this group, but answered only where the answer grant is.
+			g, ok := peerHumanMessageGroup(peer, m, PermHumanInboxRead)
+			pm.Replyable = ok && fedPeerAllows(peer, g.ID, PermHumanInboxAnswer)
+		}
 		for _, a := range m.Attachments {
 			pm.Attachments = append(pm.Attachments, a.Filename)
 		}
@@ -265,19 +272,20 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 	}
 	requests := []peerAccessRequest{}
 	for _, ar := range localPendingAccessRequests() {
-		approvable, reason := true, ""
+		approvable, answerable, reason := true, true, ""
 		if restricted {
 			req := pendingApproval(ar.ID)
 			if !peerHumanInboxRequestSeen(peer, req, PermHumanInboxRead) {
 				continue
 			}
+			answerable = peerHumanInboxRequestSeen(peer, req, PermHumanInboxAnswer)
 			reason = peerHumanInboxApproveFailure(peer, req)
 			approvable = reason == ""
 		}
 		body, _ := capText(ar.Body, peerHumanInboxBodyMax)
 		requests = append(requests, peerAccessRequest{ID: ar.ID, Perm: ar.Perm, AgentID: ar.AgentID, Title: ar.ConvTitle, Path: ar.Path, Body: body,
 			TargetGroup: ar.TargetGroup, TargetConvTitle: ar.TargetConvTitle, CreatedAt: ar.CreatedAt, Deadline: ar.Deadline,
-			Approvable: approvable, ApproveReason: reason})
+			Approvable: approvable, Answerable: answerable, ApproveReason: reason})
 	}
 	writeJSON(w, 200, map[string]any{"messages": messages, "access_requests": requests})
 }

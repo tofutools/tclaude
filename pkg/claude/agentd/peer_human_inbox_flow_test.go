@@ -162,6 +162,7 @@ type peerInboxView struct {
 	AccessRequests []struct {
 		ID            string `json:"id"`
 		Approvable    bool   `json:"approvable"`
+		Answerable    bool   `json:"answerable"`
 		ApproveReason string `json:"approve_reason"`
 	} `json:"access_requests"`
 }
@@ -278,7 +279,27 @@ func TestPeerHumanInboxWithinGrantedGroups(t *testing.T) {
 	}
 	require.Len(t, audited, 3, "every answer is audited with the peer: %v", audited)
 
+	// Read in a group the peer does not answer in: shown, but not answerable.
+	h.grant(t, agentd.PermHumanInboxRead, "group=secret")
+	got = read()
+	replyable := map[int64]bool{}
+	for _, m := range got.Messages {
+		replyable[m.ID] = m.Replyable
+	}
+	require.Equal(t, map[int64]bool{hidden: false, elsewhere: false}, replyable, "the replied notice is read now")
+	answerable := map[string]bool{}
+	for _, r := range got.AccessRequests {
+		answerable[r.ID] = r.Answerable
+	}
+	require.Equal(t, map[string]bool{"rB": false, "rC": false}, answerable, "rA was answered")
+	for _, id := range []string{"rB", "rC"} {
+		code, body = decide(id, "deny")
+		require.Equal(t, 403, code, "no answer grant in every group of the agent: %s %s", id, body)
+	}
+	code, body = reply(hidden)
+	require.Equal(t, 404, code, body)
+
 	// Unrestricted trust still reads every notice.
 	h.trustUnrestricted(t)
-	require.Len(t, read().Messages, 3, "unrestricted trust reads them all (the replied notice is still unread)")
+	require.Len(t, read().Messages, 3, "unrestricted trust reads every unread one, the senderless one too")
 }

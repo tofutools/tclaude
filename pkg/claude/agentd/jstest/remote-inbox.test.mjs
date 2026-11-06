@@ -171,3 +171,24 @@ test('a peer granting human.inbox within groups serves its human-inbox; replies 
   assert.match(harness.document.querySelector('#remote-inbox-approve-reason').textContent, /exceed what you may grant here/);
   await mounted.unmount();
 });
+
+test('a request the peer may read but not answer shows no decisions', async (t) => {
+  const { harness, m } = await load(t);
+  const peers = [{ id: 'inst_ops', name: 'ops', level: 'restricted', online: true }];
+  const urls = [];
+  const view = { level: 'restricted', included: ['human.inbox', 'human.inbox.answer'], omitted: [{ feature: 'node.messages', requires: 'node.messages.read' }] };
+  await m.readRemoteInboxes(peers, async (url) => {
+    urls.push(url);
+    if (url.includes('mailbox')) return { ok: true, json: async () => ({ peer_view: view, messages: [] }) };
+    return { ok: true, json: async () => ({ peer_view: view, messages: [{ id: 7, subject: 'q', body: 'b', read: false, replyable: false }],
+      access_requests: [{ id: 'r9', perm: 'groups.roster.read', approvable: false, answerable: false, approve_reason: 'requires human.inbox.answer' }] }) };
+  });
+  assert.deepEqual(urls, ['/api/peer/inst_ops/mailbox?id=human&unread=1&page=1&page_size=50', '/api/peer/inst_ops/human-inbox'], 'its view says it shares human.inbox');
+  const ops = m.remoteInbox.value.inst_ops;
+  assert.deepEqual([ops.error, ops.messages.length, ops.access_requests.length, ops.answers], ['', 1, 1, true]);
+  const mounted = await harness.mount(harness.html`<${m.RemoteInboxSection} inbox=${m.remoteInbox.value} actions=${{}} confirm=${async () => true} toast=${() => {}} />`);
+  await harness.act(() => harness.document.querySelector('[data-request="r9"]').click());
+  assert.equal(harness.document.querySelector('#remote-inbox-deny'), null, 'not answerable here: no Deny');
+  assert.equal(harness.document.querySelector('#remote-inbox-approve'), null);
+  await mounted.unmount();
+});
