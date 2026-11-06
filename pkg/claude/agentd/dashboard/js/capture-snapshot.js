@@ -9,6 +9,8 @@
 // labelled. With no form open it covers what is visible.
 // dashboard-imperative-boundary: browser-io
 
+import { CHOICE_FIELD } from './choice-fill.js';
+
 export const CAPTURE_MASK = '••••••••';
 export const MASKED = '[data-capture-mask], input[type="password"], input[autocomplete$="-password"]';
 // A diff dialog echoes values whose own fields are masked, and the file behind
@@ -128,6 +130,14 @@ function readField(source, tag) {
   if (kind === 'hidden') return null;
   if (kind === 'checkbox' || kind === 'radio') return { kind, checked: !!source.checked };
   if (kind === 'file') return { kind };
+  // A type-to-filter choice's box (choice-fill.js) offers its choice's rows,
+  // which are not in the page until it opens.
+  const choice = source.closest(CHOICE_FIELD);
+  if (choice) {
+    const rows = (choice.choiceItems || []).filter((item) => !item.disabled)
+      .map((item) => ({ label: spaced(item.label || item.key), masked: !!choice.closest(MASKED) }));
+    return { kind, value: source.value, choices: rows, pick: true };
+  }
   const list = source.getAttribute('list');
   const choices = list ? [...(source.ownerDocument.getElementById(list)?.options || [])]
     .map((option) => ({ label: spaced(option.value), masked: !!option.closest(MASKED) })) : [];
@@ -393,7 +403,7 @@ function fieldValue(node) {
     const picked = field.options.filter((option) => option.selected).map((option) => JSON.stringify(option.label));
     return `${picked.join(', ') || '(none)'} (options: ${listed(field.options.map((option) => option.label))})`;
   }
-  const choices = field.choices?.length ? ` (suggestions: ${listed(field.choices.map((choice) => choice.label))})` : '';
+  const choices = field.choices?.length ? ` (${field.pick ? 'choices' : 'suggestions'}: ${listed(field.choices.map((choice) => choice.label))})` : '';
   return `${quoted(field.value)}${choices}`;
 }
 

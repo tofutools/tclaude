@@ -856,6 +856,10 @@ names that agent. The spawn form and Config take fills. Field ids come from
 [`guide capture --form`](#form-values-as-text).
 
 - A fill never submits and presses nothing. You read what landed, then act.
+- A select takes an option's label or value, and a checkbox `true` or `false`. A
+  type-to-filter box, such as the spawn form's group or worktree, takes a choice's
+  label or value, as the capture lists them. It can be named by its own id or by its
+  box's (`agent-spawn-group` or `agent-spawn-group-input`).
 - Values go through each field's own handling, so a harness change updates its
   dependent fields and the normal validation runs. A field reports `filled`,
   `filled_changed` if the form altered the value, or why it was refused.

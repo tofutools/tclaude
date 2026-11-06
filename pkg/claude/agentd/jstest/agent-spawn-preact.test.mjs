@@ -2414,8 +2414,47 @@ test('a worktree picked from the box is the operator\'s: a fill that would reset
     assert.equal((await fill('agent-spawn-cwd', '/elsewhere')).fields[0].status, 'operator_edited',
       'a CWD fill would clear the picked worktree');
     assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
-    assert.equal((await fill('agent-spawn-worktree', '')).fields[0].status, 'not_fillable',
-      'the box itself is not a field a value is written into');
+    assert.equal((await fill('agent-spawn-worktree', '')).fields[0].status, 'operator_edited',
+      'the picked box itself is the operator\'s');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// tcl-alhauf: a type-to-filter choice is a fill target as a <select> is. A
+// fill sets it through its own handler (the group moves the directory, as a
+// pick does), by its key, its label or its box's id; an operator's pick then
+// holds it against the next fill.
+test('an agent fills the group box, and the operator\'s later pick holds against the next fill', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const group = () => host.querySelector('#agent-spawn-group');
+    const tick = () => flush(harness);
+    const fill = (field, value) => fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } });
+    assert.equal((await fill('agent-spawn-group', 'no-such-group')).fields[0].status, 'not_an_option');
+    const filled = (await fill('agent-spawn-group-input', 'beta')).fields[0];
+    assert.equal(filled.field, 'agent-spawn-group', 'a fill of the box answers for its choice');
+    assert.equal(filled.status, 'filled');
+    assert.equal(filled.widens, 'group, directory', 'the group moves the directory, and the warning says so');
+    assert.ok(filled.moved.includes('agent-spawn-cwd'));
+    assert.equal(group().dataset.value, 'beta');
+    assert.equal(host.querySelector('#agent-spawn-group-input').value, 'beta', 'the box shows the filled choice');
+    assert.ok(fills.filledIn('spawn').some((field) => field.id === 'agent-spawn-group' && field.before === 'alpha'), 'the fill is listed, for its undo');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    assert.equal(group().dataset.value, 'alpha', 'undo puts the group back');
+    await comboPick(harness, group(), 'beta');
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-group', 'alpha')).fields[0].status, 'operator_edited', 'the operator\'s pick holds');
+    assert.equal(group().dataset.value, 'beta');
   } finally {
     mounted.cleanup();
   }

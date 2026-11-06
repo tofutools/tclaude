@@ -374,3 +374,15 @@ test('every field that looks like it holds a secret is masked', () => {
   assert.deepEqual(unmarked, [], 'add data-capture-mask, or list the field in NOT_SECRET with what it holds');
   assert.deepEqual([...NOT_SECRET.keys()].filter((id) => !allowed.has(id)), [], 'NOT_SECRET lists a field that no longer needs it');
 });
+
+// tcl-alhauf: a type-to-filter choice's rows are not in the page until it
+// opens, so its box lists them, as a <select> lists its options, for an agent
+// to fill it by.
+test('a type-to-filter choice lists what it offers, and none it cannot be given', () => {
+  const win = page(`<div aria-modal="true" aria-label="Spawn" data-rect="0 0 800 600">
+    <div id="grp" data-fill-choice data-value="beta"><input id="grp-input" aria-label="Group" value="beta"></div>
+  </div>`);
+  win.document.getElementById('grp').choiceItems = [{ key: 'alpha', label: 'alpha' }, { key: 'beta', label: 'beta' }, { key: 'gone', label: 'gone', disabled: true }];
+  const text = textOf(win);
+  assert.match(text, /Group \[text, #grp-input\]: "beta" \(choices: alpha, beta\)/);
+});

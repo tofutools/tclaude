@@ -34,7 +34,8 @@ func guideFillCmd() *cobra.Command {
 			"and presses nothing. Filled fields stay highlighted and can be undone in one click, and a change that widens access " +
 			"shows a warning with your name. It refuses a password or marked field and any field the operator edited. Each field " +
 			"reports what became of it. Needs dashboard.forms.fill.\n\n" +
-			"A select takes an option's label or value, and a checkbox true or false. Fields apply in order, so set a harness before its model.\n\n" +
+			"A select takes an option's label or value, and a checkbox true or false. A type-to-filter box (its capture lists its choices) takes " +
+			"a choice's label or value, by its own id or its box's, or an empty value where it can be cleared. Fields apply in order, so set a harness before its model.\n\n" +
 			"Example: tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer --set agent-spawn-harness=codex",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideFillParams, _ *cobra.Command, _ []string) {
