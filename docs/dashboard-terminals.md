@@ -45,6 +45,13 @@ edge is too short to count. A fast snap into the edge zone from further out
 reveals the panel at once, without the short wait, even if it runs past the
 window's edge.
 
+Moving the pointer out of the browser window, by any edge, freezes all of this:
+a panel that is open stays open, a folded one stays folded, and a peek stays
+where it is until the pointer comes back. From the first move back in, the
+usual rules apply. Back on the page beside an open panel, for example, it goes
+after the usual delay. **Esc**, switching tabs and the panel's Hide button still
+work while the pointer is outside.
+
 To turn this off, uncheck **Side panel at the edge** on the Config tab
 (`dashboard.side_panel_edge_reveal`). The peek and its growth have switches of
 their own there, and **Advanced** holds the values that tune them. None of
