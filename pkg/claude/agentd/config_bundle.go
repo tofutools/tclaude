@@ -679,7 +679,8 @@ func planConfigBundleItem(r *http.Request, caller, section string, item configbu
 		if hash != "" && !replace {
 			return func() error { return errors.New("process template already exists") }, nil
 		}
-		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) {
+		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) &&
+			!agentHoldsResourceLock(r, resourceKindProcess, parsed.Template.ID) {
 			return nil, &resourceLockedError{what: "process template " + parsed.Template.ID}
 		}
 		return func() error { _, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, hash); return err }, nil

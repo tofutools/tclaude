@@ -683,6 +683,11 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A caller holding the lock slug for a locked page may still replace or
+	// adopt it. Checking that reads the page registry, so it is settled here,
+	// before reg.mu: a page that changes in between is judged locked.
+	held := pageLocksHeld(r, lockedPagesFor(agentID, name, adopt, savedID, savedLocked)...)
+
 	now := time.Now().UTC()
 	reg := livePages
 	pageSaveMu.Lock()
@@ -691,7 +696,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	existing := reg.byOwner[agentID][name]
 	if adopt != nil {
 		var refused func()
-		existing, refused = adoptGroupPageLocked(w, reg, adopt, agentID, name, existing)
+		existing, refused = adoptGroupPageLocked(w, reg, adopt, agentID, name, existing, held)
 		if refused != nil {
 			reg.mu.Unlock()
 			closeStageUpstream(up)
@@ -699,15 +704,19 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if existing != nil && existing.agentsLocked {
+	// A lock holder replaces its locked page in place; moving it into another
+	// group, or out of one, is still refused.
+	if existing != nil && existing.agentsLocked && (!held[existing.id] || existing.groupID != groupID) {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)
 		return
 	}
 	// The operator's lock on the saved page refuses any show that would
-	// replace it: one from another group, a takeover, or a fresh show.
-	if savedLocked && (existing == nil || existing.id != savedID) {
+	// replace it: one from another group, a takeover, or a fresh show. A lock
+	// holder may reopen that page itself, and nothing else in its place.
+	reopensSaved := existing == nil && adopt == nil && reg.byID[savedID] == nil
+	if savedLocked && (existing == nil || existing.id != savedID) && (!held[savedID] || !reopensSaved) {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)
@@ -742,15 +751,20 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		p.stage.notifyReload()
 	default:
 		p = &livePage{id: newPageID(), owner: agentID, name: name, shownAt: now}
-		if existing == nil && adopt == nil && savedID != "" && reg.byID[savedID] == nil {
+		if reopensSaved && savedID != "" {
 			p.id = savedID
-			// A closed saved page reopens with the marks and patches it kept.
+			// A closed saved page reopens with the marks and patches it kept,
+			// and the operator's lock (only a lock holder reopens a locked one).
+			p.agentsLocked = savedLocked
 			restoreSavedCollab(p.id, kept)
 		}
 		if existing != nil {
 			// Another kind of source: a fresh origin (and token), so nothing
 			// the old origin's code holds can reach the new source.
 			p.id, p.shownAt = existing.id, existing.shownAt
+			// The same page keeps the operator's lock: only a lock holder
+			// replaces or adopts a locked one.
+			p.agentsLocked = existing.agentsLocked
 			if adopt != nil {
 				// A takeover keeps what the operator drew on the page, and
 				// nothing else.
