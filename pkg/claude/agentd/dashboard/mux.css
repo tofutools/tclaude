@@ -704,6 +704,9 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
   border: 1px solid rgba(56, 139, 253, .5); background: rgba(31, 111, 235, .18); color: #79c0ff; }
 .collab-rail .cr-new:hover, .collab-rail .cr-new[aria-expanded="true"] { background: rgba(31, 111, 235, .3); color: #cae3ff; }
 .collab-rail .cr-section-row { display: flex; align-items: center; gap: 2px; }
+/* An agent, board or page dragged over another group's section moves there
+   (collab-rail-actions.js): the section is outlined as the Groups tab's box is. */
+.collab-rail .cr-section.cr-drop-over { outline: 2px dashed var(--ui-focus, #58a6ff); outline-offset: -2px; border-radius: 4px; background: rgba(31, 49, 72, 0.4); }
 .collab-rail .cr-section-row .cr-section-head { flex: 1 1 auto; min-width: 0; }
 .collab-rail .cr-section-add { color: #58a6ff; font-size: 13px; }
 .collab-rail .cr-new-menu, .collab-rail .cr-new-list { position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: var(--z-popover);

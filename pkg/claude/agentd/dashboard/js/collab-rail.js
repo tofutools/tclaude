@@ -203,7 +203,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
       ${sections.map((section) => {
         const shut = !searching && folded.has(section.name);
         const group = making ? groupByID.get(section.id) : null;
-        return html`<div key=${section.id} class=${`cr-section${shut ? ' is-folded' : ''}`} data-rail-group=${section.name}>
+        return html`<div key=${section.id} class=${`cr-section${shut ? ' is-folded' : ''}`} data-rail-group=${section.name} data-rail-group-id=${section.id}>
           <div class="cr-section-row">
             <button data-ui-exempt type="button" class="cr-section-head" aria-expanded=${shut ? 'false' : 'true'}
               onClick=${() => toggleFolded(section.name)}>
