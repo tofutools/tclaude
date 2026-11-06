@@ -61,7 +61,10 @@ column header to sort.
 
 Extra rows appear at the end of the list, depending on ▾ view:
 
-- **Ungrouped**: agents in no group.
+- **Ungrouped**: agents in no group. With Both on, it has the same Agents and
+  Resources sections as a real group. Resources lists the boards that are in
+  no group, such as one made from the Collab panel's ＋ New. To move a board
+  into a group, use its ⋯ → **Move to group**.
 - **Conversations**: sessions tclaude knows that are not agents yet.
   **promote** makes one an agent.
 - **Retired**: retired agents, with who retired them and why. **reinstate**

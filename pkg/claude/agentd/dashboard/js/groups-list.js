@@ -763,7 +763,7 @@ function VirtualUngrouped({ group, snapshot, actions }) {
       /></div>`
       : html`<${MemberTable} members=${view.visible} tableKey="virtual:ungrouped" ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   const body = !processes ? agentsBody
-    : processes.fused ? html`${agentsBody}<${UngroupedProcessBody} group=${group} />`
+    : processes.fused ? html`<${UngroupedProcessBody} group=${group} agents=${agentsBody} count=${view.members.length} />`
       : html`<${UngroupedProcessBody} group=${group} />`;
   return html`<${VirtualShell} group=${group} target="ungrouped" summary=${summary}>${body}<//>`;
 }
