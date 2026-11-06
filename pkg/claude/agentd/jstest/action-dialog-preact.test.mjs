@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 function deferred() {
   let resolve;
@@ -177,7 +178,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   assert.equal(host.querySelector('#clone-agent-error').childNodes.length, 0,
     'the shared :empty rule must collapse an error banner before an error exists');
   const worktree = host.querySelector('#clone-agent-worktree');
-  assert.ok([...worktree.options].some((option) => option.value === 'wt:/repo-wt'));
+  assert.ok((await comboKeys(harness, worktree)).includes('wt:/repo-wt'));
 
   const followUp = host.querySelector('#clone-agent-followup');
   followUp.value = 'continue\ncarefully';
@@ -189,9 +190,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#clone-agent-modal'), 'discard rejection keeps a dirty dialog open');
 
-  [...worktree.options].forEach((option) => option.removeAttribute('selected'));
-  worktree.querySelector('option[value="wt:/repo-wt"]').setAttribute('selected', '');
-  await harness.act(() => worktree.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  await comboPick(harness, worktree, 'wt:/repo-wt');
   host.querySelector('#clone-agent-submit').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls[0], ['clone', {

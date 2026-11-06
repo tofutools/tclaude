@@ -123,11 +123,9 @@ const FIELD_CONTROLS = Object.freeze({
   'agent-spawn-context-window-max': 'features',
   'agent-spawn-group-context': 'features',
   'agent-spawn-wt-repo': 'worktree',
-  'agent-spawn-worktree': 'worktree',
   'agent-spawn-wt-sync': 'worktree',
   'agent-spawn-wt-fetch': 'worktree',
   'agent-spawn-wt-branch': 'worktree',
-  'agent-spawn-wt-base': 'worktree',
 });
 
 function text(value) { return typeof value === 'string' ? value : ''; }

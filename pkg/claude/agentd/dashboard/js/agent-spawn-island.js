@@ -15,7 +15,8 @@ import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
-import { relTime, shortCwd } from './helpers.js';
+import { relTime } from './helpers.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
@@ -1864,21 +1865,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <${Select} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
-        onChange=${(event) => {
+      <${WorktreeCombobox} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
+        worktrees=${worktrees.worktrees || []} newKey=${worktreeUsable ? WT_NEW : ''} noneLabel=${worktreeEmptyLabel}
+        attrs=${{ 'data-remote-spawn-field': 'worktree' }}
+        onChange=${(value) => {
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
-          setDraft((before) => selectSpawnWorktree(before, event.currentTarget.value));
-        }}>
-        <option value="">${worktreeEmptyLabel}</option>
-        ${(worktrees.worktrees || []).map((worktree) => {
-          const branch = worktree.branch || '(detached)';
-          const main = worktree.is_main ? ' [main]' : '';
-          return html`<option key=${worktree.path} value=${`wt:${worktree.path}`}
-            title=${`${branch}${main} — ${worktree.path}`}>${branch}${main} — ${shortCwd(worktree.path)}</option>`;
-        })}
-        ${worktreeUsable && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      <//>
+          setDraft((before) => selectSpawnWorktree(before, value));
+        }} />
     </label>
     <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-sync-row"
       title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
@@ -1915,10 +1909,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-wt-base-row"
       hidden=${draft.worktree !== WT_NEW || !worktrees.hasCommits}>
       <span class="cron-create-label">Base branch</span>
-      <${Select} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
-        onChange=${(event) => update('worktreeBase', event.currentTarget.value)}>
-        ${(worktrees.branches || []).map((branch) => html`<option key=${branch} value=${branch}>${branch}</option>`)}
-      <//>
+      <${BranchCombobox} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
+        branches=${worktrees.branches || []} attrs=${{ 'data-remote-spawn-field': 'worktree' }}
+        onChange=${(value) => update('worktreeBase', value)} />
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>

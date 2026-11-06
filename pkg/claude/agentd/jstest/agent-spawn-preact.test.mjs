@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { comboPick } from './combobox-helpers.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 const groups = [{
   name: 'alpha',
@@ -1204,9 +1204,13 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     setValue(role, 'manual-role');
     await harness.act(() => harness.fireEvent(role, 'input'));
 
-    const worktree = host.querySelector('#agent-spawn-worktree');
-    setValue(worktree, '__new__');
-    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    // The new-worktree choice is offered once the worktrees have loaded.
+    for (let attempt = 0; !host.querySelector('#agent-spawn-worktree [data-key="__new__"]'); attempt += 1) {
+      if (attempt > 300) assert.fail('timed out waiting for the worktrees to load');
+      await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+      await comboKeys(harness, host.querySelector('#agent-spawn-worktree'));
+    }
+    await comboPick(harness, host.querySelector('#agent-spawn-worktree'), '__new__');
     const branch = host.querySelector('#agent-spawn-wt-branch');
     setValue(branch, 'manual-branch');
     await harness.act(() => harness.fireEvent(branch, 'input'));
@@ -1331,9 +1335,8 @@ test('Preact agent-spawn preserves direct worktree edits across a delayed profil
     await flush(harness);
     await settleWorktrees(harness);
     const worktree = host.querySelector('#agent-spawn-worktree');
-    assert.match(worktree.textContent, /create new worktree/);
-    setValue(worktree, '__new__');
-    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    assert.ok((await comboKeys(harness, worktree)).includes('__new__'), 'the new-worktree choice is offered');
+    await comboPick(harness, worktree, '__new__');
     assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     const branch = host.querySelector('#agent-spawn-wt-branch');
     setValue(branch, 'feature/manual');
@@ -1373,7 +1376,7 @@ test('Preact agent-spawn waits for worktree metadata before applying name sync',
       worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
     });
     await settleWorktrees(harness);
-    assert.equal(selectedValue(host.querySelector('#agent-spawn-worktree')), '__new__');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
     host.querySelector('#agent-spawn-submit').click();
     await flush(harness);
     assert.equal(spawnCalls, 1);
