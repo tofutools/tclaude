@@ -65,6 +65,7 @@ func TestProxyEditSendsOnlyWhatWasGiven(t *testing.T) {
 			{"body only", map[string]any{"body": "  as written\n"}, nil, "  as written\n"},
 			{"both", map[string]any{"title": "T", "body": "B"}, "T", "B"},
 			{"blank title with a body", map[string]any{"title": "   ", "body": "B"}, nil, "B"},
+			{"title with a blank body", map[string]any{"title": "T", "body": "  \n"}, "T", nil},
 		} {
 			t.Run(p.name+"/"+tc.name, func(t *testing.T) {
 				f, payloads := p.world(t)
@@ -86,6 +87,8 @@ func TestProxyEditSendsOnlyWhatWasGiven(t *testing.T) {
 	}
 }
 
+// The body's own size limit (validateGHBody) is not reachable through an
+// edit: the proxy's request cap is smaller and refuses first.
 func TestProxyEditRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -96,7 +99,6 @@ func TestProxyEditRefusals(t *testing.T) {
 		{"blank title and body", map[string]any{"title": " ", "body": " \n"}, "nothing to edit: pass a title, a body, or both"},
 		{"dash title", map[string]any{"title": "-x"}, ""},
 		{"long title", map[string]any{"title": strings.Repeat("t", 1000)}, ""},
-		{"long body", map[string]any{"title": "ok", "body": strings.Repeat("b", 1<<20)}, ""},
 	} {
 		var bodies []string
 		for _, p := range editProxies() {
