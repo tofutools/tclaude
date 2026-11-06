@@ -194,14 +194,16 @@ func TestFetchPathsRefreshOn429OnlyWhenOptedIn(t *testing.T) {
 			assert.Same(t, err429, p.run(t, fetch))
 			assert.Zero(t, *refreshes)
 		})
-		t.Run(p.name+"/a non-429 is not refreshed", func(t *testing.T) {
-			setupTestCache(t)
-			stubCandidates(t, func() []tokenCandidate { return []tokenCandidate{{token: "first", store: storeFile}} })
-			t.Setenv("TCLAUDE_DEBUG_REFRESH", "1")
-			refreshes := stubRefresh(t, "refreshed", nil)
-			fetch, _ := script(err500)
-			assert.Same(t, err500, p.run(t, fetch))
-			assert.Zero(t, *refreshes)
-		})
+		for name, stop := range map[string]error{"500": err500, "auth": errAuth} {
+			t.Run(p.name+"/a "+name+" is not refreshed", func(t *testing.T) {
+				setupTestCache(t)
+				stubCandidates(t, func() []tokenCandidate { return []tokenCandidate{{token: "first", store: storeFile}} })
+				t.Setenv("TCLAUDE_DEBUG_REFRESH", "1")
+				refreshes := stubRefresh(t, "refreshed", nil)
+				fetch, _ := script(stop)
+				assert.Same(t, stop, p.run(t, fetch))
+				assert.Zero(t, *refreshes)
+			})
+		}
 	}
 }
