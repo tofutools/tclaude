@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +112,21 @@ func TestHistoryExportContract(t *testing.T) {
 			assert.Nil(t, got)
 		})
 	}
+}
+
+// The cap: a history of exactly limit bytes exports, one byte more is
+// refused with the harness's message and no bytes, before validation.
+func TestReadHistoryExportCap(t *testing.T) {
+	open := func(s string) func() (io.ReadCloser, error) {
+		return func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(s)), nil }
+	}
+	validated := 0
+	validate := func([]byte) error { validated++; return nil }
+	got, err := readHistoryExport(open("12345"), 5, "too large", validate)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("12345"), got)
+	got, err = readHistoryExport(open("123456"), 5, "too large", validate)
+	assert.EqualError(t, err, "too large")
+	assert.Nil(t, got)
+	assert.Equal(t, 1, validated, "an oversized history is not validated")
 }

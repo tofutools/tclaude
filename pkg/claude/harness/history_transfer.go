@@ -101,22 +101,34 @@ func (j jsonlHistory) Open(convID, cwd string) (io.ReadCloser, error) {
 	return reader, nil
 }
 func (j jsonlHistory) Export(convID, cwd string) ([]byte, error) {
-	reader, err := j.Open(convID, cwd)
+	raw, err := readHistoryExport(func() (io.ReadCloser, error) { return j.Open(convID, cwd) }, agentbundle.MaxBytes,
+		"transcript exceeds federation.agent_transfer_max_bytes default (2 GiB)",
+		func(raw []byte) error { return j.Validate(raw, convID) })
 	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-	raw, err := io.ReadAll(io.LimitReader(reader, agentbundle.MaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > agentbundle.MaxBytes {
-		return nil, errors.New("transcript exceeds federation.agent_transfer_max_bytes default (2 GiB)")
-	}
-	if err := j.Validate(raw, convID); err != nil {
+		// Unlike the other harnesses, a transcript that fails validation
+		// hands back no bytes.
 		return nil, err
 	}
 	return raw, nil
+}
+
+// readHistoryExport is a history Export: open the stored history, read at
+// most limit bytes (one more tells an oversized one, refused as tooLarge),
+// then validate. The bytes come back with a validation error.
+func readHistoryExport(open func() (io.ReadCloser, error), limit int64, tooLarge string, validate func([]byte) error) ([]byte, error) {
+	r, err := open()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, errors.New(tooLarge)
+	}
+	return raw, validate(raw)
 }
 
 // rewriteHistory only replaces documented native identity/path fields at
