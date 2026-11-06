@@ -81,6 +81,12 @@ one, on every merge to main.
 
 ### macOS CI
 
+macOS on PRs is opt-in by design, not a gap to close. GitHub's hosted macOS
+capacity is too small for this repository to run macOS on every PR. The
+self-hosted runner described below is an experiment whose reliability is not
+yet known. Until it has a track record, darwin coverage relies on the macOS
+job that runs on every merge to main.
+
 Hosted macOS runners are concurrency-capped, and PR CI and Release share them.
 When none is free, a job fails with "The job was not acquired by Runner of type
 hosted even after multiple attempts" (in the jobs API: `conclusion: cancelled`,
@@ -167,6 +173,15 @@ PR CI's opted-in macOS jobs run on the repository's self-hosted macOS runner
 use) when the PR's head branch is in this repository, and on hosted `macos-latest`
 when it comes from a fork. Main keeps hosted macOS: `release.yml` and
 `manual-release.yml` are unchanged.
+
+The runner is an experiment. It is one Mac mini, and how it holds up under
+real PR load (uptime, job isolation, how persistent caches age, macOS updates)
+is still being measured. That is why main, which gates releases, stays on
+hosted macOS. A failure on `mini` that has nothing to do with the change (job
+setup, a cache or toolchain error, a timeout) may be the runner, so rerun the
+job. If it persists, report it, and if you need to unblock the PR, opt out by
+removing the label or pushing without the trailer. A failure in darwin-specific
+code is still most likely real: catching those is why a PR opts in.
 
 - **Routing.** The `Changes` job passes `--self-hosted-macos` to the
   classifier only when `github.event.pull_request.head.repo.full_name` equals
