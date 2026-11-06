@@ -1,4 +1,4 @@
-import { claimField } from './form-fill.js';
+import { claimChange, claimField } from './form-fill.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -17,6 +17,7 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
@@ -52,7 +53,6 @@ import {
   spawnNameHint,
   spawnContextFeatureIndicator,
   spawnPermissionIndicator,
-  spawnProfileChoices,
   spawnProfileSeed,
   syncSpawnWorktree,
   validateSpawnDraft,
@@ -255,21 +255,23 @@ function roleHoverText(role) {
     .filter(Boolean).join('\n\n');
 }
 
-// RemoteProfileOptions lists a remote spawn's profiles by library: the
-// target's (a profile the grant does not let this operator pick shows, but
-// cannot be chosen) and this node's. The selected one always shows.
-function RemoteProfileOptions({ profiles, remote, showFrom, selected }) {
+// remoteProfileItems are a remote spawn's profile choices, by library: the
+// target's (a profile its grant does not let you pick is listed, but cannot be
+// chosen; it may still be the target's default) and this node's, each shown
+// when its library is (showFrom) or it is the one chosen.
+function remoteProfileItems(profiles, remote, showFrom, selected) {
   const shown = (source) => profiles.filter((profile) => profile.remoteSource === source
     && (showFrom.includes(source) || profile.name === selected));
-  const label = (profile) => `${profile.localName || profile.name}${profile.disabled ? ' [🚫 disabled]' : ''}`;
-  const locked = (profile) => (profile.name === selected ? ` (${remote.node}'s default)` : ' (not in your grant)');
-  const target = shown('target');
-  const local = shown('local');
-  return html`
-    ${target.length ? html`<optgroup label=${`${remote.node}'s profiles`}>${target.map((profile) => html`<option key=${profile.name} value=${profile.name}
-      disabled=${!profile.remoteSelectable}
-      title=${profile.remoteSelectable ? '' : `${remote.node}'s grant does not let you pick this profile${profile.name === selected ? `; ${remote.node} applies it by default` : ''}`}>${label(profile)}${profile.remoteSelectable ? '' : locked(profile)}</option>`)}</optgroup>` : null}
-    ${local.length ? html`<optgroup label="This node's profiles (fills what the request carries)">${local.map((profile) => html`<option key=${profile.name} value=${profile.name}>${label(profile)}</option>`)}</optgroup>` : null}`;
+  const status = (profile) => (profile.disabled ? '🚫 disabled' : '');
+  const target = shown('target').map((profile) => ({
+    key: profile.name, label: profile.localName || profile.name, group: `${remote.node}'s profiles`, hint: status(profile),
+    disabled: !profile.remoteSelectable,
+    reason: profile.remoteSelectable ? '' : (profile.name === selected ? `${remote.node}'s default` : 'not in your grant'),
+  }));
+  const local = shown('local').map((profile) => ({
+    key: profile.name, label: profile.localName || profile.name, group: "This node's profiles (fills what the request carries)", hint: status(profile),
+  }));
+  return [...target, ...local];
 }
 
 // RemoteSourceFilter picks which libraries a remote spawn's profile and
@@ -768,6 +770,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // operatorProfile is the operator choosing a profile (or Clear): as a
+  // <select> change did, it claims the profile and every field it moves
+  // against agent form-fills. The picker sends no trusted change of its own.
+  const operatorProfile = (handle) => {
+    claimChange('spawn', 'agent-spawn-load-profile');
+    changeProfile(handle);
+  };
   // A remote spawn opened with a chosen profile (a palette or dock open on a
   // peer) picks it once the peer's profiles load, as the operator would: the
   // request then names it. One the grant does not let this operator pick
@@ -1398,16 +1407,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Loadout" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
-        <${Select} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
-          onChange=${(event) => changeProfile(event.currentTarget.value)}>
-          <option value="">${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'}</option>
-          ${remote
-            ? html`<${RemoteProfileOptions} profiles=${profiles} remote=${remote} showFrom=${showFrom} selected=${draft.profile} />`
-            : spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
-        <//>
+        <${ProfileCombobox} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
+          profiles=${profiles} aliases=${true} items=${remote ? remoteProfileItems(profiles, remote, showFrom, draft.profile) : null}
+          noneLabel=${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'} ariaLabel="Spawn profile"
+          attrs=${{ 'data-remote-spawn-field': 'profile' }}
+          onChange=${operatorProfile} />
         <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
-          onClick=${() => changeProfile('')}>Clear<//>
+          onClick=${() => operatorProfile('')}>Clear<//>
         <${Button} size="sm" id="agent-spawn-save-profile" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}

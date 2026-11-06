@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { comboPick } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const MONTHLY = { name: 'Monthly spend', metric: 'total_usd', period: 'month', budget: 500,
@@ -113,7 +114,8 @@ test('limits tab shows readings and saves a preset limit', async (t) => {
 test('assignments save per layer and agents can be snoozed or extended', async (t) => {
   const { host, mounted, calls, click, button, select, harness, flush } = await mountDialog(t, { tab: 'assignments' });
   assert.match(host.textContent, /Global default/);
-  await select('Add usage profile to All agents', 'standard');
+  await comboPick(harness, host.querySelector('[aria-label="Add usage profile to All agents"]').closest('.choice-combobox'), 'standard');
+  await flush();
   assert.deepEqual(calls.at(-1), ['assign', 'global', '', ['standard']]);
   await click(host.querySelector('[aria-label="Remove standard from tclaude"]'));
   assert.deepEqual(calls.at(-1), ['assign', 'group', 'tclaude', []]);

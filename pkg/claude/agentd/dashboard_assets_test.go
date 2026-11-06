@@ -425,8 +425,10 @@ func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 		"  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto auto;") {
 		t.Error("dashboard.css authored filesystem rows must use the shared segmented/path/action grid")
 	}
-	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {
-		t.Error("dashboard.css included-profile selector must retain intrinsic width")
+	// The included-profile choice is a type-to-filter box (tcl-986r2g), which
+	// has no intrinsic width of its own: it takes a bounded share of the row.
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1 1 14em; min-width: 0; max-width: 32em;") {
+		t.Error("dashboard.css included-profile choice must keep its bounded row share")
 	}
 }
 

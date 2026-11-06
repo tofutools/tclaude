@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { ProfileCombobox } from './profile-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
@@ -325,8 +326,7 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
     }).catch((e) => setError(e?.status === 409 ? `${errText(e)} — apply the profile to ${label} first (Profiles & pools).` : errText(e)));
   };
   return html`<${Dialog} id="fleet-offer-profile" onClose=${onClose} title="Offer a profile's config to a peer">
-    <label class="fa-of-row"><span class="fa-k">profile</span><${Select} size="sm" id="fleet-offer-profile-name" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
-      ${profiles.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">profile</span><${ProfileCombobox} id="fleet-offer-profile-name" value=${profile} profiles=${profiles} ariaLabel="Profile" onChange=${setProfile} /></label>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}

@@ -94,7 +94,9 @@ async function mountDialog(t, props) {
   await settle();
   // pickGroup chooses a receiving group in the group choice (#lt-group).
   const pickGroup = async (value) => { await comboPick(harness, q('#lt-group'), value); await settle(); };
-  return { harness, q, click, change, pickGroup, settle, setValue, timers, toasts, closed: () => closed };
+  // pickProfile chooses a morph's profile (#lt-morph-profile).
+  const pickProfile = async (value) => { await comboPick(harness, q('#lt-morph-profile'), value); await settle(); };
+  return { harness, q, click, change, pickGroup, pickProfile, settle, setValue, timers, toasts, closed: () => closed };
 }
 
 test('move from the ⚙ menu: pick a node, then a receiving group, then confirm', async (t) => {
@@ -146,9 +148,9 @@ test('morph previews the change with a dry run, then applies it at the next idle
   };
   const s = await mountDialog(t, { initialMode: 'morph', api, actions: {} });
   const select = s.q('#lt-morph-profile');
-  assert.deepEqual([...select.options].map((o) => o.getAttribute('value')), ['', 'codex-high'], 'disabled profiles are not offered');
+  assert.deepEqual(await comboKeys(s.harness, select), ['codex-high'], 'disabled profiles are not offered');
   assert.equal(s.q('#lt-ok').disabled, true, 'nothing to apply before a preview');
-  await s.change(select, 'codex-high');
+  await s.pickProfile('codex-high');
   assert.deepEqual(calls[0], ['conv_b1', { profile: 'codex-high', dry_run: true }]);
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
@@ -168,7 +170,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
 test('a refused morph preview says why and keeps the button off', async (t) => {
   const api = { status: async () => ({}), profiles: async () => [{ name: 'gem' }], morph: async () => { const e = new Error('x'); e.body = { error: 'gemini has no reasoning effort' }; throw e; } };
   const s = await mountDialog(t, { initialMode: 'morph', api, actions: {} });
-  await s.change(s.q('#lt-morph-profile'), 'gem');
+  await s.pickProfile('gem');
   assert.match(s.q('#launch-target [role=alert]').textContent, /no reasoning effort/);
   assert.equal(s.q('#lt-ok').disabled, true);
 });
@@ -352,7 +354,7 @@ test('large morph cut confirms once and waits visibly for the source summary; ca
     api:{status:async()=>({}),profiles:async()=>[{name:'small',harness:'codex'}], morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:null}),
       morph:async(id,body)=>{ sent.push(body); return body.dry_run ? {history:{budget_warning:true, needs_summary:true, dropped_percent:60,kept_percent:40,selection_reason:'summary with task and latest instructions'}} : body.cancel ? {} : {result:'pending',pending_morph:pending}; }},
   });
-  await s.change(s.q('#lt-morph-profile'),'small');
+  await s.pickProfile('small');
   assert.equal(s.q('#lt-ok').disabled,true);
   assert.match(s.q('#launch-target').textContent,/60%.*summary/);
   const confirm=s.q('#lt-confirm-cut');
@@ -398,7 +400,7 @@ test('encrypted compaction requests a handoff using the summary wait without a l
  const sent=[];
  const pending={history:'summary',handoff_reason:'encrypted_compaction_summary',expires_at:new Date(Date.now()+60000).toISOString()};
  const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
- await s.change(s.q('#lt-morph-profile'),'small');
+ await s.pickProfile('small');
  assert.match(s.q('#lt-ok').textContent,/Request handoff/);
  assert.match(s.q('#launch-target').textContent,/Compaction summary unreadable/);
  assert.equal(s.q('#lt-morph-now').disabled,true);

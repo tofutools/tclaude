@@ -680,9 +680,7 @@ test('an invite for an unrestricted profile repeats the consequence', async (t) 
   const s = await setup(t);
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
-  const sel = s.q('#fleet-invite-profile');
-  for (const o of sel.querySelectorAll('option')) { if (o.value === 'ops-full') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await comboPick(s.harness, s.q('#fleet-invite-profile'), 'ops-full');
   await s.click(s.q('#fleet-invite-create'));
   assert.match(s.confirms.at(-1).body, /at unrestricted trust — .*created later/);
 });

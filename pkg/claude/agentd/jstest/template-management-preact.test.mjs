@@ -210,7 +210,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     'the editor autofocuses its declared initial field',
   );
   assert.equal(host.querySelector('.ta-role-ref').tagName, 'SELECT');
-  assert.equal(host.querySelector('.ta-profile-select').tagName, 'SELECT');
+  assert.ok(host.querySelector('.ta-profile-select').classList.contains('choice-combobox'));
   assert.match(
     host.querySelector('.ta-role-inspect').textContent,
     /Review carefully/,
@@ -397,10 +397,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-template').tagName,
     'SELECT',
   );
-  assert.equal(
-    host.querySelector('#template-deploy-default-profile').tagName,
-    'SELECT',
-  );
+  assert.ok(host.querySelector('#template-deploy-default-profile').classList.contains('choice-combobox'));
   assert.equal(
     host.querySelector('#template-deploy-wt-per-agent').type,
     'checkbox',
@@ -409,9 +406,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-preview').textContent,
     /force-dev|dev/,
   );
-  const profile = host.querySelector('#template-deploy-default-profile');
-  profile.querySelector('option[value="fast"]').selected = true;
-  profile.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await comboPick(harness, host.querySelector('#template-deploy-default-profile'), 'fast');
   await harness.act(() => Promise.resolve());
   assert.match(
     host.querySelector('#template-deploy-preview').textContent,
@@ -525,11 +520,11 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     dropGroup: 'stale-team',
   });
   await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#template-deploy-default-profile').dataset.value, '');
   assert.match(
-    host.querySelector('#template-deploy-default-profile option[value=""]')
-      .textContent,
+    host.querySelector('#template-deploy-default-profile-input').value,
     /none/,
-    'a deleted group default degrades to the visible none option',
+    'a deleted group default degrades to the visible none choice',
   );
   const staleReinforce = host.querySelector(
     'input[name="template-deploy-mode"][value="reinforce"]',

@@ -7,6 +7,7 @@ import { pickDirectory } from './helpers.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
 import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
@@ -1872,24 +1873,20 @@ export function TemplateDeployDialog({
         /></label
       ><label class="cron-create-row" id="template-deploy-default-profile-row"
         ><span class="cron-create-label">Default profile</span
-        ><${Select}
+        ><${ProfileCombobox}
           id="template-deploy-default-profile"
           value=${findProfileByHandle(current.profiles, defaultProfile)
             ? defaultProfile
             : ''}
-          onChange=${(event) => {
-            setDefaultProfile(event.currentTarget.value);
+          profiles=${current.profiles}
+          aliases=${true}
+          noneLabel="(none — harness default)"
+          ariaLabel="Default profile"
+          onChange=${(name) => {
+            setDefaultProfile(name);
             setProfileEdited(true);
           }}
-        >
-          <option value="">(none — harness default)</option>
-          ${profileChoices(current.profiles).map(
-            (choice) =>
-              html`<option key=${choice.value} value=${choice.value}>
-                ${choice.label}
-              </option>`,
-          )}
-        <//></label
+        /></label
       >
       <div class="cron-create-row">
         <span class="cron-create-label">Preview</span>
@@ -1981,22 +1978,14 @@ function RoleInspect({ roleName, roles }) {
   </div>`;
 }
 
-function profileOptions(agent, profiles) {
-  const choices = profileChoices(profiles);
-  const names = choices.map((choice) => choice.value);
-  const selected = agent.spawn_profile || '';
+// launchNoneLabel is what an agent row's blank launch profile means: the
+// deploy's default profile, when the agent inherits it, else none.
+function launchNoneLabel(agent, profiles) {
+  const names = profileChoices(profiles).map((choice) => choice.value);
   const preferred = getDashDefaultProfile();
-  const blank =
-    preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
-      ? `(default → ${preferred})`
-      : '(none)';
-  return [
-    ['', blank],
-    ...choices.map((choice) => [choice.value, choice.label]),
-    ...(selected && !names.includes(selected)
-      ? [[selected, `⚠ ${selected} (missing)`]]
-      : []),
-  ];
+  return preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
+    ? `(default → ${preferred})`
+    : '(none)';
 }
 
 function ProfileReadback({ agent, profiles }) {
@@ -2230,17 +2219,15 @@ function AgentRow({
         class="template-agent-roleref ta-launch-pick"
         title="Launch profile: the agent's harness, model, effort, sandbox/approval and birth-time permissions come from the picked spawn profile."
         ><span>Launch profile</span
-        ><${Select}
-          class="ta-profile-select"
+        ><${ProfileCombobox}
+          className="ta-profile-select"
           value=${agent.spawn_profile}
-          onChange=${(event) =>
-            update({ spawn_profile: event.currentTarget.value })}
-        >
-          ${profileOptions(agent, profiles).map(
-            ([value, label]) =>
-              html`<option key=${value} value=${value}>${label}</option>`,
-          )}
-        <//></label
+          profiles=${profiles}
+          aliases=${true}
+          noneLabel=${launchNoneLabel(agent, profiles)}
+          ariaLabel="Launch profile"
+          onChange=${(name) => update({ spawn_profile: name })}
+        /></label
       >
       <div class="ta-launch-actions">
         <${Button} class="ta-custom-launch" onClick=${custom}>

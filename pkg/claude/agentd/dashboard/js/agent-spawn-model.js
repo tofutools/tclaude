@@ -37,20 +37,6 @@ export function findSpawnProfile(profiles, handle) {
     profile?.name === name || (profile?.aliases || []).includes(name)) || null;
 }
 
-export function spawnProfileChoices(profiles) {
-  const choices = [];
-  for (const profile of profiles || []) {
-    const status = profile.disabled
-      ? ` [🚫 disabled: ${text(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]`
-      : profile.operator_only ? ' [👤 operator only]' : '';
-    choices.push({ value: profile.name, label: profile.name + status });
-    for (const alias of profile.aliases || []) {
-      choices.push({ value: alias, label: `${alias} → ${profile.name}${status}` });
-    }
-  }
-  return choices;
-}
-
 export function defaultSpawnHarness(harnesses) {
   return findSpawnHarness(harnesses, 'claude') || (harnesses || [])[0] || null;
 }
