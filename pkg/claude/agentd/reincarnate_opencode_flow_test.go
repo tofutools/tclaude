@@ -12,18 +12,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // spawnOpenCodeAgent spawns an OpenCode agent into group through the
 // production spawn endpoint (its managed server is the flow fixture).
-func spawnOpenCodeAgent(t *testing.T, f *testharness.Flow, group string) testharness.SpawnResp {
+func spawnOpenCodeAgent(t *testing.T, f *testharness.Flow, group string, extra map[string]any) testharness.SpawnResp {
 	t.Helper()
 	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(30 * time.Second))
-	spawned := f.AsHuman().SpawnWith(group, map[string]any{
+	body := map[string]any{
 		"name":    "oc-worker",
 		"harness": "opencode",
-	})
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
+	spawned := f.AsHuman().SpawnWith(group, body)
 	require.Equal(t, http.StatusOK, spawned.Code, "raw=%s", spawned.Raw)
 	require.True(t, strings.HasPrefix(spawned.ConvID, "ses_"), "spawn conv %q", spawned.ConvID)
 	return spawned
@@ -43,11 +48,18 @@ func spawnOpenCodeAgent(t *testing.T, f *testharness.Flow, group string) testhar
 // handoff is addressed to that conversation, and the follow-up reaches it
 // through the server's prompt API rather than as a launch argument.
 func TestReincarnate_OpenCodeSuccessorUsesManagedServerConv(t *testing.T) {
-	for _, tc := range []string{"self", "operator", "manager-target"} {
+	for _, tc := range []string{"self", "operator", "manager-target", "tclaude-layer"} {
 		t.Run(tc, func(t *testing.T) {
 			f := newFlow(t)
 			g := f.HaveGroup("oc-crew")
-			spawned := spawnOpenCodeAgent(t, f, "oc-crew")
+			var extra map[string]any
+			if tc == "tclaude-layer" {
+				// tclaude's own sandbox: the successor's server needs its
+				// private attachments directory before it starts.
+				extra = map[string]any{"sandbox_implementation": "tclaude-layer",
+					"approval": harness.OpenCodeApprovalAsk}
+			}
+			spawned := spawnOpenCodeAgent(t, f, "oc-crew", extra)
 			prompts := agentd.RecordOpenCodePromptsForTest(t)
 
 			const handoff = "PROBE-OC-HANDOFF: continue the parser fix"
@@ -58,7 +70,7 @@ func TestReincarnate_OpenCodeSuccessorUsesManagedServerConv(t *testing.T) {
 				raw := agentReq(t, f, spawned.ConvID, http.MethodPost, "/v1/whoami/reincarnate", body)
 				rec = testharness.ReincarnateResp{Code: raw.Code, Raw: raw.Body.Bytes()}
 				decodeJSONInto(t, raw.Body.Bytes(), &rec)
-			case "operator":
+			case "operator", "tclaude-layer":
 				rec = f.AsHuman().ReincarnateWith(spawned.ConvID, body)
 			case "manager-target":
 				const manager = "oc-manager-aaaa-bbbb-cccc-111111111111"
@@ -99,7 +111,7 @@ func TestReincarnate_OpenCodeSuccessorUsesManagedServerConv(t *testing.T) {
 func TestReincarnate_OpenCodeHandoffSendFailureKeepsPredecessor(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("oc-crew")
-	spawned := spawnOpenCodeAgent(t, f, "oc-crew")
+	spawned := spawnOpenCodeAgent(t, f, "oc-crew", nil)
 	t.Cleanup(agentd.SetOpenCodePromptErrorForTest(errors.New("prompt_async refused")))
 
 	sessionsBefore := len(f.World.Tmux.Sessions())

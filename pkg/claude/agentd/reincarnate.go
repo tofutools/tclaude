@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -448,10 +450,18 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// successor's preset conv-id. Until the fork succeeds the server is ours
 	// to stop.
 	var openCodeLaunch *openCodeLaunch
+	privateAttachmentRootCreated := false
 	stopOpenCodeServer := func() {
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 			openCodeLaunch = nil
+		}
+		// Under tclaude's sandbox the server was granted the successor's
+		// private attachments directory; a successor that never launched
+		// must not leave it behind.
+		if privateAttachmentRootCreated {
+			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
+			privateAttachmentRootCreated = false
 		}
 	}
 	presetConvID := ""
@@ -460,9 +470,17 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		if isValidRenameTitle(successorTitle) {
 			title = successorTitle
 		}
-		var startErr error
-		openCodeLaunch, startErr = startManagedOpenCodeServer(&spawnArgs, label, managedID, title, "", false)
+		startErr := prepareReincarnationOpenCodeAttachments(spawnArgs.SandboxImplementation, label,
+			&privateAttachmentRootCreated)
+		if startErr == nil {
+			// The successor continues the predecessor's recorded sandbox
+			// (SandboxContinuation), so its resource cgroup follows the
+			// continuation policy, as resume's does.
+			openCodeLaunch, startErr = startManagedOpenCodeServer(&spawnArgs, label, managedID, title, "",
+				spawnArgs.SandboxContinuation)
+		}
 		if startErr != nil {
+			stopOpenCodeServer()
 			rollbackSandbox(true)
 			writeSpawnFailure(w, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + startErr.Error()})
@@ -734,6 +752,27 @@ func enrollReincarnationHandoff(target, caller, followUp, successorTitle, preset
 	spawnArgs.InitialPrompt = buildReincarnationLaunchPrompt(spawnArgs.Name,
 		reincarnationHandoffAuthor(caller, target), h.msgID, followUp, inlineCap)
 	return h
+}
+
+// prepareReincarnationOpenCodeAttachments creates the successor's private
+// attachments directory before its OpenCode server starts. Under tclaude's
+// sandbox the server's launch spec grants that directory and requires it to
+// exist; spawn reserves it with the label and resume prepares it the same
+// way. created reports whether this call made it.
+func prepareReincarnationOpenCodeAttachments(rawImplementation, label string, created *bool) error {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return err
+	}
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return nil
+	}
+	_, made, err := tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+	if err != nil {
+		return err
+	}
+	*created = made
+	return nil
 }
 
 // stopReincarnationSuccessor kills a successor's tmux session (its label
