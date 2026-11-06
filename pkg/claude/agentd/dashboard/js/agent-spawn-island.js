@@ -17,8 +17,8 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
-import { RoleCombobox } from './registry-picker.js';
-import { ProfileCombobox } from './profile-picker.js';
+import { ModelCombobox, RoleCombobox } from './registry-picker.js';
+import { ProfileCombobox, profileItems } from './profile-picker.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
@@ -1328,6 +1328,22 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   }, [worktrees.phase, policyReady]);
 
   const selectedModel = modelSelectValue(draft, context);
+  // The sandbox profile is a type-to-filter choice (tcl-alhauf): none is the
+  // composed layers (×), and omitting every profile value is a row of its own.
+  const sandboxProfileHelp = view.sandboxProfilesDisabled
+    ? 'This sandbox mode cannot carry tclaude sandbox-profile filesystem, environment, network, or agent-directory values.'
+    : sandboxPolicy.preview;
+  const sandboxProfileItems = view.sandboxProfilesDisabled
+    ? [{ key: SANDBOX_PROFILE_NONE, label: '— none (required by this sandbox mode) —', hint: '' }]
+    : profileItems([
+      { name: SANDBOX_PROFILE_NONE, descr: 'none omit' },
+      ...(sandboxPolicy.profiles || []).map((profile) => ({ name: profile.name })),
+    ]).map((item) => (item.key === SANDBOX_PROFILE_NONE ? { ...item, label: '— none (omit all tclaude profile values) —', hint: '' } : item))
+      // A seeded profile reads as itself, not as missing, while the policy that
+      // lists it is still loading.
+      .concat(!policyReady && draft.sandboxProfile && draft.sandboxProfile !== SANDBOX_PROFILE_NONE
+        && !(sandboxPolicy.profiles || []).some((profile) => profile.name === draft.sandboxProfile)
+        ? [{ key: draft.sandboxProfile, label: draft.sandboxProfile, hint: 'loading…' }] : []);
   const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model, Date.now(), draft.permissionOverrides);
   const usageChoice = usageChoices.find((o) => o.value === draft.usageFrom) || null;
   const subscriptionRow = !!subscription && (remote || target) && (draft.harness || 'claude') === 'claude';
@@ -1550,12 +1566,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <label class="cron-create-row" id="agent-spawn-model-claude-row" hidden=${!view.hasModelList}
         title="Model suggested by the selected harness. Default passes no --model; Custom model id accepts an out-of-catalog model.">
         <span class="cron-create-label">Model</span>
-        <${Select} id="agent-spawn-model" value=${selectedModel} disabled=${busy}
-          onChange=${(event) => changeModel(event.currentTarget.value)}>
-          <option value="">${spawnModelDefaultLabel(draft, context, profiles)}</option>
-          ${view.models.map((model) => html`<option key=${model} value=${model}>${model}</option>`)}
-          <option value=${MODEL_CUSTOM_VALUE}>Custom model id…</option>
-        <//>
+        <${ModelCombobox} id="agent-spawn-model" value=${selectedModel} disabled=${busy} onChange=${changeModel}
+          attrs=${{ 'data-remote-spawn-field': 'model' }}
+          noneLabel=${spawnModelDefaultLabel(draft, context, profiles)}
+          entries=${[...view.models, { name: MODEL_CUSTOM_VALUE, label: 'Custom model id…' }]} />
       </label>
       <label class="cron-create-row" id="agent-spawn-model-codex-row" hidden=${view.hasModelList}
         title="Free-text model id for a harness with no curated suggestions. Blank passes no --model.">
@@ -1714,18 +1728,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
       title=${`Sandbox policy, not a launch default: ${SANDBOX_PROFILE_COMPOSITION} Choose the composed layers, omit every tclaude sandbox-profile value, or add an explicit profile on top of the global and group ones.`}
-      value=${view.sandboxProfilesDisabled ? SANDBOX_PROFILE_NONE : draft.sandboxProfile}
-      options=${view.sandboxProfilesDisabled ? [
-        { value: SANDBOX_PROFILE_NONE, label: '— none (required by this sandbox mode) —' },
-      ] : [
-        { value: '', label: '— composed global + group sandbox profiles —' },
-        { value: SANDBOX_PROFILE_NONE, label: '— none (omit all tclaude profile values) —' },
-        ...(sandboxPolicy.profiles || []).map((profile) => ({ value: profile.name, label: profile.name })),
-      ]}
-      onChange=${(event) => update('sandboxProfile', event.currentTarget.value)}
-      help=${view.sandboxProfilesDisabled
-        ? 'This sandbox mode cannot carry tclaude sandbox-profile filesystem, environment, network, or agent-directory values.'
-        : sandboxPolicy.preview}
+      control=${html`<${ProfileCombobox} id="agent-spawn-sandbox-profile" ariaLabel="Sandbox profile"
+        value=${view.sandboxProfilesDisabled ? SANDBOX_PROFILE_NONE : draft.sandboxProfile}
+        disabled=${busy || view.sandboxProfilesDisabled}
+        noneLabel=${view.sandboxProfilesDisabled ? '' : '— composed global + group sandbox profiles —'}
+        items=${sandboxProfileItems} attrs=${{ 'data-remote-spawn-field': 'sandbox' }}
+        inputAttrs=${{ title: sandboxProfileHelp || undefined, 'aria-describedby': sandboxProfileHelp ? 'agent-spawn-sandbox-profile-preview' : undefined }}
+        onChange=${(value) => update('sandboxProfile', value)} />`}
+      help=${sandboxProfileHelp}
       open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
       busy=${busy || view.sandboxProfilesDisabled} />
     <div class="cron-create-row" id="agent-spawn-allow-unenforced-sandbox-row"

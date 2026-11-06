@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { comboChoose, comboKeys } from './combobox-helpers.mjs';
+import { comboChoose, comboKeys, comboPick } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const harnesses = [{
@@ -114,7 +114,7 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
   assert.match(q('#agent-spawn-title').textContent, /on forge/);
   assert.match(q('#agent-spawn-remote-intro').textContent, /forge launches it under the grant/);
   for (const id of ['agent-spawn-name', 'agent-spawn-init-msg', 'agent-spawn-role', 'agent-spawn-model', 'agent-spawn-effort', 'agent-spawn-submit', 'agent-spawn-cancel']) {
-    assert.equal(q(`#${id}`).disabled, false, `${id} stays live`);
+    assert.equal((q(`#${id}-input`) || q(`#${id}`)).disabled, false, `${id} stays live`);
   }
   for (const [id, reason] of [
     ['agent-spawn-cwd', /forge does not let you choose the directory/],
@@ -133,12 +133,26 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
   const live = [...host.querySelectorAll('input, select, textarea, button')]
     .filter((el) => !el.disabled && !el.classList.contains('spawn-field-help-trigger') && !el.closest('.help-disclosure'))
     .map((el) => el.id || el.outerHTML.slice(0, 120)).sort();
-  assert.deepEqual(live, ['agent-spawn-cancel', 'agent-spawn-effort', 'agent-spawn-init-msg', 'agent-spawn-model', 'agent-spawn-model-codex',
-    'agent-spawn-model-custom', 'agent-spawn-name', 'agent-spawn-role', 'agent-spawn-save-profile', 'agent-spawn-source-local', 'agent-spawn-source-target', 'agent-spawn-submit'], 'fail-closed: everything else is disabled (Save as profile saves on this node)');
+  assert.deepEqual(live, ['agent-spawn-cancel', 'agent-spawn-effort', 'agent-spawn-init-msg', 'agent-spawn-model-codex',
+    'agent-spawn-model-custom', 'agent-spawn-model-input', 'agent-spawn-name', 'agent-spawn-role', 'agent-spawn-save-profile', 'agent-spawn-source-local', 'agent-spawn-source-target', 'agent-spawn-submit'], 'fail-closed: everything else is disabled (Save as profile saves on this node)');
 
+  // A type-to-filter choice the peer decides is locked to an agent's fill too,
+  // as its <select> was (tcl-alhauf): the lock disables its box.
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  try {
+    const before = q('#agent-spawn-worktree').dataset.value;
+    const result = await fills.applyFill({ win: harness.window, tick: () => flush(harness), request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-worktree', value: '__new__' }] } });
+    assert.equal(result.fields[0].status, 'disabled', 'the peer\'s worktree is not the agent\'s to fill');
+    assert.equal(q('#agent-spawn-worktree').dataset.value, before);
+  } finally {
+    if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects;
+  }
   const name = q('#agent-spawn-name'); setValue(name, 'parser'); await harness.act(() => harness.fireEvent(name, 'input'));
   const brief = q('#agent-spawn-init-msg'); setValue(brief, 'port the parser'); await harness.act(() => harness.fireEvent(brief, 'input'));
-  const modelSel = q('#agent-spawn-model'); setValue(modelSel, 'opus'); await harness.act(() => harness.fireEvent(modelSel, 'change'));
+  await comboPick(harness, q('#agent-spawn-model'), 'opus');
   await flush(harness);
   assert.equal(q('#agent-spawn-cwd').disabled, true, 'the lock survives re-renders');
   // The queue is this node's: its button is locked, and its shortcut neither
@@ -225,7 +239,10 @@ test('a remote spawn sends only the launch settings the operator set, not harnes
   const q2 = (sel) => host2.querySelector(sel);
   for (const [sel, value, event] of [['#agent-spawn-init-msg', 'port the parser', 'input'], ['#agent-spawn-model', 'opus', 'change'], ['#agent-spawn-harness', 'codex', 'change'],
     ['#agent-spawn-effort', 'low', 'change'], ['#agent-spawn-model', '__custom__', 'change']]) {
-    const el = q2(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+    const el = q2(sel);
+    if (el.classList.contains('choice-combobox')) await comboPick(harness, el, value);
+    else { setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); }
+    await flush(harness);
   }
   await harness.act(() => q2('#agent-spawn-submit').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 50)));
@@ -461,7 +478,8 @@ test('an unrestricted peer opens the dialog like a local spawn', async (t) => {
   assert.ok((await comboKeys(harness, q('#agent-spawn-role-add'))).includes('builder'), 'the peer\'s roles are listed');
   await harness.act(() => harness.fireEvent(q('#agent-spawn-role-add-input'), 'blur'));
   assert.equal(q('.sbx-add-row').disabled, false, 'environment overrides can be added');
-  assert.ok([...q('#agent-spawn-sandbox-profile').querySelectorAll('option')].some((o) => o.getAttribute('value') === 'tight'), 'the peer\'s sandbox profiles are offered');
+  assert.ok((await comboKeys(harness, q('#agent-spawn-sandbox-profile'))).includes('tight'), 'the peer\'s sandbox profiles are offered');
+  await harness.act(() => harness.fireEvent(q('#agent-spawn-sandbox-profile-input'), 'blur'));
   const chip = q('#agent-spawn-prompt-refs .agent-spawn-role-chip .role-chip-remove');
   assert.equal(chip.disabled, false, 'the peer\'s own default prompt can be dropped');
   for (const id of ['agent-spawn-focus', 'agent-spawn-attach-btn', 'agent-spawn-queue', 'agent-spawn-cwd-browse']) {

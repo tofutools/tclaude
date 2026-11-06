@@ -1152,8 +1152,10 @@ test('the primary Sandbox off choice keeps a visible forced-none sandbox-profile
     const forcedNone = host.querySelector('#agent-spawn-sandbox-profile');
     assert.equal(forcedNone.closest('.cron-create-row').hidden, false,
       'the forced omission is explained instead of hiding the field');
-    assert.equal(forcedNone.disabled, true);
-    assert.match(forcedNone.options[0].textContent, /none.*required/i);
+    assert.ok(forcedNone.classList.contains('disabled'));
+    assert.equal(host.querySelector('#agent-spawn-sandbox-profile-input').disabled, true);
+    assert.equal(forcedNone.dataset.value, '/omit-all-tclaude-sandbox-profiles');
+    assert.match(host.querySelector('#agent-spawn-sandbox-profile-input').value, /none.*required/i);
 
     setValue(codexSandbox, 'harness-builtin');
     await harness.act(() => harness.fireEvent(codexSandbox, 'change'));
@@ -1422,7 +1424,7 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   assert.equal(drop.defaultPrevented, true, 'busy file drops still suppress browser navigation');
   assert.equal(button.disabled, true);
   assert.equal(host.querySelector('#agent-spawn-sandbox').disabled, true);
-  assert.equal(host.querySelector('#agent-spawn-sandbox-profile').disabled, true);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-profile-input').disabled, true);
   pending.resolve({ conv_id: '1234567890' });
   await flush(harness);
   assert.equal(state.dialog.value, null);
@@ -1595,7 +1597,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
     const row = host.querySelector(`#${id}-row`);
     assert.ok(row, `${id} renders a row`);
     assert.ok(row.querySelector('.spawn-field-help-trigger'), `${id} exposes a [?] trigger`);
-    assert.equal(row.querySelector(`#${id}`).getAttribute('aria-describedby'), descriptionID);
+    assert.equal((row.querySelector(`#${id}-input`) || row.querySelector(`#${id}`)).getAttribute('aria-describedby'), descriptionID);
     assert.match(row.querySelector(`#${descriptionID}`).getAttribute('class'), /spawn-field-description/,
       `${id} help is a collapsed description, not a paragraph`);
 
@@ -1605,7 +1607,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
     assert.deepEqual([...row.querySelector('.cron-create-target').children].map((node) => node.className),
       ['spawn-field-with-help'], `${id} renders nothing beside the control group`);
     assert.deepEqual([...row.querySelector('.spawn-field-with-help').children].map((node) => node.tagName),
-      ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
+      [id === 'agent-spawn-sandbox-profile' ? 'DIV' : 'SELECT', 'BUTTON', 'SPAN'], `${id} renders only its control (a select, or the profile's choice box), its [?], and the collapsed help`);
   }
 
   // Only persistent, field-specific hints survive; mode explanations remain
@@ -1839,9 +1841,7 @@ test('Preact agent-spawn blocks submit until the resolved sandbox policy matches
 
     loads[0].pending.resolve({ profiles: [{ name: 'strict' }], selected: '', preview: 'no profiles applied' });
     await flush(harness);
-    const picker = host.querySelector('#agent-spawn-sandbox-profile');
-    setValue(picker, 'strict');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-sandbox-profile'), 'strict');
     assert.equal(loads.length, 2, 'a selection change starts a fresh policy load');
 
     host.querySelector('#agent-spawn-submit').click();
@@ -2557,6 +2557,53 @@ test('OpenCode --tools all shows per-tool choices that compose the spawn value',
     setValue(tools, 'deny');
     await harness.act(() => harness.fireEvent(tools, 'change'));
     assertAbsent(host.querySelector('#agent-spawn-tools-entries'));
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// tcl-alhauf: the model and Sandbox profile are type-to-filter choices that an
+// agent's fill still sets, by key or label, and an operator's pick holds.
+test('an agent fills the model and sandbox profile boxes; the operator\'s pick holds against the next fill', async (t) => {
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: async (_group, selected) => ({ profiles: [{ name: 'strict' }, { name: 'loose' }], selected, preview: 'no profiles applied' }),
+  });
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const tick = () => flush(harness);
+    const fill = async (field, value) => (await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } })).fields[0];
+    const model = () => host.querySelector('#agent-spawn-model');
+    const profile = () => host.querySelector('#agent-spawn-sandbox-profile');
+
+    const other = model().dataset.value === 'opus' ? 'sonnet' : 'opus';
+    assert.equal((await fill('agent-spawn-model', other)).status, 'filled');
+    assert.equal(model().dataset.value, other);
+    assert.equal((await fill('agent-spawn-model', 'Custom model id…')).status, 'filled', 'the custom row is a choice by its label');
+    assert.ok(!host.querySelector('#agent-spawn-model-custom-row').hidden, 'and opens the custom field as a pick does');
+    assert.equal((await fill('agent-spawn-model', 'gpt-nonexistent')).status, 'not_an_option');
+
+    assert.equal((await fill('agent-spawn-sandbox-profile', 'strict')).status, 'filled');
+    assert.equal(profile().dataset.value, 'strict');
+    const cleared = await fill('agent-spawn-sandbox-profile', '');
+    assert.equal(cleared.status, 'filled', 'none (the composed profiles) can be filled where × would clear');
+    assert.equal(cleared.widens, 'sandbox');
+    assert.equal(profile().dataset.value, '');
+
+    await comboPick(harness, profile(), 'loose');
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-sandbox-profile', 'strict')).status, 'operator_edited');
+    assert.equal(profile().dataset.value, 'loose');
+    await comboPick(harness, model(), other);
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-model', other === 'opus' ? 'sonnet' : 'opus')).status, 'operator_edited');
+    assert.equal(model().dataset.value, other);
   } finally {
     mounted.cleanup();
   }

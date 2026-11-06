@@ -12,8 +12,7 @@
 //   PeerCombobox               the choice of a peer (or pool)
 //   NodeCombobox               the choice of a node
 //   BoardCombobox              the choice of a board
-//   ModelCombobox              the choice of a model (the spawn dialog's stays a
-//                              <select>: an agent can fill it, tcl-alhauf)
+//   ModelCombobox              the choice of a model
 
 import { h } from 'preact';
 import { useMemo } from 'preact/hooks';

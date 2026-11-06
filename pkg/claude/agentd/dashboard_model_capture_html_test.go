@@ -72,7 +72,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 	for _, needle := range []string{
 		`const modelID = 'profile-editor-model'`,
 		`const modelControl = hasModelList ? html`,
-		`{ name: '__custom__', label: 'Custom model id…', descr: 'custom other' }`,
+		`{ name: '__custom__', label: 'Custom model id…' }`,
 		`setCustomModel(true)`,
 		"id=${`${modelID}-custom`}",
 		`onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)}`,
@@ -85,7 +85,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 	// Each launch editor rebuilds its selector from the selected harness's
 	// catalog, so Codex and Claude receive the same preset + custom-ID behavior.
 	for _, call := range []string{
-		"view.models.map((model)",
+		"entries=${[...view.models, { name: MODEL_CUSTOM_VALUE",
 		"const models = hEntry?.models || []",
 	} {
 		if !strings.Contains(dashboardAssets, call) {
@@ -97,8 +97,8 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		t.Error("spawn harness re-apply must preserve a manual model when a sparse same-harness profile is applied")
 	}
 
-	if !strings.Contains(dashboardAssets, `<option value=${MODEL_CUSTOM_VALUE}>Custom model id…</option>`) {
-		t.Error("Preact spawn selector must emit the Custom model sentinel")
+	if !strings.Contains(dashboardAssets, `{ name: MODEL_CUSTOM_VALUE, label: 'Custom model id…' }`) {
+		t.Error("Preact spawn model choice must offer the Custom model sentinel")
 	}
 
 	// Each revealed free-text input carries an accessible name — its row's label

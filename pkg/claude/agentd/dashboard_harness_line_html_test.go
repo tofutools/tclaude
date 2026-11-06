@@ -277,7 +277,7 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("harnesses: Object.freeze([...(snapshot.harnesses || [])])", "open snapshots the harness catalog")
 	must("export function spawnCapabilityView(", "the plain model reshapes per harness")
 	must("modelSelectValue(draft, context)", "the component derives the active model control")
-	must("view.models.map((model)", "the Model dropdown is rebuilt from the selected harness catalog")
+	must("entries=${[...view.models, { name: MODEL_CUSTOM_VALUE", "the Model choice is rebuilt from the selected harness catalog")
 
 	// agent-spawn-model.js: the spawn POST body always carries the dropdown's explicit
 	// harness selection (including Claude) and sandbox.
