@@ -526,3 +526,14 @@ test('the zone and the no-flicker hold work the same with no scrollbar, an overl
     assert.equal(s.revealed(), false, 'and it still goes once the pointer leaves');
   });
 });
+
+test('a dialog or popover drawn over the panel\'s band is not the panel', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.restAtEdge();
+  const dialog = s.doc.body.appendChild(s.doc.createElement('div'));
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  s.move(dialog, WIDTH - 100);
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'over something else in its band, it goes after the delay');
+});

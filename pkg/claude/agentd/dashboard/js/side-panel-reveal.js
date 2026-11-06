@@ -114,11 +114,14 @@ export function bindEdgeReveal(doc = globalThis.document, {
   };
 
   // onPanel is whether the pointer is on the floating panel: on one of its
-  // elements, or anywhere in its band from its left edge to the window's right
-  // edge, which takes in the page scrollbar beside it.
+  // elements, or on the page scrollbar beside it. A pointer on the page
+  // scrollbar targets <html>, so only that target counts in the panel's band
+  // (its left edge to the window's right edge); a dialog or popover drawn over
+  // the band is not the panel.
   const onPanel = (event) => {
     const panel = dock();
     if (panel?.contains(event.target)) return true;
+    if (event.target !== doc.documentElement) return false;
     const rect = panel?.getBoundingClientRect?.();
     if (!rect?.width) return false;
     return event.clientX >= rect.left && event.clientY >= rect.top && event.clientY <= rect.bottom;
@@ -166,7 +169,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.addEventListener('pointerdown', (event) => {
     cancelDwell();
     if (isSidePanelRevealed() && onPanel(event)) pressFromPanel = true;
-  });
+  }, true);
   const pressOver = () => {
     if (!pressFromPanel) return;
     pressFromPanel = false;
