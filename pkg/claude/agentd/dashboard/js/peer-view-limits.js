@@ -71,22 +71,23 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // A member's role belongs to the group (its description cell also edits
   // the agent's tags: an agent control).
   'edit-role': ['groups.members.manage'],
-  // A clone's members spawn with the node's launch settings, and delete and
-  // cleanup remove what no peer grant hands out: unrestricted trust only (a
-  // feature no restricted peer shares).
-  'clone-group': ['feature:groups.create.full'],
+  // A clone takes groups.clone there (and node.groups.create, which the
+  // daemon checks); delete and cleanup remove what no peer grant hands out:
+  // unrestricted trust only (a feature no restricted peer shares).
+  'clone-group': ['groups.clone'],
   'delete-group': ['feature:groups.manage.full'],
   'cleanup-group': ['feature:groups.manage.full'],
   // Removing a member from the group: unrestricted trust only.
   'remove-member': ['feature:agents.manage.full'],
   // The group's advisory process advances under process.advance there.
   'advance-phase': ['process.advance'],
+  // A deployed force's re-brief re-sends its template's own work pattern.
+  'rebrief-force': ['templates.instantiate'],
   // What no peer grant covers, which unrestricted trust reaches as this
-  // node's operator does (the local_dashboard routes): its force
+  // node's operator does (the local_dashboard routes): its stand-down
   // and ownership controls, the auto-join default, its member permissions, its
   // links within its node, new cron jobs, its standing orders, adding
   // members, its cross-harness spawn policy and saving it as a template there.
-  'rebrief-force': ['feature:local_dashboard'],
   'stand-down-force': ['feature:local_dashboard'],
   'grant-owner': ['feature:local_dashboard'],
   'revoke-owner': ['feature:local_dashboard'],

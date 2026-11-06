@@ -47,6 +47,8 @@ var pinnedPeerGroupGates = map[string][]string{
 	PermGroupsMembersManage: {"groups.members.rename", "groups.members.tags", "groups.members.task", "groups.members.update"},
 	// S6: process.advance answers its own gate on the group's advance route.
 	PermProcessAdvance: {"process.advance"},
+	// A deployed group's re-brief (peer_group_launch.go).
+	PermTemplatesUse: {"templates.instantiate"},
 }
 
 // pinnedPeerSettingsWithCwdGates: the default directory also needs the

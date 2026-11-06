@@ -358,11 +358,17 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 	if a == nil {
 		return nil
 	}
+	return peerTemplateLaunchFailure(a.peer, before, after)
+}
+
+// peerTemplateLaunchFailure judges a template change from before (nil: none)
+// to after against what peer could launch itself.
+func peerTemplateLaunchFailure(peer string, before *templateJSON, after templateJSON) *spawnFailure {
 	var was map[string]json.RawMessage
 	if before != nil {
 		was = wireKeys(*before)
 	}
-	if fail := peerLaunchChangeFailure(a.peer, was, wireKeys(after), before == nil, peerTemplateFields, peerTemplateFreeFields, "template field"); fail != nil {
+	if fail := peerLaunchChangeFailure(peer, was, wireKeys(after), before == nil, peerTemplateFields, peerTemplateFreeFields, "template field"); fail != nil {
 		return fail
 	}
 	had := map[string]templateAgentJSON{}
@@ -378,10 +384,10 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 			prevKeys = wireKeys(prev)
 		}
 		what := fmt.Sprintf("template agent %q field", ag.Name)
-		if fail := peerLaunchChangeFailure(a.peer, prevKeys, wireKeys(ag), !existed, peerTemplateAgentFields, peerTemplateAgentFreeFields, what); fail != nil {
+		if fail := peerLaunchChangeFailure(peer, prevKeys, wireKeys(ag), !existed, peerTemplateAgentFields, peerTemplateAgentFreeFields, what); fail != nil {
 			return fail
 		}
-		if ag.SpawnProfile != "" && (!existed || prev.SpawnProfile != ag.SpawnProfile) && !peerProfileSelectableEverywhere(a.peer, ag.SpawnProfile) {
+		if ag.SpawnProfile != "" && (!existed || prev.SpawnProfile != ag.SpawnProfile) && !peerProfileSelectableEverywhere(peer, ag.SpawnProfile) {
 			return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
 				"template agent %q names a spawn profile it could not pick for a spawn into every group", ag.Name)}
 		}
@@ -397,7 +403,7 @@ func peerTemplateEditFailure(r *http.Request, before *templateJSON, after templa
 		if ag.ProfileInline != nil {
 			inline = *ag.ProfileInline
 		}
-		if fail := peerLaunchChangeFailure(a.peer, wireKeys(prevInline), wireKeys(inline), !existed || prevInline == nil,
+		if fail := peerLaunchChangeFailure(peer, wireKeys(prevInline), wireKeys(inline), !existed || prevInline == nil,
 			peerProfileFields, peerProfileFreeFields, fmt.Sprintf("template agent %q inline profile field", ag.Name)); fail != nil {
 			return fail
 		}
