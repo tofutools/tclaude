@@ -50,9 +50,12 @@ func postInitDriveSelection(op, convID string, h *harness.Harness) (codexSelecte
 func awaitPostInitDrive(op, convID string, h *harness.Harness, codexSelected, piSelected bool) bool {
 	if h.Name == harness.CopilotName && copilotLaunchIntentForConv(convID).API &&
 		!awaitCopilotAPISession(convID) {
+		why := "API posture never falls back to pane input"
+		if op == "spawn" {
+			why = "the failed launch is being shut down as crashed and " + why
+		}
 		slog.Error(op+": the Copilot API channel never came up within the bootstrap "+
-			"budget; post-init delivery is abandoned because the failed launch is being "+
-			"shut down as crashed and API posture never falls back to pane input",
+			"budget; post-init delivery is abandoned because "+why,
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
 		return false
 	}
