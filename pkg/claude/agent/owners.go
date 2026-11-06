@@ -127,13 +127,9 @@ func runGroupsGrantOwner(p *groupsGrantOwnerParams, stdout, stderr io.Writer) in
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	body := map[string]string{"conv": p.Conv}
 	var resp struct {
@@ -183,13 +179,9 @@ func runGroupsRevokeOwner(p *groupsRevokeOwnerParams, stdout, stderr io.Writer) 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/owners/" + url.PathEscape(p.Conv)
 	if err := DaemonRequest(http.MethodDelete, path, nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
