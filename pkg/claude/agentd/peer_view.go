@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -139,8 +140,12 @@ type peerViewRule struct {
 	// the peer's grants (peer_grant_routes.go); serve or write is
 	// servePeerInvoke.
 	invoke *peerInvokeSpec
-	serve  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	// orGrants also open a group rule: a route whose fields each answer
+	// their own grant (the group PATCH) opens to any of them, and the
+	// handler's per-field gates decide what each may change.
+	orGrants []string
+	serve    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -375,7 +380,8 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 		return fedPeerGroupVisible(v.peer.InstanceID, groupID)
 	}
 	if rule.group {
-		return fedPeerAllows(v.peer.InstanceID, groupID, rule.requires)
+		return fedPeerAllows(v.peer.InstanceID, groupID, rule.requires) ||
+			slices.ContainsFunc(rule.orGrants, func(slug string) bool { return fedPeerAllows(v.peer.InstanceID, groupID, slug) })
 	}
 	return fedPeerHoldsUnscoped(v.peer.InstanceID, rule.requires)
 }

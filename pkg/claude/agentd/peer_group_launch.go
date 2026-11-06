@@ -19,8 +19,9 @@ import (
 // would let it launch, in every group (peerFieldGrantedEverywhere): a request
 // that needs more is refused whole, naming the first missing grant. A
 // template agent is judged as a template write is (peerTemplateLaunchFailure),
-// whoever wrote the template: an instantiation launches it. Owner seats and
-// owner scopes take groups.owners.manage, which no peer grant hands out yet.
+// whoever wrote the template: an instantiation launches it. A new group's
+// owner seats and owner scopes take unrestricted trust: an owner holds the
+// whole owner tier, which no peer may confer (peer_ceiling.go).
 // Text the peer gives a team (its task or mission) carries the remote-request
 // banner, as a peer spawn's brief does. Unrestricted trust acts as this
 // node's operator does.
@@ -239,11 +240,11 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 	}
 	if !reinforce {
 		if len(t.OwnerScopes) > 0 {
-			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take " + PermGroupsOwnersManage}
+			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take unrestricted trust"}
 		}
 		for _, ag := range t.Agents {
 			if ag.IsOwner || ag.EffectiveIsOwner {
-				return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes %s", ag.Name, PermGroupsOwnersManage)}
+				return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes unrestricted trust", ag.Name)}
 			}
 		}
 	} else {
@@ -259,7 +260,8 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 // there. Settings copied from the source are this node's operator's own;
 // those the request overrides are judged as a new group's are. Cloning its
 // members takes groups.members.clone in every group of each, as a member's
-// own clone does, and copying its owners takes groups.owners.manage.
+// own clone does. Copying its owners takes unrestricted trust, as making an
+// owner does (peerOwnerAddFailure); a restricted peer sets copy_owners false.
 func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	peer := v.peer.InstanceID
 	src, err := db.GetAgentGroupByName(r.PathValue("name"))
@@ -318,7 +320,7 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 			return
 		}
 		if len(owners) > 0 {
-			writeError(w, http.StatusForbidden, "permission", "copying the group's owners takes "+PermGroupsOwnersManage+"; set copy_owners to false")
+			writeError(w, http.StatusForbidden, "permission", "copying the group's owners takes unrestricted trust; set copy_owners to false")
 			return
 		}
 	}

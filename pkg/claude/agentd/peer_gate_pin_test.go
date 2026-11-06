@@ -41,6 +41,10 @@ var pinnedPeerMoveWithRetireGates = []string{"agent.bundle.export", "agent.move"
 var pinnedPeerGroupGates = map[string][]string{
 	PermGroupsSettings:            {"groups.attachment", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.remote-control-policy"},
 	PermGroupsSettingsEnvironment: {"groups.settings.environment"},
+	// Each answers its own field gate on the group PATCH; what it confers is
+	// held to the peer ceiling there.
+	PermGroupsSettingsMemberPermissions: {"groups.settings.member-permissions"},
+	PermGroupsSettingsOwnerScopes:       {"groups.settings.owner-scopes"},
 	// Derived from the reach (tcl-7a6axl): the member settings
 	// groups.members.manage covers. The member PATCH route a peer reaches
 	// gates none of them, so nothing it can do changed.

@@ -39,6 +39,8 @@ func addPeerGroupStructureRules(rules map[string]peerViewRule) {
 		"POST /api/groups/{name}/archive":             {feature: "groups.archive", requires: PermGroupsArchive, group: true},
 		"POST /api/groups/{name}/unarchive":           {feature: "groups.archive", requires: PermGroupsArchive, group: true},
 		"DELETE /api/groups/{name}":                   {feature: "groups.delete", requires: PermGroupsDelete, group: true},
+		"POST /api/groups/{name}/owners":              {feature: "groups.owners.manage", requires: PermGroupsOwnersManage, group: true},
+		"DELETE /api/groups/{name}/owners/{conv}":     {feature: "groups.owners.manage", requires: PermGroupsOwnersManage, group: true},
 	} {
 		rule.write = servePeerGroupStructure(pattern)
 		rules[pattern] = rule
@@ -65,6 +67,8 @@ var peerStructureChecks = map[string]func(*peerView, *http.Request, *db.AgentGro
 	"POST /api/groups/{name}/archive":             peerGroupGrantFailure(PermGroupsArchive),
 	"POST /api/groups/{name}/unarchive":           peerUnarchiveFailure,
 	"DELETE /api/groups/{name}":                   peerGroupDeleteFailure,
+	"POST /api/groups/{name}/owners":              peerOwnerAddFailure,
+	"DELETE /api/groups/{name}/owners/{conv}":     peerOwnerRemoveFailure,
 }
 
 // servePeerGroupStructure checks a restricted peer's structure request, then
@@ -399,6 +403,11 @@ func peerLinkRemoveFailure(v *peerView, r *http.Request, g *db.AgentGroup, _ []b
 func peerGroupDeleteFailure(v *peerView, _ *http.Request, g *db.AgentGroup, _ []byte) *peerStructureFailure {
 	if fail := peerHoldsInGroup(v, g, PermGroupsDelete); fail != nil {
 		return fail
+	}
+	// A new group may take the freed name, and a peer-written permission
+	// naming it with it (peerNameBindsAGrant).
+	if bound, err := peerNameBindsAGrant(g.Name); err != nil || bound {
+		return peerStructureRefusal(http.StatusForbidden, "permission", "a permission a peer conferred names group:%s; only this node's operator may delete it", g.Name)
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {

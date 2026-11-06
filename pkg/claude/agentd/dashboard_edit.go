@@ -955,6 +955,12 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		http.Error(w, "rename: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if peerGrantFromRequest(r) != nil {
+		if err := peerRenameRebindsFailure(g.Name, body.NewName); err != nil {
+			writeError(w, http.StatusForbidden, "permission", err.Error())
+			return
+		}
+	}
 	renamed, err := db.RenameAgentGroup(g.Name, body.NewName, "")
 	if errors.Is(err, db.ErrGroupNameTaken) {
 		http.Error(w, "rename: a group named \""+body.NewName+"\" already exists", http.StatusConflict)

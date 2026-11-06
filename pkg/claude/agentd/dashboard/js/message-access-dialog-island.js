@@ -1073,6 +1073,12 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const submit = async () => {
     if (sudoMode) { await submitSudo(); return; }
     if (busyRef.current) return;
+    // A live save replaces the stored list with the rows shown, and the rows
+    // come from the slug catalogue: without it, saving would clear them all.
+    if (descriptor.mode !== 'buffer' && !rows.length) {
+      setError('This node sent no permission catalogue, so there is nothing to save against.');
+      return;
+    }
     const unreadableGroupGrants = groupMode
       ? [...unreadable].filter((slug) => currentEffect(slug) === 'grant') : [];
     if (unreadableGroupGrants.length) {

@@ -143,6 +143,9 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.link.remove` | remove a link that starts in the group. Sensitive |
 | `groups.archive` | archive and unarchive the group; an archived group is found for its unarchive by this grant on it. Sensitive |
 | `groups.delete` | delete the group; a sandbox or environment its members may take from their other groups instead takes that group's spawn grant, as on a remove. Sensitive |
+| `groups.owners.manage` | remove the group's owners, and make a member an owner when the peer holds everything an owner holds there. An owner holds the group's whole owner tier, spawning and the member lifecycle included, which no peer may confer (see [The peer ceiling](#the-peer-ceiling)), so in practice only unrestricted trust adds owners. Sensitive |
+| `groups.settings.member-permissions` | read and replace the permissions every member of the group holds. A row the peer adds or widens must be within its own grants ([The peer ceiling](#the-peer-ceiling)); a row it leaves as shown, or drops, needs nothing more. The whole list is replaced, so without this grant a peer can't replace it at all, since it would replace rows it was never shown. Sensitive |
+| `groups.settings.owner-scopes` | read and narrow what the group's owners hold. Loosening or dropping a constraint widens every owner's grant of that slug, which takes the peer holding that grant itself ([The peer ceiling](#the-peer-ceiling)). The dashboard's group permissions editor saves the member rows with them, so using it also takes `groups.settings.member-permissions`. Sensitive |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
 | `process.runs.start`, `groups.members.process` | start a process run scoped to the group, or bound to one member agent (`groups.members.process` in every group the agent is in). The run is the peer's (owner `peer:<instance>`), never your operator's: it tasks only the members in its scope and spawns no performer. It cannot authorize program profiles, so a template with a program step is refused, and it cannot pick an older template version or a run ID. A node that would need a spawned performer fails its attempt rather than wait; a retry meets the same refusal, so such a step only completes once a member who can take it joins. Every node prompt it delivers opens with an untrusted-content banner that names the peer, because the peer's params reach the prompt. Starting from the peer's dashboard also needs the template list, which no peer grant serves yet; use `tclaude process run --remote`. Unrestricted trust starts runs as your operator does |
 | `process.runs.manage` | pause any process run here; resume, decide, reassign and resolve a blocked branch of a run that executes no host programs and spawns no performers on your authority (a run with program authorizations, or one of your runs whose agent steps may fall back to a spawn, stays your operator's, pause excepted). This includes your operator's own agent-only runs, in every group. Decisions are human gates: only the peer's operator decides them, never its agents. A reassignment goes only to an agent the peer could start an agent-bound run for (`groups.members.process` in every group it is in), inside a run scoped to a group or an agent. The actor recorded is the peer, and the evidence or note it writes, which a later performer can be shown, opens with the untrusted-content banner. Re-scoping a run stays your human's, and reissuing or recording a program command's outcome has no peer route |
@@ -171,8 +174,8 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `process.templates.read` | list, show and validate this node's process templates; exporting a workflow file, which this node signs, stays this node's (unscoped only; read-only) |
 | `process.templates.manage` | create, edit, delete, import and list this node's process templates, and pin or unpin one in a group's process list where the peer also holds `groups.settings`. Starting a run takes `process.runs.start` (unscoped only) |
 | `node.groups.create` | create groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap. A launch setting (directory, environment, default profile, repository clone, remote-control policy) takes `groups.members.spawn` and the matching `.cwd`, `.environment`, `.profile` (a profile it could pick), `.worktree` or `.features` grant for every group (unscoped only; see [Managing a peer's node](federation-work.md#managing-a-peers-node)) |
-| `templates.instantiate` | deploy a team from this node's templates. Scoped to a group: re-brief a deployed group, and reinforce it (with `groups.members.spawn` there). Unscoped, with `node.groups.create` and an unscoped `groups.members.spawn`: instantiate or deploy into a new group. Every agent the template launches, whoever wrote it, must be one the peer could spawn itself (its harness, model, effort, roles, profile, approval, sandbox, environment and first message within the peer's spawn grants, no permission grants); owner seats and owner scopes take `groups.owners.manage`; the request's own directory, worktree, environment or context take their spawn grants. A request that needs more is refused whole. The task or mission text arrives marked as a remote request |
-| `groups.clone` | clone the group, with `node.groups.create`. Its settings copy from the source; a setting the request overrides takes its spawn grant as on create. Cloning its members takes `groups.members.clone` in every group of each; copying its owners takes `groups.owners.manage` |
+| `templates.instantiate` | deploy a team from this node's templates. Scoped to a group: re-brief a deployed group, and reinforce it (with `groups.members.spawn` there). Unscoped, with `node.groups.create` and an unscoped `groups.members.spawn`: instantiate or deploy into a new group. Every agent the template launches, whoever wrote it, must be one the peer could spawn itself (its harness, model, effort, roles, profile, approval, sandbox, environment and first message within the peer's spawn grants, no permission grants); a new group's owner seats and owner scopes take unrestricted trust (an owner holds the whole owner tier; see [The peer ceiling](#the-peer-ceiling)); the request's own directory, worktree, environment or context take their spawn grants. A request that needs more is refused whole. The task or mission text arrives marked as a remote request |
+| `groups.clone` | clone the group, with `node.groups.create`. Its settings copy from the source; a setting the request overrides takes its spawn grant as on create. Cloning its members takes `groups.members.clone` in every group of each; copying its owners takes unrestricted trust, so a restricted peer sets `copy_owners` to false |
 | `groups.import` | import a group archive as a new group, with `node.groups.create`, through the staged upload only. The group's context and default prompts take `.prompts`, a legacy default model `.model` and `.profile`, and the target directory `.cwd`, each with `groups.members.spawn` for every group; saved prompts the file carries join this node's library and take `prompts.manage`. Every member's landing harness and model take `.harness` and `.model` for every group: a member that needs more refuses the whole import, which lists each such member with what it needs (the preview lists them too). The import keeps nothing the file asks for: owner seats, environment, stored grants, sudo grants and cron jobs drop, listed in the reply, and the landing is written to this node's audit log (`federation.group_import`) with what dropped. Keeping any of them (`keep*`) is this node's operator's. A file whose mail is addressed to, or whose head aliases point at, an agent it does not carry is refused, so an import cannot reach this node's own agents; an import the check cannot judge is refused too (unscoped only) |
 | `groups.export` | download the group as an archive (`.paf`, or `?format=zip`), with `sessions.files.read` in the group, and `groups.settings.environment` when the group has an environment, whose values the peer view otherwise withholds. Carrying workflows and a flagged export (`allow_flagged`) take unrestricted trust. The grants are held again at every chunk of the staged download, so revoking one stops it. The transcripts take `sessions.files.read` in this group only, including those of members that are also in groups the peer has no grant in. Sensitive: the archive holds every member's conversation, the group's settings and its stored grants |
 | `agent.bundle.export` | download a member agent as a portable archive, held in every group the agent is in; its private transcript (`history=true`) also takes `sessions.files.read` in each, and a launch environment it carries takes `groups.settings.environment` in each (and `node.spawn.read` when it comes from a spawn profile). Only the staged download serves a restricted peer. Other export options (carried workflows, a flagged export, a summary) take unrestricted trust, and the grants are held again at every chunk |
@@ -293,6 +296,61 @@ worktree, and so on. A few things stay with this node even then:
 - its human inbox, which has its own peer routes.
 
 Each change is in this node's federation audit as `federation.peer_view`.
+
+### The peer ceiling
+
+What a peer confers on this node's agents (a member permission row, a
+loosened owner scope, an owner seat) never exceeds what the peer itself
+holds here. This node's operator grants without that bound; a peer's
+request does not. A row is within the ceiling only when:
+
+- its slug is one a peer may confer (below);
+- it names no peer (`peer=`): such a row acts on other nodes, which no
+  grant here measures;
+- the peer holds the slug's peer grant in every group the row reaches: the
+  groups its `group=` scope names, or, with no group scope, every group,
+  so the grant must be unscoped. An instance-wide slug is always held
+  unscoped.
+
+The slugs a peer may confer are local permissions whose peer grant of the
+same name reaches the same operation here, through a peer route that adds no
+bound of its own:
+
+- agent controls: `groups.members.interrupt`, `.context-info`, `.pr`,
+  `.remote-control`, `.rename`, `.tags`, `.task`, `.update`;
+- a group's reads and plain settings: `groups.roster.read`,
+  `groups.presence.read`, `groups.resources.read`,
+  `groups.settings.environment`, `.description`, `.max-members`,
+  `.notifications`, `.remote-control-policy`, `groups.attachment`,
+  `groups.rename`, `groups.archive`, `message.attachments`,
+  `process.advance`;
+- this node's libraries and reads: `prompts.manage`, `costs.read`,
+  `usage.read`.
+
+Every other slug stays this node's operator's to confer, even when the peer
+holds a grant of the same name. Some examples of why:
+- the peer route refuses an option the local gate allows (stop's, resume's
+  and restart's options, retire's worktree deletion);
+- the peer route redacts (the debug export);
+- the peer route checks a wider footprint (delete, add, remove, links,
+  nesting);
+- it takes extra grants (exports, clone, templates, process runs);
+- the local gate reaches what the peer route keeps back
+  (`process.templates.read` also exports a workflow file this node signs);
+- the peer form carries a policy a local row can't hold (spawning,
+  one-shot jobs, permission carry);
+- it can put text into another agent's context (compact's focus,
+  reincarnate's follow-up, cron jobs);
+- it is a global `agent.*` gate, which also reaches agents in no group;
+- its local gate opens more than the peer route: the group context's gate
+  also sets default saved prompts, the resource lock's reaches resources in
+  no group, and the role library's lets an agent attach its own grants to
+  roles.
+
+A `group=` scope names a group by name, so a peer may not rename a group
+from or to a name that a permission it conferred names, nor delete such a
+group: the permission would follow the name onto another group.
+
 
 A peer view request is one exchange of at most 15 seconds. Longer operations,
 a repository pull or sync and a worktree cleanup, run as jobs instead: the

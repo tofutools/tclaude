@@ -871,10 +871,13 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 			return false
 		}
 	}
-	if u.body.Permissions != nil || u.body.OwnerScopes != nil {
+	peer := peerGrantFromRequest(u.r)
+	if (u.body.Permissions != nil || u.body.OwnerScopes != nil) && peer == nil {
 		// Authorize the higher-impact fields before applying ANY part of a mixed
 		// PATCH, so a caller cannot get a partial settings update followed by a
-		// permission-administration 403.
+		// permission-administration 403. A peer is held to its ceiling below
+		// instead (peer_group_permissions.go): what it confers never exceeds
+		// what it holds here.
 		if _, ok := requirePermission(w, u.r, PermPermissionsGrant); !ok {
 			return false
 		}
@@ -892,6 +895,12 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 			return false
 		}
 		u.ownerScopes = canonical
+		if peer != nil {
+			if err := peerOwnerScopesFailure(peer.peer, u.g, canonical); err != nil {
+				writeError(w, http.StatusForbidden, "permission", err.Error())
+				return false
+			}
+		}
 	}
 	if u.body.Environment != nil {
 		var err error
@@ -933,6 +942,14 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 		if err := checkGrantAttenuation(u.caller, grantConferee{}, conferred); err != nil {
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return false
+		}
+		// A peer's caller reads as the human here, whom attenuation leaves
+		// unconstrained: hold its rows to the peer ceiling instead.
+		if peer != nil {
+			if err := peerGroupPermissionsFailure(peer.peer, u.g, u.normalizedPermissions); err != nil {
+				writeError(w, http.StatusForbidden, "permission", err.Error())
+				return false
+			}
 		}
 	}
 	// Every field is validated before the first write, so a rejected save leaves
@@ -1086,7 +1103,9 @@ func (u *groupUpdate) applyMembershipPolicy(w http.ResponseWriter) bool {
 		// cosmetic group editing. Both meta-slugs were checked before mutations
 		// because a replacement can widen and narrow the set in one request.
 		grantedBy := u.caller
-		if grantedBy == "" {
+		if a := peerGrantFromRequest(u.r); a != nil {
+			grantedBy = "peer:" + a.peer
+		} else if grantedBy == "" {
 			grantedBy = "<human>"
 		}
 		if err := db.ReplaceAgentGroupPermissionGrants(u.g.ID, u.normalizedPermissions, grantedBy); err != nil {

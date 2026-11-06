@@ -42,7 +42,7 @@ func TestPeerTemplateDeployStaysWithinItsSpawnGrants(t *testing.T) {
 	require.Contains(t, body, agentd.PermGroupsMembersSpawnModel)
 	code, body = deploy("crowned", map[string]any{"group_name": "team"})
 	require.Equal(t, 403, code, "owner seats: %s", body)
-	require.Contains(t, body, agentd.PermGroupsOwnersManage)
+	require.Contains(t, body, "unrestricted trust")
 	code, body = deploy("squad", map[string]any{"group_name": "team", "cwd": t.TempDir()})
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, agentd.PermGroupsMembersSpawnCwd)

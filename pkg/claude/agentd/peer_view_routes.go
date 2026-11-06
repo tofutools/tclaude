@@ -283,7 +283,6 @@ var peerViewLocalRoutes = []string{
 	"/api/worktrees",
 	"/api/worktrees/cleanup",
 	"/api/worktrees/progress",
-	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
 	"GET /api/groups/{name}/standing-orders",
 	"GET /api/groups/{name}/worktrees",
@@ -301,7 +300,6 @@ var peerViewLocalRoutes = []string{
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",
-	"POST /api/groups/{name}/owners",
 	"POST /api/groups/{name}/spawn",
 	// Resolves a spawn without spawning, through the spawn handler.
 	"POST /api/groups/{name}/spawn-preview",
