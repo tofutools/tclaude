@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -18,11 +20,20 @@ import (
 // board in such a group, and moves one between two groups it holds the grant
 // in. A board in no group is reached only through the global boards.* slugs,
 // which no peer holds: it is no peer's.
-// What the peer writes is authored as its operator (operator@<instance>).
-// Unrestricted trust does all this as this node's operator does. Deleting a
-// board, its live socket and presence, the operator's activity mail
-// (events), undo, its rendered snapshot, inviting agents and ending their
-// sessions stay with this node's own dashboard.
+// What the peer writes is authored as its operator (operator@<instance>),
+// unrestricted trust's too, and never enters this node's undo history. A
+// restricted peer's read carries neither the board's presence (who is on it,
+// the local operator's view) nor its invited agents, and the group's members
+// only with groups.roster.read there; a peer's new board takes its id from its
+// title and leaves peerBoardReserve boards to this node. Unrestricted trust
+// otherwise does all this as this node's operator does. Deleting a board, its
+// live socket and presence, the operator's activity mail (events), undo, its
+// rendered snapshot, inviting agents and ending their sessions stay with this
+// node's own dashboard.
+
+// peerBoardReserve is how many of the node's boards a peer's creates leave to
+// this node's operator and agents.
+const peerBoardReserve = 100
 
 func addPeerBoardRules(rules map[string]peerViewRule) {
 	read := peerViewRule{feature: "boards", requires: PermGroupsResourcesRead, orGrants: []string{PermGroupsResourcesWrite}, group: true}
@@ -71,17 +82,73 @@ func servePeerBoardList(w http.ResponseWriter, r *http.Request, v *peerView, rul
 		return
 	}
 	peer := v.peer.InstanceID
-	serveBoardList(w, func(b *db.CollabBoard) bool { return peerBoardReads(peer, b) })
+	rec := httptest.NewRecorder()
+	serveBoardList(rec, func(b *db.CollabBoard) bool { return peerBoardReads(peer, b) })
+	if rec.Code != http.StatusOK {
+		copyRecorded(w, rec)
+		return
+	}
+	var out struct {
+		Boards []boardSummaryJSON `json:"boards"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+		writeError(w, http.StatusInternalServerError, "encode", "read the board list")
+		return
+	}
+	for i := range out.Boards {
+		// Invited agents may be any group's.
+		out.Boards[i].Participants = []string{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// copyRecorded writes a recorded response as it is.
+func copyRecorded(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
+	for k, vals := range rec.Header() {
+		w.Header()[k] = vals
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(rec.Body.Bytes())
+}
+
+// servePeerBoardRead is serveBoardRead for a restricted peer: no presence, no
+// invited agents, and the group's members only with its roster grant.
+func servePeerBoardRead(w http.ResponseWriter, r *http.Request, peer string, b *db.CollabBoard) {
+	since := int64(-1)
+	if q := r.URL.Query().Get("since"); q != "" {
+		n, err := strconv.ParseInt(q, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "since must be a board version >= 0")
+			return
+		}
+		since = n
+	}
+	elems, err := db.ListCollabBoardElements(b.ID, since)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	out := boardToJSON(b, elems)
+	out.Presence, out.Participants = nil, []string{}
+	if !peerBoardGroupAllows(peer, b, PermGroupsRosterRead) {
+		out.GroupMembers = nil
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // servePeerBoard serves one board's read, edit, title and group move.
 func servePeerBoard(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
-	if v.unrestricted() {
+	unrestricted := v.unrestricted()
+	if unrestricted && r.Method != http.MethodPatch {
 		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
 		return
 	}
 	id, ok := boardPathID(w, r)
 	if !ok {
+		return
+	}
+	if unrestricted {
+		serveBoardPatch(w, r, id, peerBoardAuthor(v), "", "")
 		return
 	}
 	b, err := db.GetCollabBoard(id)
@@ -93,7 +160,7 @@ func servePeerBoard(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	}
 	v.groupName = b.GroupName
 	if r.Method == http.MethodGet {
-		serveBoardRead(w, r, id)
+		servePeerBoardRead(w, r, peer, b)
 		return
 	}
 	if !peerBoardGroupAllows(peer, b, PermGroupsResourcesWrite) {
@@ -136,16 +203,29 @@ func peerServeBoardLocally(w http.ResponseWriter, r *http.Request, raw []byte) {
 }
 
 func servePeerBoardCreate(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
-	if v.unrestricted() {
-		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
-		return
-	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	var req struct {
 		Group string `json:"group"`
 	}
-	if err != nil || json.Unmarshal(raw, &req) != nil {
+	var fields map[string]json.RawMessage
+	if err != nil || json.Unmarshal(raw, &req) != nil || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid board")
+		return
+	}
+	if boards, err := db.ListCollabBoards(); err != nil || len(boards) >= boardMaxBoards-peerBoardReserve {
+		writeError(w, http.StatusConflict, "too_many_boards", "this node keeps its last board slots for its own operator and agents")
+		return
+	}
+	if v.unrestricted() {
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		serveBoardCreate(w, r, peerBoardAuthor(v), "")
+		return
+	}
+	// The id comes from the title: one the peer names could say whether a
+	// board of that id exists in a group it cannot see.
+	delete(fields, "id")
+	if raw, err = json.Marshal(fields); err != nil {
+		writeError(w, http.StatusInternalServerError, "encode", err.Error())
 		return
 	}
 	g, err := db.GetAgentGroupByName(strings.TrimSpace(req.Group))

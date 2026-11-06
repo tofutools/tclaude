@@ -29,6 +29,9 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 	board("plan", h.group.ID)
 	board("hidden", sec.ID)
 	board("loose", 0)
+	outsider := havePerformerAgent(t, h.f, "secret", "sec-conv", "sec", "dev", "idle")
+	_, err := db.SetCollabBoardParticipant("plan", outsider, false)
+	require.NoError(t, err)
 	list := func() []string {
 		t.Helper()
 		code, body := h.call("GET", "/api/boards", nil)
@@ -51,6 +54,12 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 	require.Equal(t, []string{"plan"}, list(), "only a board in a group the peer reads")
 	code, body = h.call("GET", "/api/boards/plan", nil)
 	require.Equal(t, 200, code, body)
+	var read map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(body), &read))
+	require.NotContains(t, body, outsider, "an invited agent of another group")
+	require.NotContains(t, read, "presence", "who is on the board and the operator's view stay local")
+	require.NotContains(t, read, "group_members", "the roster takes groups.roster.read")
+	require.JSONEq(t, `[]`, string(read["participants"]), "invited agents may be any group's")
 	for _, id := range []string{"hidden", "loose", "nope"} {
 		code, body = h.call("GET", "/api/boards/"+id, nil)
 		require.Equal(t, 404, code, "%s: %s", id, body)
@@ -59,6 +68,11 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 	require.Equal(t, 403, code, "reading is not editing: %s", body)
 	code, body = h.call("POST", "/api/boards", map[string]any{"title": "new", "group": "crew"})
 	require.Equal(t, 403, code, body)
+
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	code, body = h.call("GET", "/api/boards/plan", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"group_members"`, "shown with the roster grant")
 
 	h.grant(t, agentd.PermGroupsResourcesWrite, "group=crew")
 	code, body = h.call("PATCH", "/api/boards/plan", edit)
@@ -80,8 +94,8 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 		code, body = h.call("POST", "/api/boards", map[string]any{"title": "new", "group": g})
 		require.Equal(t, 403, code, "%q: %s", g, body)
 	}
-	code, body = h.call("POST", "/api/boards", map[string]any{"title": "notes", "group": "crew"})
-	require.Equal(t, 201, code, body)
+	code, body = h.call("POST", "/api/boards", map[string]any{"id": "hidden", "title": "notes", "group": "crew"})
+	require.Equal(t, 201, code, "the peer's id is not used, so it probes nothing: %s", body)
 	for _, g := range []string{"", "other"} {
 		code, body = h.call("POST", "/api/boards/notes/group", map[string]any{"group": g})
 		require.Equal(t, 403, code, "%q: %s", g, body)
@@ -106,4 +120,9 @@ func TestPeerBoardsWithinTheirGroups(t *testing.T) {
 
 	h.trustUnrestricted(t)
 	require.ElementsMatch(t, []string{"plan", "hidden", "loose", "notes"}, list(), "unrestricted trust lists as this node's operator does")
+	code, body = h.call("PATCH", "/api/boards/loose", map[string]any{"elements": []map[string]any{rect("dot", 1, 2, 0)}})
+	require.Equal(t, 200, code, body)
+	loose, err := db.GetCollabBoard("loose")
+	require.NoError(t, err)
+	require.Equal(t, "operator@"+h.peer.id.ID(), loose.UpdatedBy, "unrestricted edits are the peer's too, not this node's operator's")
 }
