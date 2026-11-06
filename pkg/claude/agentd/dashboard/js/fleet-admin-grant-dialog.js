@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
-import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
+import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, UNGRANTABLE_SLUGS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -57,6 +57,8 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const visible = PEER_SLUGS
     .filter((s) => (!cat || slugCategory(s.slug) === cat) && (!hideSensitive || !s.sensitive || picked.includes(s.slug)))
     .filter((s) => !needle || [s.slug, s.what, s.warning, slugCategory(s.slug)].some((x) => String(x || '').toLowerCase().includes(needle)));
+  // Shown in the unfiltered list and in searches, never picked.
+  const ungrantable = cat ? [] : UNGRANTABLE_SLUGS.filter((s) => !needle || [s.slug, s.why].some((x) => x.toLowerCase().includes(needle)));
   const counts = Object.fromEntries(GRANT_CATEGORIES.map((c) => [c, PEER_SLUGS.filter((s) => slugCategory(s.slug) === c).length]));
   const infos = picked.map(slugInfo);
   const groupKinds = infos.some((i) => i.kind === 'group' || i.kind === 'scoped');
@@ -125,7 +127,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           <label class="muted fa-gd-hide"><input id="fleet-grant-hide-sensitive" type="checkbox" checked=${hideSensitive} onChange=${(e) => setHideSensitive(e.currentTarget.checked)} /> hide sensitive</label>
         </div>
         <div class="fa-gd-list" id="fleet-grant-list">
-          ${visible.length === 0 && html`<div class="empty">No permission matches.</div>`}
+          ${visible.length === 0 && ungrantable.length === 0 && html`<div class="empty">No permission matches.</div>`}
           ${[...visible].sort((a, b) => GRANT_CATEGORIES.indexOf(slugCategory(a.slug)) - GRANT_CATEGORIES.indexOf(slugCategory(b.slug))).map((s) => {
             const c = slugCategory(s.slug);
             const head = c !== lastCat ? html`<div class="ui-eyebrow fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
@@ -140,6 +142,13 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
               ${s.warning && html`<span class="fa-gd-what fa-warn">${s.warning}</span>`}
             </label>`;
           })}
+          ${ungrantable.length > 0 && html`<div class="ui-eyebrow fa-gd-cat" key="c|ungrantable">Not grantable to peers</div>`}
+          ${ungrantable.map((s) => html`<label key=${s.slug} class="fa-gd-item fa-gd-ungrantable" data-ungrantable-slug=${s.slug} aria-disabled="true">
+            <input type="checkbox" disabled />
+            <code>${s.slug}</code>
+            <span class="fa-gd-badges"><span class="ui-tag fa-gd-badge">local only</span></span>
+            <span class="fa-gd-what muted">not grantable to peers: ${s.why}</span>
+          </label>`)}
         </div>
       </div>
       <div class="fa-gd-side">

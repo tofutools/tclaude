@@ -229,6 +229,14 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'models.proxy.leased', kind: 'node', gateway: true, what: 'leased model gateway access for requester-paid workers (all gateways, or one)' },
 ]);
 
+// UNGRANTABLE_SLUGS are local permissions an operator may look for here that
+// no peer can hold, listed in the picker as disabled rows with the reason
+// (their Why in permission_federation_reach.go, which must agree).
+export const UNGRANTABLE_SLUGS = Object.freeze([
+  { slug: 'settings.default-model', why: 'edits the host\'s ~/.claude/settings.json, which reaches Claude sessions outside tclaude' },
+  { slug: 'relaunch-policy.manage', why: 'a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)' },
+]);
+
 export function slugInfo(slug) {
   return PEER_SLUGS.find((s) => s.slug === slug) || { slug, kind: 'node', what: '' };
 }

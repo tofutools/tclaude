@@ -214,7 +214,7 @@ node profile saved by an older tclaude can still hold, authorizes nothing:
 
 Some local permissions have no peer grant at all. Two examples:
 `settings.default-model` edits the host's `~/.claude/settings.json`, which
-reaches Claude sessions outside tclaude. `relaunch.policy.manage` is refused
+reaches Claude sessions outside tclaude. `relaunch-policy.manage` is refused
 to every peer on purpose, unrestricted trust included.
 
 Nothing is granted by default; agent defaults and group ownership never grant
