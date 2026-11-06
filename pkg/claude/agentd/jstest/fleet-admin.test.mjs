@@ -721,11 +721,22 @@ test('become-node gives exactly what is ticked, preselects nothing, warns, and n
 
   await s.check(s.q('[data-become-slug="host.read"] input[type=checkbox]'));
   await s.check(s.q('[data-become-slug="groups.members.spawn"] input[type=checkbox]'));
+  await s.check(s.q('[data-become-slug="sessions.shell"] input[type=checkbox]'));
+  const fpEarly = s.q('#fleet-become-fp'); fpEarly.value = FP_NEW;
+  await s.harness.act(() => s.harness.fireEvent(fpEarly, 'input'));
+  assert.equal(s.q('#fleet-become-submit').disabled, true, 'a group permission needs its group chosen: never every group by default');
+  assert.doesNotMatch(s.q('#fleet-become-warning').textContent, /sessions\.shell/, 'an unchosen group permission is not given');
   await pickOption(s, '[data-become-group="groups.members.spawn"]', 'build');
+  await pickOption(s, '[data-become-group="sessions.shell"]', '*');
+  fpEarly.value = '';
+  await s.harness.act(() => s.harness.fireEvent(fpEarly, 'input'));
   const warning = s.q('#fleet-become-warning').textContent;
   assert.match(warning, /You are handing this machine to/);
   assert.match(warning, /host\.read \(this node\) Sensitive/);
   assert.match(warning, /groups\.members\.spawn \(group build\)/);
+  assert.match(warning, /at most 2 live workers/);
+  assert.match(warning, /sessions\.shell \(every group, including future ones\) Sensitive/);
+  assert.match(warning, /A shell runs any command here/, 'a permission\'s own caution is in the warning');
   assert.equal(s.q('#fleet-become-submit').disabled, true, 'no fingerprint yet');
 
   const fp = s.q('#fleet-become-fp'); fp.value = 'not-it';
@@ -736,14 +747,14 @@ test('become-node gives exactly what is ticked, preselects nothing, warns, and n
   assert.equal(s.q('#fleet-become-submit').disabled, false);
   await s.click(s.q('#fleet-become-submit'));
   assert.deepEqual(s.log.find((l) => l[0] === 'becomeNode')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1', confirmFingerprint: FP_NEW,
-    givePermissions: [{ slug: 'groups.members.spawn', scope: 'group=build' }, { slug: 'host.read', scope: '' }] });
+    givePermissions: [{ slug: 'groups.members.spawn', scope: 'group=build' }, { slug: 'host.read', scope: '' }, { slug: 'sessions.shell', scope: '' }] });
   assert.equal(s.q('#fleet-become-modal'), null);
 });
 
 test('become-node unrestricted disables the list and sends no permissions; a scoped grant needs its group', async (t) => {
   const s = await setup(t);
   const inv = await s.harness.importDashboardModule('js/fleet-admin-invites.js');
-  assert.deepEqual(inv.becomeNodeGives({ 'agents.receive': '', 'message.direct': '' }), [{ slug: 'message.direct', scope: '' }], 'a scoped slug without its group is not given');
+  assert.deepEqual(inv.becomeNodeGives({ 'agents.receive': '', 'message.direct': '', 'sessions.read': '*', 'host.read': '' }), [{ slug: 'host.read', scope: '' }, { slug: 'sessions.read', scope: '' }], 'a group permission without its choice is not given; every group is chosen explicitly');
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
   await s.click(s.q('#fleet-become-open'));

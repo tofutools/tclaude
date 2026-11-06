@@ -108,15 +108,23 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
 // given afterwards with a grant (federation_enrollment.go fedBecomeNodeGrant).
 export const BECOME_NODE_SLUGS = Object.freeze(PEER_SLUGS.filter((r) => !r.gateway));
 
-// becomeNodeGives turns the picked rows (slug -> group name, '' for every
-// group or a node grant) into the request's give_permissions. A scoped slug
-// without its group is left out: the dialog does not submit until it has one.
+// EVERY_GROUP is the group choice that gives a group grant unscoped: every
+// group, including future ones. It is chosen explicitly, never defaulted.
+export const EVERY_GROUP = '*';
+
+// becomeNodeGives turns the picked rows (slug -> group name, EVERY_GROUP, or
+// '' while no group is chosen; '' for a node grant) into the request's
+// give_permissions. A group grant without its choice is left out: the dialog
+// does not submit until each has one.
 export function becomeNodeGives(picked) {
   return Object.entries(picked)
-    .filter(([slug, group]) => group || BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind !== 'scoped')
-    .map(([slug, group]) => ({ slug, scope: group ? `group=${group}` : '' }))
+    .filter(([slug, group]) => group || BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind === 'node')
+    .map(([slug, group]) => ({ slug, scope: group && group !== EVERY_GROUP ? `group=${group}` : '' }))
     .sort((a, b) => a.slug.localeCompare(b.slug));
 }
+
+// SPAWN_CAPPED are given with a live cap of 2 (federation grant changes it).
+const SPAWN_CAPPED = new Set(['groups.members.spawn', 'jobs.run']);
 
 function normFP(s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); }
 
@@ -141,7 +149,7 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
     try { setPreview(await actions.enrollPreview({ master, token: token.trim() })); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
   const gives = becomeNodeGives(picked);
-  const missingGroup = Object.entries(picked).some(([slug, group]) => !group && BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind === 'scoped');
+  const missingGroup = Object.entries(picked).some(([slug, group]) => !group && BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind !== 'node');
   const fpOK = !!preview && normFP(fp) !== '' && normFP(fp) === normFP(preview.master_fingerprint);
   const ready = !!preview && fpOK && !busy && (unrestricted || (gives.length > 0 && !missingGroup));
   const submit = async () => {
@@ -170,7 +178,7 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
   const whereText = (slug, group) => {
     const kind = BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind;
     if (kind === 'node') return 'this node';
-    return group ? `group ${group}` : 'every group, including future ones';
+    return group && group !== EVERY_GROUP ? `group ${group}` : 'every group, including future ones';
   };
   return html`<${Dialog} id="fleet-become-modal" onClose=${onClose} blocked=${busy} dirty=${!!token || gives.length > 0 || unrestricted} title="Become a worker node of a master">
     <label class="cron-create-row"><span class="cron-create-label">Master</span>
@@ -192,7 +200,8 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
         <input type="checkbox" checked=${r.slug in picked} disabled=${unrestricted} onChange=${() => toggle(r)} />
         <code>${r.slug}</code>
         <span>${r.kind !== 'node' && r.slug in picked && html`<${Select} size="sm" data-become-group=${r.slug} value=${picked[r.slug]} onChange=${(e) => setPicked({ ...picked, [r.slug]: e.currentTarget.value })}>
-          ${r.kind === 'scoped' ? html`<option value="">choose a group…</option>` : html`<option value="">every group</option>`}
+          <option value="">choose a group…</option>
+          ${r.kind !== 'scoped' && html`<option value=${EVERY_GROUP}>every group, including future ones</option>`}
           ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
         <//>`}${r.sensitive && html`<span class="fa-sensitive">Sensitive</span>`}</span>
         <span class="muted fa-become-what">${r.what}</span>
@@ -203,12 +212,12 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
     ${(unrestricted || gives.length > 0) && html`<div class="fa-become-warn" role="alert" id="fleet-become-warning"><b>⚠ You are handing this machine to ${masterLabel}</b>
       ${unrestricted
         ? html`<div>${UNRESTRICTED_CONSEQUENCE}</div>`
-        : html`<div>It will be able to, on this machine:</div><ul>${gives.map((g) => { const group = g.scope.replace(/^group=/, ''); const row = BECOME_NODE_SLUGS.find((r) => r.slug === g.slug); return html`<li key=${g.slug}><code>${g.slug}</code> (${whereText(g.slug, group)})${row?.sensitive ? html` <b>Sensitive</b>` : ''}: ${row?.what || ''}</li>`; })}</ul>`}
+        : html`<div>It will be able to, on this machine:</div><ul>${gives.map((g) => { const group = g.scope.replace(/^group=/, ''); const row = BECOME_NODE_SLUGS.find((r) => r.slug === g.slug); return html`<li key=${g.slug}><code>${g.slug}</code> (${whereText(g.slug, group)})${row?.sensitive ? html` <b>Sensitive</b>` : ''}: ${row?.what || ''}${SPAWN_CAPPED.has(g.slug) ? ' (at most 2 live workers; change it with a grant)' : ''}${row?.warning ? html` <b>${row.warning}</b>` : ''}</li>`; })}</ul>`}
       <div>Take it back any time with Revoke on the Grants page, or untrust.</div></div>`}
     <label class="cron-create-row"><span class="cron-create-label">Fingerprint</span>
       <input id="fleet-become-fp" type="text" autocomplete="off" spellcheck="false" placeholder="paste the master's fingerprint, compared with its operator" value=${fp} onInput=${(e) => setFP(e.currentTarget.value)} /></label>
     ${fp && !fpOK && html`<div class="muted">Does not match the master's fingerprint.</div>`}
-    ${missingGroup && !unrestricted && html`<div class="muted">Choose a group for each permission that needs one.</div>`}`}
+    ${missingGroup && !unrestricted && html`<div class="muted">Choose where each group permission applies: one group, or every group.</div>`}`}
     <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
