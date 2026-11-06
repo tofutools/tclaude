@@ -23,7 +23,7 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   assert.equal(mod.limitHint('omitted', 'costs', 'forge', ['costs.read']), 'forge does not share costs with you (needs costs.read)');
   assert.equal(mod.limitHint('local', 'The daemon log', 'forge', ['unrestricted trust']), 'forge does not share the daemon log with you (needs unrestricted trust)');
   // The hint names the grant the peer requires, as its omission says.
-  const noStatus = { ...pv, included: ['groups'], omitted: [{ feature: 'agents.status', requires: 'agents.status.read' }, { feature: 'agents.manage.full', requires: 'groups.members.delete', unrestricted_only: true }] };
+  const noStatus = { ...pv, included: ['groups'], omitted: [{ feature: 'agents.status', requires: 'agents.status.read' }, { feature: 'agents.manage.full', requires: 'agent.sandbox-impl', unrestricted_only: true }] };
   assert.equal(mod.featureNeeds('agents.status', noStatus), 'agents.status.read');
   assert.equal(mod.tabState('groups', noStatus), 'shared', 'a roster or presence grant alone shows the Groups tab, without agent status');
   const nothing = { ...pv, included: [], omitted: [{ feature: 'groups', requires: 'groups.roster.read' }] };
@@ -276,10 +276,16 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.grantHeld(doc.getElementById('solo-notify'), agents), true);
   assert.ok(mod.grantSelectors(agents).includes('[data-act="toggle-agent-notify"][data-agent="agt_solo"]'));
   assert.ok(!mod.grantSelectors(agents).some((sel) => sel.includes('agt_shared')));
-  for (const act of ['toggle-remote-control', 'fast-mode-set', 'compact-agent', 'reincarnate', 'delete-agent']) {
-    assert.equal(mod.agentGrantHeld(act, 'agt_solo', agents), false, `${act} takes unrestricted trust whatever the agent's grants`);
+  for (const act of ['toggle-remote-control', 'fast-mode-set', 'compact-agent', 'reincarnate', 'delete-agent', 'debug-export']) {
+    assert.equal(mod.agentGrantHeld(act, 'agt_solo', agents), false, `${act} takes more than the settings grant`);
     assert.equal(mod.agentGrantHeld(act, 'agt_solo', { level: 'unrestricted' }), true);
   }
+  const lifecycle = { ...restricted, agents: { agt_solo: ['groups.members.delete', 'groups.members.debug-export', 'groups.members.remote-control'] } };
+  for (const act of ['delete-agent', 'debug-export', 'toggle-remote-control']) {
+    assert.equal(mod.agentGrantHeld(act, 'agt_solo', lifecycle), true, `${act} runs under its own grant`);
+  }
+  assert.equal(mod.agentGrantHeld('fast-mode-set', 'agt_solo', lifecycle), false, 'fast mode takes unrestricted trust');
+  assert.equal(mod.agentGrantHeld('sandbox-impl', 'agt_solo', lifecycle), false, 'so does the sandbox implementation');
   assert.equal(mod.groupGrantHeld('remove-member', 'ops', restricted), false);
   assert.equal(mod.groupGrantHeld('remove-member', 'ops', { level: 'unrestricted' }), true);
 

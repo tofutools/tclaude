@@ -32,11 +32,13 @@ const (
 // controls, which peer_view.agents names per agent: its settings, and its
 // lifecycle and move (peer_actions.go).
 var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
-	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR}
+	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR,
+	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
-// groups the agent owns (cloneAuthorizationGroups).
-var peerOwnerFootprintGrants = []string{PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
+// groups the agent owns (cloneAuthorizationGroups). A delete purges the
+// agent's owner seats, as a retire gives them up.
+var peerOwnerFootprintGrants = []string{PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermGroupsMembersDelete}
 
 func addPeerMemberRules(rules map[string]peerViewRule) {
 	for _, verb := range []string{"rename", "tags", "task", "notify"} {
@@ -60,27 +62,27 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 		}
 		rules[pattern] = rule
 	}
-	// An agent's remote access and fast mode, its sandbox implementation and
-	// its permanent delete reach
-	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
-	// handlers. One feature names one slug, so the metadata is stable.
-	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
+	// An agent's permanent delete and its debug export, under their own
+	// grants held in every group of the agent (peer_agent_delete.go).
+	rules["DELETE /api/agents/{id}"] = peerViewRule{feature: "members.delete", requires: PermGroupsMembersDelete, group: true, write: servePeerAgentDelete}
+	rules["GET /api/agents/{id}/debug-export"] = peerViewRule{feature: "members.debug-export", requires: PermGroupsMembersDebugExport, group: true, serve: servePeerAgentDebugExport}
+	// An agent's fast mode and its sandbox implementation reach what no peer
+	// grant hands out yet: only unrestricted trust holds these, through this
+	// node's own handlers. So does the delete dialog's worktree probe, which
+	// only a delete that takes the worktree too needs (unrestricted again);
+	// the dialog treats a refused probe as no worktree to offer.
+	full := peerViewRule{feature: "agents.manage.full", requires: PermAgentSandboxImplementation, unrestrictedOnly: true, write: servePeerFullAgent}
 	for _, pattern := range []string{
-		"POST /api/agents/{id}/remote-control",
 		"POST /api/agents/{id}/fast-mode/{direction}",
 		"POST /api/agents/{id}/sandbox-impl",
-		"DELETE /api/agents/{id}",
 	} {
 		rules[pattern] = full
 	}
-	// The delete dialog reads the agent's worktree first, the sandbox picker
-	// the recorded posture.
 	read := full
 	read.write, read.serve = nil, servePeerFullAgent
 	for _, pattern := range []string{
 		"GET /api/agents/{id}/worktree",
 		"GET /api/agents/{id}/sandbox-impl",
-		"GET /api/agents/{id}/debug-export",
 	} {
 		rules[pattern] = read
 	}
@@ -95,6 +97,9 @@ var peerAgentControlRoutes = map[string]string{
 	"GET /api/agents/{id}/context-info": PermGroupsMembersContextInfo,
 	"GET /api/agents/{id}/prs":          PermGroupsMembersPR,
 	"POST /api/agents/{id}/prs":         PermGroupsMembersPR,
+	// Turning the agent's Claude Code Remote Access on exposes its session
+	// to this node's operator's claude.ai account, never to the peer.
+	"POST /api/agents/{id}/remote-control": PermGroupsMembersRemoteControl,
 }
 
 // servePeerAgentControl runs an agent control: as this node's operator would

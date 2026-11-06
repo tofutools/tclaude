@@ -150,6 +150,9 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.messages.schedule`, `groups.members.schedule` | schedule recurring messages to the group (`groups.messages.schedule`) or to a member agent (`groups.members.schedule` in every group the agent is in), and list, read the run history of and disable your own cron jobs aimed there. A job the peer schedules is the peer's, never your operator's: it sends messages only and never spawns; each one arrives as the peer's mail under the untrusted-content banner; and every fire rechecks the peer's grants, recording `peer_denied` and delivering nothing once they no longer reach the target. The peer changes, enables, fires and deletes only its own jobs; on yours it reads and disables (disabling is reversible), and creating, editing, enabling, firing and deleting stay with their owner and your operator. A peer keeps at most 50 jobs here (10 for each of its agents); a run replaces the job's still-unread earlier one, as local cron does; your operator may reschedule, disable or delete a peer's job but never rewrites what it says; another peer's jobs are not in reach; a group export leaves them out. Unlinking or revoking the peer deletes its jobs. Jobs an unrestricted peer creates are ordinary local jobs and stay when it is downgraded or unlinked. The peer sees no conversation IDs and no run error text, and a spawn job's worker instructions stay yours. `agent.schedule` is granted as `groups.members.schedule` |
 | `groups.triggers.read` | list and inspect the group's trigger rules and their recent firings, without a spawn's instruction template or any error detail. Global rules stay yours, and no peer grant authors, edits, enables or disables a rule: trigger rules are only ever your operator's (`groups.triggers.manage` is local). `triggers.read` is granted as `groups.triggers.read` |
 | `groups.members.interrupt`, `.compact`, `.reincarnate`, `.context-info`, `.pr` | from the peer's dashboard: interrupt a member Codex agent's running turn, compact a member agent, ask it to reincarnate itself, read its context window use, and list or present its pull requests. Each needs the grant in every group the agent is in. No peer text is typed into the agent's pane: a peer's compact takes no follow-up, and a peer's reincarnate is the agent's own (mode `self`, no focus hint; the inbox request names your node and is not operator-authored). A peer presenting a PR names no repository directory. Unrestricted trust keeps every option |
+| `groups.members.delete` | permanently delete a member agent from the peer's dashboard, holding this grant in every group the agent is in or owns, archived ones included (a delete purges those memberships and owner seats). Deleting its git worktree as well takes unrestricted trust: it can destroy uncommitted work on this machine, so the peer's delete dialog offers no worktree option. Sensitive |
+| `groups.members.debug-export` | download a member agent's recorded launch and sandbox configuration, holding this grant in every group the agent is in. Every environment value, the recorded PATH and each sandbox-profile pre-launch script are redacted (names kept, each field listed under `redactions`); unrestricted trust gets the full export. Sensitive |
+| `groups.members.remote-control` | turn a member agent's Claude Code Remote Access on or off, holding this grant in every group the agent is in. Remote Access exposes the session to this node's claude.ai account, not to the peer. Sensitive |
 | `agents.receive` | offer agents into that group. See [Sharing an agent](federation-moving.md#sharing-an-agent-with-a-peer) |
 | `agents.receive.permissions` | opt-in permission carry into a receiving group, optionally limited to named slugs. It never transfers ownership or sensitive authority. See [permission carry](federation-moving.md#receiver-approved-permission-carry) |
 | `agents.teleport.receive` | automatic teleport landing in that group, with an applied node profile that sets `teleport_landing` |
@@ -263,11 +266,13 @@ buttons stop or wake every member under `groups.members.stop` and
 `groups.members.resume` for that group. An agent's name, tags, task link and
 notifications change under `groups.members.manage`, held in every group the
 agent is in; its role and description in a group under that group's grant.
-Removing an agent from a group, deleting it, reincarnating it, switching its
-remote access or fast mode, assigning its sandbox implementation and
-downloading its debug export take unrestricted trust. Cloning a group,
-deleting it (with retiring its members first) and cleaning up its offline
-members take unrestricted trust: no peer grant covers them.
+Deleting an agent takes `groups.members.delete`, its debug export
+`groups.members.debug-export` and its remote access
+`groups.members.remote-control`, each held in every group the agent is in (a
+delete also in every group it owns). Deleting its git worktree with it, switching its
+fast mode and assigning its sandbox implementation take unrestricted trust.
+Cloning a group with retiring its members first, and cleaning up its offline
+members, take unrestricted trust: no peer grant covers them.
 
 Unrestricted trust makes a peer's dashboard about equivalent to this node's
 own. It holds every peer grant, and every dashboard route without a peer

@@ -234,8 +234,11 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 			case rcSeenOn, rcSeenFailed:
 				resp.RemoteControl = true
 				resp.Source = "pane"
-				resp.SessionURL = obs.sessionURL
-				resp.Note = obs.note
+				// The session link is this node's operator's: a peer acting
+				// under its own grant switches remote access, never reads it.
+				if peerActionFromRequest(r) == nil {
+					resp.SessionURL, resp.Note = obs.sessionURL, obs.note
+				}
 				selfHealRemoteControl(sess, true)
 			case rcSeenOff:
 				resp.RemoteControl = false

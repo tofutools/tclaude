@@ -165,15 +165,17 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // sends no follow-up, focus hint or forced mode).
   'compact-agent': ['groups.members.compact'],
   'reincarnate': ['groups.members.reincarnate'],
-  // Remote access, fast mode, the sandbox implementation, the debug export
-  // and permanent delete reach what no peer grant hands out:
-  // unrestricted trust only (a feature no restricted peer shares).
-  'toggle-remote-control': ['feature:agents.manage.full'],
+  // Remote access, permanent delete (its worktree is unrestricted trust's:
+  // the dialog's worktree probe is refused, so it offers none) and the debug
+  // export (environment values redacted) under their own grants.
+  'toggle-remote-control': ['groups.members.remote-control'],
+  'debug-export': ['groups.members.debug-export'],
+  'delete-agent': ['groups.members.delete'],
+  // Fast mode and the sandbox implementation reach what no peer grant hands
+  // out yet: unrestricted trust only (a feature no restricted peer shares).
   'sandbox-impl': ['feature:agents.manage.full'],
-  'debug-export': ['feature:agents.manage.full'],
   'fast-mode-set': ['feature:agents.manage.full'],
   'fast-mode-disable': ['feature:agents.manage.full'],
-  'delete-agent': ['feature:agents.manage.full'],
   // Its lifecycle, through the regular dialogs (peer_actions.go refuses
   // their local-only options). A restart stops the agent first.
   'restart': ['groups.members.stop', 'groups.members.resume'],
