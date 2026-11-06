@@ -18,12 +18,11 @@ const html = htm.bind(h);
 // worktreeItems are a repo's worktrees, keyed `wt:<path>` and found by branch
 // or path, then (newKey) the "+ create new worktree…" choice keyed newKey.
 export function worktreeItems(worktrees = [], { newKey = '' } = {}) {
-  const rows = worktrees.filter((worktree) => worktree?.path).map((worktree) => ({
-    key: `wt:${worktree.path}`,
-    label: `${worktree.branch || '(detached)'}${worktree.is_main ? ' [main]' : ''}`,
-    hint: shortCwd(worktree.path),
-    keywords: worktree.path,
-  }));
+  const rows = worktrees.filter((worktree) => worktree?.path).map((worktree) => {
+    const label = `${worktree.branch || '(detached)'}${worktree.is_main ? ' [main]' : ''}`;
+    // The row shows a short path; its tooltip keeps the full one.
+    return { key: `wt:${worktree.path}`, label, hint: shortCwd(worktree.path), keywords: worktree.path, title: `${label} — ${worktree.path}` };
+  });
   return newKey ? [...rows, { key: newKey, label: '+ create new worktree…', hint: '', keywords: 'new create' }] : rows;
 }
 
