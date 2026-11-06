@@ -3,6 +3,7 @@ package agentd
 import (
 	"maps"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -335,7 +336,29 @@ func TestDashboardUngrantableSlugsMatchFederationReach(t *testing.T) {
 		require.Equal(t, FedLocal, reach.Kind, m[1])
 		require.Equal(t, reach.Why, strings.ReplaceAll(m[2], `\'`, `'`), "%s: the picker's reason is the registry's", m[1])
 	}
-	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage, PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge, PermGitLabRead, PermGitLabWrite, PermGitLabMerge, PermHTTP, PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite} {
+	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage, PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge, PermGitLabRead, PermGitLabWrite, PermGitLabMerge, PermHTTP, PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
+		PermResourcesRead, PermResourcesWrite, PermGroupsAdmin, PermAgentMorph, PermGroupsMembersMorph, PermGroupsSettingsDefaultSpawnTarget, PermAgentStanddown, PermAgentInboxWatch, PermGroupsMembersInboxWatch, PermSandboxHarnessConfig, PermHumanNotify} {
 		require.True(t, listed[slug], "%s is shown as not grantable", slug)
+	}
+}
+
+// Every local slug is either a peer grant some peer route serves, or local
+// with its reason: none waits on a route any more.
+func TestFederationReachNonePending(t *testing.T) {
+	for slug, reach := range slugFederationReach {
+		assert.False(t, reach.Pending, "%s is pending: give it a peer route or a FedLocal reason", slug)
+	}
+}
+
+// sandbox.harness-config is local: a peer's spawn request carries no field
+// that could lift the harness-config floor, and an unknown one is dropped
+// when the payload is decoded.
+func TestPeerSpawnRequestCarriesNoHarnessConfig(t *testing.T) {
+	typ := reflect.TypeFor[proto.SpawnRequestPayload]()
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		name := strings.ToLower(f.Name + " " + f.Tag.Get("json"))
+		assert.NotContains(t, name, "harness", "%s: a peer's spawn must not choose the harness-config posture", f.Name)
+		assert.NotContains(t, name, "sandbox", "%s: a peer's spawn must not choose sandbox posture", f.Name)
 	}
 }

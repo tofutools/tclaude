@@ -85,6 +85,16 @@ const peerPagesWhy = "a page is this node's stage origin, shown to the local ope
 // peer's agents' calls through them is parked as an idea (tcl-31l8c0).
 const peerCredentialProxyWhy = "uses this node's operator's credentials; a peer's agents use their own node's proxies"
 
+// peerUmbrellaWhy: an umbrella slug confers a family of operations at once;
+// a peer is granted each one, so its grant list says exactly what it holds.
+const peerUmbrellaWhy = "an umbrella over many slugs; a peer is granted each operation it needs, so its grant list says exactly what it holds"
+
+// peerMorphWhy: a morph re-forms an agent's whole launch, which may widen it.
+const peerMorphWhy = "morph re-forms an agent's whole launch (profile, harness, sandbox, grants); a peer changes only the narrow parts it is granted, such as agent.sandbox-impl and permissions.grant"
+
+// peerInboxWatchWhy: an inbox watch delivers into the calling agent's pane.
+const peerInboxWatchWhy = "delivers another member's mail into the calling agent's own pane; a peer reads mail through node.messages.read"
+
 // peerTriggersManageWhy: trigger rules are authored only on this node's
 // dashboard, by its operator; locally no agent creates or changes one either,
 // and the slug only revalidates an agent owner no path creates.
@@ -102,8 +112,8 @@ var slugFederationReach = map[string]FedReach{
 	PermKnowledgeRead:                     {Kind: FedLocal, Why: "the docs and source of the build answering; a peer's agents read their own"},
 	PermBoardsRead:                        {Kind: FedPeerAlias, Via: []string{PermGroupsResourcesRead}},
 	PermBoardsWrite:                       {Kind: FedPeerAlias, Via: []string{PermGroupsResourcesWrite}},
-	PermResourcesRead:                     {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermResourcesWrite:                    {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermResourcesRead:                     {Kind: FedLocal, Why: peerUmbrellaWhy},
+	PermResourcesWrite:                    {Kind: FedLocal, Why: peerUmbrellaWhy},
 	PermHostRead:                          {Kind: FedPeerInstance, Sensitive: true},
 	PermHumanInboxRead:                    {Kind: FedPeerGroup, Cap: "human_inbox_read", Sensitive: true},
 	PermHumanInboxAnswer:                  {Kind: FedPeerGroup, Cap: "human_inbox_answer", Sensitive: true},
@@ -138,7 +148,7 @@ var slugFederationReach = map[string]FedReach{
 	PermAgentProcess:                      {Kind: FedPeerAlias, Via: []string{PermGroupsMembersProcess}},
 	PermGroupsMembersProcess:              {Kind: FedPeerGroup, Cap: "member_process", Sensitive: true},
 	PermSelfMorph:                         {Kind: FedLocal, Why: "acts on the calling agent itself"},
-	PermAgentMorph:                        {Kind: FedPeerAlias, Via: []string{PermGroupsMembersMorph}, Pending: true},
+	PermAgentMorph:                        {Kind: FedLocal, Why: peerMorphWhy},
 	PermAgentReincarnate:                  {Kind: FedPeerAlias, Via: []string{PermGroupsMembersReincarnate}},
 	PermAgentCompact:                      {Kind: FedPeerAlias, Via: []string{PermGroupsMembersCompact}},
 	PermAgentInterrupt:                    {Kind: FedPeerAlias, Via: []string{PermGroupsMembersInterrupt}},
@@ -150,7 +160,7 @@ var slugFederationReach = map[string]FedReach{
 	PermAgentPR:                           {Kind: FedPeerAlias, Via: []string{PermGroupsMembersPR}},
 	PermAgentTags:                         {Kind: FedPeerAlias, Via: []string{PermGroupsMembersManage}},
 	PermAgentSpawn:                        {Kind: FedSender, Via: []string{PermGroupsMembersSpawn}},
-	PermGroupsMembersMorph:                {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermGroupsMembersMorph:                {Kind: FedLocal, Why: peerMorphWhy},
 	PermGroupsMembersReincarnate:          {Kind: FedPeerGroup, Cap: "reincarnate", Sensitive: true},
 	PermGroupsMembersCompact:              {Kind: FedPeerGroup, Cap: "compact", Sensitive: true},
 	PermGroupsMembersInterrupt:            {Kind: FedPeerGroup, Cap: "interrupt", Sensitive: true},
@@ -161,7 +171,7 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsMembersTask:                 {Kind: FedPeerAlias, Via: []string{PermGroupsMembersManage}},
 	PermGroupsMembersPR:                   {Kind: FedPeerGroup, Cap: "pr", Sensitive: true},
 	PermGroupsMembersTags:                 {Kind: FedPeerAlias, Via: []string{PermGroupsMembersManage}},
-	PermGroupsAdmin:                       {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermGroupsAdmin:                       {Kind: FedLocal, Why: peerUmbrellaWhy},
 	PermGroupsCreate:                      {Kind: FedPeerAlias, Via: []string{PermNodeGroupsCreate}},
 	PermGroupsDelete:                      {Kind: FedPeerGroup, Cap: "group_delete", Sensitive: true},
 	PermGroupsMembersStop:                 {Kind: FedPeerGroup, Cap: "stop", Sensitive: true},
@@ -174,7 +184,7 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsSettingsDefaultDir:          {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsDefaultContext:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsEnvironment:         {Kind: FedPeerGroup, Cap: "group_environment", SelfGate: true, Sensitive: true},
-	PermGroupsSettingsDefaultSpawnTarget:  {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermGroupsSettingsDefaultSpawnTarget:  {Kind: FedLocal, Why: "picks where this node's own operator and agents spawn by default; a peer names the group of each spawn it asks for"},
 	PermGroupsSettingsDefaultProfile:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsMaxMembers:          {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsNotifications:       {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
@@ -203,12 +213,12 @@ var slugFederationReach = map[string]FedReach{
 	PermAgentPromote:                      {Kind: FedLocal, Why: "promotes a plain conversation, which no peer view shows"},
 	PermGroupsMembersPromote:              {Kind: FedLocal, Why: "promotes a plain conversation, which no peer view shows"},
 	PermAgentRetire:                       {Kind: FedPeerAlias, Via: []string{PermGroupsMembersRetire}},
-	PermAgentStanddown:                    {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermAgentStanddown:                    {Kind: FedLocal, Why: "reserved for the scoped stand-down flow; no operation checks it yet"},
 	PermAgentRemoteControl:                {Kind: FedPeerAlias, Via: []string{PermGroupsMembersRemoteControl}},
 	PermGroupsMembersRemoteControl:        {Kind: FedPeerGroup, Cap: "remote_control", Sensitive: true},
 	PermAgentSandboxImplementation:        {Kind: FedPeerGroup, Cap: "sandbox_impl", Sensitive: true},
-	PermAgentInboxWatch:                   {Kind: FedPeerAlias, Via: []string{PermGroupsMembersInboxWatch}, Pending: true},
-	PermGroupsMembersInboxWatch:           {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermAgentInboxWatch:                   {Kind: FedLocal, Why: peerInboxWatchWhy},
+	PermGroupsMembersInboxWatch:           {Kind: FedLocal, Why: peerInboxWatchWhy},
 	PermMessageDirect:                     {Kind: FedPeerGroup, Cap: proto.CapMail},
 	PermGroupsExport:                      {Kind: FedPeerGroup, Cap: "group_export", Sensitive: true},
 	PermGroupsImport:                      {Kind: FedPeerInstance, Sensitive: true},
@@ -223,7 +233,7 @@ var slugFederationReach = map[string]FedReach{
 	PermConfigExport:                      {Kind: FedPeerInstance, Sensitive: true},
 	PermConfigImport:                      {Kind: FedPeerAlias, Via: []string{PermConfigOffer}},
 	PermProfilesManage:                    {Kind: FedPeerInstance, Sensitive: true},
-	PermSandboxHarnessConfig:              {Kind: FedPeerGroup, Pending: true, Sensitive: true},
+	PermSandboxHarnessConfig:              {Kind: FedLocal, Why: "lifts a spawn's read-only floor over the harness's own config; a peer never loosens a sandbox"},
 	PermSandboxProfilesManage:             {Kind: FedPeerInstance, Sensitive: true},
 	PermRelaunchPolicyManage:              {Kind: FedLocal, Why: "a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)"},
 	PermSandboxProfilesDraft:              {Kind: FedLocal, Why: "a scribe the local operator summoned hands its draft to that operator"},
@@ -239,7 +249,7 @@ var slugFederationReach = map[string]FedReach{
 	PermTriggersManage:                    {Kind: FedLocal, Why: peerTriggersManageWhy},
 	PermGroupsTriggersRead:                {Kind: FedPeerGroup, Cap: "triggers_read"},
 	PermGroupsTriggersManage:              {Kind: FedLocal, Why: peerTriggersManageWhy},
-	PermHumanNotify:                       {Kind: FedPeerInstance, Pending: true},
+	PermHumanNotify:                       {Kind: FedLocal, Why: "an agent of this node reaching its own operator's Messages tab; a peer's agents notify their own operator"},
 	PermHumanClipboard:                    {Kind: FedLocal, Why: "the local display"},
 	session.PermAutoPermitEnterWorktree:   {Kind: FedLocal, Why: "answers a harness check inside the agent's own pane"},
 	PermSettingsDefaultModel:              {Kind: FedLocal, Why: "edits the host's ~/.claude/settings.json, which reaches Claude sessions outside tclaude"},

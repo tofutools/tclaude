@@ -225,7 +225,15 @@ live page is this node's stage origin, shown to the local operator's own
 dashboard and its agents, so a peer has no view of it. The credential proxies (`proxy.git.*`,
 `proxy.github.*`, `proxy.gitlab.*`, `proxy.http`, `proxy.linear.*`,
 `proxy.awb.*`) use this node's operator's credentials, so a peer's agents use
-their own node's proxies instead.
+their own node's proxies instead. Umbrella slugs (`groups.admin`,
+`resources.read`, `resources.write`) are not peer grants: a peer is granted
+each operation it needs, so its grant list says exactly what it holds. Morph
+(`agent.morph`, `groups.members.morph`) re-forms an agent's whole launch, and
+`sandbox.harness-config` lifts a spawn's floor over the harness's own config:
+a peer only narrows. `groups.settings.default-spawn-target`, inbox watch,
+`human.notify` and `agent.standdown` belong to this node's own operator and
+agents. The dashboard's grant picker lists every one of them as a disabled
+row with its reason.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's

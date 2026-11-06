@@ -254,6 +254,17 @@ export const UNGRANTABLE_SLUGS = Object.freeze([
   { slug: 'proxy.linear.write', why: 'uses this node\'s operator\'s credentials; a peer\'s agents use their own node\'s proxies' },
   { slug: 'proxy.awb.read', why: 'uses this node\'s operator\'s credentials; a peer\'s agents use their own node\'s proxies' },
   { slug: 'proxy.awb.write', why: 'uses this node\'s operator\'s credentials; a peer\'s agents use their own node\'s proxies' },
+  { slug: 'resources.read', why: 'an umbrella over many slugs; a peer is granted each operation it needs, so its grant list says exactly what it holds' },
+  { slug: 'resources.write', why: 'an umbrella over many slugs; a peer is granted each operation it needs, so its grant list says exactly what it holds' },
+  { slug: 'groups.admin', why: 'an umbrella over many slugs; a peer is granted each operation it needs, so its grant list says exactly what it holds' },
+  { slug: 'agent.morph', why: 'morph re-forms an agent\'s whole launch (profile, harness, sandbox, grants); a peer changes only the narrow parts it is granted, such as agent.sandbox-impl and permissions.grant' },
+  { slug: 'groups.members.morph', why: 'morph re-forms an agent\'s whole launch (profile, harness, sandbox, grants); a peer changes only the narrow parts it is granted, such as agent.sandbox-impl and permissions.grant' },
+  { slug: 'groups.settings.default-spawn-target', why: 'picks where this node\'s own operator and agents spawn by default; a peer names the group of each spawn it asks for' },
+  { slug: 'agent.standdown', why: 'reserved for the scoped stand-down flow; no operation checks it yet' },
+  { slug: 'agent.inbox-watch', why: 'delivers another member\'s mail into the calling agent\'s own pane; a peer reads mail through node.messages.read' },
+  { slug: 'groups.members.inbox-watch', why: 'delivers another member\'s mail into the calling agent\'s own pane; a peer reads mail through node.messages.read' },
+  { slug: 'sandbox.harness-config', why: 'lifts a spawn\'s read-only floor over the harness\'s own config; a peer never loosens a sandbox' },
+  { slug: 'human.notify', why: 'an agent of this node reaching its own operator\'s Messages tab; a peer\'s agents notify their own operator' },
   { slug: 'relaunch-policy.manage', why: 'a peer is deliberately refused, even with unrestricted trust (relaunchPolicyFromPeer)' },
 ]);
 
