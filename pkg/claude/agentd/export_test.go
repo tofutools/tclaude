@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDashboardJS_ExportModalWired guards the end-to-end wiring of the per-agent
@@ -123,3 +124,28 @@ func ServePeerMailboxForTest(r *http.Request) *httptest.ResponseRecorder {
 // RelaunchOverridesNoteForTest is the resume echo of an agent's overridden
 // relaunch rows ("" when it follows the global table throughout).
 func RelaunchOverridesNoteForTest(convID string) string { return relaunchOverridesNote(convID) }
+
+// AddPendingApprovalForTest registers a pending ask-human request as a gate
+// site would, and returns a function that reports the decision it received
+// ("" while none) and removes it.
+func AddPendingApprovalForTest(id, perm, agentID, convID, scopeJSON string) func() string {
+	req := &approvalRequest{id: id, perm: perm, agentID: agentID, convID: convID, scopeJSON: scopeJSON,
+		createdAt: time.Now(), timeout: time.Minute, decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1)}
+	approvals.mu.Lock()
+	approvals.pending[id] = req
+	approvals.mu.Unlock()
+	return func() string {
+		approvals.mu.Lock()
+		delete(approvals.pending, id)
+		approvals.mu.Unlock()
+		select {
+		case o := <-req.decision:
+			if o == outcomeApprove {
+				return "approve"
+			}
+			return "deny"
+		default:
+			return ""
+		}
+	}
+}
