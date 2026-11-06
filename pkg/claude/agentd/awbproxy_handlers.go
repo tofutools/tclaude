@@ -517,6 +517,27 @@ func (s *awbProxySession) gateIssueRef(raw string) (string, *proxyFault) {
 	return ref, nil
 }
 
+// awbIssueAddressed is a request body addressed by one issue.
+type awbIssueAddressed interface{ issueID() string }
+
+func (b *awbIssueRefRequest) issueID() string { return b.ID }
+
+// openAWBIssueProxy is openAWBProxy for a verb addressed by one issue: it
+// also gates that issue's id, before anything reaches AWB, and returns the
+// reference to address it by.
+func openAWBIssueProxy(w http.ResponseWriter, r *http.Request, perm string, body awbIssueAddressed) (*awbProxySession, string, bool) {
+	s, ok := openAWBProxy(w, r, perm, body)
+	if !ok {
+		return nil, "", false
+	}
+	ref, fault := s.gateIssueRef(body.issueID())
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return nil, "", false
+	}
+	return s, ref, true
+}
+
 // identity is the AWB user the daemon authenticates as — the one identity an
 // agent has here, and what `claim` records and `--mine` filters on.
 //
@@ -926,13 +947,8 @@ func awbWhoamiText(resp *awbWhoamiResponse) string {
 // handleAWBProxyIssueShow serves POST /v1/awb/issue/show.
 func handleAWBProxyIssueShow(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
-	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBRead, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	var issue awbIssue
@@ -1003,13 +1019,8 @@ func handleAWBProxyIssueSearch(w http.ResponseWriter, r *http.Request) {
 // for what happens to a child the caller may not see.
 func handleAWBProxyDepTree(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
-	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBRead, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	var tree awbIssueTree
@@ -1148,13 +1159,8 @@ func awbKindOrAll(kind string) string {
 // handleAWBProxyAttachList serves POST /v1/awb/attach/list.
 func handleAWBProxyAttachList(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
-	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBRead, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	attachments := []awbAttachment{}
@@ -1546,13 +1552,8 @@ type awbIssuePatchBody struct {
 // handleAWBProxyIssueUpdate serves POST /v1/awb/issue/update.
 func handleAWBProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	var body awbUpdateRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	var patch awbIssuePatchBody
@@ -1623,13 +1624,8 @@ type awbClaimBody struct {
 // handleAWBProxyIssueClaim serves POST /v1/awb/issue/claim.
 func handleAWBProxyIssueClaim(w http.ResponseWriter, r *http.Request) {
 	var body awbClaimRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	if body.As != nil {
@@ -1648,9 +1644,7 @@ func handleAWBProxyIssueClaim(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	s.mutateIssue(w, r, "issue.claim", ref, body.Compact, awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/claim",
-	}, awbClaimBody{Assignee: assignee, Force: body.Force}, "")
+	s.transitionIssue(w, r, "claim", ref, body.Compact, awbClaimBody{Assignee: assignee, Force: body.Force})
 }
 
 type awbReleaseBody struct {
@@ -1661,13 +1655,8 @@ type awbReleaseBody struct {
 // handleAWBProxyIssueRelease serves POST /v1/awb/issue/release.
 func handleAWBProxyIssueRelease(w http.ResponseWriter, r *http.Request) {
 	var body awbForceRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	// The identity serves only the "assigned to somebody else" refusal, so it
@@ -1675,15 +1664,14 @@ func handleAWBProxyIssueRelease(w http.ResponseWriter, r *http.Request) {
 	// that authenticates nobody is a legitimate request and must not fail for
 	// want of a name nothing would compare.
 	out := awbReleaseBody{Force: body.Force}
+	var fault *proxyFault
 	if body.Force {
 		out.Assignee = s.policy.Username
 	} else if out.Assignee, fault = s.identity("release"); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	s.mutateIssue(w, r, "issue.release", ref, body.Compact, awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/release",
-	}, out, "")
+	s.transitionIssue(w, r, "release", ref, body.Compact, out)
 }
 
 type awbCloseBody struct {
@@ -1693,13 +1681,8 @@ type awbCloseBody struct {
 // handleAWBProxyIssueClose serves POST /v1/awb/issue/close.
 func handleAWBProxyIssueClose(w http.ResponseWriter, r *http.Request) {
 	var body awbCloseRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	if body.Reason != nil {
@@ -1708,26 +1691,17 @@ func handleAWBProxyIssueClose(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.mutateIssue(w, r, "issue.close", ref, body.Compact, awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/close",
-	}, awbCloseBody{Reason: body.Reason}, "")
+	s.transitionIssue(w, r, "close", ref, body.Compact, awbCloseBody{Reason: body.Reason})
 }
 
 // handleAWBProxyIssueReopen serves POST /v1/awb/issue/reopen.
 func handleAWBProxyIssueReopen(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
 		return
 	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return
-	}
-	s.mutateIssue(w, r, "issue.reopen", ref, body.Compact, awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/reopen",
-	}, nil, "")
+	s.transitionIssue(w, r, "reopen", ref, body.Compact, nil)
 }
 
 type awbStatusBody struct {
@@ -1739,16 +1713,12 @@ type awbStatusBody struct {
 // be cleared by setting the issue back to open.
 func handleAWBProxyIssueMakeReady(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
 		return
 	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return
-	}
 	payload, _ := json.Marshal(awbStatusBody{Status: "open"})
+	var fault *proxyFault
 	for attempt := 0; attempt < 2; attempt++ {
 		var issue awbIssue
 		if _, fault = s.exec(r.Context(), awbCall{Method: http.MethodGet,
@@ -1804,13 +1774,8 @@ func handleAWBProxyIssueMakeReady(w http.ResponseWriter, r *http.Request) {
 // because removing a blocker silently makes other issues ready.
 func handleAWBProxyIssueDelete(w http.ResponseWriter, r *http.Request) {
 	var body awbForceRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	if !body.Force {
@@ -1876,15 +1841,10 @@ func handleAWBProxyLabelRemove(w http.ResponseWriter, r *http.Request) {
 func openAWBLabelVerb(
 	w http.ResponseWriter, r *http.Request,
 ) (s *awbProxySession, ref, label string, body awbLabelRequest, ok bool) {
-	s, ok = openAWBProxy(w, r, PermAWBWrite, &body)
-	if !ok {
+	if s, ref, ok = openAWBIssueProxy(w, r, PermAWBWrite, &body); !ok {
 		return nil, "", "", body, false
 	}
 	var fault *proxyFault
-	if ref, fault = s.gateIssueRef(body.ID); fault != nil {
-		writeProxyFault(w, fault)
-		return nil, "", "", body, false
-	}
 	if label, fault = validateAWBLabel(body.Label); fault != nil {
 		writeProxyFault(w, fault)
 		return nil, "", "", body, false
@@ -1934,15 +1894,10 @@ func handleAWBProxyDepRemove(w http.ResponseWriter, r *http.Request) {
 func openAWBDepVerb(
 	w http.ResponseWriter, r *http.Request,
 ) (s *awbProxySession, ref, relType, other string, body awbRelationRequest, ok bool) {
-	s, ok = openAWBProxy(w, r, PermAWBWrite, &body)
-	if !ok {
+	if s, ref, ok = openAWBIssueProxy(w, r, PermAWBWrite, &body); !ok {
 		return nil, "", "", "", body, false
 	}
 	var fault *proxyFault
-	if ref, fault = s.gateIssueRef(body.ID); fault != nil {
-		writeProxyFault(w, fault)
-		return nil, "", "", "", body, false
-	}
 	if relType, fault = validateAWBRelationType(body.Type); fault != nil {
 		writeProxyFault(w, fault)
 		return nil, "", "", "", body, false
@@ -1963,13 +1918,8 @@ func openAWBDepVerb(
 // issue would show nothing that changed.
 func handleAWBProxyCommentAdd(w http.ResponseWriter, r *http.Request) {
 	var body awbCommentAddRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	if fault := validateAWBComment(body.Body); fault != nil {
@@ -2024,13 +1974,8 @@ type awbCommentBody struct {
 // maxAWBAttachmentBytes for why that is worth a size bound.
 func handleAWBProxyAttachAdd(w http.ResponseWriter, r *http.Request) {
 	var body awbAttachAddRequest
-	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	s, ref, ok := openAWBIssueProxy(w, r, PermAWBWrite, &body)
 	if !ok {
-		return
-	}
-	ref, fault := s.gateIssueRef(body.ID)
-	if fault != nil {
-		writeProxyFault(w, fault)
 		return
 	}
 	name, fault := validateAWBAttachmentName(body.Name)
@@ -2106,6 +2051,14 @@ func handleAWBProxyAttachDelete(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, "attach.delete", body.Compact, &attachment,
 		fmt.Sprintf("Deleted attachment %s from %s.\n", awbJSONString(attachment.Name), attachment.Issue),
 		fmt.Sprintf("issue=%s name=%q", ref, name))
+}
+
+// transitionIssue makes one of AWB's issue transitions, a POST to
+// /api/issues/{ref}/{verb}, as the proxy verb issue.{verb}.
+func (s *awbProxySession) transitionIssue(w http.ResponseWriter, r *http.Request, verb, ref string, compact bool, payload any) {
+	s.mutateIssue(w, r, "issue."+verb, ref, compact, awbCall{
+		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/" + verb,
+	}, payload, "")
 }
 
 // mutateIssue is the shared tail of every mutating verb that answers with the
