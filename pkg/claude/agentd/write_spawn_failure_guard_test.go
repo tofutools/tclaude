@@ -26,10 +26,11 @@ func TestSpawnFailuresAreWrittenThroughTheHelper(t *testing.T) {
 		}
 		src, err := os.ReadFile(file)
 		require.NoError(t, err)
-		for _, m := range inline.FindAllStringSubmatch(string(src), -1) {
-			if file == "lifecycle_spawn_profile.go" && m[1] == "fail" {
-				continue // writeSpawnFailure itself
-			}
+		matches := inline.FindAllStringSubmatch(string(src), -1)
+		if file == "lifecycle_spawn_profile.go" && len(matches) > 0 && matches[0][1] == "fail" {
+			matches = matches[1:] // writeSpawnFailure's own body; any other is a finding
+		}
+		for _, m := range matches {
 			assert.Failf(t, "inline spawnFailure write", "%s: %s; use writeSpawnFailure(w, %s)", file, m[0], m[1])
 		}
 	}
@@ -42,7 +43,6 @@ func TestWriteSpawnFailure(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"permission"`)
 
 	rec = httptest.NewRecorder()
-	rec.Code = 0
 	writeSpawnFailure(rec, errSpawnResponseWritten)
 	assert.Empty(t, rec.Body.String(), "a failure already answered writes nothing more")
 	assert.False(t, rec.Flushed)
