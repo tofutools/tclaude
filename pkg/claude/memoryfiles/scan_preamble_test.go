@@ -78,3 +78,16 @@ func TestScanPreambleNoMemoryFiles(t *testing.T) {
 		})
 	}
 }
+
+// clean refuses a malformed glob before it scans: nothing of the scan, not
+// even its note, is printed.
+func TestScanPreambleCleanValidatesGlobsFirst(t *testing.T) {
+	const target = "/work/proj"
+	memEnv(t, target, nil)
+	stdout, stderr := tmpStream(t, ""), tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Exclude: []string{"keep_[me.md"}, Yes: true}, stdout, stderr, tmpStream(t, ""))
+	require.Equal(t, 1, code)
+	assert.Empty(t, readStream(t, stdout))
+	assert.Regexp(t, `^Error: .*invalid glob pattern.*\n$`, readStream(t, stderr))
+	assert.NotContains(t, readStream(t, stderr), "Note:")
+}
