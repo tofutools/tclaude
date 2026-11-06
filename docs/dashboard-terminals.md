@@ -25,9 +25,12 @@ panel and handle as the palette on the Groups tab. It starts folded: open it wit
 handle on the right edge. Each tab remembers its own panel's state.
 
 While a panel is folded, resting the pointer at the right edge for a moment
-(no button held) floats it in over the page, on this tab and on Groups. It goes
-again shortly after the pointer leaves it, but not while something in it has
-focus or one of its menus is open; **Esc** sends it away. Its handle still
+(within about 32 pixels of the page's edge, or on the page's scrollbar; no
+button held) floats it in over the page, on this tab and on Groups. The
+scrollbar beside it counts as part of it. It goes again shortly after the
+pointer leaves it, after the same delay as a popover, but not while something
+in it has focus, one of its menus is open, or you are dragging its scrollbar;
+**Esc** sends it away. Its handle still
 unfolds it for good. To turn this off, uncheck **Side panel at the edge** on the
 Config tab (`dashboard.side_panel_edge_reveal`). It does nothing on touch
 screens.
