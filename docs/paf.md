@@ -171,6 +171,14 @@ permissions stay under the carry policy rather than this list. A request that na
 group's owners land, for a human caller. Snapshot spawns and board imports are such
 requests.
 
+A group file's archived mail and head aliases land only among the file's own
+agents. The import gives fresh ids only to the file's own conversations, so an
+archived message addressed to another conversation on this node (by `to`, a
+recipient list or its original recipient), or a head alias pointing at one,
+would reach that agent unchanged, under the sender the file names. A human
+import drops those entries, and the preview and the reply list them by archived
+message id and alias handle. A peer import refuses the file.
+
 ## How tclaude uses PAF
 
 | Operation | What PAF carries | Carrier in this release |
