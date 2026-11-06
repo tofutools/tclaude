@@ -55,7 +55,7 @@ function primaryLabel(kind, view) {
 // RowMenu is a row's ⋯: what is rarely wanted, and what cannot be undone
 // behind a confirm. An item with children opens them in its place (Move to
 // group lists the groups), with a way back.
-function RowMenu({ label, items }) {
+export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more' }) {
   const [open, setOpen] = useState(false);
   const [sub, setSub] = useState(null);
   const ref = useRef(null);
@@ -70,8 +70,8 @@ function RowMenu({ label, items }) {
     void item.run();
   };
   return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant="link" class="gq-link gr-more" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${`More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>⋯<//>
+    <${Button} size="sm" variant="link" class=${`gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      title=${title || `More for ${label}`} aria-label=${title || `More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>${glyph}<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu">
       ${shown.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} ...${item.attrs || {}}
         onClick=${() => pick(item)}>${item.children ? `${item.label} ›` : item.label}<//>`)}
@@ -81,9 +81,9 @@ function RowMenu({ label, items }) {
 
 // RenameField edits a row's name in place: Enter saves, Escape or leaving
 // it keeps the name.
-function RenameField({ value, label, onSave, onDone }) {
+export function RenameField({ value, label, onSave, onDone }) {
   const ref = useRef(null);
-  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
+  useEffect(() => { ref.current?.focus(); ref.current?.select?.(); }, []);
   const key = (event) => {
     if (event.key === 'Escape') { event.preventDefault(); onDone(); }
     if (event.key !== 'Enter') return;
@@ -118,6 +118,51 @@ function renameAndMove({ startRename, groups, move, attrs }) {
     });
   }
   return items;
+}
+
+// resourceMenu is a board's or page's edit items, the ⋯ of its Groups row
+// and the ⚙ of its Collab panel row (tcl-usrm7h): Rename…, Move to group ›
+// (resource-moves.js' targets) and Delete…. resource is { kind, id, label,
+// closed, owner } with owner the page's agent ('' for a group's own page);
+// groupId is the group it is listed in (0 for none); startRename shows the
+// row's name field.
+export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source, notify, confirm, startRename }) {
+  const { kind, id, label } = resource;
+  const act = rowAction(label, source, notify);
+  const page = kind === 'page';
+  const move = act('move', (name) => (page ? api.moveGroupPage(id, name) : api.moveBoard(id, name)), (name) => `Moved ${label} to ${name}`);
+  // An agent's page moves to a group its agent is in; a group's own blank
+  // page only while closed.
+  const groups = !page ? moveTargets(snapshotValue, groupId)
+    : !resource.owner ? (resource.closed ? moveTargets(snapshotValue, groupId) : [])
+      : moveTargets(snapshotValue, groupId, resource.owner);
+  const remove = async () => {
+    const ok = await confirm(page
+      ? {
+        title: `Delete page ${label}?`,
+        body: resource.closed
+          ? 'The page is removed from the group and cannot be reopened.'
+          : 'The page closes for everyone viewing it and is removed from the group; it cannot be reopened.',
+        okLabel: 'Delete',
+      }
+      : { title: `Delete board ${label}?`, body: 'The board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await (page ? api.deleteGroupPage(id) : api.deleteBoard(id));
+      notify(`Deleted ${label}`);
+      void source?.refresh?.();
+    } catch (cause) {
+      notify(`Could not delete ${label}: ${cause.message}`, true);
+    }
+  };
+  return [...renameAndMove({ startRename, groups, move, attrs: id }),
+    { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-board-delete']: id }, run: remove }];
+}
+
+// renameResource sets a board's or page's title, as its Rename… field saves it.
+export function renameResource(resource, { api, source, notify }) {
+  const call = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameBoard(resource.id, title);
+  return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
 // ResourceRow is one resource: glyph and name (the primary action too), what
@@ -163,23 +208,6 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
   const [renaming, setRenaming] = useState(false);
   const view = resourceView(snapshotValue, groupId, 'page', page.id, page.state === 'closed' ? 'closed' : 'running');
   const run = view === 'closed' ? () => reopenPage(page, api, source, notify) : focusOr(`page:${page.id}`, () => openPagePane(page.id, label));
-  const remove = async () => {
-    const ok = await confirm({
-      title: `Delete page ${label}?`,
-      body: view === 'closed'
-        ? 'The page is removed from the group and cannot be reopened.'
-        : 'The page closes for everyone viewing it and is removed from the group; it cannot be reopened.',
-      okLabel: 'Delete',
-    });
-    if (!ok) return;
-    try {
-      await api.deleteGroupPage(page.id);
-      notify(`Deleted ${label}`);
-      void source?.refresh?.();
-    } catch (cause) {
-      notify(`Could not delete ${label}: ${cause.message}`, true);
-    }
-  };
   const reload = async () => {
     try {
       await api.reloadGroupPage(page.id);
@@ -187,48 +215,30 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
       notify(`Could not reload ${label}: ${cause.message}`, true);
     }
   };
-  const act = rowAction(label, source, notify);
-  const rename = act('rename', (title) => api.renameGroupPage(page.id, title), (title) => `Renamed ${label} to ${title}`);
-  const move = act('move', (name) => api.moveGroupPage(page.id, name), (name) => `Moved ${label} to ${name}`);
-  // An agent's page moves to a group its agent is in; a group's own blank
-  // page only while closed.
-  const groups = page.groupOwned ? (view === 'closed' ? moveTargets(snapshotValue, groupId) : []) : moveTargets(snapshotValue, groupId, page.owner);
+  const resource = { kind: 'page', id: page.id, label, closed: view === 'closed', owner: page.groupOwned ? '' : page.owner || '' };
+  const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="page" attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
     drag=${draggable && { id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
     closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
     action=${view !== 'closed' && { glyph: '↻', title: `Reload ${label} in every view`, attrs: { 'data-page-reload': page.id }, run: reload }}
-    renaming=${renaming && { value: label, onSave: rename, onDone: () => setRenaming(false) }}
-    menu=${[...renameAndMove({ startRename: () => setRenaming(true), groups, move, attrs: page.id }),
-      { label: 'Delete…', danger: true, attrs: { 'data-page-delete': page.id }, run: remove }]}
+    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
+    menu=${resourceMenu(resource, ctx)}
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
 function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId, groupName, draggable = true }) {
   const label = board.title || board.id;
   const [renaming, setRenaming] = useState(false);
-  const act = rowAction(label, source, notify);
-  const rename = act('rename', (title) => api.renameBoard(board.id, title), (title) => `Renamed ${label} to ${title}`);
-  const move = act('move', (name) => api.moveBoard(board.id, name), (name) => `Moved ${label} to ${name}`);
   const view = resourceView(snapshotValue, groupId, 'board', board.id);
-  const remove = async () => {
-    const ok = await confirm({ title: `Delete board ${label}?`, body: 'The board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
-    if (!ok) return;
-    try {
-      await api.deleteBoard(board.id);
-      notify(`Deleted ${label}`);
-      void source?.refresh?.();
-    } catch (cause) {
-      notify(`Could not delete ${label}: ${cause.message}`, true);
-    }
-  };
+  const resource = { kind: 'board', id: board.id, label };
+  const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="board" attrs=${{ 'data-resource-board': board.id }} glyph="▦" label=${label}
     drag=${draggable && { id: board.id, group: groupName }}
     meta=${board.editing > 0 ? `board · ${board.editing} editing` : 'board'} view=${view}
     primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
-    renaming=${renaming && { value: label, onSave: rename, onDone: () => setRenaming(false) }}
-    menu=${[...renameAndMove({ startRename: () => setRenaming(true), groups: moveTargets(snapshotValue, groupId), move, attrs: board.id }),
-      { label: 'Delete…', danger: true, attrs: { 'data-board-delete': board.id }, run: remove }]}
+    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
+    menu=${resourceMenu(resource, ctx)}
     lock=${html`<${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 

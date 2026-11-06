@@ -186,7 +186,7 @@ const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
 // --- moving an item to another group (tcl-eq8pq9) ---
 
 // railResource is a board or page item as resource-moves.js reads it.
-function railResource(item) {
+export function railResource(item) {
   if (!MOVABLE_KINDS.includes(item.kind)) return null;
   const id = item.resource?.id || item.key.slice(item.kind.length + 1);
   return { kind: item.kind, id, label: item.title, group: item.group || '', owner: item.resource?.owner || '',
@@ -195,7 +195,7 @@ function railResource(item) {
 
 // railAgent is an agent item's agent on this node, or null (another node's
 // agent moves on its own dashboard).
-function railAgent(item) {
+export function railAgent(item) {
   if (!isAgentItem(item) || item.pane?.seed?.remote || item.row?.node) return null;
   const agent = item.status.agent;
   return agent.conv_id || agent.agent_id ? agent : null;

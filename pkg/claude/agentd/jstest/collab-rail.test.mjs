@@ -185,8 +185,9 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
 
   // A strip tab comes forward on click, and offers pop out and close.
   const launch = root.querySelector('[data-rail-item="board:launch"]');
-  assert.equal(launch.querySelectorAll('.cr-tool:not(.cr-more)').length, 2);
+  assert.equal(launch.querySelectorAll('.cr-tool:not(.cr-more):not(.cr-gear-btn)').length, 2);
   assert.ok(launch.querySelector('.cr-more'), 'and a ⋯ for the rest');
+  assert.ok(launch.querySelector('.cr-gear-btn'), 'and a ⚙ to edit it');
   await harness.act(async () => { harness.fireEvent(launch.querySelector('.cr-name'), 'click'); await wait(); });
   assert.deepEqual(activated, ['board:launch']);
 
