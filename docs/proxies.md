@@ -133,6 +133,13 @@ Edit it there or in the dashboard's
   token with the `api` scope. The GitLab verbs send it to the API, and git
   uses it for `https` pushes and fetches to a configured instance. There is no
   CLI fallback; with no file configured every GitLab verb refuses and says so.
+  A fine-grained token limited to some projects works too, for those
+  projects. It may not list the whole instance, so the footer's
+  [Open MRs](dashboard-groups.md#open-mrs) **all** reads everyone's merge
+  requests project by project instead: the projects your agents work in,
+  those of your own open merge requests, and every `allowed_remotes` entry
+  that names one exact project on the instance (no `*`). A project in none of
+  those is not shown.
 
 `~/` expands in these values; shell variables do not.
 

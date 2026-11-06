@@ -354,7 +354,21 @@ which names the projects and covers the 500 most recently updated open merge
 requests. Up to 20 projects per instance are then read through GraphQL, five
 per query: those your agents work in first, then the ones with the most open
 merge requests. Past either cap, the remaining projects are left out and the
-**all** count ends in `+`. If the project-wide read fails while your own list
+**all** count ends in `+`.
+
+A token limited to some projects (a fine-grained personal access token) may
+not call the instance-wide list; GitLab answers 403. agentd then reads
+everyone's merge requests project by project, from the projects it already
+knows: those your agents work in, then those of your own open merge requests,
+then every `agent.git_proxy.allowed_remotes` entry that names one exact
+project on the instance (a `*` entry names none). The same 20-project cap
+applies. The popover says how many projects were read this way; it is not an
+error. A project in none of those lists does not show. agentd asks the
+instance-wide list again every 10 minutes, so a token given wider access
+switches back by itself. Only when the per-project read fails too, or there is
+no project to read, does the popover show an error, with both reasons.
+
+If the project-wide read fails while your own list
 answers, the project tabs keep their last lists and say so. The instance is
 not marked as failed. That needs a GitLab recent enough to have
 `detailedMergeStatus` (16.x is safe); an older one reports the missing field

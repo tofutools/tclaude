@@ -194,3 +194,66 @@ const glEveryoneProjects = `{"data":{"p0":{"mergeRequests":{"count":3,"nodes":[
 {"iid":"9","title":"Someone else's","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/9",
  "draft":false,"updatedAt":"2026-11-02T12:00:00Z","author":{"username":"martin"},"headPipeline":null,"approvedBy":{"nodes":[]}}
 ]}}}}`
+
+// TestOpenMRs_AProjectLimitedTokenReadsEveryoneProjectByProject: the token
+// may not call the instance-wide merge request list (403
+// insufficient_granular_scope, as a project-limited fine-grained token
+// answers), so everyone's merge requests come from the projects already
+// known: the user's own merge requests' and the exact projects in
+// allowed_remotes. A wildcard entry reads nothing, and the popover is told
+// how many projects were read rather than shown an error.
+func TestOpenMRs_AProjectLimitedTokenReadsEveryoneProjectByProject(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_, _, gl := glWorld(t, []string{"gitlab.contoso.test/contoso/*", "gitlab.contoso.test/contoso/sub/docs"})
+	t.Cleanup(agentd.ResetAuthoredOpenMRsForTest)
+	var projectQueries []string
+	listCalls := 0
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		switch {
+		case !req.GraphQL && req.Path == "merge_requests":
+			listCalls++
+			return glCanned{Status: http.StatusForbidden, Body: `{"error":"insufficient_granular_scope"}`}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "mergedAt"):
+			return glCanned{Status: http.StatusOK, Body: glRecentMRsAnswer}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "mergeRequestInteraction"):
+			return glCanned{Status: http.StatusOK, Body: glOpenMRReviewersAnswer}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "authoredMergeRequests"):
+			return glCanned{Status: http.StatusOK, Body: glOpenMRsAnswer}, true
+		case req.GraphQL:
+			projectQueries = append(projectQueries, string(req.Body))
+			return glCanned{Status: http.StatusOK, Body: glScopedProjects}, true
+		}
+		return glCanned{}, false
+	}
+
+	_, err := agentd.PollAuthoredOpenMRsForTest()
+	require.NoError(t, err)
+	assert.Equal(t, 1, listCalls)
+	require.Len(t, projectQueries, 1)
+	assert.Contains(t, projectQueries[0], `"p0":"contoso/sub/player"`, "the project of your own merge requests")
+	assert.Contains(t, projectQueries[0], `"p1":"contoso/sub/docs"`, "the exact allowed_remotes project")
+	assert.NotContains(t, projectQueries[0], `"p2"`, "the wildcard entry reads nothing")
+
+	snap := snapshotJSON(t, agentd.BuildDashboardHandlerForTest(), "/api/snapshot")
+	mrs, ok := snap["authored_open_mrs"].(map[string]any)
+	require.True(t, ok, "snapshot=%v", snap["authored_open_mrs"])
+	inst := mrs["instances"].([]any)[0].(map[string]any)
+	assert.NotContains(t, inst, "everyone_error", "a refused instance-wide list is not an error")
+	assert.EqualValues(t, 2, inst["everyone_by_project"])
+	assert.EqualValues(t, 4, mrs["everyone_total"])
+	projects := mrs["projects"].([]any)
+	require.Len(t, projects, 2)
+
+	_, err = agentd.PollAuthoredOpenMRsForTest()
+	require.NoError(t, err)
+	assert.Equal(t, 1, listCalls, "the refusal is remembered; the next poll reads the projects directly")
+	assert.Len(t, projectQueries, 2)
+}
+
+const glScopedProjects = `{"data":{
+"p0":{"fullPath":"contoso/sub/player","mergeRequests":{"count":3,"nodes":[
+{"iid":"7","title":"Add a thing","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7","author":{"username":"jdoe"}},
+{"iid":"8","title":"Draft: Try a thing","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8","author":{"username":"jdoe"}},
+{"iid":"9","title":"Someone else's","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/9","author":{"username":"martin"}}]}},
+"p1":{"fullPath":"contoso/sub/docs","mergeRequests":{"count":1,"nodes":[
+{"iid":"2","title":"Fix a typo","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/docs/-/merge_requests/2","author":{"username":"ann"}}]}}}}`

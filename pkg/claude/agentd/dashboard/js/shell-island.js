@@ -813,6 +813,9 @@ function OpenMRs({ state }) {
   // A project-wide read that failed before it ever answered leaves no tabs to
   // carry its error, and a zero that only means "unknown".
   const everyoneUnread = !view.projects.length && staleEveryone.length > 0;
+  // A project-limited token cannot list the whole instance, so everyone's
+  // merge requests were read project by project: a note, not a failure.
+  const byProject = view.instances.filter((entry) => entry.everyoneByProject > 0 && !entry.everyoneError);
   const everyone = everyoneUnread ? '?' : `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
   const where = view.projectEntry;
   const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
@@ -847,6 +850,8 @@ function OpenMRs({ state }) {
           ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
           ${where ? staleEveryone.filter((entry) => entry.host === where.host).map((entry) => html`<p key=${`${entry.host}-everyone`}
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} are from an earlier read: ${entry.everyoneError}</p>`) : null}
+          ${byProject.filter((entry) => !where || entry.host === where.host).map((entry) => html`<p key=${`${entry.host}-by-project`}
+            class="open-prs-note" role="status">Everyone's merge requests on ${entry.host}: ${entry.everyoneByProject} project${entry.everyoneByProject === 1 ? '' : 's'}, read individually: this token can't list the whole instance</p>`)}
           ${!where && everyoneUnread ? staleEveryone.map((entry) => html`<p key=${`${entry.host}-everyone`}
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length

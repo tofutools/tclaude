@@ -332,6 +332,7 @@ body.dock-open .open-prs.is-open::before {
 }
 .open-prs-add-form button:where(:not(.ui-btn)):focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
+.open-prs-note { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #7d8590; font-size: 10.5px; }
 .open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
 .open-prs-confirm-backdrop {
@@ -11132,6 +11133,7 @@ body.wizard .open-prs-head strong {
   letter-spacing: 0.4px;
 }
 body.wizard .open-prs-age,
+body.wizard .open-prs-note,
 body.wizard .open-pr-meta { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }

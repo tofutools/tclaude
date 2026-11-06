@@ -122,6 +122,10 @@ type dashboardAuthoredOpenMRInstance struct {
 	// EveryoneError says why the last project-wide read failed. The
 	// instance itself is fine, and its last good project tabs stay.
 	EveryoneError string `json:"everyone_error,omitempty"`
+	// EveryoneByProject is set when the instance refused the instance-wide
+	// list (a project-limited token) and everyone's merge requests were read
+	// project by project instead: the number of projects read.
+	EveryoneByProject int `json:"everyone_by_project,omitempty"`
 }
 
 // dashboardAuthoredOpenMRs is the snapshot's authored_open_mrs: the Open PRs
@@ -163,6 +167,16 @@ var authoredOpenMRState struct {
 	recent      map[string]authoredRecentMRs
 	recentTried map[string]recentMRAttempt
 	polls       int
+	// refused is each instance whose instance-wide merge request list the
+	// token may not call, and when it last said so. Such an instance is read
+	// project by project, and asked again every everyoneOpenMRReprobe.
+	refused map[string]everyoneRefusal
+}
+
+// everyoneRefusal is an instance's last refusal of the instance-wide list.
+type everyoneRefusal struct {
+	at     time.Time
+	reason string
 }
 
 // recentMRAttempt is when (by poll number) and under which window an
@@ -193,6 +207,14 @@ type authoredOpenMREveryone struct {
 	// truncated is set when discovery stopped at its page cap, so projects
 	// beyond it are missing.
 	truncated bool
+	// byProject is how many projects were read individually because the
+	// instance-wide list was refused, counting those GitLab answered for (a
+	// path that is a group, or gone, does not count); zero when discovery
+	// named them.
+	byProject int
+	// found counts the projects a read answered for, with open merge
+	// requests or without.
+	found int
 }
 
 // dashboardOpenMRProject is one project tab in the Open MRs popover: every
@@ -322,6 +344,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	everyone := map[string]authoredOpenMREveryone{}
 	recent := map[string]authoredRecentMRs{}
 	recentTried := map[string]recentMRAttempt{}
+	refused := map[string]everyoneRefusal{}
 	polls := 0
 	if authoredOpenMRState.key == key && authoredOpenMRState.tokenDigest == digest {
 		for base, answer := range authoredOpenMRState.good {
@@ -335,6 +358,9 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		}
 		for base, attempt := range authoredOpenMRState.recentTried {
 			recentTried[base] = attempt
+		}
+		for base, refusal := range authoredOpenMRState.refused {
+			refused[base] = refusal
 		}
 		polls = authoredOpenMRState.polls
 	}
@@ -364,12 +390,16 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			inst.URL = base + "/dashboard/merge_requests?state=opened&author_username=" + url.QueryEscape(username)
 			// Everyone's merge requests only once the token has resolved a
 			// user here; a failure keeps the last good project lists.
-			all, retry, err := fetchEveryoneOpenMRs(ctx, base, token, agentProjects)
+			all, retry, err := readEveryoneOpenMRs(ctx, base, token, agentProjects,
+				everyoneFallbackKnown(policy, base, answer), refused, time.Now())
+			// A good read may still carry a wait: a re-probe that hit a 429
+			// before the per-project read answered.
+			wait = max(wait, retry)
 			if err != nil {
 				inst.EveryoneError = err.Error()
-				wait = max(wait, retry)
 			} else {
 				everyone[base] = all
+				inst.EveryoneByProject = all.byProject
 			}
 			// The recently closed list, authoredRecentMREvery polls after the
 			// last attempt, or at once when the window changed under it. A
@@ -407,6 +437,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	authoredOpenMRState.everyone = everyone
 	authoredOpenMRState.recent = recent
 	authoredOpenMRState.recentTried = recentTried
+	authoredOpenMRState.refused = refused
 	authoredOpenMRState.polls = polls + 1
 	authoredOpenMRState.instances = instances
 	if answered > 0 {
@@ -473,6 +504,7 @@ func resetAuthoredOpenMRs(key string) {
 	authoredOpenMRState.everyone = nil
 	authoredOpenMRState.recent = nil
 	authoredOpenMRState.recentTried = nil
+	authoredOpenMRState.refused = nil
 	authoredOpenMRState.polls = 0
 	authoredOpenMRState.instances = nil
 	authoredOpenMRState.updatedAt = time.Time{}
@@ -623,10 +655,208 @@ const (
 	everyoneOpenMRChunk = 5
 	// everyoneOpenMRMaxProjects caps the projects read per instance and
 	// poll: the ones agents work in first, then the busiest. With discovery,
-	// that bounds a poll at 9 requests per instance whatever the instance
-	// holds, each under its own authoredOpenMRTimeout.
+	// that bounds the project-wide read at 9 requests per instance whatever
+	// the instance holds, each under its own authoredOpenMRTimeout. On an
+	// instance that refuses discovery it is at most 10: a re-probe every
+	// everyoneOpenMRReprobe, up to everyoneOpenMRPages pages of the user's own
+	// merge requests when the Mine list was cut (fetchMineMRProjects, read
+	// afresh each poll), and the 4 project queries.
 	everyoneOpenMRMaxProjects = 20
+	// everyoneOpenMRReprobe is how long an instance that refused the
+	// instance-wide list is read project by project before it is asked again.
+	everyoneOpenMRReprobe = 10 * time.Minute
 )
+
+// errEveryoneRefused is the instance-wide list's 403: the token may read
+// projects, but not list the whole instance (a project-limited fine-grained
+// token answers insufficient_granular_scope).
+type errEveryoneRefused struct{ reason string }
+
+func (e *errEveryoneRefused) Error() string { return e.reason }
+
+// readEveryoneOpenMRs is one instance's project-wide read. It asks for the
+// instance-wide list unless that was refused within everyoneOpenMRReprobe;
+// a refused instance is read project by project instead, from the projects
+// already known to matter: the agents', then those of the user's own open
+// merge requests and the exact projects allowed_remotes names (known). Only
+// when that fails too, or has no project to read, is the read an error, and
+// the error carries both reasons. refused is updated in place.
+func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects map[string]bool, known everyoneKnown,
+	refused map[string]everyoneRefusal, now time.Time) (authoredOpenMREveryone, time.Duration, error) {
+	refusal, wasRefused := refused[base]
+	var probeRetry time.Duration
+	if !wasRefused || now.Sub(refusal.at) >= everyoneOpenMRReprobe {
+		all, retry, err := fetchEveryoneOpenMRs(ctx, base, token, agentProjects)
+		var refusedErr *errEveryoneRefused
+		switch {
+		case errors.As(err, &refusedErr):
+			refusal = everyoneRefusal{at: now, reason: refusedErr.reason}
+		case err == nil:
+			delete(refused, base)
+			return all, retry, nil
+		case !wasRefused:
+			return all, retry, err
+		default:
+			// A re-probe that failed for another reason (a timeout, a 5xx,
+			// a 429) says nothing new about the token: keep reading project
+			// by project, and ask again after the next interval.
+			refusal.at = now
+			probeRetry = retry
+		}
+		refused[base] = refusal
+	}
+	mine := known.mine
+	if known.mineMore {
+		// The Mine list stopped at its page, so later projects of the user's
+		// own merge requests are found by paging; on a failure, the first
+		// page's projects are read alone.
+		more, retry, err := fetchMineMRProjects(ctx, base, token)
+		probeRetry = max(probeRetry, retry)
+		if err != nil {
+			slog.Debug("open-mrs: GitLab read of the rest of your merge requests failed; reading the first page's projects",
+				"host", gitlabBaseHost(base), "error", err, "module", "agentd")
+		}
+		mine = append(mine, more...)
+	}
+	projects := everyoneFallbackProjects(base, agentProjects, append(mine, known.allowed...))
+	if len(projects) == 0 {
+		return authoredOpenMREveryone{}, probeRetry, fmt.Errorf("%s: this token can't list the whole instance, and no project "+
+			"is known to read one by one (none an agent works in, none with your open merge requests, "+
+			"no exact project in allowed_remotes)", refusal.reason)
+	}
+	truncated := false
+	if len(projects) > everyoneOpenMRMaxProjects {
+		projects, truncated = projects[:everyoneOpenMRMaxProjects], true
+	}
+	all, retry, err := fetchOpenMRProjectChunks(ctx, base, token, projects)
+	if err != nil {
+		return authoredOpenMREveryone{}, max(retry, probeRetry), fmt.Errorf("%s (listing the instance); reading its projects one by one: %w",
+			refusal.reason, err)
+	}
+	all.truncated, all.byProject = truncated, all.found
+	return all, probeRetry, nil
+}
+
+// everyoneKnown is the part of a refused instance's project set the poller
+// knows besides the agents'. mine are the projects on the Mine list's page;
+// mineMore says the user has more open merge requests than it held.
+type everyoneKnown struct {
+	mine     []string
+	mineMore bool
+	allowed  []string
+}
+
+// everyoneFallbackKnown is that set: the projects of the user's own open merge
+// requests on the instance, then every allowed_remotes entry that names one
+// exact project there (host/group/.../project, no wildcard). An entry naming a group
+// with subgroups cannot be told from a project by its shape; GitLab answers
+// such a path with no project, and it is skipped. allowed_remotes is
+// lower-cased by ResolvedGitProxy, so these paths take GitLab's own spelling
+// only from the fullPath fetchOpenMRProjects asks for.
+func everyoneFallbackKnown(policy config.GitProxyConfig, base string, mine authoredOpenMRAnswer) everyoneKnown {
+	out := everyoneKnown{mineMore: mine.truncated}
+	for _, item := range mine.items {
+		out.mine = append(out.mine, item.Repository)
+	}
+	for _, pattern := range policy.AllowedRemotes {
+		segs := strings.Split(strings.Trim(pattern, "/"), "/")
+		if len(segs) < 3 || strings.Contains(pattern, "*") {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimRight(policy.GitLabBase(segs[0]), "/"), base) {
+			continue
+		}
+		out.allowed = append(out.allowed, strings.TrimSuffix(strings.Join(segs[1:], "/"), ".git"))
+	}
+	return out
+}
+
+// mineMRProjectsQuery pages through the user's open merge requests for their
+// projects alone.
+const mineMRProjectsQuery = `query($first: Int!, $after: String) {
+  currentUser {
+    authoredMergeRequests(state: opened, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { webUrl }
+    }
+  }
+}`
+
+// fetchMineMRProjects lists the projects of the user's open merge requests on
+// one instance, in the order GitLab lists them, for a refused instance whose
+// Mine list was cut at its page. It reads at most everyoneOpenMRPages pages,
+// as instance-wide discovery does, each under its own timeout, and returns
+// what it found before any failure.
+func fetchMineMRProjects(ctx context.Context, base, token string) ([]string, time.Duration, error) {
+	var out []string
+	seen := map[string]bool{}
+	var after any
+	for range everyoneOpenMRPages {
+		var data struct {
+			CurrentUser *struct {
+				AuthoredMergeRequests struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						WebURL string `json:"webUrl"`
+					} `json:"nodes"`
+				} `json:"authoredMergeRequests"`
+			} `json:"currentUser"`
+		}
+		pageCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+		err := glGraphQL(pageCtx, base, token, mineMRProjectsQuery,
+			map[string]any{"first": authoredOpenMRLimit, "after": after}, &data)
+		cancel()
+		if err != nil {
+			return out, glRetryFrom(err), err
+		}
+		if data.CurrentUser == nil {
+			return out, 0, errors.New("GitLab did not resolve the token to a user")
+		}
+		list := data.CurrentUser.AuthoredMergeRequests
+		for _, node := range list.Nodes {
+			ref, ok := gitlabMRRefFromURL(node.WebURL)
+			if !ok || !strings.EqualFold(ref.base, strings.TrimRight(base, "/")) || seen[strings.ToLower(ref.project)] {
+				continue
+			}
+			seen[strings.ToLower(ref.project)] = true
+			out = append(out, ref.project)
+		}
+		if !list.PageInfo.HasNextPage || list.PageInfo.EndCursor == "" {
+			break
+		}
+		after = list.PageInfo.EndCursor
+	}
+	return out, 0, nil
+}
+
+// everyoneFallbackProjects orders a refused instance's projects: the ones
+// agents work in first (sorted, as the set has no order), then known, each
+// once whatever its case.
+func everyoneFallbackProjects(base string, agentProjects map[string]bool, known []string) []string {
+	prefix := strings.ToLower(strings.TrimRight(base, "/")) + "/"
+	var agents []string
+	for root := range agentProjects {
+		if project, ok := strings.CutPrefix(strings.ToLower(root), prefix); ok {
+			agents = append(agents, project)
+		}
+	}
+	sort.Strings(agents)
+	seen := map[string]bool{}
+	var out []string
+	for _, project := range append(agents, known...) {
+		project = strings.Trim(project, "/")
+		key := strings.ToLower(project)
+		if project == "" || strings.Contains(project, "/-/") || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, project)
+	}
+	return out
+}
 
 // authoredOpenMRAgentProjects is the set of "<base>/<project>" roots agents
 // work in, as the last snapshot saw them. The poller reads it to put those
@@ -667,6 +897,10 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects
 		}
 		if res.Status == http.StatusTooManyRequests {
 			return authoredOpenMREveryone{}, glRetryAfter(res, time.Now()), errors.New(glRateLimitText(res))
+		}
+		if res.Status == http.StatusForbidden {
+			// Not a 401: a bad token fails the user's own list too.
+			return authoredOpenMREveryone{}, 0, &errEveryoneRefused{reason: glErrorText(res)}
 		}
 		if res.Status != http.StatusOK {
 			return authoredOpenMREveryone{}, 0, errors.New(glErrorText(res))
@@ -714,18 +948,29 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects
 		order = order[:everyoneOpenMRMaxProjects]
 		truncated = true
 	}
+	out, retry, err := fetchOpenMRProjectChunks(ctx, base, token, order)
+	if err != nil {
+		return authoredOpenMREveryone{}, retry, err
+	}
+	out.truncated = truncated
+	return out, 0, nil
+}
 
-	out := authoredOpenMREveryone{truncated: truncated}
+// fetchOpenMRProjectChunks reads the given projects everyoneOpenMRChunk to a
+// GraphQL query, each query under its own timeout.
+func fetchOpenMRProjectChunks(ctx context.Context, base, token string, order []string) (authoredOpenMREveryone, time.Duration, error) {
+	var out authoredOpenMREveryone
 	fetchedAt := time.Now().UTC().Format(time.RFC3339)
 	for start := 0; start < len(order); start += everyoneOpenMRChunk {
 		chunk := order[start:min(start+everyoneOpenMRChunk, len(order))]
 		chunkCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
-		got, retry, err := fetchOpenMRProjects(chunkCtx, base, token, chunk, fetchedAt)
+		got, found, retry, err := fetchOpenMRProjects(chunkCtx, base, token, chunk, fetchedAt)
 		cancel()
 		if err != nil {
 			return authoredOpenMREveryone{}, retry, err
 		}
 		out.projects = append(out.projects, got...)
+		out.found += found
 	}
 	return out, 0, nil
 }
@@ -733,7 +978,8 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects
 // fetchOpenMRProjects reads up to everyoneOpenMRChunk projects' open merge
 // requests in one GraphQL query, one alias per project. The query text is
 // built here from a count; every project path travels as a variable.
-func fetchOpenMRProjects(ctx context.Context, base, token string, projects []string, fetchedAt string) ([]dashboardOpenMRProject, time.Duration, error) {
+// It also returns how many of the projects GitLab answered for.
+func fetchOpenMRProjects(ctx context.Context, base, token string, projects []string, fetchedAt string) ([]dashboardOpenMRProject, int, time.Duration, error) {
 	var params, fields strings.Builder
 	variables := map[string]any{}
 	for i, project := range projects {
@@ -741,7 +987,7 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 			params.WriteString(", ")
 		}
 		fmt.Fprintf(&params, "$p%d: ID!", i)
-		fmt.Fprintf(&fields, "  p%d: project(fullPath: $p%d) { mergeRequests(state: opened, first: %d) { count nodes { ...mr } } }\n",
+		fmt.Fprintf(&fields, "  p%d: project(fullPath: $p%d) { fullPath mergeRequests(state: opened, first: %d) { count nodes { ...mr } } }\n",
 			i, i, everyoneOpenMRPerProject)
 		variables["p"+strconv.Itoa(i)] = project
 	}
@@ -754,16 +1000,17 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 		Body:    map[string]any{"query": query, "variables": variables},
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if res.Status == http.StatusTooManyRequests {
-		return nil, glRetryAfter(res, time.Now()), errors.New(glRateLimitText(res))
+		return nil, 0, glRetryAfter(res, time.Now()), errors.New(glRateLimitText(res))
 	}
 	if res.Status != http.StatusOK {
-		return nil, 0, errors.New(glErrorText(res))
+		return nil, 0, 0, errors.New(glErrorText(res))
 	}
 	var doc struct {
 		Data map[string]*struct {
+			FullPath      string `json:"fullPath"`
 			MergeRequests struct {
 				Count int            `json:"count"`
 				Nodes []glOpenMRNode `json:"nodes"`
@@ -774,16 +1021,23 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(res.Body, &doc); err != nil {
-		return nil, 0, fmt.Errorf("decode GitLab response: %w", err)
+		return nil, 0, 0, fmt.Errorf("decode GitLab response: %w", err)
 	}
-	if len(doc.Errors) > 0 {
-		return nil, 0, fmt.Errorf("GitLab GraphQL: %s", truncateAuthoredPRTitle(doc.Errors[0].Message))
-	}
+	// An error names one alias (a deleted project, one the token may not
+	// read) and leaves it null; the others' answers stand. Only a query no
+	// alias answered is an error.
 	var out []dashboardOpenMRProject
+	found := 0
 	for i, project := range projects {
 		got := doc.Data["p"+strconv.Itoa(i)]
 		if got == nil {
-			continue // not visible to the token any more
+			continue // not visible to the token any more, or not a project
+		}
+		found++
+		// A path known only lower-cased (an agent's link, allowed_remotes)
+		// takes the project's own spelling.
+		if strings.EqualFold(got.FullPath, project) {
+			project = got.FullPath
 		}
 		entry := dashboardOpenMRProject{
 			Base: base, Host: gitlabBaseHost(base), Project: project,
@@ -806,7 +1060,14 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 			out = append(out, entry)
 		}
 	}
-	return out, 0, nil
+	if len(doc.Errors) > 0 {
+		if found == 0 {
+			return nil, 0, 0, fmt.Errorf("GitLab GraphQL: %s", truncateAuthoredPRTitle(doc.Errors[0].Message))
+		}
+		slog.Debug("open-mrs: GitLab could not read some projects; keeping the others",
+			"host", gitlabBaseHost(base), "errors", len(doc.Errors), "error", truncateAuthoredPRTitle(doc.Errors[0].Message), "module", "agentd")
+	}
+	return out, found, 0, nil
 }
 
 // fetchRecentMRs reads one instance's recently closed list: the user's merge

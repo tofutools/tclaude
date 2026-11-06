@@ -586,8 +586,8 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
       { number: 6, url: 'https://example.com/not-a-merge-request/6' },
     ],
     instances: [
-      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe' },
-      { host: 'evil.example.test', url: 'javascript:alert(1)' },
+      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', everyone_by_project: 4 },
+      { host: 'evil.example.test', url: 'javascript:alert(1)', everyone_by_project: 'many' },
       { host: 'down.example.test', error: 'GitLab returned HTTP 502' },
     ],
   } };
@@ -604,9 +604,9 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   assert.equal(noWindow.showingRecent, false, 'no recently closed list without a window');
   assert.deepEqual(noWindow.items.map((mr) => mr.number), all.items.map((mr) => mr.number), 'so the open list shows');
   assert.deepEqual(all.instances, [
-    { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', error: '', everyoneError: '' },
-    { host: 'evil.example.test', url: '', error: '', everyoneError: '' },
-    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502', everyoneError: '' },
+    { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', error: '', everyoneError: '', everyoneByProject: 4 },
+    { host: 'evil.example.test', url: '', error: '', everyoneError: '', everyoneByProject: 0 },
+    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502', everyoneError: '', everyoneByProject: 0 },
   ]);
   assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
 });

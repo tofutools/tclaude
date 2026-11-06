@@ -1083,3 +1083,31 @@ test('a project-wide read that never answered says so on Mine, and all reads ?',
     'a merge request badge names GitLab');
   await mounted.unmount();
 });
+
+test('a project-limited token reads everyone\'s project by project and says so, not as an error', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:8929';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 0, items: [], everyone_total: 1,
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
+      everyone_by_project: 3 }],
+    projects: [{ host: 'gitlab.example.test:8929', project: 'acme/app', url: `${base}/acme/app/-/merge_requests`,
+      total: 1, items: [{ number: 4, url: `${base}/acme/app/-/merge_requests/4`, title: 'Theirs', repository: 'acme/app', author: 'ann' }] }],
+  } }));
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '1', 'a count, not ?');
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Open MRs/ }).click());
+  assert.equal(mounted.container.querySelector('.open-prs-stale'), null, 'no error');
+  assert.match(mounted.container.querySelector('.open-prs-note').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:8929: 3 projects, read individually: this token can't list the whole instance/);
+  await harness.act(() => getByRole(mounted.container, 'tab', { name: /app 1/ }).click());
+  assert.match(mounted.container.querySelector('.open-prs-note').textContent, /3 projects, read individually/,
+    'the project tab says it too');
+  await mounted.unmount();
+});
