@@ -21,6 +21,7 @@ import {
 import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
 } from './process-context.js';
+import { AgentCombobox } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -312,10 +313,8 @@ function ReassignForm({ run, node, members, onAssign, wizard }) {
   };
   return html`<div class="grf-reassign" data-run-reassign=${node.id}>
     <div class="ui-eyebrow grf-section">${wizard ? 'REBIND' : 'REASSIGN'}</div>
-    ${candidates.length ? html`<${Select} size="sm" aria-label=${`New performer for ${node.label}`} value=${chosen}
-        onChange=${(event) => setTarget(event.currentTarget.value)}>
-        ${candidates.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-      <//>
+    ${candidates.length ? html`<${AgentCombobox} ariaLabel=${`New performer for ${node.label}`} value=${chosen} agents=${candidates}
+        onChange=${setTarget} />
       <${Button} size="sm" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign<//>`
     : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
     ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}

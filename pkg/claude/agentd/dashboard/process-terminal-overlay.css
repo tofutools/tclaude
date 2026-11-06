@@ -65,7 +65,7 @@
 
 /* Reassign picker in the T2 actions row */
 .pk-reassign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.pk-reassign-select { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; max-width: 220px; }
+.pk-reassign .agent-combobox { display: inline-block; vertical-align: top; min-width: 200px; max-width: 260px; }
 
 /* T3: agent-scoped run stepper (js/process-agent-stepper.js) */
 .pk-agent-stepper { width: min(440px, calc(100vw - 48px)); }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
 
@@ -459,10 +460,9 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form[data-start-scope="agent"]');
   assert.equal(form.getAttribute('aria-label'), 'Start a process for one agent in frontend-squad');
-  const agent = form.querySelector('select[data-start-agent]');
-  assert.deepEqual([...agent.options].map((o) => o.textContent), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
-  Object.defineProperty(agent, 'value', { configurable: true, writable: true, value: 'agt_fe_charts' });
-  await harness.act(() => harness.fireEvent(agent, 'change'));
+  const agent = form.querySelector('[data-start-agent]');
+  assert.deepEqual(await comboLabels(harness, agent), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
+  await comboPick(harness, agent, 'agt_fe_charts');
   await harness.act(() => harness.fireEvent(form, 'submit'));
   await settle(harness);
   assert.equal(started.length, 1);

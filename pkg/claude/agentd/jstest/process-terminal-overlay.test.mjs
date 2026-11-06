@@ -1,5 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 // A run as GET /v1/process/context projects it: an agent-scoped review loop
 // where agt_coder implements, a human decides, and a fix step loops back.
@@ -202,10 +203,9 @@ test('reassign hands an outstanding agent attempt to a group member', async (t) 
   const button = (pattern) => [...root.querySelectorAll('.pk-run-popover-actions button')].find((b) => pattern.test(b.textContent));
   assert.equal(button(/reassign/).disabled, false);
   await harness.act(() => harness.fireEvent(button(/reassign/), 'click'));
-  const select = root.querySelector('[data-process-reassign="fix"] select');
-  assert.deepEqual([...select.querySelectorAll('option')].map((o) => o.textContent), ['reviewer', 'ops']);
-  for (const option of select.querySelectorAll('option')) option.selected = option.value === 'agt_ops';
-  await harness.act(() => harness.fireEvent(select, 'change'));
+  const box = root.querySelector('[data-process-reassign="fix"] .agent-combobox');
+  assert.deepEqual(await comboLabels(harness, box), ['reviewer', 'ops']);
+  await comboPick(harness, box, 'agt_ops');
   await harness.act(async () => { harness.fireEvent(button(/^assign$/), 'click'); });
   assert.deepEqual(assigned, [['run_review', 'fix', 'agt_ops']]);
   assert.ok(!root.querySelector('[data-process-reassign]'), 'the picker closes after assigning');

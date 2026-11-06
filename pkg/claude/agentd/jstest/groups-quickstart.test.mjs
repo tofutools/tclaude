@@ -1265,7 +1265,7 @@ test('the start form opens the draft it asks about', async (t) => {
 
 test('opening the draft from an agent-scoped form still starts it for that agent', async (t) => {
   const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-resource-add-process-agent]' });
-  const agent = root.querySelector('[data-start-agent] option').getAttribute('value');
+  const agent = root.querySelector('[data-start-agent]').dataset.value;
   assert.ok(agent);
   await click(root.querySelector('[data-start-draft-open]'));
   await settle();

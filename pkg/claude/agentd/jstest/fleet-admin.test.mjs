@@ -1,4 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
+import { comboKeys } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
@@ -1251,7 +1252,7 @@ test('offers: preview then apply a config offer item by item, start a moved agen
 
   // Share an agent: only agents with a stable ID; the receiving group is required.
   await s.click(s.q('#fleet-share-agent-open'));
-  assert.deepEqual([...q('#fleet-share-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1']);
+  assert.deepEqual(await comboKeys(s.harness, q('#fleet-share-agent-agent')), ['agt_a1']);
   await s.click(q('#fleet-share-agent-send'));
   assert.match(q('#fleet-share-agent [role=alert]').textContent, /receiving group/);
   await type(q('#fleet-share-agent-group'), 'team');
@@ -1320,7 +1321,7 @@ test('moves: the move dialog spells out that the source retires and surfaces ref
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
   await s.click(s.q('#fleet-move-open'));
-  assert.deepEqual([...q('#fleet-move-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1'], 'only agents with a stable ID can move');
+  assert.deepEqual(await comboKeys(s.harness, q('#fleet-move-agent-agent')), ['agt_a1'], 'only agents with a stable ID can move');
   await s.click(q('#fleet-move-agent-send'));
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /receiving group/);
   const g = q('#fleet-move-agent-group'); g.value = 'team';

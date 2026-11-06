@@ -44,6 +44,7 @@ import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.j
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
 import { Button, Select } from './ui-components.js';
+import { AgentCombobox } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -193,9 +194,8 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ${agentScoped
     ? html`<span class="pk-chip ui-tag pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
-        ? html`<${Select} size="sm" aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
-          ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-        <//>`
+        ? html`<${AgentCombobox} attrs=${{ 'data-start-agent': '' }} ariaLabel="Agent" value=${agent} disabled=${busy} agents=${agents} group=${group.name}
+          placeholder=${wizard ? 'Type to find a hero…' : 'Type to find an agent…'} onChange=${setAgent} />`
         : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
     : html`<span class="pk-chip ui-tag pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
