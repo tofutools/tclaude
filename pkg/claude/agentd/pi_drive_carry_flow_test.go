@@ -3,7 +3,9 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/url"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +39,16 @@ func TestPiDriveSurvivesClone(t *testing.T) {
 			cloned := f.AsHuman().CloneWith(driven.ConvID, body)
 			require.NotEmptyf(t, cloned.NewConv, "no clone: %s", cloned.Raw)
 			assert.True(t, piDriveRecorded(t, cloned.NewConv), "the clone of a driven pi lost the drive")
+			// The clone's post-init waits for its drive, so its rename goes over
+			// the drive once the extension connects (late, as a real one is after
+			// its first "no drive"), never failing on a channel not yet up.
+			sim := f.World.Pis.GetByConvID(cloned.NewConv)
+			require.NotNil(t, sim, "the clone should have a pi pane simulator")
+			ext := startPiDriveExtension(t, f, sim, cloned.NewConv)
+			require.Eventually(t, func() bool { return slices.Contains(ext.ran(), "rename") },
+				5*time.Second, 10*time.Millisecond, "the driven clone's post-init rename goes over the drive")
+			assert.Equal(t, "pi-driven-c-1", sim.Name())
+			assert.Empty(t, sentToSession(f, cloned.TmuxSession), "a driven clone never receives keystrokes")
 
 			cloned = f.AsHuman().CloneWith(plain.ConvID, body)
 			require.NotEmptyf(t, cloned.NewConv, "no clone: %s", cloned.Raw)
