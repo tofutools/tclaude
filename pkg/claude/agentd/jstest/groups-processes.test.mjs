@@ -862,3 +862,13 @@ test('Both folds an empty Ungrouped Resources to its line and says where boards 
   const opened = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
   assert.match(opened.querySelector('[data-resources-empty]').textContent, /^No resources outside groups\./);
 });
+
+test('another node\'s Ungrouped in Both lists none of this node\'s boards, and claims none of its own', async (t) => {
+  const peer = { name: 'Ungrouped@lab-b', key: ' ungrouped-virtual@lab-b', virtual: true, fleet_node: { id: 'n2', name: 'lab-b', local: false }, members: [] };
+  const { harness, details } = await mountFocus(t, { fused: true, groups: [GROUPS[0], peer], allGroups: [GROUPS[0]] });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed' }] });
+  const el = details(' ungrouped-virtual@lab-b');
+  assert.ok(el.querySelector(':scope > .subtable > [data-fused-section="agents"]'));
+  assert.equal(el.querySelector('[data-fused-section="processes"]'), null, 'no Resources section without runs');
+  assert.equal(el.querySelector('[data-resource-board]'), null);
+});

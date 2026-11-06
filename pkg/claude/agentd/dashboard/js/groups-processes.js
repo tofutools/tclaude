@@ -761,9 +761,14 @@ export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot
   if (perspective.fused) {
     // The snapshot is this node's: another node's Ungrouped (the fused
     // fleet view) lists none of its boards.
-    const boards = !group.fleet_node || group.fleet_node.local ? ungroupedBoards(snapshot?.value) : [];
+    const own = !group.fleet_node || group.fleet_node.local;
+    const boards = own ? ungroupedBoards(snapshot?.value) : [];
     const shown = boards.length > 0 || entries.length > 0;
-    return html`<${FusedSection} group=${key} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${count}>${agents}<//>
+    const agentsSection = html`<${FusedSection} group=${key} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${count}>${agents}<//>`;
+    // Another node's boards are not read here, so its Ungrouped claims none:
+    // Resources shows only for its agents' runs.
+    if (!own && !entries.length) return agentsSection;
+    return html`${agentsSection}
       <${FusedSection} group=${key} section="processes" label="Resources" count=${boards.length} auto=${shown}
         attrs=${{ 'data-fused-processes': key }}>
         <div class="gp-group" data-process-group=${key}>
@@ -771,7 +776,7 @@ export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot
             notify=${perspective.notify || defaultNotify} snapshot=${snapshot} />
           <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
             onOpen=${(runId) => perspective.onFocusRun({ group: key, runId })} />
-          ${!shown && html`<div class="gp-empty ui-empty" data-resources-empty=${key}>${wizard
+          ${!shown && own && html`<div class="gp-empty ui-empty" data-resources-empty=${key}>${wizard
             ? 'Nothing here. A board made outside a party lands here; ⋯ binds it to one.'
             : 'No resources outside groups. A board made outside a group lands here; its ⋯ moves it into one.'}</div>`}
         </div>
