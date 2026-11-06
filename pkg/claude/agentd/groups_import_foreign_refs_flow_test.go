@@ -136,3 +136,70 @@ func TestGroupImport_InspectListsTheForeignMailItWillDrop(t *testing.T) {
 	assert.Contains(t, warnings, "5 archived messages", "the preview says what will drop: %s", warnings)
 	assert.Contains(t, warnings, `"trusted-head"`)
 }
+
+func TestGroupImport_InspectConfirmationCarriesTheDropWhenTheFileHasItemsToKeep(t *testing.T) {
+	f := newFlow(t)
+	archive := foreignRefsArchive(t, f)
+	// An owner seat is a keepable item, so the preview shows its
+	// confirmation's warnings rather than file_warnings.
+	archive = rewriteZipEntry(t, archive, "manifest.json", func(raw []byte) []byte {
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(raw, &m))
+		m["owners"] = []any{map[string]any{"conv_id": foreignA, "created_at": "2026-01-01T00:00:00Z"}}
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out
+	})
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/groups/import/inspect?as=team2", bytes.NewReader(archive)))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var insp struct {
+		Confirm struct {
+			Items    []json.RawMessage `json:"items"`
+			Warnings []string          `json:"warnings"`
+		} `json:"confirm"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &insp))
+	require.NotEmpty(t, insp.Confirm.Items, "fixture: the file has an item to keep")
+	warnings := strings.Join(insp.Confirm.Warnings, "\n")
+	assert.Contains(t, warnings, "5 archived messages", "the confirmation the preview shows names the drop: %s", warnings)
+	assert.Contains(t, warnings, `"trusted-head"`)
+}
+
+// A recipient list naming one of the file's own conversations with JSON
+// escapes still has it remapped: the escaped id must not survive the import
+// and decode, on insert, to the local conversation it collided with.
+func TestGroupImport_RemapsAnEscapedRecipientID(t *testing.T) {
+	f := newFlow(t)
+	archive := foreignRefsArchive(t, f)
+	escaped := `["` + "\\u0062" + foreignB[1:] + `"]` // foreignB, its first byte as a JSON escape
+	require.NotContains(t, escaped, foreignB, "fixture: the id is not there verbatim")
+	archive = rewriteZipEntry(t, archive, "manifest.json", func(raw []byte) []byte {
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(raw, &m))
+		msgs := m["messages"].([]any)
+		inside := msgs[0].(map[string]any)
+		require.Equal(t, "inside", inside["subject"])
+		inside["to_recipients"] = escaped
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out
+	})
+	res := importArchiveOK(t, f, archive, f.TestCwd("restored"), "team2")
+	freshB := res.ConvRemaps[foreignB]
+	require.NotEmpty(t, freshB, "fixture: bob collides locally, so the import remaps him")
+	var landed struct {
+		Messages []struct {
+			Subject      string `json:"subject"`
+			ToRecipients string `json:"to_recipients"`
+		} `json:"messages"`
+	}
+	rewriteZipEntry(t, exportGroupAs(t, f, "team2", "zip"), "manifest.json", func(raw []byte) []byte {
+		require.NoError(t, json.Unmarshal(raw, &landed))
+		return append(raw, ' ')
+	})
+	require.Len(t, landed.Messages, 1)
+	var recipients []string
+	require.NoError(t, json.Unmarshal([]byte(landed.Messages[0].ToRecipients), &recipients))
+	assert.Equal(t, []string{freshB}, recipients, "the escaped id was remapped like any other")
+}

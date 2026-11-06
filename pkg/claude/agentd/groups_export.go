@@ -587,7 +587,9 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
 	insp.FileWarnings = append(append([]string(nil), settled.warnings...), foreignWarnings...)
-	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, settled.warnings)
+	// The confirmation's warnings are what a preview with keepable items
+	// shows, so the dropped mail and aliases ride there too.
+	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, insp.FileWarnings)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)

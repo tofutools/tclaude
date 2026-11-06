@@ -793,11 +793,22 @@ func (c *importCtx) rc(id string) string {
 	return id
 }
 
-// rl remaps every conv-id occurrence inside a free-form string —
-// recipient lists (to_recipients / cc_recipients) and the like. conv-ids
-// are 36-char UUIDs, so a plain substring replace cannot mis-hit, and
-// this stays agnostic to the list's delimiter.
+// rl remaps the conv-ids in a recipient list (to_recipients /
+// cc_recipients). A JSON list is decoded, remapped id by id and encoded
+// again, so an id written with JSON escapes cannot slip past the remap and
+// decode, on insert, to a local conversation outside the file. Anything else
+// falls back to substring replacement: conv-ids are 36-char UUIDs, so a plain
+// replace cannot mis-hit.
 func (c *importCtx) rl(s string) string {
+	var ids []string
+	if strings.TrimSpace(s) != "" && json.Unmarshal([]byte(s), &ids) == nil {
+		for i, id := range ids {
+			ids[i] = c.rc(id)
+		}
+		if out, err := json.Marshal(ids); err == nil {
+			return string(out)
+		}
+	}
 	for old, fresh := range c.plan.ConvRemap {
 		if old != fresh && old != "" {
 			s = strings.ReplaceAll(s, old, fresh)
