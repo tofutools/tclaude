@@ -171,7 +171,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermResourcesWrite, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimResource},
-		Description: "Umbrella for changing every kind of resource: boards (boards.write) and process templates (process.templates.manage), for a manager agent. Scoped like resources.read; a resource in several groups needs every one of them in a group= scope. It does not pass an operator lock (only groups.resources.lock or the human unlocks), and run mutations stay on process.runs.manage. Never member- or owner-implied and not default-granted.",
+		Description: "Umbrella for changing every kind of resource: boards (boards.write) and process templates (process.templates.manage), for a manager agent. Implies resources.read (a deny of resources.read still wins); the per-kind write slugs do not imply their read slugs. Scoped like resources.read; a resource in several groups needs every one of them in a group= scope. It does not pass an operator lock (only groups.resources.lock or the human unlocks), and run mutations stay on process.runs.manage. Never member- or owner-implied and not default-granted.",
 	},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
 	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},

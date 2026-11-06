@@ -172,6 +172,7 @@ func TestResourcesWriteUmbrellaChangesButNotPastALock(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, e.draw("loose"), "a lock holds against resources.write")
 	rec = e.save("shared", nil)
 	assert.GreaterOrEqual(t, rec.Code, 400, "a lock holds against resources.write: %s", rec.Body.String())
+	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, pathLoose, nil).Code, "write implies read, and a lock does not stop a read")
 	rec = e.agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "board", "id": "loose", "locked": false})
 	assert.Equal(t, http.StatusForbidden, rec.Code, "only groups.resources.lock or the human unlocks")
 	assert.Contains(t, rec.Body.String(), agentd.PermGroupsResourcesLock)
@@ -296,4 +297,21 @@ func TestResourcesUmbrellaIsNotHiddenByAScopedKindGrant(t *testing.T) {
 	e.grant(agentd.PermResourcesRead, `{"group":["crew"]}`)
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, "/v1/process/runs?group=crew", nil).Code)
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, "/v1/process/runs?group=hidden", nil).Code)
+}
+
+// resources.write implies resources.read, scope included, below a deny of
+// resources.read.
+func TestResourcesWriteUmbrellaImpliesRead(t *testing.T) {
+	e := newUmbrellaEnv(t)
+	e.grant(agentd.PermResourcesWrite, `{"group":["crew"]}`)
+	assert.Equal(t, map[string]int{
+		pathPlan: http.StatusOK, pathSecret: http.StatusForbidden, pathLoose: http.StatusForbidden,
+		pathShip: http.StatusOK, pathShared: http.StatusOK, pathSolo: http.StatusForbidden,
+	}, e.reads(umbrellaReadPaths...))
+	assert.Equal(t, []string{"plan"}, e.listedBoards())
+	assert.Equal(t, []string{"shared", "ship"}, e.listedTemplates())
+
+	require.NoError(t, db.SetAgentPermissionOverride(e.manager, agentd.PermResourcesRead, db.PermEffectDeny, "test"))
+	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, pathPlan, nil).Code, "a deny of resources.read wins")
+	assert.Equal(t, http.StatusOK, e.draw("plan"), "the write itself stays")
 }

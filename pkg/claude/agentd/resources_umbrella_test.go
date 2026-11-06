@@ -17,8 +17,13 @@ func TestResourceUmbrellasAreExplicitOnly(t *testing.T) {
 		assert.False(t, IsOwnerImpliedSlug(slug), "%s must never be owner-implied", slug)
 		assert.ElementsMatch(t, []ScopeDim{ScopeDimGroup, ScopeDimResource}, permissionScopeDimsForSlug(slug), slug)
 		assert.NotEmpty(t, sudoUseLimitRefusal(slug), slug)
-		assert.Empty(t, permissionUmbrellaFor(slug), "an umbrella implies no umbrella")
 	}
+	assert.Equal(t, PermResourcesWrite, permissionUmbrellaFor(PermResourcesRead), "write implies read")
+	assert.Empty(t, permissionUmbrellaFor(PermResourcesWrite))
+	kindWrite := permSources{resolvable: true, override: map[string]overridePermSource{PermBoardsWrite: {Effect: "grant"}},
+		group: map[string][]string{}, sudo: map[string]sudoPermSource{}}
+	assert.Equal(t, permUndecided, resolveEffectivePermissionVerdictFrom(kindWrite, PermBoardsRead, false, false).Resolution,
+		"the per-kind write slugs do not imply their read slugs")
 }
 
 // What each umbrella implies, and what it does not: run mutations stay on
@@ -49,6 +54,18 @@ func TestResourceUmbrellaImplications(t *testing.T) {
 		assert.Equal(t, permUndecided, resolveEffectivePermissionVerdictFrom(src, slug, false, false).Resolution, slug)
 	}
 	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(src, PermBoardsWrite, false, false).Resolution)
+
+	writeOnly := permSources{resolvable: true, override: map[string]overridePermSource{PermResourcesWrite: {Effect: "grant"}},
+		group: map[string][]string{}, sudo: map[string]sudoPermSource{}}
+	for _, slug := range []string{PermResourcesRead, PermBoardsRead, PermProcessTemplatesRead, PermProcessRunsRead} {
+		assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, slug, false, false).Resolution, "write implies %s", slug)
+	}
+	writeOnly.override[PermResourcesRead] = overridePermSource{Effect: "deny"}
+	for _, slug := range []string{PermResourcesRead, PermBoardsRead} {
+		assert.NotEqual(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, slug, false, false).Resolution,
+			"a deny of resources.read wins over write for %s", slug)
+	}
+	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, PermBoardsWrite, false, false).Resolution)
 }
 
 func TestResourceScopeShape(t *testing.T) {

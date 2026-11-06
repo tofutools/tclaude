@@ -658,7 +658,11 @@ func resolveEffectivePermissionVerdictFrom(src permSources, slug string, default
 	if exact.Resolution == permDeny || umbrella == "" {
 		return exact
 	}
-	admin := resolvePermissionVerdictFrom(src, umbrella, umbrellaDefaultAllowed)
+	// An umbrella may itself sit under one (resources.write implies
+	// resources.read), so it resolves through this same function. That
+	// second step reads no defaults list: neither resource umbrella is meant
+	// to be a default.
+	admin := resolveEffectivePermissionVerdictFrom(src, umbrella, umbrellaDefaultAllowed, false)
 	if exact.Resolution == permUndecided && admin.Resolution == permAllow {
 		return admin
 	}

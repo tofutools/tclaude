@@ -11,7 +11,8 @@ import (
 // confers inside one group:
 //
 //   - Never member- or owner-implied, never default-granted: only an explicit
-//     grant (or sudo) of the umbrella itself confers it.
+//     grant (or sudo) of an umbrella confers it. resources.write implies
+//     resources.read, below a deny of resources.read.
 //   - A grant may be scoped with the ordinary scope system: group= reaches the
 //     resources linked to those groups, resource=kind:id the named resources,
 //     and no scope means every resource.
@@ -70,10 +71,16 @@ func resourceUmbrellaFor(slug string) string {
 
 // permissionUmbrellaFor is the umbrella slug that implies slug, "" for none.
 // The two umbrella families never overlap: groups.admin covers the groups.*
-// namespace, the resource umbrellas the per-kind resource slugs.
+// namespace, the resource umbrellas the per-kind resource slugs. resources.write
+// implies resources.read (a manager that may change a resource may read it),
+// but only the umbrella does: boards.write still does not imply boards.read.
+// A deny of resources.read wins over that step, as any dedicated deny does.
 func permissionUmbrellaFor(slug string) string {
 	if IsGroupsAdminImpliedSlug(slug) {
 		return PermGroupsAdmin
+	}
+	if slug == PermResourcesRead {
+		return PermResourcesWrite
 	}
 	return resourceUmbrellaFor(slug)
 }
