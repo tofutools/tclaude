@@ -194,6 +194,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 | `node.update` | check and apply tclaude updates here. See [Updating nodes](federation-admin.md#updating-local-and-linked-nodes) (unscoped only) |
+| `host.read` | this node's host status (`GET /api/host/status` through the peer proxy): CPU load, memory, live agents and sessions, disk capacity by kind (data, work), and the warnings its thresholds raise. Never a host path: disks and disk warnings go by kind, and warning messages and error text are left out. Unrestricted trust reads the full status. Unscoped only. Sensitive |
 | `node.harnesses.read` | installed harness binary paths and versions, and whether credentials exist, as a yes or no (unscoped only) |
 | `node.harnesses.install` | install and update harnesses here (unscoped only) |
 | `node.credentials.receive` | receive harness credentials copied from a peer (unscoped only) |
@@ -216,12 +217,15 @@ node profile saved by an older tclaude can still hold, authorizes nothing:
 `federation grants` and the dashboard's grant list mark it inert, and
 `federation profile show` warns about it, until it is granted per group.
 
-Some local permissions have no peer grant at all. Three examples:
+Some local permissions have no peer grant at all. Some examples:
 `settings.default-model` edits the host's `~/.claude/settings.json`, which
 reaches Claude sessions outside tclaude. `relaunch-policy.manage` is refused
 to every peer on purpose, unrestricted trust included. `groups.pages.*`: a
 live page is this node's stage origin, shown to the local operator's own
-dashboard and its agents, so a peer has no view of it.
+dashboard and its agents, so a peer has no view of it. The credential proxies (`proxy.git.*`,
+`proxy.github.*`, `proxy.gitlab.*`, `proxy.http`, `proxy.linear.*`,
+`proxy.awb.*`) use this node's operator's credentials, so a peer's agents use
+their own node's proxies instead.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's

@@ -80,6 +80,11 @@ func (f FedReach) peerGrantable() bool {
 // its local operator's own dashboard and to its agents.
 const peerPagesWhy = "a page is this node's stage origin, shown to the local operator's own dashboard and its agents; a peer has no view of it"
 
+// peerCredentialProxyWhy: the git, forge, HTTP, Linear and awb proxies carry
+// this node's operator's credentials to this node's own agents. Forwarding a
+// peer's agents' calls through them is parked as an idea (tcl-31l8c0).
+const peerCredentialProxyWhy = "uses this node's operator's credentials; a peer's agents use their own node's proxies"
+
 // peerTriggersManageWhy: trigger rules are authored only on this node's
 // dashboard, by its operator; locally no agent creates or changes one either,
 // and the slug only revalidates an agent owner no path creates.
@@ -99,7 +104,7 @@ var slugFederationReach = map[string]FedReach{
 	PermBoardsWrite:                       {Kind: FedPeerAlias, Via: []string{PermGroupsResourcesWrite}},
 	PermResourcesRead:                     {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermResourcesWrite:                    {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermHostRead:                          {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermHostRead:                          {Kind: FedPeerInstance, Sensitive: true},
 	PermHumanInboxRead:                    {Kind: FedPeerGroup, Cap: "human_inbox_read", Sensitive: true},
 	PermHumanInboxAnswer:                  {Kind: FedPeerGroup, Cap: "human_inbox_answer", Sensitive: true},
 	PermApprovalsAnswer:                   {Kind: FedPeerInstance, Sensitive: true},
@@ -282,20 +287,20 @@ var slugFederationReach = map[string]FedReach{
 	PermRoutesPublishHost:                 {Kind: FedLocal, Why: "host-only by definition"},
 	PermRoutesPublish:                     {Kind: FedLocal, Why: "publishes the caller's own route; peers open shared group routes through routes.consume"},
 	PermRoutesConsume:                     {Kind: FedPeerGroup, Cap: proto.CapRoutes},
-	PermGitRead:                           {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitPush:                           {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitHubRead:                        {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitHubWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitHubMerge:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitLabRead:                        {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitLabWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermGitLabMerge:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermGitRead:                           {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitPush:                           {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitHubRead:                        {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitHubWrite:                       {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitHubMerge:                       {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitLabRead:                        {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitLabWrite:                       {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermGitLabMerge:                       {Kind: FedLocal, Why: peerCredentialProxyWhy},
 	PermModelsProxy:                       {Kind: FedPeerProxy},
-	PermHTTP:                              {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermLinearRead:                        {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermLinearWrite:                       {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermAWBRead:                           {Kind: FedPeerInstance, Pending: true, Sensitive: true},
-	PermAWBWrite:                          {Kind: FedPeerInstance, Pending: true, Sensitive: true},
+	PermHTTP:                              {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermLinearRead:                        {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermLinearWrite:                       {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermAWBRead:                           {Kind: FedLocal, Why: peerCredentialProxyWhy},
+	PermAWBWrite:                          {Kind: FedLocal, Why: peerCredentialProxyWhy},
 	PermConfigOffer:                       {Kind: FedPeerInstance},
 }
 

@@ -108,7 +108,7 @@ var pinnedFederationPeerSlugs = map[string]string{
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{
-	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermFleetRead: true, PermProcessRunsRead: true, PermProcessRunsManage: true, PermNodeHarnessesRead: true,
+	"config.offer": true, PermHostRead: true, PermApprovalsAnswer: true, PermNodeRead: true, PermFleetRead: true, PermProcessRunsRead: true, PermProcessRunsManage: true, PermNodeHarnessesRead: true,
 	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true, PermGroupsImport: true,
@@ -335,7 +335,7 @@ func TestDashboardUngrantableSlugsMatchFederationReach(t *testing.T) {
 		require.Equal(t, FedLocal, reach.Kind, m[1])
 		require.Equal(t, reach.Why, strings.ReplaceAll(m[2], `\'`, `'`), "%s: the picker's reason is the registry's", m[1])
 	}
-	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage} {
+	for _, slug := range []string{PermSettingsDefaultModel, PermRelaunchPolicyManage, PermGroupsPagesRead, PermGroupsPagesPatch, PermGroupsPagesManage, PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge, PermGitLabRead, PermGitLabWrite, PermGitLabMerge, PermHTTP, PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite} {
 		require.True(t, listed[slug], "%s is shown as not grantable", slug)
 	}
 }
