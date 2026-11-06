@@ -100,6 +100,9 @@ var pinnedFederationPeerSlugs = map[string]string{
 	// An agent's sandbox implementation, only ever adding confinement
 	// (peer_agent_sandbox_impl.go).
 	PermAgentSandboxImplementation: "sandbox_impl",
+	// This node's human inbox, within the granted groups
+	// (peer_human_inbox.go).
+	PermHumanInboxRead: "human_inbox_read", PermHumanInboxAnswer: "human_inbox_answer",
 }
 
 var pinnedFedInstancePeerSlugs = map[string]bool{

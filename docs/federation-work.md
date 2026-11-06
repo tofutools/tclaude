@@ -179,9 +179,22 @@ An operator running several nodes of their own can read and answer each node's
 human inbox from one dashboard. A node serves `GET /api/human-inbox` (the
 newest 50 unread human notifications and the pending ask-human requests of its own
 agents) and the answers `POST /api/human-inbox/reply {id, body}` and
-`POST /api/human-inbox/access/{id} {decision: approve|deny}` only to a peer it
-trusts unrestricted (`human.inbox.read` / `human.inbox.answer`); these slugs
-cannot be granted or requested. Read state,
+`POST /api/human-inbox/access/{id} {decision: approve|deny}` to a peer it
+trusts unrestricted, which reads and answers all of them.
+
+A restricted peer gets them within the groups its grants name.
+`human.inbox.read` shows the unread notices an agent the peer sees sent in such
+a group (never a senderless one), and the pending requests of an agent whose
+every group carries the grant. A request whose target group or agent the peer
+can't see is left out. `human.inbox.answer` (in the same groups) replies to a
+notice it reads and denies a request it reads. Approving also needs the
+requested action, as the request scopes it, to be within what the peer may
+grant here (the peer ceiling): it holds that slug's peer grant in those
+groups. That is checked when it answers, so a grant revoked after the listing
+refuses the approval. Each request carries `approvable` and, when false,
+`approve_reason`. Both slugs are sensitive.
+
+Read state,
 `POST /api/human-inbox/read {id[, read:false]} | {all:true}`, has its own
 grantable instance-wide slug `node.messages.mark-read` (off by default;
 unrestricted trust holds it): with it and `node.messages.read`, opening a

@@ -16,7 +16,8 @@ const html = htm.bind(h);
 // The human inbox of the operator's other nodes (tcl-99b5ir gap 2), read from
 // each node that shares it with this one. A node that trusts this one
 // unrestricted serves its agents' human notifications and pending ask-human
-// requests at /api/peer/{id}/human-inbox; one granting node.messages.read
+// requests at /api/peer/{id}/human-inbox, as does one granting human.inbox.read
+// within those groups; one granting only node.messages.read
 // shares the notifications through its Messages mailbox (the human folder),
 // and its requests stay on its own dashboard. The snapshot poll (refresh.js)
 // is the only reader, at a relaxed cadence — never per-node full rate — so
@@ -32,8 +33,9 @@ export const INBOX_REFUSED_SHARED_RETRY_MS = 5 * 60_000;
 const INBOX_MESSAGES = 50;
 
 // remoteInbox maps a node ID to { label, messages, access_requests, error,
-// answers, markable }: answers when it trusts this node unrestricted (reply,
-// decide), markable when it lets this node mark its notifications read.
+// answers, markable }: answers when it trusts this node unrestricted or grants
+// human.inbox.answer (reply, decide), markable when it lets this node mark its
+// notifications read.
 export const remoteInbox = signal({});
 
 let lastRead = -Infinity;
@@ -58,7 +60,9 @@ export function peerViewOf(id) {
 }
 
 const unrestricted = (view) => view?.level === 'unrestricted';
-const sharesInbox = (view) => unrestricted(view) || featureState('node.messages', view) === 'shared';
+const humanInbox = (view) => unrestricted(view) || featureState('human.inbox', view) === 'shared';
+const answersInbox = (view) => unrestricted(view) || featureState('human.inbox.answer', view) === 'shared';
+const sharesInbox = (view) => humanInbox(view) || featureState('node.messages', view) === 'shared';
 
 // inboxPeers are the nodes worth asking: online, and sharing their
 // notifications with this node. A node not heard from yet is asked, and after
@@ -105,25 +109,30 @@ function mailboxNotification(m) {
 }
 
 // readInbox reads one node through the route its trust in this node opens:
-// human-inbox when unrestricted, else its human mailbox folder, whose reply
-// says what it shares (an unrestricted one is read through human-inbox then).
+// human-inbox when unrestricted or it grants human.inbox.read, else its human
+// mailbox folder, whose reply says what it shares (one sharing the human
+// inbox is read through human-inbox then).
 async function readInbox(fetchImpl, p) {
-  if (!unrestricted(peerViewOf(p.id))) {
+  if (!humanInbox(peerViewOf(p.id))) {
     const data = await call(fetchImpl, peerURL(p.id, `mailbox?id=human&unread=1&page=1&page_size=${INBOX_MESSAGES}`));
     const view = data?.peer_view || null;
     if (view) heard.set(p.id, view);
-    if (!unrestricted(view)) {
+    if (!humanInbox(view)) {
       if (view && !sharesInbox(view)) throw Object.assign(new Error('not shared'), { code: 'permission' });
       const messages = (Array.isArray(data?.messages) ? data.messages : []).filter((m) => m && !m.read).map(mailboxNotification);
       return { messages, access_requests: [], answers: false, markable: humanReadShared(view) };
     }
   }
   const data = await call(fetchImpl, peerURL(p.id, 'human-inbox'));
-  heard.set(p.id, { ...heard.get(p.id), level: 'unrestricted' });
+  // The reply's own view says what it shares; an older node sends none and
+  // serves this route only to unrestricted trust.
+  const view = data?.peer_view || { ...heard.get(p.id), level: 'unrestricted' };
+  heard.set(p.id, view);
+  const answers = answersInbox(view);
   return {
-    messages: Array.isArray(data?.messages) ? data.messages.filter((m) => m && !m.read) : [],
+    messages: Array.isArray(data?.messages) ? data.messages.filter((m) => m && !m.read).map((m) => answers ? m : { ...m, replyable: false }) : [],
     access_requests: Array.isArray(data?.access_requests) ? data.access_requests.filter(Boolean) : [],
-    answers: true, markable: true,
+    answers, markable: unrestricted(view) || humanReadShared(view),
   };
 }
 
@@ -183,7 +192,9 @@ export function approveConsequence(r, node) {
 }
 
 function InboxReader({ item, onClose, actions, confirm, toast }) {
-  const { node, label, kind, data, markable = true } = item;
+  const { node, label, kind, data, markable = true, answers = true } = item;
+  // An older node sends no approvable flag; it serves only unrestricted trust.
+  const approvable = data.approvable !== false;
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
   const done = (msg) => { dropItem(node, kind, data.id); toast(msg, false); onClose(); };
@@ -206,9 +217,11 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
       ${(data.target_group || data.target_conv_title) && html`<div class="muted">target: ${data.target_group ? `group ${data.target_group}` : ''}${data.target_conv_title ? ` ${data.target_conv_title}` : ''}</div>`}
       ${data.body && html`<pre class="remote-inbox-body">${data.body}</pre>`}
       <div class="muted">One answer for this one request; the call runs with all its effects. "Always allow" stays on ${label}'s own dashboard.</div>
+      ${!answers ? html`<div class="muted">Answer this one on ${label}'s own dashboard.</div>`
+        : !approvable && html`<div class="muted" id="remote-inbox-approve-reason">Approve stays on ${label}: ${data.approve_reason || 'not yours to approve'}</div>`}
       <div class="modal-buttons"><span class="spacer"></span>
-        <${Button} id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</${Button}>
-        <${Button} variant="primary" id="remote-inbox-approve" disabled=${busy} onClick=${approve}>Approve once…</${Button}>
+        ${answers && html`<${Button} id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</${Button}>`}
+        ${answers && html`<${Button} variant="primary" id="remote-inbox-approve" disabled=${busy || !approvable} title=${approvable ? '' : data.approve_reason || ''} onClick=${approve}>Approve once…</${Button}>`}
         <${Button} onClick=${onClose}>Close</${Button}></div>`
     : html`
       <h3 id="remote-inbox-title">${data.subject || '(no subject)'} <span class="muted">@${label}</span></h3>
@@ -237,7 +250,7 @@ export function RemoteInboxSection({ inbox = remoteInbox.value, actions = defaul
     ${nodes.map(([id, n]) => html`<div class="remote-inbox-node" key=${id} data-node=${id}>
       ${n.error && html`<div class="mailbox-row nested muted" title=${n.error}>@${n.label}: unreachable</div>`}
       ${(n.access_requests || []).map((r) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item pending" key=${`r${r.id}`} data-request=${r.id}
-        title=${`${r.perm} for ${r.title || r.agent_id} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'request', data: r })}>🔐 ${r.perm} <span class="muted">@${n.label}</span></button>`)}
+        title=${`${r.perm} for ${r.title || r.agent_id} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'request', data: r, answers: n.answers !== false })}>🔐 ${r.perm} <span class="muted">@${n.label}</span></button>`)}
       ${(n.messages || []).map((m) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item" key=${`m${m.id}`} data-message=${m.id}
         title=${`${m.subject || ''} — from ${m.from_title || m.from_agent || ''} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'message', data: m, markable: n.markable !== false })}>✉ ${m.subject || m.from_title || 'notification'} <span class="muted">@${n.label}</span></button>`)}
     </div>`)}

@@ -13,12 +13,14 @@ import (
 )
 
 // The human inbox of another of your own nodes: its agents' notifications and
-// pending ask-human requests. The peer serves these only to a node it trusts
-// unrestricted (human.inbox.read / human.inbox.answer), and only through this
-// operator-only proxy; decisions are one-shot.
+// pending ask-human requests. The peer serves them all to a node it trusts
+// unrestricted, and those of the granted groups to one holding
+// human.inbox.read / human.inbox.answer (each request then says whether it
+// may be approved, and why not), only through this operator-only proxy;
+// decisions are one-shot.
 
 type humanInboxParams struct {
-	Peer string `pos:"true" help:"Your own node (trusted unrestricted): label or stable ID"`
+	Peer string `pos:"true" help:"The node (trusting this one unrestricted, or granting human.inbox.read): label or stable ID"`
 }
 
 type humanInboxReplyParams struct {

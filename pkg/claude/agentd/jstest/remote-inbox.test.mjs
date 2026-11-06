@@ -141,3 +141,33 @@ test('a peer granting node.messages.read shares its notifications through its ma
   await m.readRemoteInboxes(peers, async (url) => { urls.push(url); return { ok: true, json: async () => ({ messages: [], access_requests: [] }) }; });
   assert.deepEqual(urls, ['/api/peer/inst_lab/human-inbox'], 'then straight to human-inbox');
 });
+
+test('a peer granting human.inbox within groups serves its human-inbox; replies and decisions follow human.inbox.answer, approve its reason', async (t) => {
+  const { harness, m } = await load(t);
+  const peers = [{ id: 'inst_lab', name: 'lab', level: 'restricted', online: true }];
+  const urls = [];
+  const readOnly = { level: 'restricted', included: ['human.inbox'], omitted: [{ feature: 'human.inbox.answer', requires: 'human.inbox.answer' }] };
+  const serve = (view) => async (url) => { urls.push(url); return { ok: true, json: async () => (url.includes('mailbox') ? { peer_view: view, messages: [] } : { peer_view: view,
+    messages: [{ id: 4, subject: 'deploy?', body: 'go?', read: false, replyable: true }],
+    access_requests: [{ id: 'r2', perm: 'groups.members.stop', approvable: false, approve_reason: 'approving it would exceed what you may grant here' }] }) }; };
+  await m.readRemoteInboxes(peers, serve(readOnly));
+  assert.deepEqual(urls, ['/api/peer/inst_lab/mailbox?id=human&unread=1&page=1&page_size=50', '/api/peer/inst_lab/human-inbox']);
+  let lab = m.remoteInbox.value.inst_lab;
+  assert.deepEqual([lab.messages[0].replyable, lab.answers, lab.access_requests.length], [false, false, 1], 'read only: no reply');
+  let mounted = await harness.mount(harness.html`<${m.RemoteInboxSection} inbox=${m.remoteInbox.value} actions=${{}} confirm=${async () => true} toast=${() => {}} />`);
+  await harness.act(() => harness.document.querySelector('[data-request="r2"]').click());
+  assert.equal(harness.document.querySelector('#remote-inbox-deny'), null, 'no answer grant: no decisions');
+  assert.match(harness.document.querySelector('#remote-inbox-reader').textContent, /Answer this one on lab's own dashboard/);
+  await mounted.unmount();
+
+  const answering = { level: 'restricted', included: ['human.inbox', 'human.inbox.answer'], omitted: [] };
+  await m.readRemoteInboxes(peers, serve(answering));
+  lab = m.remoteInbox.value.inst_lab;
+  assert.deepEqual([lab.messages[0].replyable, lab.answers], [true, true]);
+  mounted = await harness.mount(harness.html`<${m.RemoteInboxSection} inbox=${m.remoteInbox.value} actions=${{}} confirm=${async () => true} toast=${() => {}} />`);
+  await harness.act(() => harness.document.querySelector('[data-request="r2"]').click());
+  assert.ok(harness.document.querySelector('#remote-inbox-deny'), 'deny takes only the answer grant');
+  assert.equal(harness.document.querySelector('#remote-inbox-approve').disabled, true, 'approve outside the ceiling is disabled');
+  assert.match(harness.document.querySelector('#remote-inbox-approve-reason').textContent, /exceed what you may grant here/);
+  await mounted.unmount();
+});
