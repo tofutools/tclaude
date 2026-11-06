@@ -1827,7 +1827,7 @@ func TestVoice(t *testing.T) {
 func TestSidePanelTuning(t *testing.T) {
 	def := (*Config)(nil).SidePanelTuning()
 	assert.Equal(t, SidePanelTuning{
-		PredictivePeek: true, GrowingPeek: true, EdgeZonePx: 32, DwellMs: 150, RetractMs: 500,
+		PredictivePeek: true, GrowingPeek: false, EdgeZonePx: 32, DwellMs: 150, RetractMs: 500,
 		PredictMinSpeed: 1200, PredictSpeedDistancePx: 600, PredictMinSpeedFloor: 600,
 		PredictMinReadings: 4, MinTravelPx: 80, BrakePercent: 70, PeekMinPx: 48,
 	}, def, "nil → today's defaults")
@@ -1840,6 +1840,9 @@ func TestSidePanelTuning(t *testing.T) {
 	}}).SidePanelTuning()
 	assert.False(t, got.PredictivePeek)
 	assert.False(t, got.GrowingPeek)
+	on := true
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{SidePanelGrowingPeek: &on}}).SidePanelTuning().GrowingPeek,
+		"the growing peek is off by default, on when set (tcl-bg5qm1)")
 	assert.Equal(t, 200, got.EdgeZonePx, "clamped to the max")
 	assert.Equal(t, 0, got.DwellMs, "clamped to the min")
 	assert.Equal(t, 100, got.BrakePercent)

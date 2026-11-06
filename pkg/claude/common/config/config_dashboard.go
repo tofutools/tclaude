@@ -138,8 +138,10 @@ type DashboardConfig struct {
 	// SidePanelPredictivePeek peeks a folded side panel's leading edge in
 	// when a pointer flung at the right edge is predicted to land there
 	// (tcl-o4nims), and SidePanelGrowingPeek grows that peek towards the
-	// panel's full width as the pointer closes in (tcl-wdwbm2). Both default
-	// true and need SidePanelEdgeReveal. *bool so absent differs from false.
+	// panel's full width as the pointer closes in (tcl-wdwbm2). The peek
+	// defaults on, its growth off (tcl-bg5qm1: opening is then a move onto
+	// the peek); both need SidePanelEdgeReveal. *bool so absent differs from
+	// false.
 	SidePanelPredictivePeek *bool `json:"side_panel_predictive_peek,omitempty"`
 	SidePanelGrowingPeek    *bool `json:"side_panel_growing_peek,omitempty"`
 	// The edge reveal's and the peek's tuning, each absent for its default
@@ -887,7 +889,7 @@ func (c *Config) SidePanelTuning() SidePanelTuning {
 	}
 	t := SidePanelTuning{
 		PredictivePeek:         d.SidePanelPredictivePeek == nil || *d.SidePanelPredictivePeek,
-		GrowingPeek:            d.SidePanelGrowingPeek == nil || *d.SidePanelGrowingPeek,
+		GrowingPeek:            d.SidePanelGrowingPeek != nil && *d.SidePanelGrowingPeek,
 		EdgeZonePx:             sidePanelTuned("edge_zone_px", d.SidePanelEdgeZonePx),
 		DwellMs:                sidePanelTuned("dwell_ms", d.SidePanelDwellMs),
 		RetractMs:              sidePanelTuned("retract_ms", d.SidePanelRetractMs),

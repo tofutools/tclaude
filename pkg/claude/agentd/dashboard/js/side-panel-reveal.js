@@ -55,15 +55,17 @@
 //    for the prediction. One that runs past the window's right edge counts
 //    when its next frame would have reached the edge zone. A slow approach
 //    still takes the dwell.
-//  - The folded handle is no exception: resting on it takes the dwell like
-//    anywhere in the edge zone. Pinning stays one click: on the handle before
-//    the dwell ends, or on the revealed panel's handle.
+//  - On the handle (folded, or the revealed panel's), nothing opens or closes
+//    by itself (tcl-bg5qm1): no dwell, no snap and no reveal from a peek, and
+//    a revealed panel does not go. A pointer there means to pin or unpin the
+//    panel. Moving off it resumes the rest; the prediction ignores it.
 //  - A debug overlay draws each prediction (side-panel-predict-debug.js):
 //    ?side_panel_predict_debug=1 in the URL, or localStorage
 //    tclaude.dash.sidePanelPredictDebug = "1".
 //  - config dashboard.side_panel_edge_reveal (default on) turns it off, peek
 //    included; dashboard.side_panel_predictive_peek and
-//    dashboard.side_panel_growing_peek turn off the peek, or its growth, and
+//    dashboard.side_panel_growing_peek turn off the peek, or (default off,
+//    tcl-bg5qm1) on its growth, and
 //    the other dashboard.side_panel_* values tune it (setSidePanelTuning).
 
 import { HOVER_CLOSE_MS } from './popover-watch.js';
@@ -92,7 +94,7 @@ export const REVEAL_DEFAULTS = Object.freeze({
   EDGE_PX: EDGE_REVEAL_PX,
   DWELL_MS: EDGE_REVEAL_DWELL_MS,
   PREDICTIVE: true,
-  GROWING: true,
+  GROWING: false,
 });
 let tuning = REVEAL_DEFAULTS;
 
@@ -106,7 +108,7 @@ export function setSidePanelTuning(t, doc = globalThis.document) {
   const next = {
     ...REVEAL_DEFAULTS,
     PREDICTIVE: t?.predictive_peek !== false,
-    GROWING: t?.growing_peek !== false,
+    GROWING: t?.growing_peek === true,
     EDGE_PX: pick('EDGE_PX', num(t?.edge_zone_px)),
     DWELL_MS: pick('DWELL_MS', num(t?.dwell_ms)),
     PEEK_RETRACT_MS: pick('PEEK_RETRACT_MS', num(t?.retract_ms)),
@@ -186,6 +188,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let swallowClick = false; // the click after a press a peek swallowed
   let motion = null; // where the current rightward motion started: { x, t }
   let lastT = 0; // when the last pointermove came
+  let onHandle = false; // the last move was on the handle (#dock-toggle)
   let peekStartX = 0; // where the pointer was when the peek started
   let peekW = 0; // the peek's width now
   let stop = null; // a peek's stop timer
@@ -307,6 +310,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // a still pointer (the strip sliding in): that is not the pointer going
     // anywhere.
     const moved = !last || last.x !== event.clientX || last.y !== event.clientY;
+    onHandle = !!doc.getElementById('dock-toggle')?.contains(event.target);
     const t = now();
     // The motion restarts at any leftward move (so a rightward one starts from
     // its low point) and after a pause (from where it rested, a frame before
@@ -320,7 +324,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     if (isSidePanelRevealed()) {
       samples = [];
       motion = null;
-      overPanel = onPanel(event);
+      overPanel = onHandle || onPanel(event);
       if (overPanel) cancelHide();
       else scheduleHide();
       return;
@@ -331,6 +335,19 @@ export function bindEdgeReveal(doc = globalThis.document, {
       if (isSidePanelPeeking()) endPeek();
       samples = [];
       // A move with a button held (a selection, a drag) is no snap's start.
+      motion = null;
+      return;
+    }
+    // The handle holds whatever state the panel is in: a pointer there is
+    // about to pin it, not asking it to open. A peek stays while it rests
+    // there (the handle rides the peek, so a retract would slide it away),
+    // and no motion that reached the handle reveals later: moving off starts
+    // afresh, and a peek left behind runs out from there.
+    if (onHandle) {
+      cancelDwell();
+      cancelRetract();
+      cancelStop();
+      samples = [];
       motion = null;
       return;
     }
@@ -488,7 +505,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
-    if (motion && last && inBand && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
+    if (motion && last && inBand && !onHandle && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && finePointer() && canRevealSidePanel(doc)) {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
