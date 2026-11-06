@@ -16,3 +16,13 @@ func TestTerminalTitleCannotEscapeItsSequence(t *testing.T) {
 	}
 	assert.Equal(t, "fix[2J]52;c;cm0=itgpj exe", got)
 }
+
+// session list colours its cells with escapes of its own, so it prints to the
+// raw terminal and cleans each cell's text instead.
+func TestSessionListCellKeepsItsColourAndCleansItsText(t *testing.T) {
+	got := listCell(getStatusColorFunc(StatusIdle), "/home/dev\x1b[2J\x1b]8;;https://evil.example\x07/\u202egit")
+	assert.Contains(t, got, "\x1b[33m", "the table's own colour stays")
+	for _, bad := range []string{"\x1b[2J", "\x1b]8", "\x07", "\u202e"} {
+		assert.NotContains(t, got, bad)
+	}
+}

@@ -31,10 +31,13 @@ var terminalOutputPackages = []string{
 
 var rawStdio = regexp.MustCompile(`\bos\.(Stdout|Stderr)\b|\bfmt\.Print(f|ln)?\(`)
 
-// terminalHandoff is a line that hands the raw terminal on rather than
-// printing to it: a child process's stdio (cmd.Stdout = os.Stdout), or a
-// question about the terminal itself (os.Stdout.Fd()). Neither prints.
-var terminalHandoff = regexp.MustCompile(`^\w+\.(Stdin|Stdout|Stderr)\b[\w., ]*= |\bos\.(Stdin|Stdout|Stderr)\.Fd\(\)`)
+// terminalHandoff is a line that hands the raw terminal to a child process
+// rather than printing to it (cmd.Stdout = os.Stdout).
+var terminalHandoff = regexp.MustCompile(`^\w+\.(Stdin|Stdout|Stderr)\b[\w., ]*= `)
+
+// terminalQuery is a question about the terminal itself, which prints
+// nothing. Only the call is exempt: the rest of its line is still checked.
+var terminalQuery = regexp.MustCompile(`\bterm\.(GetSize|IsTerminal)\(int\(os\.(Stdin|Stdout|Stderr)\.Fd\(\)\)\)`)
 
 // rawStdioAllowed holds "<package>/<file>\x00<trimmed line>" for each line
 // that may use the raw streams, with the reason beside it.
@@ -43,6 +46,11 @@ var rawStdioAllowed = map[string]string{
 	"pkg/claude/agent/inbox_watch.go\x00os.Exit(runInboxWatch(p, os.Stdout, os.Stderr))": "TUI",
 	// attach streams a remote terminal: its bytes are the peer's screen.
 	"pkg/claude/federationcmd/attach.go\x00os.Exit(runAttach(cmd.Context(), p, os.Stdin, os.Stdout, os.Stderr))": "raw remote terminal",
+	// session list colours its table with escapes of its own and cleans
+	// each cell instead.
+	"pkg/claude/session/list.go\x00t.SetOutputMirror(os.Stdout)": "coloured table, cells cleaned",
+	// federation sessions --notify rings the bell; the text after it is cleaned.
+	"pkg/claude/federationcmd/sessions.go\x00var sessionBell io.Writer = os.Stdout": "bell",
 	// The OSC title sequence is ours; termTitle cleans the title inside it.
 	"pkg/claude/session/attach.go\x00fmt.Fprintf(os.Stdout, \"\\033]0;%s\\007\", termTitle(title))": "terminal title",
 }
@@ -62,7 +70,7 @@ func TestCommandsPrintThroughTheTerminalWriters(t *testing.T) {
 			require.NoError(t, err)
 			for i, line := range strings.Split(string(data), "\n") {
 				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "//") || !rawStdio.MatchString(line) || terminalHandoff.MatchString(trimmed) {
+				if strings.HasPrefix(trimmed, "//") || terminalHandoff.MatchString(trimmed) || !rawStdio.MatchString(terminalQuery.ReplaceAllString(trimmed, "")) {
 					continue
 				}
 				if _, ok := rawStdioAllowed[pkg+"/"+name+"\x00"+trimmed]; ok {
@@ -74,11 +82,10 @@ func TestCommandsPrintThroughTheTerminalWriters(t *testing.T) {
 	}
 }
 
-func TestTerminalHandoffMatchesOnlyHandoffs(t *testing.T) {
+func TestTerminalHandoffAndQueryExemptOnlyThemselves(t *testing.T) {
 	for _, line := range []string{
 		"cmd.Stdout = os.Stdout",
 		"child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr",
-		"if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && width > 0 {",
 	} {
 		require.True(t, terminalHandoff.MatchString(line), line)
 	}
@@ -90,4 +97,8 @@ func TestTerminalHandoffMatchesOnlyHandoffs(t *testing.T) {
 	} {
 		require.False(t, terminalHandoff.MatchString(line), line)
 	}
+	printsAfterQuery := func(line string) bool { return rawStdio.MatchString(terminalQuery.ReplaceAllString(line, "")) }
+	require.False(t, printsAfterQuery("if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && width > 0 {"))
+	require.True(t, printsAfterQuery("if term.IsTerminal(int(os.Stdout.Fd())) { fmt.Println(x) }"), "a print beside a query is still a print")
+	require.True(t, printsAfterQuery(`fmt.Fprintln(os.Stderr, "fd", os.Stdout.Fd())`))
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	tbl "github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"golang.org/x/term"
 )
 
@@ -134,15 +135,20 @@ func runList(params *ListParams) error {
 	}
 
 	// Render table
+	// The table colours its cells with escapes of its own, which a cleaned
+	// writer would print as text, so it goes to the raw terminal and its
+	// cells are cleaned instead (a status detail or a directory can carry
+	// agent text).
 	t := table.NewWriter()
-	t.SetOutputMirror(cliStdout)
+	t.SetOutputMirror(os.Stdout)
 	t.SetStyle(table.StyleLight)
 	t.SetAllowedRowLength(getTermWidth())
 
 	t.AppendHeader(table.Row{"", "ID", "Directory", "Status", "Age", "Updated"})
 
 	for _, state := range filtered {
-		colorFunc := getStatusColorFunc(state.Status)
+		color := getStatusColorFunc(state.Status)
+		colorFunc := func(s string) string { return listCell(color, s) }
 		status := state.Status
 		if detail := StatusDetailForDisplay(state.StatusDetail); detail != "" {
 			status = status + ": " + detail
@@ -192,6 +198,12 @@ func shortenPathForTable(path string, maxLen int) string {
 		return path
 	}
 	return "…" + path[len(path)-maxLen+1:]
+}
+
+// listCell is a session list cell: its text cleaned of what a terminal would
+// interpret, then coloured with the table's own escapes.
+func listCell(color func(a ...interface{}) string, s string) string {
+	return color(termtext.Cell(s))
 }
 
 func getStatusColorFunc(status string) func(a ...interface{}) string {

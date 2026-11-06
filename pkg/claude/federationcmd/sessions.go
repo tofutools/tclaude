@@ -80,6 +80,11 @@ func runSessions(ctx context.Context, p *sessionsParams, stdout, stderr io.Write
 
 // Remember stale states, but never alert from them. Reconnecting with the
 // same waiting snapshot therefore does not announce a fictitious transition.
+// sessionBell rings for --notify. The BEL is ours, so it goes to the raw
+// terminal (a cleaned one would drop it); the peer's text after it goes
+// through the cleaned writer.
+var sessionBell io.Writer = os.Stdout
+
 func notifySessionTransitions(w io.Writer, rows []remoteSession, previous map[string]string, initial bool) map[string]string {
 	current := map[string]string{}
 	for _, s := range rows {
@@ -91,7 +96,8 @@ func notifySessionTransitions(w io.Writer, rows []remoteSession, previous map[st
 		current[key] = state
 		old, known := previous[key]
 		if !initial && !s.Stale && s.WaitingReason != "" && (!known || old != state) {
-			fmt.Fprintf(w, "\a%s (%s) started waiting: %s\n", s.Address, s.Name, s.WaitingReason)
+			fmt.Fprint(sessionBell, "\a")
+			fmt.Fprintf(w, "%s (%s) started waiting: %s\n", s.Address, s.Name, s.WaitingReason)
 		}
 	}
 	return current
