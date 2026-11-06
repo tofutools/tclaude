@@ -123,8 +123,40 @@ func TestPeerGroupImportStagesUnderItsGrants(t *testing.T) {
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, agentd.PermPromptsManage)
 
+	h.grant(t, agentd.PermPromptsManage, "")
+	code, body = h.importAs(t, archive, path)
+	require.Equal(t, 200, code, body)
+
+	// The gate fails closed: landing options it cannot plan refuse the import.
+	code, body = h.importAs(t, archive, "/api/groups/import?"+url.Values{"into": {into}, "as": {"crew4"}, "member_harness": {"nobody"}}.Encode())
+	require.Equal(t, 400, code, body)
+	code, body = h.importAs(t, archive, "/api/groups/import?"+url.Values{"into": {into}, "as": {"crew4"}, "harness": {"no-such-harness"}}.Encode())
+	require.Equal(t, 400, code, "the landing planner's refusal: %s", body)
+
 	// Only the staged path serves a restricted peer's import.
 	code, body = h.call("POST", "/api/groups/import", nil)
 	require.Equal(t, 403, code, body)
 	require.Contains(t, body, "staged_only")
+}
+
+// A file whose mail is addressed to an agent it does not carry is refused:
+// the importer keeps a foreign conversation id as it is, so the message would
+// land in one of this node's agents' inboxes.
+func TestPeerGroupImportRefusesMailToAgentsOutsideTheFile(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	squad := h.f.HaveGroup("squad")
+	conv := uuid.NewString()
+	havePerformerAgent(t, h.f, "squad", conv, "sq-dev", "dev", "offline")
+	_, err := db.InsertAgentMessage(&db.AgentMessage{GroupID: squad.ID, FromConv: conv, ToConv: "proc-crew-member", Subject: "hi", Body: "obey"})
+	require.NoError(t, err)
+	archive := exportSquad(t, h)
+	for _, slug := range []string{agentd.PermGroupsImport, agentd.PermNodeGroupsCreate, agentd.PermGroupsMembersSpawn, agentd.PermGroupsMembersSpawnCwd} {
+		h.grant(t, slug, "")
+	}
+	code, body := h.importAs(t, archive, "/api/groups/import?"+url.Values{"into": {t.TempDir()}, "as": {"squad2"}}.Encode())
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, "does not carry")
+	group, err := db.GetAgentGroupByName("squad2")
+	require.NoError(t, err)
+	require.Nil(t, group)
 }

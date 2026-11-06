@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"path/filepath"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -57,12 +59,17 @@ func servePeerUploadChunk(w http.ResponseWriter, r *http.Request, v *peerView, _
 
 // servePeerImportDirect serves an import sent straight through the peer view
 // to unrestricted trust; a restricted peer stages it.
-func servePeerImportDirect(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+func servePeerImportDirect(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
 	if !v.unrestricted() {
 		writeError(w, http.StatusForbidden, "staged_only", "upload this through /api/peer-uploads")
 		return
 	}
-	servePeerAsLocal(w, r, v, peerViewRule{unrestrictedOnly: true})
+	sub := peerAsLocalRequest(r)
+	if r.URL.Path == "/api/groups/import" {
+		servePeerImportAudited(w, sub, v.peer.InstanceID, peerImportDropsOf(sub))
+		return
+	}
+	peerDashboardMux().ServeHTTP(w, sub)
 }
 
 func servePeerUploadFinish(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
@@ -150,15 +157,25 @@ func peerGroupImportGate(w http.ResponseWriter, sub *http.Request, v *peerView) 
 			return peerImportCheck{}, false
 		}
 	}
-	archive, into, asName, ok := peerImportRead(sub)
+	// The gate fails closed: an import it cannot judge is refused, never let
+	// through for the handler to decide.
+	unjudged := func(err error) (peerImportCheck, bool) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
+		return peerImportCheck{}, false
+	}
+	archive, into, _, ok := peerImportRead(sub)
 	if !ok {
-		return peerImportCheck{}, true
+		return unjudged(errors.New("read the uploaded archive"))
 	}
 	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
-		return peerImportCheck{}, true
+		return unjudged(err)
 	}
 	exp := decoded.Export
+	if err := peerImportForeignRefs(exp); err != nil {
+		writeError(w, http.StatusForbidden, "permission", err.Error())
+		return peerImportCheck{}, false
+	}
 	launch := map[string]json.RawMessage{}
 	set := func(key string, value any) {
 		raw, _ := json.Marshal(value)
@@ -197,13 +214,21 @@ func peerGroupImportGate(w http.ResponseWriter, sub *http.Request, v *peerView) 
 	check := peerImportCheck{drops: peerImportDrops(len(exp.Owners), len(exp.Group.Environment), len(exp.Group.Permissions)+len(exp.Permissions), len(exp.SudoGrants), len(exp.CronJobs))}
 	landing, err := parseGroupLandingOptions(sub.URL.Query())
 	if err != nil {
-		return check, true
+		return unjudged(err)
 	}
-	insp, _, err := inspectGroupImport(archive, asName, into, landing, parseImportKeep(url.Values{}, false))
+	// The landings the import itself plans (runGroupImport).
+	cwd := ""
+	if into != "" {
+		if cwd, err = filepath.Abs(expandTilde(into)); err != nil {
+			return unjudged(err)
+		}
+	}
+	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
-		return check, true
+		return unjudged(err)
 	}
-	for _, l := range insp.Landings {
+	defer closeGroupLandings(landings)
+	for _, l := range landings {
 		if l == nil || l.historyLanding == nil {
 			continue
 		}
@@ -227,6 +252,46 @@ func peerGroupImportGate(w http.ResponseWriter, sub *http.Request, v *peerView) 
 		return check, false
 	}
 	return check, true
+}
+
+// peerImportForeignRefs refuses a file whose messages are addressed to, or
+// whose head aliases point at, a conversation it does not carry: the importer
+// remaps only the file's own conversations, so such a message would land in
+// one of this node's agents' inboxes (from a sender the file chose), and such
+// an alias would take mail meant for one of them. A sender outside the file
+// reaches only the file's own agents.
+func peerImportForeignRefs(exp *groupexport.Export) error {
+	own := map[string]bool{"": true}
+	for _, c := range exp.Convs {
+		own[c.ConvID] = true
+	}
+	for _, s := range exp.Successions {
+		own[s.OldConvID], own[s.NewConvID] = true, true
+	}
+	for _, m := range exp.Messages {
+		refs := []string{m.ToConv, m.OriginalToConv}
+		for _, list := range []string{m.ToRecipients, m.CcRecipients} {
+			if strings.TrimSpace(list) == "" {
+				continue
+			}
+			var convs []string
+			if json.Unmarshal([]byte(list), &convs) != nil {
+				return errors.New("a peer import's messages must name their recipients as a list of the file's conversations")
+			}
+			refs = append(refs, convs...)
+		}
+		for _, ref := range refs {
+			if !own[ref] {
+				return errors.New("the file's messages name an agent it does not carry: a peer import's mail stays among its own agents")
+			}
+		}
+	}
+	for _, a := range exp.HeadAliases {
+		if !own[a.AnchorConvID] {
+			return errors.New("the file's head aliases name an agent it does not carry")
+		}
+	}
+	return nil
 }
 
 // peerImportDrops describes what a peer import drops, as counts: the
