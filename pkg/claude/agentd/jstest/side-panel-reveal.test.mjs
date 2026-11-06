@@ -394,15 +394,19 @@ const PANEL_W = 264;
 // withPageScrollbar gives the page a scrollbar and the panel its real box: off
 // screen right of the content while folded, left of the scrollbar while it
 // floats in.
-function withPageScrollbar(s) {
-  const right = WIDTH - SCROLLBAR;
-  Object.defineProperty(s.doc.documentElement, 'clientWidth', { configurable: true, get: () => right });
+// width is the scrollbar's layout width: 0 for no scrollbar and for an
+// overlay scrollbar (macOS), which takes no width but still sits at the edge.
+// setWidth changes it live, as a scrollbar appearing or going does.
+function withPageScrollbar(s, width = SCROLLBAR) {
+  let bar = width;
+  const contentRight = () => WIDTH - bar;
+  Object.defineProperty(s.doc.documentElement, 'clientWidth', { configurable: true, get: contentRight });
   s.dock.getBoundingClientRect = () => {
-    const left = s.revealed() ? right - PANEL_W : right;
+    const left = s.revealed() ? contentRight() - PANEL_W : contentRight();
     return { top: 100, bottom: 600, left, right: left + PANEL_W, width: PANEL_W, height: 500 };
   };
   const onScrollbar = (init) => s.move(s.doc.documentElement, WIDTH - 5, init);
-  return { right, onScrollbar };
+  return { right: contentRight(), onScrollbar, setWidth: (w) => { bar = w; } };
 }
 
 test('the pointer on the page scrollbar, under the edge zone, reveals the panel and does not flicker it', async (t) => {
@@ -477,4 +481,48 @@ test('leaving the panel retracts it after exactly the popover hover-out delay', 
   assert.equal(s.revealed(), true, 'still shown just before HOVER_CLOSE_MS');
   s.timers.advance(1);
   assert.equal(s.revealed(), false, 'gone at HOVER_CLOSE_MS');
+});
+
+test('the zone and the no-flicker hold work the same with no scrollbar, an overlay scrollbar, or one that comes and goes', async (t) => {
+  const steady = async (s, at, what) => {
+    for (let i = 0; i < 6; i++) {
+      at({ clientY: 300 + (i % 2 ? 3 : -3) });
+      s.timers.advance(s.hoverClose);
+      assert.equal(s.revealed(), true, `${what}: still shown after move ${i + 1}`);
+    }
+  };
+  await t.test('no vertical scrollbar (clientWidth equals innerWidth)', async (t) => {
+    const s = await shell(t);
+    withPageScrollbar(s, 0);
+    s.move(s.content, WIDTH - s.reveal.EDGE_REVEAL_PX - 1);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), false, 'just outside the zone');
+    s.move(s.content, WIDTH - 5);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true, 'the same zone reveals');
+    // The panel now reaches the window edge, so the pointer is on it.
+    await steady(s, (init) => s.move(s.doc.getElementById('dock-body'), WIDTH - 5, init), 'no scrollbar');
+  });
+  await t.test('an overlay scrollbar: no width, but a pointer on it targets <html>', async (t) => {
+    const s = await shell(t);
+    const { onScrollbar } = withPageScrollbar(s, 0);
+    onScrollbar();
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true);
+    await steady(s, onScrollbar, 'overlay scrollbar');
+  });
+  await t.test('a scrollbar that appears, then goes, while the panel floats', async (t) => {
+    const s = await shell(t);
+    const { onScrollbar, setWidth } = withPageScrollbar(s, 0);
+    s.move(s.content, WIDTH - 5);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true);
+    setWidth(SCROLLBAR); // the panel shifts left; the pointer is now on the new scrollbar
+    await steady(s, onScrollbar, 'scrollbar appeared');
+    setWidth(0); // the panel shifts back under the pointer
+    await steady(s, (init) => s.move(s.doc.getElementById('dock-body'), WIDTH - 5, init), 'scrollbar gone');
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false, 'and it still goes once the pointer leaves');
+  });
 });
