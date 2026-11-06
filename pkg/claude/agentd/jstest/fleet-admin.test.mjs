@@ -2403,7 +2403,6 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
   const peers = [{ id: 'inst_forge', label: 'forge', receiving: ['intake', 'labs'] }, { id: 'inst_lab', label: 'lab', receiving: [] }];
   const mounted = await harness.mount(harness.html`<${MoveAgentDialog} peers=${peers} agents=${[{ id: 'agt_a1', label: 'ada' }]} actions=${actions} confirm=${confirm} onClose=${() => {}} onDone=${() => {}} />`);
   const q = (x) => harness.document.querySelector(x);
-  const pick = async (sel, value) => { const el = q(sel); for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); } await harness.act(() => harness.fireEvent(el, 'change')); };
   assert.equal(q('#fleet-move-agent-group-pick input').value, 'pick a group that receives agents…');
   assert.deepEqual(await comboLabels(harness, q('#fleet-move-agent-group-pick')), ['intake', 'labs', 'another group (type its name)…']);
   await comboPick(harness, q('#fleet-move-agent-group-pick'), 'labs');
@@ -2412,7 +2411,8 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
   assert.equal(sent.at(-1).group, 'labs');
   await comboPick(harness, q('#fleet-move-agent-group-pick'), '\u0000other');
   assert.ok(q('#fleet-move-agent-group'), 'typing is the fallback');
-  await pick('#fleet-move-agent-peer', 'inst_lab');
+  await comboPick(harness, q('#fleet-move-agent-peer'), 'inst_lab');
+  assert.equal(q('#fleet-move-agent-peer').dataset.value, 'inst_lab');
   assert.equal(q('#fleet-move-agent-group-pick'), null, 'a peer listing no receiving group gets the text field');
   await mounted.unmount();
 });

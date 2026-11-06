@@ -5166,13 +5166,13 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 /* The node choice is a type-to-filter box (tcl-saada2) that reads as the
    chip's label until it is typed in; its list opens over the page. */
 .toolbar-node-select { width: 11em; max-width: 14em; }
-.toolbar-node-select .filter-combobox-input {
+.toolbar-node .toolbar-node-select .filter-combobox-input {
   box-sizing: border-box; width: 100%; min-height: 0; padding: 1px 2px;
   background: transparent; border: 0; color: #c9d1d9; cursor: pointer;
   font-family: ui-monospace, monospace; font-size: 11px;
 }
-.toolbar-node-select .filter-combobox-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-.toolbar-node-select .filter-combobox-list { min-width: 16em; }
+.toolbar-node .toolbar-node-select .filter-combobox-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.toolbar-node .toolbar-node-select .filter-combobox-list { min-width: 16em; }
 .toolbar-node.flash { animation: toolbar-node-flash .9s ease-out; }
 @keyframes toolbar-node-flash {
   from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nc) 70%, transparent); background: color-mix(in srgb, var(--nc) 25%, transparent); }
