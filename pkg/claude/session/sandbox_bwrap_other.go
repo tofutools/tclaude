@@ -32,91 +32,11 @@ func tclaudeLayerToolingPresence(bool) error {
 	return fmt.Errorf("tclaude’s sandbox requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
 }
 
-func tclaudeLayerCommand(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	string,
-) (string, error) {
+func tclaudeLayerCommand(tclaudeLayerRenderInput, tclaudeLayerLaunchOpts, string) (string, error) {
 	return "", fmt.Errorf("tclaude’s sandbox is not supported on this platform")
 }
 
-func tclaudeLayerCommandWithLoopbackBind(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	int,
-	string,
-) (string, error) {
-	return "", fmt.Errorf("tclaude’s sandbox is not supported on this platform")
-}
-
-func tclaudeLayerCommandWithRouteSlots(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	[]int,
-	*DarwinRouteSlotReservation,
-	*TclaudeLayerRouteHelper,
-	string,
-) (string, error) {
-	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")
-}
-
-func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	[]int,
-	*DarwinRouteSlotReservation,
-	*TclaudeLayerRouteHelper,
-	int,
-	string,
-) (string, error) {
-	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")
-}
-
-func tclaudeLayerServerCommand(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	string,
-) (string, error) {
-	return "", fmt.Errorf(
-		"tclaude’s sandbox server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
-}
-
-func tclaudeLayerServerCommandWithLoopbackBind(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	int,
-	string,
-) (string, error) {
+func tclaudeLayerServerCommand(tclaudeLayerRenderInput, int, string) (string, error) {
 	return "", fmt.Errorf(
 		"tclaude’s sandbox server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }

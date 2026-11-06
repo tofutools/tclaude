@@ -17,50 +17,27 @@ func TestLayerCommandPins(t *testing.T) {
 		order = append(order, key)
 		pins[key] = layerPinRender(normalise, out, err)
 	}
-	for _, in := range inputs {
-		p := in.name + "/"
-		pin(p+"command", func() (string, error) {
-			return tclaudeLayerCommand(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, "exec agent --flag")
-		})
-		pin(p+"command+loopback", func() (string, error) {
-			return tclaudeLayerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, 4567, "exec agent --flag")
-		})
-		pin(p+"command+route-slots-none", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlots(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, nil, nil, nil, "exec agent --flag")
-		})
-		pin(p+"command+route-slots", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlots(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, []int{1}, nil, nil, "exec agent --flag")
-		})
-		pin(p+"command+route-slots+loopback", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, nil, nil, nil, 4567, "exec agent --flag")
-		})
-		pin(p+"command+route-helper", func() (string, error) {
-			return tclaudeLayerCommandWithRouteHelper(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, helper, "exec agent --flag")
-		})
-		proxyOnly := helper
-		proxyOnly.ProxyOnly = true
-		pin(p+"command+route-helper-proxy-only", func() (string, error) {
-			return tclaudeLayerCommandWithRouteHelper(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, proxyOnly, "exec agent --flag")
-		})
-		pin(p+"server", func() (string, error) {
-			return tclaudeLayerServerCommand(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, "exec opencode serve")
-		})
-		pin(p+"server+loopback-zero", func() (string, error) {
-			return tclaudeLayerServerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, 0, "exec opencode serve")
-		})
-		pin(p+"server+loopback", func() (string, error) {
-			return tclaudeLayerServerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, 4567, "exec opencode serve")
-		})
+	proxyOnly := helper
+	proxyOnly.ProxyOnly = true
+	for _, input := range inputs {
+		p, in := input.name+"/", input.in
+		in.Binary = binary
+		command := func(opts tclaudeLayerLaunchOpts) func() (string, error) {
+			return func() (string, error) { return tclaudeLayerCommand(in, opts, "exec agent --flag") }
+		}
+		server := func(port int) func() (string, error) {
+			return func() (string, error) { return tclaudeLayerServerCommand(in, port, "exec opencode serve") }
+		}
+		pin(p+"command", command(tclaudeLayerLaunchOpts{}))
+		pin(p+"command+loopback", command(tclaudeLayerLaunchOpts{LoopbackBindPort: 4567}))
+		pin(p+"command+route-slots-none", command(tclaudeLayerLaunchOpts{}))
+		pin(p+"command+route-slots", command(tclaudeLayerLaunchOpts{RouteSlots: []int{1}}))
+		pin(p+"command+route-slots+loopback", command(tclaudeLayerLaunchOpts{LoopbackBindPort: 4567}))
+		pin(p+"command+route-helper", command(tclaudeLayerLaunchOpts{RouteHelper: &helper}))
+		pin(p+"command+route-helper-proxy-only", command(tclaudeLayerLaunchOpts{RouteHelper: &proxyOnly}))
+		pin(p+"server", server(0))
+		pin(p+"server+loopback-zero", server(0))
+		pin(p+"server+loopback", server(4567))
 	}
 	checkLayerPins(t, pins, order)
 }

@@ -32,13 +32,8 @@ var (
 // layerPinInput is one launch's render input, with fixed extras on top of what
 // the spec derived so every slot of the renderer carries something.
 type layerPinInput struct {
-	name             string
-	phase0WriteDirs  []string
-	privateWriteDirs []TclaudeLayerPrivateWriteDir
-	finalHideDirs    []string
-	readOnlyBinds    []TclaudeLayerReadOnlyBind
-	socketPaths      []string
-	plan             sandboxpolicy.MountPlan
+	name string
+	in   tclaudeLayerRenderInput
 }
 
 // layerPinFixture builds the pin inputs under root and returns them with a
@@ -108,21 +103,18 @@ func layerPinFixture(t *testing.T) ([]layerPinInput, func(string) string) {
 			HarnessName: "claude", Cwd: cwd, StateRoot: state, Snapshot: snapshot,
 		})
 		require.NoError(t, err, c.name)
-		phase0, private, hide, binds, sockets, plan, err := tclaudeLayerSpecRenderInput(spec)
+		in, err := tclaudeLayerSpecRenderInput(spec)
 		require.NoError(t, err, c.name)
-		inputs = append(inputs, layerPinInput{
-			name:            c.name,
-			phase0WriteDirs: append(phase0, extra("phase0")),
-			privateWriteDirs: append(private, TclaudeLayerPrivateWriteDir{
-				Parent: extra("private"), Current: extra("private/current"),
-			}),
-			finalHideDirs: append(hide, extra("hide")),
-			readOnlyBinds: append(binds, TclaudeLayerReadOnlyBind{
-				Source: extra("ro"), Target: extra("ro"),
-			}),
-			socketPaths: append(sockets, socket),
-			plan:        plan,
+		in.Phase0WriteDirs = append(in.Phase0WriteDirs, extra("phase0"))
+		in.PrivateWriteDirs = append(in.PrivateWriteDirs, TclaudeLayerPrivateWriteDir{
+			Parent: extra("private"), Current: extra("private/current"),
 		})
+		in.FinalHideDirs = append(in.FinalHideDirs, extra("hide"))
+		in.ReadOnlyBinds = append(in.ReadOnlyBinds, TclaudeLayerReadOnlyBind{
+			Source: extra("ro"), Target: extra("ro"),
+		})
+		in.SocketPaths = append(in.SocketPaths, socket)
+		inputs = append(inputs, layerPinInput{name: c.name, in: in})
 	}
 	exe, _ := os.Executable()
 	normalise := func(s string) string {

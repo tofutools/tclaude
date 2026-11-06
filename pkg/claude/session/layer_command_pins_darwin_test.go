@@ -28,7 +28,7 @@ func TestLayerCommandPins(t *testing.T) {
 	// Seatbelt has no packet engine: an isolated plan stands in for it.
 	isolated := inputs[0]
 	isolated.name = "isolated"
-	isolated.plan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
+	isolated.in.Plan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
 	inputs = append(inputs, isolated)
 	slot := freeLoopbackPort(t)
 	normalise := func(s string) string {
@@ -46,43 +46,23 @@ func TestLayerCommandPins(t *testing.T) {
 		order = append(order, key)
 		pins[key] = layerPinRender(normalise, out, err)
 	}
-	for _, in := range inputs {
-		p := in.name + "/"
-		pin(p+"command", func() (string, error) {
-			return tclaudeLayerCommand(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, "exec agent --flag")
-		})
-		pin(p+"command+loopback", func() (string, error) {
-			return tclaudeLayerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, 4567, "exec agent --flag")
-		})
-		pin(p+"command+route-slots", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlots(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, []int{slot}, nil, &helper, "exec agent --flag")
-		})
-		pin(p+"command+route-slots-invalid", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlots(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, []int{0}, nil, nil, "exec agent --flag")
-		})
-		pin(p+"command+route-slots+loopback", func() (string, error) {
-			return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, []int{slot}, nil, &helper, 4567,
-				"exec agent --flag")
-		})
-		pin(p+"command+route-helper", func() (string, error) {
-			return tclaudeLayerCommandWithRouteHelper(binary, in.phase0WriteDirs, in.privateWriteDirs, in.finalHideDirs,
-				in.readOnlyBinds, in.socketPaths, in.plan, helper, "exec agent --flag")
-		})
+	for _, input := range inputs {
+		p, in := input.name+"/", input.in
+		in.Binary = binary
+		command := func(opts tclaudeLayerLaunchOpts) func() (string, error) {
+			return func() (string, error) { return tclaudeLayerCommand(in, opts, "exec agent --flag") }
+		}
+		pin(p+"command", command(tclaudeLayerLaunchOpts{}))
+		pin(p+"command+loopback", command(tclaudeLayerLaunchOpts{LoopbackBindPort: 4567}))
+		pin(p+"command+route-slots", command(tclaudeLayerLaunchOpts{RouteSlots: []int{slot}, RouteHelper: &helper}))
+		pin(p+"command+route-slots-invalid", command(tclaudeLayerLaunchOpts{RouteSlots: []int{0}}))
+		pin(p+"command+route-slots+loopback", command(tclaudeLayerLaunchOpts{
+			RouteSlots: []int{slot}, RouteHelper: &helper, LoopbackBindPort: 4567}))
+		pin(p+"command+route-helper", command(tclaudeLayerLaunchOpts{RouteHelper: &helper}))
 		// Production renders a server only through the loopback variant: the
-		// plain one's inherited-descriptor form has no caller.
-		pin(p+"server", func() (string, error) {
-			return tclaudeLayerServerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, 0, "exec opencode serve")
-		})
-		pin(p+"server+loopback", func() (string, error) {
-			return tclaudeLayerServerCommandWithLoopbackBind(binary, in.phase0WriteDirs, in.privateWriteDirs,
-				in.finalHideDirs, in.readOnlyBinds, in.socketPaths, in.plan, 4567, "exec opencode serve")
-		})
+		// plain one's inherited-descriptor form had no caller.
+		pin(p+"server", func() (string, error) { return tclaudeLayerServerCommand(in, 0, "exec opencode serve") })
+		pin(p+"server+loopback", func() (string, error) { return tclaudeLayerServerCommand(in, 4567, "exec opencode serve") })
 	}
 	checkLayerPins(t, pins, order)
 }

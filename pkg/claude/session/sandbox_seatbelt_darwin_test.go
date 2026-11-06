@@ -264,16 +264,13 @@ func TestTclaudeLayerDarwinServerCommandUsesSeatbelt(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	require.NoError(t, os.MkdirAll(config, 0o700))
 
-	command, err := tclaudeLayerServerCommand(
-		darwinSeatbeltExecutable,
-		[]string{cwd},
-		nil,
-		nil,
-		[]TclaudeLayerReadOnlyBind{{Source: config, Target: config}},
-		sandboxpolicy.AgentdSocketFloor(),
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
-		"opencode serve --hostname 127.0.0.1",
-	)
+	command, err := tclaudeLayerServerCommand(tclaudeLayerRenderInput{
+		Binary:          darwinSeatbeltExecutable,
+		Phase0WriteDirs: []string{cwd},
+		ReadOnlyBinds:   []TclaudeLayerReadOnlyBind{{Source: config, Target: config}},
+		SocketPaths:     sandboxpolicy.AgentdSocketFloor(),
+		Plan:            sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+	}, 0, "opencode serve --hostname 127.0.0.1")
 	require.NoError(t, err)
 	assert.Contains(t, command, darwinSeatbeltExecutable)
 	assert.Contains(t, command, "opencode serve")
@@ -283,16 +280,11 @@ func TestTclaudeLayerDarwinServerCommandUsesSeatbelt(t *testing.T) {
 func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	command, err := tclaudeLayerCommand(
-		darwinSeatbeltExecutable,
-		nil,
-		nil,
-		nil,
-		nil,
-		sandboxpolicy.AgentdSocketFloor(),
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
-		"true",
-	)
+	command, err := tclaudeLayerCommand(tclaudeLayerRenderInput{
+		Binary:      darwinSeatbeltExecutable,
+		SocketPaths: sandboxpolicy.AgentdSocketFloor(),
+		Plan:        sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
+	}, tclaudeLayerLaunchOpts{}, "true")
 	require.NoError(t, err)
 	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
 		want := socket
@@ -304,17 +296,11 @@ func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 }
 
 func TestTclaudeLayerDarwinIsolatedCommandCarriesManagedServerPort(t *testing.T) {
-	command, err := tclaudeLayerServerCommandWithLoopbackBind(
-		darwinSeatbeltExecutable,
-		nil,
-		nil,
-		nil,
-		nil,
-		sandboxpolicy.AgentdSocketFloor(),
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
-		43210,
-		"true",
-	)
+	command, err := tclaudeLayerServerCommand(tclaudeLayerRenderInput{
+		Binary:      darwinSeatbeltExecutable,
+		SocketPaths: sandboxpolicy.AgentdSocketFloor(),
+		Plan:        sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
+	}, 43210, "true")
 	require.NoError(t, err)
 	assert.Contains(t, command,
 		`(deny network-bind (require-not (local tcp "localhost:43210")))`)
@@ -330,28 +316,26 @@ func TestTclaudeLayerDarwinCommandDefersProxyFloorToLauncher(t *testing.T) {
 	}
 	t.Cleanup(func() { darwinProxyLauncherPrefix = oldPrefix })
 
-	command, err := tclaudeLayerCommand(
-		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, "true")
+	in := tclaudeLayerRenderInput{Binary: darwinSeatbeltExecutable, Plan: plan}
+	command, err := tclaudeLayerCommand(in, tclaudeLayerLaunchOpts{}, "true")
 	require.NoError(t, err)
 	assert.Contains(t, command, tclaudeLayerDarwinProxyLauncherCommand)
 	assert.Contains(t, command, "--launch")
 	assert.NotContains(t, command, " -p ",
 		"the profile cannot be rendered before the launcher owns the actual endpoint")
 
-	serverCommand, err := tclaudeLayerServerCommand(
-		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, "true")
+	serverCommand, err := tclaudeLayerServerCommand(in, 0, "true")
 	require.NoError(t, err)
 	encoded := strings.TrimPrefix(serverCommand,
 		darwinProxyLauncherPrefix()+" --launch ")
 	spec, err := decodeDarwinProxyLaunchSpec(encoded)
 	require.NoError(t, err)
-	assert.Equal(t, 2, spec.PreserveFDs,
-		"the OpenCode server boundary keeps its launcher-owned descriptor pair")
+	assert.Zero(t, spec.PreserveFDs,
+		"the Darwin TCP control boundary has no inherited server descriptors")
 	assert.Zero(t, spec.LoopbackBindPort,
-		"the ordinary server renderer must not invent a listener exception")
+		"a server without a control port must not invent a listener exception")
 
-	serverCommand, err = tclaudeLayerServerCommandWithLoopbackBind(
-		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, 43210, "true")
+	serverCommand, err = tclaudeLayerServerCommand(in, 43210, "true")
 	require.NoError(t, err)
 	encoded = strings.TrimPrefix(serverCommand,
 		darwinProxyLauncherPrefix()+" --launch ")

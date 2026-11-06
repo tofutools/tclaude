@@ -109,6 +109,30 @@ type TclaudeLayerReadOnlyBind struct {
 	Target string `json:"target"`
 }
 
+// tclaudeLayerRenderInput is what a launch spec renders an outer-layer
+// boundary from: the platform's sandbox binary and the spec's cleaned paths
+// and plan (tclaudeLayerSpecRenderInput). Named rather than positional: three
+// of these are []string, and a swapped pair would still compile.
+type tclaudeLayerRenderInput struct {
+	Binary           string
+	Phase0WriteDirs  []string
+	PrivateWriteDirs []TclaudeLayerPrivateWriteDir
+	FinalHideDirs    []string
+	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
+	SocketPaths      []string
+	Plan             sandboxpolicy.MountPlan
+}
+
+// tclaudeLayerLaunchOpts are a pane launch's optional authorities, each the
+// platform renderer's to honour or refuse: one loopback listener, a Darwin
+// route-slot pool (with its pre-reservation), and a group-route helper.
+type tclaudeLayerLaunchOpts struct {
+	LoopbackBindPort int
+	RouteSlots       []int
+	RouteReservation *DarwinRouteSlotReservation
+	RouteHelper      *TclaudeLayerRouteHelper
+}
+
 // TclaudeLayerLaunchSpec is the complete, versioned input to the outer-layer
 // renderer. It is deliberately independent of NewParams and daemon launch
 // types so pane-authoritative harnesses and agentd-owned executors can render
@@ -1222,47 +1246,20 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
+	in.Binary = binary
+	opts := tclaudeLayerLaunchOpts{LoopbackBindPort: loopbackBindPort, RouteHelper: spec.Contract.RouteHelper}
 	if len(spec.Contract.DarwinRouteSlots) > 0 {
 		if runtime.GOOS != "darwin" {
 			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
-		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
-			binary,
-			phase0WriteDirs,
-			privateWriteDirs,
-			finalHideDirs,
-			readOnlyBinds,
-			socketPaths,
-			plan,
-			spec.Contract.DarwinRouteSlots,
-			spec.Contract.DarwinRouteReservation,
-			spec.Contract.RouteHelper,
-			loopbackBindPort,
-			harnessCommand,
-		)
+		opts.RouteSlots = spec.Contract.DarwinRouteSlots
+		opts.RouteReservation = spec.Contract.DarwinRouteReservation
 	}
-	if spec.Contract.RouteHelper != nil {
-		return tclaudeLayerCommandWithRouteHelper(
-			binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-			readOnlyBinds, socketPaths, plan, *spec.Contract.RouteHelper,
-			harnessCommand)
-	}
-	return tclaudeLayerCommandWithLoopbackBind(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		loopbackBindPort,
-		harnessCommand,
-	)
+	return tclaudeLayerCommand(in, opts, harnessCommand)
 }
 
 func cleanTclaudeLayerPrivateWriteDirs(
@@ -1379,11 +1376,11 @@ func WrapTclaudeLayerServerSpecWithLoopbackBind(
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
+	in.Binary = binary
 	if spec.Contract.RouteHelper != nil {
 		wrapped, helperErr := wrapTclaudeLayerRouteHelper(binary, *spec.Contract.RouteHelper, serverCommand)
 		if helperErr != nil {
@@ -1391,17 +1388,7 @@ func WrapTclaudeLayerServerSpecWithLoopbackBind(
 		}
 		serverCommand = wrapped
 	}
-	return tclaudeLayerServerCommandWithLoopbackBind(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		loopbackBindPort,
-		serverCommand,
-	)
+	return tclaudeLayerServerCommand(in, loopbackBindPort, serverCommand)
 }
 
 // TclaudeLayerUnixRelayServerExecArgs renders the v4 server boundary as argv
@@ -1423,8 +1410,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	if spec.Contract.RouteHelper != nil {
 		return nil, fmt.Errorf("linux group-route helper requires a shell-wrapped pane launch; unix-relay server argv cannot supervise it")
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -1437,8 +1423,8 @@ func TclaudeLayerUnixRelayServerExecArgs(
 		opaqueStateDirs = spec.Contract.StateDirs
 	}
 	args, err := bwrapArgsWithDaemonFinal(
-		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
-		socketPaths, opaqueStateRoot, opaqueStateDirs)
+		in.Phase0WriteDirs, in.Plan, in.PrivateWriteDirs, in.FinalHideDirs, in.ReadOnlyBinds,
+		in.SocketPaths, opaqueStateRoot, opaqueStateDirs)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,11 +1496,11 @@ func tclaudeLayerRelayEngineDescriptors(
 func TclaudeLayerUnixRelayServerFDs(
 	spec TclaudeLayerLaunchSpec,
 ) (listenerFD, executableFD int, err error) {
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	rendered, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return 0, 0, err
 	}
-	engineDescriptors, relayed := tclaudeLayerRelayEngineDescriptors(plan)
+	engineDescriptors, relayed := tclaudeLayerRelayEngineDescriptors(rendered.Plan)
 	if !relayed {
 		return 3, 4, nil
 	}
@@ -1522,65 +1508,55 @@ func TclaudeLayerUnixRelayServerFDs(
 	return base, base + 1, nil
 }
 
-func tclaudeLayerSpecRenderInput(
-	spec TclaudeLayerLaunchSpec,
-) (
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	error,
-) {
+func tclaudeLayerSpecRenderInput(spec TclaudeLayerLaunchSpec) (tclaudeLayerRenderInput, error) {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("unsupported tclaude sandbox launch spec version %d", spec.Version)
 	}
 	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
 		spec.Effective, spec.Contract.NetworkEngine)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	if err := validateTclaudeLayerHarnessStateRules(
 		tclaudeLayerHarnessStateRules(spec.Contract, phase0WriteDirs[0]),
 		spec.Contract.ProfileFilesystem,
 	); err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	finalHideDirs, err := cleanTclaudeLayerAbsoluteDirs(
 		"daemon-final hide", spec.Contract.FinalHideDirs)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	readOnlyBinds, err := cleanTclaudeLayerReadOnlyBinds(spec.Contract.ReadOnlyBinds)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("resolve protected paths for daemon-final read-only binds: %w", err)
 	}
 	for _, bind := range readOnlyBinds {
 		for _, path := range []string{bind.Source, bind.Target} {
 			for _, protected := range protectedRoots {
 				if sandboxpolicy.GuardContainsOrEqual(protected, path) {
-					return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+					return tclaudeLayerRenderInput{},
 						fmt.Errorf(
 							"daemon-final read-only bind path %q is at or below protected root %q",
 							path, protected)
@@ -1596,7 +1572,7 @@ func tclaudeLayerSpecRenderInput(
 			authoredSockets = *spec.Contract.MaterializedUnixSocketPaths
 			if socketErr := sandboxpolicy.ValidateMaterializedUnixSocketPaths(
 				*spec.Effective.UnixSockets, authoredSockets); socketErr != nil {
-				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+				return tclaudeLayerRenderInput{},
 					fmt.Errorf("validate tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		} else {
@@ -1604,7 +1580,7 @@ func tclaudeLayerSpecRenderInput(
 			authoredSockets, socketErr = sandboxpolicy.MaterializeUnixSocketPaths(
 				*spec.Effective.UnixSockets)
 			if socketErr != nil {
-				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+				return tclaudeLayerRenderInput{},
 					fmt.Errorf("materialize tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		}
@@ -1612,7 +1588,14 @@ func tclaudeLayerSpecRenderInput(
 			socketPaths = AppendUniqueDir(socketPaths, socket)
 		}
 	}
-	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, nil
+	return tclaudeLayerRenderInput{
+		Phase0WriteDirs:  phase0WriteDirs,
+		PrivateWriteDirs: privateWriteDirs,
+		FinalHideDirs:    finalHideDirs,
+		ReadOnlyBinds:    readOnlyBinds,
+		SocketPaths:      socketPaths,
+		Plan:             plan,
+	}, nil
 }
 
 func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
@@ -1703,7 +1686,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 // ValidateTclaudeLayerLaunchSpec applies the renderer's complete structural
 // validation without producing a platform command.
 func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
-	_, _, _, _, _, _, err := tclaudeLayerSpecRenderInput(spec)
+	_, err := tclaudeLayerSpecRenderInput(spec)
 	return err
 }
 

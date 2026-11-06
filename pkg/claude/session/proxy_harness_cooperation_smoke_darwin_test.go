@@ -144,9 +144,9 @@ func runDarwinProxyCooperationScenario(
 	harnessCommand := clcommon.ShellQuoteArg(os.Args[0]) +
 		" -test.run=^TestDarwinProxyCooperationProbeHelper$ -test.v; " +
 		clcommon.ShellQuoteArg(scenario.binary) + " " + strings.Join(shellQuoteDarwinArgs(scenario.args), " ")
-	command, err := tclaudeLayerCommand(
-		darwinSeatbeltExecutable, []string{workspace}, nil, nil, nil, nil,
-		plan, harnessCommand)
+	command, err := tclaudeLayerCommand(tclaudeLayerRenderInput{
+		Binary: darwinSeatbeltExecutable, Phase0WriteDirs: []string{workspace}, Plan: plan,
+	}, tclaudeLayerLaunchOpts{}, harnessCommand)
 	require.NoError(t, err)
 	require.Contains(t, command, tclaudeLayerDarwinProxyLauncherCommand)
 
