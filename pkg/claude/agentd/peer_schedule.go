@@ -10,10 +10,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// Scheduling and triggers over the peer view (S7a, tcl-s0rmfe). This node's
-// cron jobs and trigger rules fire on this node's authority, so a restricted
-// peer reads them and stops them, and never authors, rewrites, re-enables or
-// fires one:
+// Scheduling and triggers over the peer view (S7a, tcl-s0rmfe; S7b,
+// tcl-ck33er). This node's cron jobs and trigger rules fire on this node's
+// authority, so a restricted peer reads them and stops them, and never
+// authors, rewrites, re-enables or fires one (its own jobs are
+// peer_cron_jobs.go's):
 //   - a cron job is in a peer's reach when it targets a visible group the peer
 //     holds groups.messages.schedule on, or a visible agent with
 //     groups.members.schedule in every group it is in, as locally;
@@ -29,8 +30,9 @@ import (
 // conv IDs, a spawn's instruction template (template text, as S6 keeps a
 // performer's prompt), run and firing detail (error text, which can name
 // host paths), a firing's event reference (it names the PR's URL, which only
-// groups.members.pr reads), and agents and groups the peer does not see. Unrestricted trust reads and disables as this node's
-// operator does.
+// groups.members.pr reads), and agents and groups the peer does not see.
+// Unrestricted trust reads and disables as this node's operator does. An
+// agent principal reaches only the jobs it scheduled.
 
 // peerCronJobInReach reports whether a restricted peer reaches job.
 func peerCronJobInReach(v *peerView, job *db.AgentCronJob) bool {
@@ -147,9 +149,53 @@ func peerHoldsInSomeGroup(v *peerView, slugs ...string) bool {
 	return false
 }
 
-// GET /v1/cron: the jobs in the peer's reach.
+// peerOwnsCronJob reports whether job is one the peer scheduled here: its
+// operator's, or for an agent principal that agent's own. The peer's operator
+// also manages the jobs its agents scheduled.
+func peerOwnsCronJob(v *peerView, job *db.AgentCronJob) bool {
+	if job.OwnerPeer == "" || job.OwnerPeer != v.peer.InstanceID {
+		return false
+	}
+	return v.agent == nil || job.OwnerPeerAgent == v.agent.ID
+}
+
+// peerSchedules reports whether the peer holds a scheduling grant on any
+// visible group: what a list, or a by-id route on a job not its own, needs.
+func peerSchedules(v *peerView) bool {
+	return peerHoldsInSomeGroup(v, PermGroupsMessagesSchedule, PermGroupsMembersSchedule)
+}
+
+// peerCronJobView is the peer's view of job: allowlisted, naming its owner
+// and a member job's routing group only when the peer sees them, and its peer
+// owner only when that is the asking peer.
+func peerCronJobView(v *peerView, j *db.AgentCronJob) (map[string]any, bool) {
+	view, ok := peerAllowlisted(toJobJSON(j), func(doc any) any { return allowKeys(doc, peerCronJobKeys) })
+	if !ok {
+		return nil, false
+	}
+	doc := view.(map[string]any)
+	if !j.IsGroupTarget() && j.GroupID > 0 && !fedPeerGroupVisible(v.peer.InstanceID, j.GroupID) {
+		delete(doc, "group_id")
+	}
+	if j.OwnerAgent != "" {
+		if _, seen := v.visibleAgent(j.OwnerAgent); seen {
+			doc["owner_agent"] = j.OwnerAgent
+		}
+	}
+	if peerOwnsCronJob(v, j) {
+		doc["owner_peer"] = j.OwnerPeer
+		if j.OwnerPeerAgent != "" {
+			doc["owner_peer_agent"] = j.OwnerPeerAgent
+		}
+	}
+	return doc, true
+}
+
+// GET /v1/cron: the jobs in the peer's reach and the ones it scheduled. An
+// agent principal lists only its own.
 func servePeerCronList(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	if !v.unrestricted() && !peerHoldsInSomeGroup(v, PermGroupsMessagesSchedule, PermGroupsMembersSchedule) {
+	full := v.unrestricted()
+	if !full && v.agent == nil && !peerSchedules(v) && !peerHasCronJobs(v) {
 		writeError(w, http.StatusForbidden, "permission", "requires "+PermGroupsMessagesSchedule+" or "+PermGroupsMembersSchedule)
 		return
 	}
@@ -158,55 +204,67 @@ func servePeerCronList(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 		writeError(w, http.StatusInternalServerError, "io", "list jobs")
 		return
 	}
-	full := v.unrestricted()
 	out := make([]any, 0, len(jobs))
 	for _, j := range jobs {
 		if full {
 			out = append(out, toJobJSON(j))
 			continue
 		}
-		if !peerCronJobInReach(v, j) {
+		own := peerOwnsCronJob(v, j)
+		if !own && (v.agent != nil || !peerCronJobInReach(v, j)) {
 			continue
 		}
-		if view, ok := peerAllowlisted(toJobJSON(j), func(doc any) any { return allowKeys(doc, peerCronJobKeys) }); ok {
-			// The owner is named only when the peer sees it: a job is in
-			// reach for its target, and its owner can be any agent.
-			// A member's job routed through a group names that group only
-			// when the peer sees it.
-			if !j.IsGroupTarget() && j.GroupID > 0 && !fedPeerGroupVisible(v.peer.InstanceID, j.GroupID) {
-				delete(view.(map[string]any), "group_id")
-			}
-			if j.OwnerAgent != "" {
-				if _, seen := v.visibleAgent(j.OwnerAgent); seen {
-					view.(map[string]any)["owner_agent"] = j.OwnerAgent
-				}
-			}
+		if view, ok := peerCronJobView(v, j); ok {
 			out = append(out, view)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
 }
 
-// peerCronJob is the job a by-id route names, when the peer reaches it.
-func peerCronJob(w http.ResponseWriter, r *http.Request, v *peerView) (int64, bool) {
+// peerHasCronJobs reports whether the peer scheduled any job here.
+func peerHasCronJobs(v *peerView) bool {
+	jobs, err := db.ListAgentCronJobs()
+	if err != nil {
+		return false
+	}
+	for _, j := range jobs {
+		if peerOwnsCronJob(v, j) {
+			return true
+		}
+	}
+	return false
+}
+
+// peerCronJob is the job a by-id route names, when the peer reaches it: one
+// it scheduled (kept in reach after its grant is gone, so it can still read,
+// stop and delete it), or for the peer's operator one in its grants' reach.
+// own says which.
+func peerCronJob(w http.ResponseWriter, r *http.Request, v *peerView) (job *db.AgentCronJob, own bool, ok bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id must be a positive integer")
-		return 0, false
+		return nil, false, false
 	}
 	v.auditDetail = "job: " + strconv.FormatInt(id, 10)
-	job, err := db.GetAgentCronJob(id)
+	job, err = db.GetAgentCronJob(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "lookup")
-		return 0, false
+		return nil, false, false
 	}
-	if !v.unrestricted() && !peerHoldsInSomeGroup(v, PermGroupsMessagesSchedule, PermGroupsMembersSchedule) {
+	full := v.unrestricted()
+	own = job != nil && peerOwnsCronJob(v, job)
+	switch {
+	case full || own:
+	case v.agent == nil && !peerSchedules(v):
 		writeError(w, http.StatusForbidden, "permission", "requires "+PermGroupsMessagesSchedule+" or "+PermGroupsMembersSchedule)
-		return 0, false
-	}
-	if job == nil || (!v.unrestricted() && !peerCronJobInReach(v, job)) {
+		return nil, false, false
+	case job == nil || v.agent != nil || !peerCronJobInReach(v, job):
 		writeError(w, http.StatusNotFound, "not_found", "object not found")
-		return 0, false
+		return nil, false, false
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "object not found")
+		return nil, false, false
 	}
 	if job.IsGroupTarget() {
 		if g, _ := db.GetAgentGroupByID(job.GroupID); g != nil {
@@ -215,21 +273,21 @@ func peerCronJob(w http.ResponseWriter, r *http.Request, v *peerView) (int64, bo
 	} else {
 		v.targetConv = job.TargetConv
 	}
-	return id, true
+	return job, own, true
 }
 
 // GET /v1/cron/{id}/logs: a job's recent runs.
 func servePeerCronLogs(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	id, ok := peerCronJob(w, r, v)
+	job, _, ok := peerCronJob(w, r, v)
 	if !ok {
 		return
 	}
 	if v.unrestricted() {
-		handleCronLogs(w, asDashboardHumanPeer(r), id)
+		handleCronLogs(w, asDashboardHumanPeer(r), job.ID)
 		return
 	}
 	rec := httptest.NewRecorder()
-	handleCronLogs(rec, asDashboardHumanPeer(r), id)
+	handleCronLogs(rec, asDashboardHumanPeer(r), job.ID)
 	if rec.Code < 200 || rec.Code >= 300 {
 		// This node's error text stays its own.
 		writeError(w, rec.Code, "cron_logs", "the job's runs could not be read")
@@ -240,11 +298,14 @@ func servePeerCronLogs(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 	})
 }
 
-// POST /v1/cron/{id}/disable: pauses a job. Enable, run-now, patch and delete
-// are not peer routes.
+// POST /v1/cron/{id}/disable: pauses a job, the peer's own or one in reach.
 func servePeerCronDisable(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	id, ok := peerCronJob(w, r, v)
+	job, _, ok := peerCronJob(w, r, v)
 	if !ok {
+		return
+	}
+	if v.unrestricted() {
+		handleCronSetEnabled(w, asDashboardHumanPeer(r), job.ID, false)
 		return
 	}
 	// Only an enabled job is paused, as a hand pause: one tclaude paused
@@ -252,7 +313,7 @@ func servePeerCronDisable(w http.ResponseWriter, r *http.Request, v *peerView, _
 	// peer's disable stays reversible.
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
-	if _, err := db.DisableEnabledAgentCronJob(id); err != nil {
+	if _, err := db.DisableEnabledAgentCronJob(job.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "update")
 		return
 	}

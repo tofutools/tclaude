@@ -147,7 +147,8 @@ func TestPeerCronJobsUnderGrants(t *testing.T) {
 	code, body = h.call("GET", "/v1/cron/"+strconv.FormatInt(hidden, 10)+"/logs", nil)
 	require.Equal(t, 404, code, "a job out of reach: %s", body)
 
-	// Disable, which is reversible; nothing that authors or fires.
+	// Disable, which is reversible; nothing that changes, fires or deletes
+	// this node's jobs (the peer's own jobs are peer_cron_jobs_flow_test.go's).
 	code, body = h.call("POST", "/v1/cron/"+strconv.FormatInt(member, 10)+"/disable", map[string]any{})
 	require.Equal(t, http.StatusNoContent, code, body)
 	require.Equal(t, false, operatorJobs(t, h)[member]["enabled"])
@@ -159,12 +160,13 @@ func TestPeerCronJobsUnderGrants(t *testing.T) {
 		{"POST", "/v1/cron/" + strconv.FormatInt(group, 10) + "/run-now"},
 		{"PATCH", "/v1/cron/" + strconv.FormatInt(group, 10)},
 		{"DELETE", "/v1/cron/" + strconv.FormatInt(group, 10)},
-		{"POST", "/v1/cron"},
 	} {
-		code, body := h.call(c.method, c.path, map[string]any{"target": "group:crew", "interval": "1h", "body": "x"})
-		require.Equal(t, 403, code, "%s %s: %s", c.method, c.path, body)
+		code, body := h.call(c.method, c.path, map[string]any{"body": "x"})
+		require.Equal(t, http.StatusConflict, code, "%s %s: %s", c.method, c.path, body)
+		require.Contains(t, body, "cron_job_not_yours")
 	}
-	require.Len(t, operatorJobs(t, h), 3, "nothing created or deleted")
+	require.Len(t, operatorJobs(t, h), 3, "nothing deleted")
+	require.Equal(t, "standup", operatorJobs(t, h)[group]["body"], "nothing changed")
 
 	// Unrestricted trust reads as this node's operator.
 	h.trustUnrestricted(t)

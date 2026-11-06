@@ -842,6 +842,7 @@ type dashboardCronJob struct {
 	RunImmediately             bool     `json:"run_immediately"`
 	QueueWhenOffline           bool     `json:"queue_when_offline"`
 	OperatorAuthored           bool     `json:"operator_authored,omitempty"`
+	OwnerPeer                  string   `json:"owner_peer,omitempty"`
 	CreatedAt                  string   `json:"created_at,omitempty"`
 	LastRunAt                  string   `json:"last_run_at,omitempty"`
 	LastRunStatus              string   `json:"last_run_status,omitempty"`

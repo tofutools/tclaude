@@ -82,6 +82,8 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 	for _, q := range []string{
 		`DELETE FROM federation_peer_grants WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
+		// The cron jobs it scheduled here go with it.
+		`DELETE FROM agent_cron_jobs WHERE owner_peer=?`,
 		`UPDATE model_proxy_leases SET revoked=1 WHERE peer=?`,
 	} {
 		if _, err := tx.Exec(q, instanceID); err != nil {

@@ -230,6 +230,10 @@ func rebindFederationIdentityTx(tx *sql.Tx, old, next string, newKey, pinnedKey 
 			return err
 		}
 	}
+	// The cron jobs the peer scheduled here stay its own.
+	if _, err := tx.Exec(`UPDATE agent_cron_jobs SET owner_peer=? WHERE owner_peer=?`, next, old); err != nil {
+		return err
+	}
 	// These tables read typed JSON as their source of truth, not the indexed
 	// peer column. Keep both representations in the same transaction.
 	for _, table := range []string{"federation_teleport_leases", "federation_teleports"} {
