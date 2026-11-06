@@ -398,9 +398,9 @@ tclaude agent permissions peer-reach add ops-lead --peer bob --slug agents.statu
 
 `peer-reach add` adds the peer to the agent's existing grant of each slug.
 It refuses a grant the agent holds for local use, rather than replacing it.
-It warns for `agent.stop`, `agent.retire` and `groups.members.stop`, which
-end sessions on the peer, and for `agent.resume`, which a restart also
-needs.
+Both `peer-reach add` and `permissions grant --scope peer=…` warn for
+`agent.stop`, `agent.retire` and `groups.members.stop`, which end sessions
+on the peer, and for `agent.resume`, which a restart also needs.
 
 Everything else on the peer view stays the operator's: moves and teleports,
 spawns (agents use the spawn request), sessions and shells, node management,
@@ -418,7 +418,10 @@ Other limits:
   because it would serve it as your operator's. A peer that answers without
   confirming the agent principal, for example one downgraded since its last
   catalog, is refused the same way, before the request is sent.
-- Both nodes audit the agent: `federation.peer_view.agent.out` on yours, and
+- An agent's reads carry no group or member settings and no spawn catalogs
+  or defaults, even where the peer's grants would show them to its operator.
+- Both nodes audit the agent, reads and refusals included:
+  `federation.peer_view.agent.out` on yours, and
   `agent:<name>/<agent-id>@<node>` on the peer's.
 - A reply carries `X-Tclaude-Remote-Content: untrusted`. What a peer returns
   is remote content, so treat it like remote mail.
