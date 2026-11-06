@@ -107,6 +107,21 @@ func servePeerSandboxProfileByName(w http.ResponseWriter, r *http.Request, v *pe
 		writeError(w, http.StatusForbidden, "permission", "a peer edits only the sandbox profiles it created")
 		return
 	}
+	// Your operator may have added to the peer's profile since: then it
+	// carries more than a peer's shape, which a peer's edit would wipe, so
+	// it is theirs to change.
+	if r.Method != http.MethodGet && !peerSandboxProfileShape(existing) {
+		writeError(w, http.StatusForbidden, "permission", "this node's operator has changed the profile beyond what a peer's profile holds; only they may change it now")
+		return
+	}
+	if r.Method == http.MethodDelete {
+		// A profile assigned to a group or as the default would leave them
+		// with none: deleting it is your operator's.
+		if assigned, err := db.SandboxProfileAssigned(existing.ID); err != nil || assigned {
+			writeError(w, http.StatusConflict, "assigned", "the profile is assigned to a group or as the default; only this node's operator may delete it")
+			return
+		}
+	}
 	req := peerAsLocalRequest(r)
 	if r.Method == http.MethodPatch {
 		raw, ok := peerSandboxProfileBody(w, r, existing)
@@ -176,4 +191,22 @@ func peerSandboxProfileBody(w http.ResponseWriter, r *http.Request, existing *db
 		return nil, false
 	}
 	return raw, true
+}
+
+// peerSandboxProfileShape reports whether a stored profile holds only what a
+// peer's profile may: one include, filesystem denies, and the network cut
+// or inherited.
+func peerSandboxProfileShape(p *db.SandboxProfile) bool {
+	if len(p.Includes) != 1 || (p.NetworkAccess != sandboxpolicy.NetworkAccessInherit && p.NetworkAccess != sandboxpolicy.NetworkAccessNone) {
+		return false
+	}
+	for _, grant := range p.Filesystem {
+		if grant.Access != sandboxpolicy.AccessDeny {
+			return false
+		}
+	}
+	return len(p.Tmpfs) == 0 && len(p.Environment) == 0 && len(p.AgentDirectories) == 0 &&
+		p.FilesystemRoot == "" && p.HarnessConfig == "" && p.Network == nil && p.UnixSockets == nil &&
+		p.ResourceLimits == (sandboxpolicy.ResourceLimits{}) && !p.DarwinAllowMachRegister &&
+		!p.DarwinDisableKeychainWrite && len(p.PreLaunch) == 0
 }

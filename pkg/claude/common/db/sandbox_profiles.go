@@ -1444,3 +1444,16 @@ func SandboxProfilePeerOwner(profileID int64) (string, error) {
 	}
 	return peer, err
 }
+
+// SandboxProfileAssigned reports whether the profile with this ID is a
+// group's sandbox profile or the global default.
+func SandboxProfileAssigned(profileID int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return true, err
+	}
+	var assigned bool
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM agent_groups WHERE sandbox_profile_id = ?)
+		OR EXISTS(SELECT 1 FROM sandbox_profile_global_assignment WHERE profile_id = ?)`, profileID, profileID).Scan(&assigned)
+	return assigned, err
+}

@@ -161,6 +161,25 @@ func TestPeerSandboxProfilesOnlyNarrowTheirInclude(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, flat.Environment, 1)
 
+	// Assigned to a group, deleting it would leave the group with none.
+	_, err = db.SetAgentGroupSandboxProfile("crew", "mine2")
+	require.NoError(t, err)
+	code, body = h.call("DELETE", "/api/sandbox-profiles/mine2", nil)
+	require.Equal(t, 409, code, body)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "")
+	require.NoError(t, err)
+
+	// Once your operator adds to it, it is theirs to change.
+	mine, err = db.GetSandboxProfile("mine2")
+	require.NoError(t, err)
+	mine.HarnessConfig = sandboxpolicy.HarnessConfigAccessRead
+	require.NoError(t, db.UpdateSandboxProfile(mine))
+	for _, method := range []string{"PATCH", "DELETE"} {
+		code, body = h.call(method, "/api/sandbox-profiles/mine2", map[string]any{"name": "mine2"})
+		require.Equal(t, 403, code, "%s: %s", method, body)
+	}
+	mine.HarnessConfig = ""
+	require.NoError(t, db.UpdateSandboxProfile(mine))
 	code, body = h.call("DELETE", "/api/sandbox-profiles/mine2", nil)
 	require.Less(t, code, 300, body)
 }

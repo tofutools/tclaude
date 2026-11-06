@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,10 @@ import (
 // accepts a move-out's consequences for your operator. A restart of a live
 // agent also takes groups.members.stop and groups.members.resume there.
 // Unrestricted trust assigns as this node's operator does.
+
+// peerSandboxImplFromKey carries the implementation a peer's move was judged
+// from into the assignment, which refuses it if that changed under its lock.
+type peerSandboxImplFromKey struct{}
 
 func servePeerAgentSandboxImpl(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	if v.unrestricted() {
@@ -78,6 +83,7 @@ func servePeerAgentSandboxImpl(w http.ResponseWriter, r *http.Request, v *peerVi
 			writeError(w, http.StatusForbidden, "permission", msg)
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), peerSandboxImplFromKey{}, current.SandboxImplementation))
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
 	}
