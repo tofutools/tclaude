@@ -168,6 +168,9 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.process', kind: 'group', sensitive: true, what: 'start a process run bound to one member agent (no program steps; the run spawns no agents)', warning: 'The run tasks the agent with this node\'s template; your parameters reach it marked as remote content.' },
   { slug: 'process.runs.start', kind: 'group', sensitive: true, what: 'start a process run scoped to the group, of a template with no program steps; it tasks only the group\'s members and spawns none', warning: 'The run tasks the group\'s members with this node\'s template; your parameters reach them marked as remote content.' },
   { slug: 'process.advance', kind: 'group', sensitive: true, what: 'advance the group\'s advisory process to the next or a named phase (the nudge names your node)' },
+  { slug: 'groups.messages.schedule', kind: 'group', sensitive: true, what: 'list the group\'s recurring cron jobs, read their runs and disable them (no creating, editing, enabling, firing or deleting)', warning: 'Can pause this node\'s own scheduled group messages and spawns, including this node\'s operator\'s.' },
+  { slug: 'groups.members.schedule', kind: 'group', sensitive: true, what: 'list cron jobs aimed at member agents, read their runs and disable them (no creating, editing, enabling, firing or deleting)', warning: 'Can pause scheduled messages to member agents, including this node\'s operator\'s.' },
+  { slug: 'groups.triggers.read', kind: 'group', what: 'list and inspect the group\'s trigger rules and their recent firings, without spawn instructions or error details (read-only)' },
   { slug: 'agent.move', kind: 'group', sensitive: true, what: 'move or teleport member agents to its node (with groups.members.retire)' },
   { slug: 'agents.receive', kind: 'scoped', what: 'move or share agents into the group' },
   { slug: 'agents.teleport.receive', kind: 'scoped', what: 'teleport agents into the group' },
@@ -206,8 +209,8 @@ export function slugInfo(slug) {
 // order.
 export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
-const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
-const GROUP_ADMIN = new Set(['process.runs.start', 'process.advance', 'groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
+const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'groups.members.schedule', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
+const GROUP_ADMIN = new Set(['process.runs.start', 'process.advance', 'groups.messages.schedule', 'groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
 
 export function slugCategory(slug) {
   if (slug.startsWith('groups.members.spawn') || slug.startsWith('node.spawn.') || slug === 'jobs.run') return 'Spawn & jobs';

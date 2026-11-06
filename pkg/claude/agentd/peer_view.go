@@ -232,6 +232,13 @@ func peerViewRules() map[string]peerViewRule {
 	} {
 		rules[pattern] = peerViewRule{feature: "process.runs.manage", requires: PermProcessRunsManage, write: servePeerProcessRunManage}
 	}
+	// Cron jobs and trigger rules (peer_schedule.go): read, and a job
+	// disabled, in the peer's reach; never authored or fired.
+	rules["GET /v1/cron"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronList}
+	rules["GET /v1/cron/{id}/logs"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronLogs}
+	rules["POST /v1/cron/{id}/disable"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronDisable}
+	rules["GET /v1/triggers"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTriggers}
+	rules["GET /v1/triggers/{id}"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTrigger}
 	// A group's advisory process: read by any peer that sees the group,
 	// advanced under process.advance there.
 	rules["GET /api/groups/{name}/process"] = withPeerInvoke("GET /api/groups/{name}/process", peerViewRule{feature: "groups.process", requires: PermGroupsVisibilityRead, group: true, visible: true, invoke: &peerInvokeSpec{param: "name"}})
