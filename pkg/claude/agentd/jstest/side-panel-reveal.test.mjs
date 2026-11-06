@@ -320,13 +320,22 @@ test('a drag whose dragend never arrives does not leave the reveal dead', async 
   });
 });
 
-test('resting on the folded handle does not slide the panel in under the click', async (t) => {
-  const s = await shell(t);
-  s.move(s.doc.getElementById('dock-toggle'), WIDTH - 4);
-  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
-  assert.equal(s.revealed(), false);
-  s.harness.fireEvent(s.doc.getElementById('dock-toggle'), 'click');
-  assert.equal(s.side.isSidePanelOpen('groups'), true, 'the click pins it, as aimed');
+// The folded handle is no exception to the edge zone (tcl-bg5qm1): resting on
+// it reveals after the dwell like anywhere else, and pinning is still one
+// click on the handle, before the dwell or on the revealed panel.
+test('resting on the folded handle takes the dwell like the rest of the edge zone; its click still pins', async (t) => {
+  let s = await shell(t);
+  const handle = () => s.doc.getElementById('dock-toggle');
+  s.move(handle(), WIDTH - 4);
+  s.harness.fireEvent(handle(), 'click');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'a click before the dwell pins it');
+
+  s = await shell(t);
+  s.move(handle(), WIDTH - 4);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true, 'resting there reveals it');
+  s.harness.fireEvent(handle(), 'click');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'and the revealed panel’s handle pins it');
 });
 
 test('a reveal does not carry over from one tab\'s panel to another\'s', async (t) => {
@@ -407,6 +416,15 @@ test('end to end over the real dashboard markup: the panel auto-hides', async (t
 // right of the fixed panel. A pointer on it targets <html>, not the panel.
 const SCROLLBAR = 15;
 const PANEL_W = 264;
+
+// creep moves the pointer slowly (20px every 50ms, under any fling speed) from
+// where it is to x, so arriving at the edge after it is no snap.
+function creep(s, from, x) {
+  for (let at = from; at < x; at = Math.min(x, at + 20)) {
+    s.timers.advance(50);
+    s.move(s.content, Math.min(x, at + 20));
+  }
+}
 
 // withPageScrollbar gives the page a scrollbar and the panel its real box: off
 // screen right of the content while folded, left of the scrollbar while it
@@ -583,30 +601,26 @@ test('moving onto the peeking strip reveals at once; the page scrollbar beside i
 
   s = await shell(t);
   const { onScrollbar } = withPageScrollbar(s);
-  s.flick(SHORT_FLING);
+  s.move(s.content, 700);
+  s.timers.advance(500);
+  creep(s, 700, 980);
   onScrollbar();
-  assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, the dwell still decides');
+  assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, a slow approach takes the dwell');
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
   assert.equal(s.revealed(), true);
 });
 
-// The folded handle sits at the edge, where a fling ends: a peek would move it
-// out from under the click that pins the panel, so a landing at its height
-// does not peek and the click still unfolds the panel.
-test('a fling across the page at the handle does not peek, and the click still pins the panel open', async (t) => {
+// No exception at the folded handle's height (tcl-bg5qm1): a fling there
+// peeks like any other, and the handle's click still pins the panel.
+test('a fling at the handle’s height peeks like any other, and the click still pins the panel open', async (t) => {
   const s = await shell(t);
   const handle = s.doc.getElementById('dock-toggle');
   handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
   s.flick({ ...FLING, y0: 300 });
-  assert.equal(s.peeking(), false, 'landing at the handle’s height');
+  assert.equal(s.peeking(), true, 'it peeks');
   s.move(handle, WIDTH - 10);
   handle.click();
   assert.equal(s.side.isSidePanelOpen('groups'), true, 'the handle’s click unfolds it');
-
-  const away = await shell(t);
-  away.doc.getElementById('dock-toggle').getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
-  away.flick({ ...FLING, y0: 150 });
-  assert.equal(away.peeking(), true, 'a fling well above the handle still peeks');
 });
 
 // A press on the strip while it only peeks means the strip slid under a still
@@ -661,7 +675,6 @@ test('no peek for a move that is not a fling at the edge', async (t) => {
   for (const [why, run] of [
     ['a fast move braking to stop short of the edge', (s) => s.flick({ x0: 300, x1: 850, ease: 0.55 })],
     ['a vertical flick', (s) => s.flick({ x0: 600, x1: 600, y0: 100, y1: 600 })],
-    ['a diagonal flick', (s) => s.flick({ x0: 300, x1: 700, y0: 100, y1: 500 })],
     ['a leftward flick', (s) => s.flick({ x0: 800, x1: 300 })],
     ['an ordinary move across the page', (s) => s.flick({ x0: 600, x1: 800, steps: 20 })],
     ['one jump', (s) => { s.move(s.content, 300); s.timers.advance(16); s.move(s.content, 900); }],
@@ -728,7 +741,13 @@ test('a fling to the page scrollbar peeks, and a press there takes it back with 
   const { onScrollbar } = withPageScrollbar(s);
   s.flick(SHORT_FLING);
   assert.equal(s.peeking(), true);
+  // Then on to the scrollbar in a short move after a pause: a long fast
+  // arrival there would be a snap, which reveals at once.
+  s.timers.advance(100);
+  s.move(s.content, 860);
+  s.timers.advance(100);
   onScrollbar();
+  assert.equal(s.peeking(), true, 'still peeking on the scrollbar');
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS / 2);
   s.harness.fireEvent(s.doc.documentElement, 'pointerdown');
   assert.equal(s.peeking(), false, 'grabbing the scrollbar ends the peek');
@@ -753,8 +772,7 @@ test('a peek is not a reveal: it runs no hover-out, so repeated short flings nev
 // v2 (tcl-wdwbm2): the peek grows, crossing into or stopping in the full
 // panel's area reveals, a cancel shrinks before it retracts, and a motion is
 // judged from where it started. All on the panel's real box: the open panel
-// would start at FULL_LEFT (721), the edge zone at 953, and the near-edge band
-// is the 100px left of FULL_LEFT.
+// would start at FULL_LEFT (721), and the edge zone at 953.
 
 const peekW = (s) => parseFloat(s.doc.body.style.getPropertyValue('--dock-peek-w')) || 0;
 
@@ -821,19 +839,6 @@ test('a braking stop on content under the would-be panel does not peek or reveal
     s.timers.advance(2000);
     assert.equal(s.revealed(), false, `${why}: and no reveal, by crossing or by the stop`);
   }
-});
-
-test('the fold handle: a fling at its height neither peeks nor reveals by crossing', async (t) => {
-  const s = await shell(t);
-  withPageScrollbar(s);
-  const handle = s.doc.getElementById('dock-toggle');
-  handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
-  s.flick(FLING);
-  assert.equal(s.peeking(), false);
-  assert.equal(s.revealed(), false, 'past FULL_LEFT, but aimed at the handle');
-  s.move(handle, WIDTH - 10);
-  handle.click();
-  assert.equal(s.side.isSidePanelOpen('groups'), true, 'the click still pins it open');
 });
 
 test('a prediction that stops holding shrinks the peek back before it retracts', async (t) => {
@@ -903,13 +908,13 @@ test('the config switches and values take effect, and the form’s defaults are 
 
   s = await shell(t);
   withPageScrollbar(s);
-  s.reveal.setSidePanelTuning({ near_edge_band_px: 500 }, s.doc);
+  s.reveal.setSidePanelTuning({ min_travel_px: 500 }, s.doc);
   s.flick(SHORT_FLING);
-  assert.equal(s.peeking(), false, 'a wider near-edge band takes in a motion from 421px out');
+  assert.equal(s.peeking(), false, 'a longer minimum travel refuses a 400px fling');
   s.reveal.setSidePanelTuning({ peek_min_px: 80, growing_peek: false, edge_zone_px: 60, dwell_ms: 400 }, s.doc);
   s.flick({ ...SHORT_FLING, y0: 320 });
   assert.equal(peekW(s), 80, 'the peek’s width');
-  s.move(s.content, WIDTH - SCROLLBAR - 55);
+  creep(s, SHORT_FLING.x1, WIDTH - SCROLLBAR - 55);
   s.timers.advance(399);
   assert.equal(s.revealed(), false, 'the wider zone’s longer dwell');
   s.timers.advance(1);
@@ -922,7 +927,7 @@ test('the config switches and values take effect, and the form’s defaults are 
     edge_zone_px: ['EDGE_PX', 1], dwell_ms: ['DWELL_MS', 1], retract_ms: ['PEEK_RETRACT_MS', 1],
     predict_min_speed: ['MIN_VX', 1000], predict_speed_distance_px: ['RUNWAY_FULL_PX', 1],
     predict_min_speed_floor: ['MIN_VX_FLOOR', 1000], predict_min_readings: ['MIN_SAMPLES', 1],
-    near_edge_band_px: ['NEAR_BAND_PX', 1], brake_percent: ['BRAKE_RATIO', 100], peek_min_px: ['PEEK_MIN_PX', 1],
+    min_travel_px: ['MIN_TRAVEL_PX', 1], brake_percent: ['BRAKE_RATIO', 100], peek_min_px: ['PEEK_MIN_PX', 1],
   };
   assert.deepEqual(Object.keys(map).sort(), Object.keys(defaults).sort(), 'every field is mapped');
   const { REVEAL_DEFAULTS } = s.reveal;
@@ -1006,4 +1011,72 @@ test('the peek is never wider than the panel', async (t) => {
   assert.equal(peekW(s), PANEL_W, 'clamped to the panel’s width');
   s.reveal.setSidePanelTuning({ predictive_peek: false }, s.doc);
   assert.equal(peekW(s), 0, 'turning the peek off clears its width');
+});
+
+
+// A snap (tcl-bg5qm1): the operator's fast move from the left is over in a
+// few frames, too few for the prediction's readings, and used to be left to
+// the dwell, which a snap that moves on or runs off the window never waits
+// out. An arrival that travelled far, fast, reveals at once.
+const snap = (s, xs, { from = 60, frameMs = 16, y = 300 } = {}) => {
+  s.move(s.content, from, { clientY: y });
+  s.timers.advance(500); // at rest
+  for (const x of xs) { s.timers.advance(frameMs); s.move(s.content, x, { clientY: y }); }
+};
+
+test('a three-frame snap from the left into the edge zone reveals the panel at once', async (t) => {
+  let s = await shell(t);
+  snap(s, [420, 860, 990]);
+  assert.equal(s.revealed(), true, 'revealed on arrival, no dwell');
+  s.move(s.content, 900);
+  assert.equal(s.revealed(), true, 'and moving on after it does not undo that');
+
+  s = await shell(t);
+  snap(s, [600, 990]);
+  assert.equal(s.revealed(), true, 'a two-frame snap: the first frame counts from where the pointer rested');
+
+  s = await shell(t);
+  snap(s, [420, 860, 990], { y: 300 });
+  assert.equal(s.revealed(), true, 'no exception at the handle');
+});
+
+test('a snap that runs past the window’s edge reveals when its next frame would have reached the zone', async (t) => {
+  let s = await shell(t);
+  snap(s, [420, 860]);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
+  assert.equal(s.revealed(), true, 'heading off the right at snap speed');
+
+  s = await shell(t);
+  snap(s, [200, 340, 480], { frameMs: 40 });
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 480, clientY: 300 });
+  assert.equal(s.revealed(), false, 'a slow motion leaving the window is not one');
+});
+
+test('a slow approach, or a short one from near the edge, still takes the dwell', async (t) => {
+  for (const [why, run] of [
+    ['a slow approach', (s) => snap(s, [300, 500, 700, 900, 990], { frameMs: 120 })],
+    ['a short quick move from near the edge', (s) => snap(s, [880, 990], { from: 850 })],
+  ]) {
+    const s = await shell(t);
+    run(s);
+    assert.equal(s.revealed(), false, `${why}: not at once`);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true, `${why}: after the dwell`);
+  }
+});
+
+test('the prediction judges the horizontal motion only, with no band where nothing runs', async (t) => {
+  let s = await shell(t);
+  s.flick({ x0: 300, x1: 700, y0: 100, y1: 500 });
+  assert.equal(s.peeking(), true, 'a diagonal fling right peeks: only its rightward speed counts');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 640, x1: 740, steps: 5, stepMs: 16 });
+  assert.equal(s.revealed() || s.peeking(), true, 'a fast move from 80px left of the panel’s edge is judged, not refused by a band');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 900, x1: 950, steps: 5, stepMs: 10 });
+  assert.equal(s.peeking() || s.revealed(), false, 'a short move near the edge travels too little');
 });

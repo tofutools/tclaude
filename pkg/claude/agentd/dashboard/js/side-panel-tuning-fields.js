@@ -12,7 +12,7 @@ export const SIDE_PANEL_TUNING_FIELDS = Object.freeze([
   { key: 'predict_speed_distance_px', label: 'Full speed needed from', unit: 'px', def: 600, min: 1, max: 4000 },
   { key: 'predict_min_speed_floor', label: 'Speed floor up close', unit: 'px/s', def: 600, min: 100, max: 10000 },
   { key: 'predict_min_readings', label: 'Readings needed', unit: 'moves', def: 4, min: 2, max: 20 },
-  { key: 'near_edge_band_px', label: 'Near-edge band', unit: 'px', def: 100, min: 0, max: 1000 },
+  { key: 'min_travel_px', label: 'Fling minimum travel', unit: 'px', def: 80, min: 0, max: 1000 },
   { key: 'brake_percent', label: 'Braking threshold', unit: '%', def: 70, min: 0, max: 100 },
   { key: 'peek_min_px', label: 'Peek start width', unit: 'px', def: 48, min: 8, max: 400 },
 ].map(Object.freeze));

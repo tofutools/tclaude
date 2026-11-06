@@ -152,7 +152,7 @@ type DashboardConfig struct {
 	SidePanelPredictSpeedDistancePx *int `json:"side_panel_predict_speed_distance_px,omitempty"`
 	SidePanelPredictMinSpeedFloor   *int `json:"side_panel_predict_min_speed_floor,omitempty"`
 	SidePanelPredictMinReadings     *int `json:"side_panel_predict_min_readings,omitempty"`
-	SidePanelNearEdgeBandPx         *int `json:"side_panel_near_edge_band_px,omitempty"`
+	SidePanelMinTravelPx            *int `json:"side_panel_min_travel_px,omitempty"`
 	SidePanelBrakePercent           *int `json:"side_panel_brake_percent,omitempty"`
 	SidePanelPeekMinPx              *int `json:"side_panel_peek_min_px,omitempty"`
 	// RecentPRWindowDays bounds the footer popover's "Recently closed"
@@ -843,7 +843,7 @@ type SidePanelTuning struct {
 	PredictSpeedDistancePx int  `json:"predict_speed_distance_px"`
 	PredictMinSpeedFloor   int  `json:"predict_min_speed_floor"`
 	PredictMinReadings     int  `json:"predict_min_readings"`
-	NearEdgeBandPx         int  `json:"near_edge_band_px"`
+	MinTravelPx            int  `json:"min_travel_px"`
 	BrakePercent           int  `json:"brake_percent"`
 	PeekMinPx              int  `json:"peek_min_px"`
 }
@@ -863,7 +863,7 @@ var SidePanelTuningLimits = map[string]SidePanelTuningLimit{
 	"predict_speed_distance_px": {600, 1, 4000},
 	"predict_min_speed_floor":   {600, 100, 10000},
 	"predict_min_readings":      {4, 2, 20},
-	"near_edge_band_px":         {100, 0, 1000},
+	"min_travel_px":             {80, 0, 1000},
 	"brake_percent":             {70, 0, 100},
 	"peek_min_px":               {48, 8, 400},
 }
@@ -895,7 +895,7 @@ func (c *Config) SidePanelTuning() SidePanelTuning {
 		PredictSpeedDistancePx: sidePanelTuned("predict_speed_distance_px", d.SidePanelPredictSpeedDistancePx),
 		PredictMinSpeedFloor:   sidePanelTuned("predict_min_speed_floor", d.SidePanelPredictMinSpeedFloor),
 		PredictMinReadings:     sidePanelTuned("predict_min_readings", d.SidePanelPredictMinReadings),
-		NearEdgeBandPx:         sidePanelTuned("near_edge_band_px", d.SidePanelNearEdgeBandPx),
+		MinTravelPx:            sidePanelTuned("min_travel_px", d.SidePanelMinTravelPx),
 		BrakePercent:           sidePanelTuned("brake_percent", d.SidePanelBrakePercent),
 		PeekMinPx:              sidePanelTuned("peek_min_px", d.SidePanelPeekMinPx),
 	}

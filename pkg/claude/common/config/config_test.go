@@ -1829,7 +1829,7 @@ func TestSidePanelTuning(t *testing.T) {
 	assert.Equal(t, SidePanelTuning{
 		PredictivePeek: true, GrowingPeek: true, EdgeZonePx: 32, DwellMs: 150, RetractMs: 500,
 		PredictMinSpeed: 1200, PredictSpeedDistancePx: 600, PredictMinSpeedFloor: 600,
-		PredictMinReadings: 4, NearEdgeBandPx: 100, BrakePercent: 70, PeekMinPx: 48,
+		PredictMinReadings: 4, MinTravelPx: 80, BrakePercent: 70, PeekMinPx: 48,
 	}, def, "nil → today's defaults")
 	assert.Equal(t, def, (&Config{Dashboard: &DashboardConfig{}}).SidePanelTuning(), "absent keys → defaults")
 	off, big, neg, slow := false, 100000, -5, 300
