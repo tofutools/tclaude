@@ -220,6 +220,9 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		emptyPeerCollections(reflect.ValueOf(&row).Elem())
 		if held := settings[g.Name]; len(held) > 0 {
 			projectPeerGroupSettings(&row, g, v.peer.InstanceID, held)
+			if err := projectPeerGroupPermissions(&row, g, held); err != nil {
+				return nil, nil, err
+			}
 		}
 		for i := range row.Members {
 			if m := &row.Members[i]; slices.Contains(settings[g.Name], PermGroupsMembersManage) || len(agentHeld[m.AgentID]) > 0 {

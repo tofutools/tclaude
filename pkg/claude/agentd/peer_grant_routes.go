@@ -208,7 +208,8 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 
 // peerGroupControlGrants are the grants behind a group's peer-invoked
 // controls, which peer_view.groups names per group.
-var peerGroupControlGrants = []string{PermGroupsMembersAdd, PermGroupsMembersRemove, PermGroupsLinkAdd, PermGroupsLinkRemove, PermGroupsArchive, PermGroupsDelete, PermGroupsExport, PermSessionsFilesRead, PermGroupsClone, PermTemplatesUse, PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsResourcesLock, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell, PermProcessAdvance}
+var peerGroupControlGrants = []string{PermGroupsMembersAdd, PermGroupsMembersRemove, PermGroupsLinkAdd, PermGroupsLinkRemove, PermGroupsArchive, PermGroupsDelete, PermGroupsExport, PermSessionsFilesRead, PermGroupsClone, PermTemplatesUse, PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsResourcesLock, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell, PermProcessAdvance,
+	PermGroupsOwnersManage, PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes}
 
 // peerGroupGrants names, per group, the peer grants of
 // peerGroupControlGrants (and the spawn grant, plus the spawn directory,

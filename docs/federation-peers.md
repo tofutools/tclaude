@@ -143,6 +143,9 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.link.remove` | remove a link that starts in the group. Sensitive |
 | `groups.archive` | archive and unarchive the group; an archived group is found for its unarchive by this grant on it. Sensitive |
 | `groups.delete` | delete the group; a sandbox or environment its members may take from their other groups instead takes that group's spawn grant, as on a remove. Sensitive |
+| `groups.owners.manage` | remove the group's owners, and make a member an owner when the peer holds everything an owner holds there. An owner holds the group's whole owner tier, spawning and the member lifecycle included, which no peer may confer (see [The peer ceiling](#the-peer-ceiling)), so in practice only unrestricted trust adds owners. Sensitive |
+| `groups.settings.member-permissions` | read and replace the permissions every member of the group holds. A row the peer adds or widens must be within its own grants ([The peer ceiling](#the-peer-ceiling)); a row it leaves as shown, or drops, needs nothing more. The whole list is replaced, so without this grant a peer can't replace it at all, since it would replace rows it was never shown. Sensitive |
+| `groups.settings.owner-scopes` | read and narrow what the group's owners hold. Loosening or dropping a constraint widens every owner's grant of that slug, which takes the peer holding that grant itself ([The peer ceiling](#the-peer-ceiling)). Sensitive |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
 | `process.runs.start`, `groups.members.process` | start a process run scoped to the group, or bound to one member agent (`groups.members.process` in every group the agent is in). The run is the peer's (owner `peer:<instance>`), never your operator's: it tasks only the members in its scope and spawns no performer. It cannot authorize program profiles, so a template with a program step is refused, and it cannot pick an older template version or a run ID. A node that would need a spawned performer fails its attempt rather than wait; a retry meets the same refusal, so such a step only completes once a member who can take it joins. Every node prompt it delivers opens with an untrusted-content banner that names the peer, because the peer's params reach the prompt. Starting from the peer's dashboard also needs the template list, which no peer grant serves yet; use `tclaude process run --remote`. Unrestricted trust starts runs as your operator does |
 | `process.runs.manage` | pause any process run here; resume, decide, reassign and resolve a blocked branch of a run that executes no host programs and spawns no performers on your authority (a run with program authorizations, or one of your runs whose agent steps may fall back to a spawn, stays your operator's, pause excepted). This includes your operator's own agent-only runs, in every group. Decisions are human gates: only the peer's operator decides them, never its agents. A reassignment goes only to an agent the peer could start an agent-bound run for (`groups.members.process` in every group it is in), inside a run scoped to a group or an agent. The actor recorded is the peer, and the evidence or note it writes, which a later performer can be shown, opens with the untrusted-content banner. Re-scoping a run stays your human's, and reissuing or recording a program command's outcome has no peer route |
@@ -293,6 +296,51 @@ worktree, and so on. A few things stay with this node even then:
 - its human inbox, which has its own peer routes.
 
 Each change is in this node's federation audit as `federation.peer_view`.
+
+### The peer ceiling
+
+What a peer confers on this node's agents (a member permission row, a
+loosened owner scope, an owner seat) never exceeds what the peer itself
+holds here. This node's operator grants without that bound; a peer's
+request does not. A row is within the ceiling only when:
+
+- its slug is one a peer may confer (below);
+- it names no peer (`peer=`): such a row acts on other nodes, which no
+  grant here measures;
+- the peer holds the slug's peer grant in every group the row reaches: the
+  groups its `group=` scope names, or, with no group scope, every group,
+  so the grant must be unscoped. An instance-wide slug is always held
+  unscoped.
+
+The slugs a peer may confer are local permissions whose peer grant of the
+same name reaches the same operation here, through a peer route that adds no
+bound of its own:
+
+- agent controls: `groups.members.interrupt`, `.context-info`, `.pr`,
+  `.remote-control`, `.rename`, `.tags`, `.task`, `.update`;
+- a group's reads and plain settings: `groups.roster.read`,
+  `groups.presence.read`, `groups.resources.read`, `groups.resources.lock`,
+  `groups.settings.environment`, `.description`, `.default-context`,
+  `.max-members`, `.notifications`, `.remote-control-policy`,
+  `groups.attachment`, `groups.rename`, `groups.archive`,
+  `message.attachments`, `process.advance`;
+- this node's libraries and reads: `prompts.manage`, `roles.manage`,
+  `costs.read`, `usage.read`, `process.templates.read`.
+
+Every other slug stays this node's operator's to confer, even when the peer
+holds a grant of the same name. Some examples of why:
+- the peer route refuses an option the local gate allows (stop's, resume's
+  and restart's options, retire's worktree deletion);
+- the peer route redacts (the debug export);
+- the peer route checks a wider footprint (delete, add, remove, links,
+  nesting);
+- it takes extra grants (exports, clone, templates, process runs);
+- the peer form carries a policy a local row can't hold (spawning,
+  one-shot jobs, permission carry);
+- it can put text into another agent's context (compact's focus,
+  reincarnate's follow-up, cron jobs);
+- it is a global `agent.*` gate, which also reaches agents in no group.
+
 
 A peer view request is one exchange of at most 15 seconds. Longer operations,
 a repository pull or sync and a worktree cleanup, run as jobs instead: the

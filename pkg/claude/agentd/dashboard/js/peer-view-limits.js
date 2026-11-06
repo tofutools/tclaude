@@ -89,16 +89,20 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'advance-phase': ['process.advance'],
   // A deployed force's re-brief re-sends its template's own work pattern.
   'rebrief-force': ['templates.instantiate'],
+  // Its owners and member permissions, held to the peer ceiling: what a
+  // peer confers never exceeds what it holds here (peer_ceiling.go). Making
+  // an owner confers spawning and the member lifecycle, which no peer may
+  // confer, so in practice a peer only removes owners. The permissions
+  // editor saves the whole list, which takes the grant that shows it.
+  'grant-owner': ['groups.owners.manage'],
+  'revoke-owner': ['groups.owners.manage'],
+  'set-group-permissions': ['groups.settings.member-permissions'],
   // What no peer grant covers, which unrestricted trust reaches as this
-  // node's operator does (the local_dashboard routes): its stand-down
-  // and ownership controls, the auto-join default, its member permissions,
-  // new cron jobs, its standing orders, its cross-harness spawn policy and
-  // saving it as a template there.
+  // node's operator does (the local_dashboard routes): its stand-down, the
+  // auto-join default, new cron jobs, its standing orders, its cross-harness
+  // spawn policy and saving it as a template there.
   'stand-down-force': ['feature:local_dashboard'],
-  'grant-owner': ['feature:local_dashboard'],
-  'revoke-owner': ['feature:local_dashboard'],
   'set-default-spawn-group': ['feature:local_dashboard'],
-  'set-group-permissions': ['feature:local_dashboard'],
   'cron-new': ['feature:local_dashboard'],
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],

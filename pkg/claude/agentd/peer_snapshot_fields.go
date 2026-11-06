@@ -21,16 +21,16 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
 		"projected": "Members Online",
-		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent",
-		"denied":    "DefaultSpawnGroup Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
+		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes",
+		"denied":    "DefaultSpawnGroup Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",
 		"roster":   "Role",
 		"presence": "Online FederationPresence",
 		"status":   "State taskRefView ClaudeSubscription",
-		"settings": "Descr tagsView Notify NotifyEffective",
-		"denied":   "CreatedAt agentLocationView repoLinksView Waking ExternalSteward SpawnedByExternalSteward RouteHealth Owner",
+		"settings": "Descr tagsView Notify NotifyEffective Owner",
+		"denied":   "CreatedAt agentLocationView repoLinksView Waking ExternalSteward SpawnedByExternalSteward RouteHealth",
 	}),
 	reflect.TypeFor[dashboardAgent](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title Groups",

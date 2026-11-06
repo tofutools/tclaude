@@ -39,6 +39,8 @@ func addPeerGroupStructureRules(rules map[string]peerViewRule) {
 		"POST /api/groups/{name}/archive":             {feature: "groups.archive", requires: PermGroupsArchive, group: true},
 		"POST /api/groups/{name}/unarchive":           {feature: "groups.archive", requires: PermGroupsArchive, group: true},
 		"DELETE /api/groups/{name}":                   {feature: "groups.delete", requires: PermGroupsDelete, group: true},
+		"POST /api/groups/{name}/owners":              {feature: "groups.owners.manage", requires: PermGroupsOwnersManage, group: true},
+		"DELETE /api/groups/{name}/owners/{conv}":     {feature: "groups.owners.manage", requires: PermGroupsOwnersManage, group: true},
 	} {
 		rule.write = servePeerGroupStructure(pattern)
 		rules[pattern] = rule
@@ -65,6 +67,8 @@ var peerStructureChecks = map[string]func(*peerView, *http.Request, *db.AgentGro
 	"POST /api/groups/{name}/archive":             peerGroupGrantFailure(PermGroupsArchive),
 	"POST /api/groups/{name}/unarchive":           peerUnarchiveFailure,
 	"DELETE /api/groups/{name}":                   peerGroupDeleteFailure,
+	"POST /api/groups/{name}/owners":              peerOwnerAddFailure,
+	"DELETE /api/groups/{name}/owners/{conv}":     peerOwnerRemoveFailure,
 }
 
 // servePeerGroupStructure checks a restricted peer's structure request, then

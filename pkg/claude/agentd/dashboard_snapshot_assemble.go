@@ -287,14 +287,7 @@ func (gb snapshotGroupsBuild) buildGroup(g *db.AgentGroup) dashboardGroup {
 	groupUnreadablePermissionScopes := []string{}
 	gb.gt.track(&gb.gt.perms, func() {
 		rows, _ := db.ListAgentGroupPermissionRows(g.ID)
-		for _, row := range rows {
-			groupPermissions = append(groupPermissions, row.Slug)
-			if scope := permissionScopeFromJSON(row.ScopeJSON); len(scope) > 0 {
-				groupPermissionScopes[row.Slug] = scope
-			} else if row.ScopeJSON != "" {
-				groupUnreadablePermissionScopes = append(groupUnreadablePermissionScopes, row.Slug)
-			}
-		}
+		groupPermissions, groupPermissionScopes, groupUnreadablePermissionScopes = groupPermissionsView(rows)
 	})
 	attachment := groupAttachmentViewFor(g)
 	dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, DefaultPrompts: g.DefaultPrompts, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}

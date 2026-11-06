@@ -239,11 +239,11 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 	}
 	if !reinforce {
 		if len(t.OwnerScopes) > 0 {
-			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take " + PermGroupsOwnersManage}
+			return &spawnFailure{http.StatusForbidden, "permission", "the template sets owner scopes, which take unrestricted trust"}
 		}
 		for _, ag := range t.Agents {
 			if ag.IsOwner || ag.EffectiveIsOwner {
-				return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes %s", ag.Name, PermGroupsOwnersManage)}
+				return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf("template agent %q is a group owner, which takes unrestricted trust", ag.Name)}
 			}
 		}
 	} else {
@@ -318,7 +318,7 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 			return
 		}
 		if len(owners) > 0 {
-			writeError(w, http.StatusForbidden, "permission", "copying the group's owners takes "+PermGroupsOwnersManage+"; set copy_owners to false")
+			writeError(w, http.StatusForbidden, "permission", "copying the group's owners takes unrestricted trust; set copy_owners to false")
 			return
 		}
 	}
