@@ -1152,13 +1152,22 @@ func ValidateTclaudeLayerNetwork(
 		if h.Name == harness.OpenCodeName {
 			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The isolated server retains OpenCode's required config, install, auth, and runtime-state projections; tclaude’s sandbox packet boundary remains authoritative if those inputs select a different route at runtime. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude’s sandbox nft boundary is the packet-enforced floor."
 		}
-		return []sandboxpolicy.AccessNotice{{
+		notices := []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
 			Axis:   "network",
 			Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
 			Effect: sandboxpolicy.AccessNoticeEffectLaunchGated,
 			Detail: detail,
-		}}, nil
+		}}
+		// A subscription login refreshes its token at a host besides the model
+		// endpoint. Missing it breaks the launch hours later, not now, so it is
+		// a warning rather than a coverage refusal.
+		if h.Name == harness.DefaultName {
+			if notice, ok := harness.ClaudeLoginRefreshNotice(axes.Network, resolvedModel); ok {
+				notices = append(notices, notice)
+			}
+		}
+		return notices, nil
 	case sandboxpolicy.AccessModeClosed:
 		if h != nil && h.UsesCommandInput() {
 			return nil, nil

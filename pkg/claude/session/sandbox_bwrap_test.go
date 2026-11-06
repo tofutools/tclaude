@@ -2226,3 +2226,36 @@ func TestBwrapArgsCreatesMissingProtectedParentBeforePinning(t *testing.T) {
 	assert.Equal(t, []string{"--dir", claudeDir}, got[pin-2:pin],
 		"the missing parent must be created immediately before its pin")
 }
+
+func TestValidateTclaudeLayerNetworkWarnsASubscriptionClaudeWithoutItsRefreshHost(t *testing.T) {
+	claude := harness.Default()
+	effective := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: harness.ClaudeAPIDestinations(),
+		},
+	}
+	subscription := harness.ResolvedModelTransport{
+		Model: "sonnet", Provider: "anthropic", ProviderResolved: true,
+		ClaudeLogin: harness.ClaudeLoginSubscription,
+	}
+	notices, err := ValidateTclaudeLayerNetwork(claude, effective, subscription)
+	require.NoError(t, err, "a missing refresh host warns; it never refuses the launch")
+	require.Len(t, notices, 2)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated, notices[0].Effect)
+	assert.Contains(t, notices[1].Detail, "platform.claude.com:443")
+	assert.Contains(t, notices[1].Detail, "include the net-anthropic pack")
+
+	effective.Network.Allow = append(harness.ClaudeAPIDestinations(),
+		harness.ClaudeLoginRefreshDestinations()...)
+	notices, err = ValidateTclaudeLayerNetwork(claude, effective, subscription)
+	require.NoError(t, err)
+	require.Len(t, notices, 1, "a list that reaches the refresh host gets only the model notice")
+
+	effective.Network.Allow = harness.ClaudeAPIDestinations()
+	apiKey := subscription
+	apiKey.ClaudeLogin = harness.ClaudeLoginNone
+	notices, err = ValidateTclaudeLayerNetwork(claude, effective, apiKey)
+	require.NoError(t, err)
+	require.Len(t, notices, 1, "an API-key launch is not warned")
+}

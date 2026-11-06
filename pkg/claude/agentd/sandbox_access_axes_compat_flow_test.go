@@ -931,15 +931,16 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 		return got.Targets[0].NetworkEntries
 	}
 
+	// net-local, net-anthropic's API and sign-in refresh hosts, net-openai-codex.
 	claudeRows := request(t, "claude")
-	require.Len(t, claudeRows, 3)
+	require.Len(t, claudeRows, 4)
 	for _, row := range claudeRows {
 		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
 		assert.Contains(t, row.Detail, "outbound traffic is open")
 	}
 
 	openCodeRows := request(t, "opencode")
-	require.Len(t, openCodeRows, 3)
+	require.Len(t, openCodeRows, 4)
 	for _, row := range openCodeRows {
 		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
 		assert.NotContains(t, row.Detail, "no explicit provider")

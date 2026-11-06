@@ -45,7 +45,7 @@ and frozen into launch snapshots. The current registry:
 | Pack | Covers |
 |------|--------|
 | `net-local` | Unscoped loopback — local model servers (Ollama, LM Studio, llama.cpp), Codex OSS mode, host-local dev services |
-| `net-anthropic` | Direct Anthropic API-key endpoints (`api.anthropic.com:443`) |
+| `net-anthropic` | Claude Code with an API key or a Claude subscription sign-in (`api.anthropic.com:443`, plus `platform.claude.com:443`, where a subscription login refreshes its token) |
 | `net-openai-codex` | Direct OpenAI API-key endpoints (`api.openai.com:443`) |
 | `net-openai-chatgpt` | ChatGPT-signed-in Codex (`chatgpt.com:443`, `auth.openai.com:443`) |
 | `net-github-copilot` | GitHub Copilot CLI model and auth traffic |
@@ -201,7 +201,12 @@ fabricates provider resolution or quietly punches a hole:
 - **Claude Code** resolves its route from the launch environment, and inspects
   the cached remote managed settings for provider routing. Claude Code can
   re-route live on its hourly settings poll; a route moved that way is denied
-  fail-closed at the packet floor for new flows.
+  fail-closed at the packet floor for new flows. A Claude subscription login
+  also refreshes its access token at `platform.claude.com:443`. That is not
+  model traffic, so it does not gate the launch: when a subscription-signed-in
+  launch's rules cannot reach it, the launch carries a warning instead, since
+  the model keeps working until the current token (about 8 hours) expires.
+  `net-anthropic` covers both hosts.
 - **Codex** is read through the app-server `config/read` request — including
   the MDM and enterprise cloud-config layers no local file exposes. ChatGPT
   sign-in resolves to `chatgpt_base_url` plus the constant `auth.openai.com`
@@ -366,6 +371,7 @@ these were read from pi's source at 1.1.0. Web tools, MCP servers and a first
 | `curl` works but another tool cannot reach anything (proxy engine) | The tool ignores proxy environment variables; proxy-unaware clients are blocked, not filtered |
 | UDP/QUIC traffic silently fails under the proxy engine | By design — only TCP through CONNECT is carried |
 | Launch refused: `unsupported_filtered_model_transport` | The authored list does not cover the resolved provider endpoint — add the matching pack or use network open |
+| Claude Code loses the model hours into a filtered session | A subscription login cannot reach `platform.claude.com:443` to refresh its token; the launch warned about it. Include `net-anthropic` or allow that host |
 | Launch refused over `HTTP_PROXY`/`ALL_PROXY` | A foreign proxy variable in the launch environment; remove it or use network open |
 | Filtered rules silently became host-open (warning recorded) | A packet-engine prerequisite (`bwrap`, `pasta`, `nft`, pidfds) was missing before enforcement was selected |
 | Rules recorded but "not enforced" notice on the launch | Non-activated engine cell — e.g. Copilot, or macOS packet filtering |

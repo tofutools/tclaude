@@ -259,9 +259,10 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Contains(t, catalog.NetworkPacks[2].Warning,
 		"ChatGPT-auth Codex uses different destinations")
 	assert.Contains(t, catalog.NetworkPacks[3].Warning, "chatgpt_base_url")
-	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
-		Domain: "api.anthropic.com", Ports: []int{443},
-	}}, catalog.NetworkPacks[1].Entries)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "api.anthropic.com", Ports: []int{443}},
+		{Domain: "platform.claude.com", Ports: []int{443}},
+	}, catalog.NetworkPacks[1].Entries)
 	assert.Equal(t, catalog.NetworkPacks, catalog.NetworkTemplates,
 		"legacy insertion catalog remains a compatibility alias")
 	assert.NotContains(t, rec.Body.String(), "net-pypi")

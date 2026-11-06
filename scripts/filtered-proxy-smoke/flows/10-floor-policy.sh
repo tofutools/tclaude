@@ -70,7 +70,7 @@ flow::run() {
   TCLAUDE_FILTERED_ALLOWED_PORT="${ports[0]}" \
   TCLAUDE_FILTERED_DENIED_PORT="${ports[1]}" \
     go test ./pkg/claude/session \
-      -run '^TestTclaudeLayerProxy(Floor|Policy)Smoke$' \
+      -run '^(TestTclaudeLayerProxy(Floor|Policy)Smoke|TestTclaudeLayerClaudeCredentialWriteBackSmoke)$' \
       -count=1 -v -timeout=300s
 }
 

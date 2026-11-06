@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -470,12 +471,88 @@ func resolveClaudeModelTransport(
 					variable))
 		}
 	}
+	baseURL := strings.TrimSpace(environment["ANTHROPIC_BASE_URL"])
 	return harness.ResolvedModelTransport{
 		Model:            context.Model,
 		Provider:         "anthropic",
-		BaseURL:          strings.TrimSpace(environment["ANTHROPIC_BASE_URL"]),
+		BaseURL:          baseURL,
 		ProviderResolved: true,
+		ClaudeLogin:      claudeLaunchLogin(baseURL, environment, runtime.GOOS),
 	}, nil
+}
+
+// claudeLaunchLogin classifies what a first-party Claude Code launch signs in
+// with, for the sign-in refresh warning (harness.ClaudeLoginRefreshNotice). It
+// reads only whether the stored login carries a refresh token, never a token.
+// A launch through a moved ANTHROPIC_BASE_URL is a gateway, not a subscription
+// route, and is not classified.
+func claudeLaunchLogin(
+	baseURL string,
+	environment map[string]string,
+	goos string,
+) harness.ClaudeLogin {
+	if baseURL != "" && !claudeFirstPartyBaseURL(baseURL) {
+		return harness.ClaudeLoginNone
+	}
+	for _, variable := range []string{
+		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+	} {
+		if strings.TrimSpace(environment[variable]) != "" {
+			return harness.ClaudeLoginNone
+		}
+	}
+	login := harness.ClaudeLoginNone
+	switch hasRefresh, found := claudeStoredSubscriptionLogin(environment); {
+	case hasRefresh:
+		login = harness.ClaudeLoginSubscription
+	case !found && goos == "darwin":
+		// Claude Code keeps a macOS login in the keychain, which tclaude does
+		// not read.
+		login = harness.ClaudeLoginUnknown
+	}
+	if login != harness.ClaudeLoginNone &&
+		strings.TrimSpace(environment[harness.ClaudeCustomOAuthURLEnvVar]) != "" {
+		return harness.ClaudeLoginCustomOAuth
+	}
+	return login
+}
+
+func claudeFirstPartyBaseURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	port := parsed.Port()
+	return parsed.Scheme == "https" && (port == "" || port == "443") &&
+		strings.EqualFold(parsed.Hostname(), "api.anthropic.com")
+}
+
+// claudeStoredSubscriptionLogin reports whether the launch's Claude Code
+// credentials file holds a subscription login with a refresh token, and
+// whether the file exists at all. An unreadable or malformed file counts as
+// no login: the warning is advisory, and Claude Code itself would not use it.
+func claudeStoredSubscriptionLogin(environment map[string]string) (hasRefresh, found bool) {
+	configDir := strings.TrimSpace(environment["CLAUDE_CONFIG_DIR"])
+	if configDir == "" {
+		home := strings.TrimSpace(environment["HOME"])
+		if home == "" {
+			return false, false
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
+	if err != nil {
+		return false, !errors.Is(err, os.ErrNotExist)
+	}
+	var credentials struct {
+		ClaudeAIOAuth *struct {
+			RefreshToken string `json:"refreshToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &credentials) != nil || credentials.ClaudeAIOAuth == nil {
+		return false, true
+	}
+	return strings.TrimSpace(credentials.ClaudeAIOAuth.RefreshToken) != "", true
 }
 
 var claudeProviderSettingVariables = map[string]struct{}{
