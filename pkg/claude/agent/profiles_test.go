@@ -567,7 +567,7 @@ func TestPrintProfileHuman_Sparse(t *testing.T) {
 	assert.Equal(t, "Profile: bare\n", buf.String())
 }
 
-// loadProfileFile round-trips the `profiles show --json` shape that `create` /
+// loadLibraryJSONFile round-trips the `profiles show --json` shape that `create` /
 // `edit` accept — the file-based input the mutating verbs share.
 func TestLoadProfileFile_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.json")
@@ -575,7 +575,7 @@ func TestLoadProfileFile_RoundTrip(t *testing.T) {
 		`"is_owner":true,"permission_overrides":{"human.notify":"grant"}}`
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
-	prof, rc := loadProfileFile(path, nil, new(bytes.Buffer))
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", path, nil, new(bytes.Buffer))
 	require.Equal(t, rcOK, rc)
 	require.NotNil(t, prof)
 	assert.Equal(t, []string{"codex-reviewer"}, prof.Aliases)
@@ -591,7 +591,7 @@ func TestLoadProfileFile_RoundTrip(t *testing.T) {
 
 // "-" reads the profile JSON from stdin (sidesteps shell quoting for long bodies).
 func TestLoadProfileFile_Stdin(t *testing.T) {
-	prof, rc := loadProfileFile("-", strings.NewReader(`{"name":"from-stdin"}`), new(bytes.Buffer))
+	prof, rc := loadLibraryJSONFile[profileJSON]("profile", "-", strings.NewReader(`{"name":"from-stdin"}`), new(bytes.Buffer))
 	require.Equal(t, rcOK, rc)
 	require.NotNil(t, prof)
 	assert.Equal(t, "from-stdin", prof.Name)
@@ -600,13 +600,13 @@ func TestLoadProfileFile_Stdin(t *testing.T) {
 // A missing --file, an unreadable path, and malformed / wrong-shape JSON all
 // fail fast before any daemon call.
 func TestLoadProfileFile_Errors(t *testing.T) {
-	_, rc := loadProfileFile("", nil, new(bytes.Buffer))
+	_, rc := loadLibraryJSONFile[profileJSON]("profile", "", nil, new(bytes.Buffer))
 	assert.Equal(t, rcInvalidArg, rc, "missing --file")
 
 	// A path that does not exist surfaces as an IO failure, naming the file.
 	missing := filepath.Join(t.TempDir(), "nope.json")
 	stderr := new(bytes.Buffer)
-	_, rc = loadProfileFile(missing, nil, stderr)
+	_, rc = loadLibraryJSONFile[profileJSON]("profile", missing, nil, stderr)
 	assert.Equal(t, rcIOFailure, rc, "unreadable file")
 	assert.Contains(t, stderr.String(), missing)
 
@@ -614,7 +614,7 @@ func TestLoadProfileFile_Errors(t *testing.T) {
 	badPath := filepath.Join(t.TempDir(), "bad.json")
 	require.NoError(t, os.WriteFile(badPath, []byte("{not json"), 0o600))
 	stderr = new(bytes.Buffer)
-	_, rc = loadProfileFile(badPath, nil, stderr)
+	_, rc = loadLibraryJSONFile[profileJSON]("profile", badPath, nil, stderr)
 	assert.Equal(t, rcInvalidArg, rc, "malformed JSON")
 	assert.Contains(t, stderr.String(), "not valid profile JSON")
 
@@ -624,7 +624,7 @@ func TestLoadProfileFile_Errors(t *testing.T) {
 	arrPath := filepath.Join(t.TempDir(), "arr.json")
 	require.NoError(t, os.WriteFile(arrPath, []byte(`[{"name":"a"}]`), 0o600))
 	stderr = new(bytes.Buffer)
-	_, rc = loadProfileFile(arrPath, nil, stderr)
+	_, rc = loadLibraryJSONFile[profileJSON]("profile", arrPath, nil, stderr)
 	assert.Equal(t, rcInvalidArg, rc, "array instead of object")
 	assert.Contains(t, stderr.String(), "not valid profile JSON")
 }
