@@ -46,6 +46,8 @@ type cronJobJSON struct {
 	Name                       string   `json:"name,omitempty"`
 	OwnerAgent                 string   `json:"owner_agent,omitempty"`
 	OwnerConv                  string   `json:"owner_conv"`
+	OwnerPeer                  string   `json:"owner_peer,omitempty"`
+	OwnerPeerAgent             string   `json:"owner_peer_agent,omitempty"`
 	TargetKind                 string   `json:"target_kind"`
 	TargetAgent                string   `json:"target_agent,omitempty"`
 	TargetConv                 string   `json:"target_conv"`
