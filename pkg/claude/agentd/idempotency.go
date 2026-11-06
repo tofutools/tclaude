@@ -64,7 +64,7 @@ func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }
 // response replay must never capture the bearer. Enrollment CLI calls disable
 // automatic mutation retries and require operators to retry explicitly.
 func isEnrollmentCredentialRoute(path string) bool {
-	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll"
+	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll" || path == "/v1/federation/become-node"
 }
 
 // An external steward's credential is shown once and stored only hashed, so the

@@ -862,7 +862,7 @@ supply or override this receiver-owned permission map.
 
 ## Enroll a node with a token
 
-Enrollment sets up reciprocal trust after both machines have joined the hub.
+Enrollment links a node to a master after both machines have joined the hub.
 Hub admission remains a separate step; an enrollment token is not a hub invite.
 On the master, create a node profile and issue a short-lived bearer:
 
@@ -872,7 +872,15 @@ tclaude federation enroll-token create --profile test-rig --uses 1 --ttl 24h
 
 The token is printed once on stdout; its public terms and master fingerprint
 appear on stderr. Deliver it privately to the node. Prefer a private file or
-stdin over `--token` to avoid shell history and process argument exposure:
+stdin over `--token` to avoid shell history and process argument exposure.
+
+A token **offers** the node what the master gives it; it never decides what
+the node gives the master. Two commands enroll, and they differ in exactly
+that.
+
+**`enroll` accepts the offer and gives the master nothing.** The master is
+trusted restricted, with no grants: it needs explicit grants here for anything
+more, given later with `tclaude federation grant` or `trust`.
 
 ```bash
 tclaude federation enroll <master-instance-id> --token-file /private/enrollment-token
@@ -880,19 +888,45 @@ tclaude federation enroll <master-instance-id> --token-file /private/enrollment-
 tclaude federation enroll <master-instance-id> --token-stdin --preview
 ```
 
-Running `enroll` is consent. Before sending, it displays both fingerprints, the
-profile's name, immutable ID and revision, expiry, and the trust level granted
-to the master on this node. `--trust-level unrestricted` when creating the
-bearer proposes full master authority: every peer permission on every live
-local group, automatic worker spawning, and local unscoped grants towards that
-peer. The default is restricted, which requires explicit local grants.
+Before sending, it displays both fingerprints, the profile's name, immutable ID
+and revision (your authority on the master), and expiry. The named profile
+controls the node's authority **on the master**, including pool memberships,
+peer grants and defaults for workers that node spawns there. Enrollment does
+not apply the node's default peer profile and does not automatically accept
+config offers. Offer/import those separately. Profile edits invalidate unused
+tokens; pool grants remain live membership policy.
 
-The named profile controls the node's authority **on the master**, including
-pool memberships, peer grants and defaults for workers that node spawns there.
-The node grants its master only the reciprocal trust level displayed by the
-token. Enrollment does not apply the node's default peer profile and does not
-automatically accept config offers. Offer/import those separately. Profile
-edits invalidate unused tokens; pool grants remain live membership policy.
+**`become-node` also gives the master control of this machine.** Use it to
+attach a worker node to your own fleet. It gives exactly the permissions it
+names, or unrestricted trust with `--yes-unrestricted`, and needs the master's
+fingerprint, compared with its operator over another channel:
+
+```bash
+tclaude federation become-node <master-instance-id> --token-file /private/enrollment-token \
+  --give-permissions agents.status.read,groups.members.spawn@group=builders \
+  --confirm-fingerprint <master-fingerprint>
+# Everything, for a machine you own:
+tclaude federation become-node <master-instance-id> --token-file /private/enrollment-token \
+  --yes-unrestricted --confirm-fingerprint <master-fingerprint>
+```
+
+It always prints a warning naming exactly what is given, with each Sensitive
+grant marked, and `--preview` prints that warning without enrolling. A
+permission is `slug` (every group, or an instance grant) or
+`slug@group=<local group>`. It is given with its default policy; one that takes
+a policy of its own (`agents.receive.permissions`, `models.proxy`) and a grant's
+limits are given afterwards with `federation grant`. Unrestricted means every
+peer permission on every live local group, automatic worker spawning, and
+local unscoped grants towards that peer. A refused become-node never reaches
+the master and spends no token use; once a node has enrolled with a token,
+become-node on it again is refused, and further permissions are given with
+`federation grant` or `trust`.
+
+`--request-trust unrestricted` when creating the bearer (formerly
+`--trust-level`, still accepted) only **requests** that level: both commands
+show it as the master's request, and neither applies it. A token issued before
+this change that requested unrestricted now enrolls restricted through
+`enroll`; existing enrollments keep their trust.
 
 `tcle1` tokens contain signed public terms, a pinned master public key and a
 random bearer secret. The master stores only the public terms and secret hash.

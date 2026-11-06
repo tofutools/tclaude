@@ -684,7 +684,7 @@ test('an invite for an unrestricted profile repeats the consequence', async (t) 
   assert.match(s.confirms.at(-1).body, /at unrestricted trust — .*created later/);
 });
 
-test('joining previews the master fingerprint and trust level, and needs the check before enrolling', async (t) => {
+test('joining previews the master fingerprint, gives restricted only, shows the requested trust as a request, and needs the check', async (t) => {
   const s = await setup(t);
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
@@ -694,7 +694,7 @@ test('joining previews the master fingerprint and trust level, and needs the che
   await s.click(s.q('#fleet-join-preview'));
   assert.deepEqual(s.log.find((l) => l[0] === 'enrollPreview')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL' });
   const modal = s.q('#fleet-join-modal').textContent;
-  assert.match(modal, new RegExp(FP_NEW)); assert.match(modal, /unrestricted trust on this node/); assert.match(modal, /created later/);
+  assert.match(modal, new RegExp(FP_NEW)); assert.match(modal, /restricted trust, no grants/); assert.match(modal, /unrestricted trust \(a request; Enroll gives it nothing\)/); assert.match(modal, /become-node/);
   assert.equal(s.q('#fleet-join-submit').disabled, true);
   await s.check(s.q('#fleet-join-ack'));
   await s.click(s.q('#fleet-join-submit'));

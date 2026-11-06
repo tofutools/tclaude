@@ -121,8 +121,8 @@ func TestFederationEnrollmentNodeConsentAndRetry(t *testing.T) {
 	require.NoError(t, e)
 	preview, e := FederationEnrollmentNodePreview(tok, node.Pub)
 	require.NoError(t, e)
-	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, "wrong"))
-	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview))
+	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, "wrong", FederationTrustRestricted, nil))
+	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview, FederationTrustRestricted, nil))
 	rotated, e := proto.NewIdentity()
 	require.NoError(t, e)
 	_, e = FederationEnrollmentNodePreview(tok, rotated.Pub)
@@ -132,10 +132,10 @@ func TestFederationEnrollmentNodeConsentAndRetry(t *testing.T) {
 	require.NoError(t, e)
 	peer.TrustLevel = "unrestricted"
 	require.NoError(t, TrustFederationPeer(*peer))
-	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, preview), "concurrent manual change invalidates consent")
+	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, preview, FederationTrustRestricted, nil), "concurrent manual change invalidates consent")
 	preview, e = FederationEnrollmentNodePreview(tok, node.Pub)
 	require.NoError(t, e)
-	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview))
+	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview, FederationTrustRestricted, nil))
 	peer, e = GetFederationPeer(master.ID())
 	require.NoError(t, e)
 	require.Equal(t, "unrestricted", peer.TrustLevel)
@@ -158,4 +158,22 @@ func TestFederationEnrollmentTokensDoNotRetainDeletedProfiles(t *testing.T) {
 	require.NoError(t, e)
 	require.Len(t, tokens, 1)
 	require.Equal(t, tok.Public, tokens[0].Public)
+}
+
+// The node writes the trust its operator chose, not the token's request.
+func TestCompleteFederationEnrollmentWritesTheChosenTrust(t *testing.T) {
+	setupTestDB(t)
+	master, e := proto.NewIdentity()
+	require.NoError(t, e)
+	node, e := proto.NewIdentity()
+	require.NoError(t, e)
+	_, tok, e := proto.NewEnrollmentToken(master, "p", "rigs", 1, FederationTrustUnrestricted, time.Now().Add(time.Hour))
+	require.NoError(t, e)
+	preview, e := FederationEnrollmentNodePreview(tok, node.Pub)
+	require.NoError(t, e)
+	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, preview, "", nil), "no level is a refusal, never the token's")
+	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview, FederationTrustRestricted, nil))
+	peer, e := GetFederationPeer(master.ID())
+	require.NoError(t, e)
+	require.Equal(t, FederationTrustRestricted, peer.TrustLevel)
 }

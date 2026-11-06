@@ -179,6 +179,7 @@ GET routes preserve read-only semantics on both API surfaces.
 | POST | `enroll-tokens/{id}/revoke` | `enroll-token revoke` |
 | GET | `enrollments` | `enrollments` |
 | POST | `enroll/preview`, `enroll` | `enroll --preview`, `enroll` |
+| POST | `become-node` | `become-node --preview`, `become-node` |
 | POST | `peers/trust`, `peers/untrust` | `trust`, `untrust` |
 | GET / POST / DELETE | `grants` | `grants`, `grant`, `revoke` |
 | GET / POST | `profiles` | `profile ls`, `profile create` |

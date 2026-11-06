@@ -17298,6 +17298,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-wrap { overflow-wrap: anywhere; }
 .fa-fp-full { font-size: 14px; color: #f0f6fc; }
 .fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fa-request { margin: 8px 0; padding: 8px 10px; border: 1px solid #58a6ff55; border-radius: 6px; background: #58a6ff14; color: #a5d6ff; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
