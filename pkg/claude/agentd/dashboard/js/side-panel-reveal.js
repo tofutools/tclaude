@@ -189,6 +189,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let motion = null; // where the current rightward motion started: { x, t }
   let lastT = 0; // when the last pointermove came
   let onHandle = false; // the last move was on the handle (#dock-toggle)
+  let outside = false; // the pointer left the window and has not moved back in
   let peekStartX = 0; // where the pointer was when the peek started
   let peekW = 0; // the peek's width now
   let stop = null; // a peek's stop timer
@@ -302,6 +303,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
 
   doc.addEventListener('pointermove', (event) => {
     dragOver();
+    outside = false;
     if (event.pointerType && event.pointerType !== 'mouse') return;
     // A move with no button held ends a press, even one whose pointerup the
     // page never saw (a scrollbar drag released elsewhere).
@@ -496,12 +498,19 @@ export function bindEdgeReveal(doc = globalThis.document, {
   }, true);
   doc.addEventListener('pointerup', pressOver, true);
   doc.addEventListener('pointercancel', pressOver, true);
+  // Leaving the window freezes the reveal: nothing opens or closes because
+  // the pointer went out, by any edge, and nothing pending (a dwell, a peek's
+  // retract or stop, the hover-out hide) acts while it is out. Tracking
+  // resumes with the first move back in, under the normal rules: back on the
+  // page by a revealed panel, its hover-out delay starts then. The panel's
+  // own leave comes first and schedules the hide; this takes it back.
+  // Explicit actions (Escape, a tab switch, Hide) still work while out.
+  //
+  // The one thing decided on the way out is a snap that runs past the right
+  // edge, judged on the moves the page saw: within the panel's height it never
+  // sends a move inside the edge zone, so it counts when its next frame would
+  // have got there.
   doc.documentElement?.addEventListener('pointerleave', (event) => {
-    cancelDwell();
-    cancelStop();
-    // A snap that runs past the window's right edge, within the panel's
-    // height, never sends a move inside the edge zone: it counts when its next
-    // frame would have got there.
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
@@ -509,18 +518,15 @@ export function bindEdgeReveal(doc = globalThis.document, {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
-      if (next >= edgeX && snapArrived(next, lastT + c.FRAME_MS)) {
-        revealNow();
-        overPanel = false;
-        scheduleHide();
-        return;
-      }
+      if (next >= edgeX && snapArrived(next, lastT + c.FRAME_MS)) revealNow();
     }
+    outside = true;
+    cancelDwell();
+    cancelStop();
+    cancelRetract();
+    cancelHide();
     samples = [];
     motion = null;
-    if (isSidePanelPeeking() && !retract) armRetract();
-    overPanel = false;
-    scheduleHide();
   });
   doc.addEventListener('dragstart', (event) => {
     dragging = true;
@@ -552,6 +558,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
     cancelHide();
   });
   doc.addEventListener('focusout', (event) => {
+    // The window losing focus while the pointer is out of it is no leave.
+    if (outside) return;
     if (dock()?.contains(event.target) && !overPanel) scheduleHide();
   });
   doc.addEventListener('keydown', (event) => {

@@ -361,6 +361,75 @@ test('a reveal does not carry over from one tab\'s panel to another\'s', async (
   assert.equal(s.revealed(), false, 'the Collab panel does not appear already floating');
 });
 
+// Leaving the window freezes the reveal (tcl-bg5qm1): nothing opens or closes
+// on the way out, by any edge, and nothing pending acts until the pointer
+// moves back in, when the normal rules take over.
+test('leaving the window freezes the panel: nothing opens or closes until the pointer is back', async (t) => {
+  const { PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  // leaveWindow is the pointer going out of the window: the panel's leave
+  // (when it was on it), then the document's.
+  const leaveWindow = (s, { fromPanel = false, y = 300 } = {}) => {
+    if (fromPanel) s.dock.dispatchEvent(new s.harness.window.Event('pointerleave', { bubbles: false }));
+    s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: WIDTH + 5, clientY: y });
+  };
+
+  let s = await shell(t);
+  s.restAtEdge();
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  leaveWindow(s, { fromPanel: true });
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'out past the right edge from the panel, it stays');
+  s.move(s.content, 300);
+  assert.equal(s.revealed(), true, 'back onto the page, the hover-out delay starts afresh');
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'and then it goes');
+
+  s = await shell(t);
+  s.restAtEdge();
+  s.move(s.content, 300);
+  leaveWindow(s, { y: -5 });
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'a hide pending when the pointer left by the top does not fire while it is out');
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'back in onto the panel, it stays');
+
+  s = await shell(t);
+  s.atEdge();
+  leaveWindow(s);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  assert.equal(s.revealed(), false, 'a dwell under way when the pointer left does not reveal');
+  s.atEdge();
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true, 'back at the edge, the dwell runs again');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick(SHORT_FLING);
+  assert.equal(s.peeking(), true);
+  leaveWindow(s, { y: -5 });
+  s.timers.advance(PEEK_RETRACT_MS * 4);
+  assert.equal(s.peeking(), true, 'a peek holds while the pointer is out');
+  s.move(s.content, 300);
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), false, 'back in away from it, it runs out');
+
+  s = await shell(t);
+  withPageScrollbar(s);
+  s.flick(SHORT_FLING);
+  leaveWindow(s, { y: -5 });
+  s.harness.fireEvent(s.doc, 'keydown', { key: 'Escape' });
+  assert.equal(s.peeking(), false, 'Escape still takes a peek back while the pointer is out');
+
+  s = await shell(t);
+  s.restAtEdge();
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  leaveWindow(s, { fromPanel: true });
+  s.harness.fireEvent(s.dock, 'focusout');
+  s.timers.advance(s.hoverClose * 4);
+  assert.equal(s.revealed(), true, 'the window losing focus while the pointer is out does not send it away');
+});
+
 test('leaving the panel straight into a frame still sends it away', async (t) => {
   const s = await shell(t);
   s.restAtEdge();
