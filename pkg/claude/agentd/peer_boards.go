@@ -29,7 +29,8 @@ import (
 // otherwise does all this as this node's operator does. Deleting a board, its
 // live socket and presence, the operator's activity mail (events), undo, its
 // rendered snapshot, inviting agents and ending their sessions stay with this
-// node's own dashboard.
+// node's own dashboard. A board this node's operator locked refuses every
+// peer's change, as it does an agent's, until it is unlocked.
 
 // peerBoardReserve is how many of the node's boards a peer's creates leave to
 // this node's operator and agents.
@@ -139,6 +140,18 @@ func servePeerBoardRead(w http.ResponseWriter, r *http.Request, peer string, b *
 // servePeerBoard serves one board's read, edit, title and group move.
 func servePeerBoard(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	unrestricted := v.unrestricted()
+	// A board this node's operator locked is not a remote operator's to
+	// change, whatever its trust: it unlocks it first (groups.resources.lock).
+	if r.Method != http.MethodGet && db.GroupResourceLocked(resourceKindBoard, r.PathValue("id")) {
+		if !unrestricted {
+			if b, err := db.GetCollabBoard(r.PathValue("id")); err != nil || !peerBoardReads(v.peer.InstanceID, b) {
+				writeError(w, http.StatusNotFound, "not_found", "board not found")
+				return
+			}
+		}
+		writeResourceLocked(w, "board "+r.PathValue("id"))
+		return
+	}
 	if unrestricted && r.Method != http.MethodPatch {
 		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
 		return
