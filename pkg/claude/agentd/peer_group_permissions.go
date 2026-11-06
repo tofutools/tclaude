@@ -260,13 +260,13 @@ func groupPermissionsView(rows []db.AgentGroupPermission) ([]string, map[string]
 	return slugs, scopes, unreadable
 }
 
-// peerNameBindsAGrant reports whether a group permission row a peer wrote
-// names group name in its group= scope. A scope names a group by name, and a
+// peerNameBindsAGrant reports whether a group permission row or an agent
+// override a peer wrote names group name in its group= scope. A scope names a group by name, and a
 // rename keeps the name's grants where the name goes: a peer renaming or
 // deleting such a group could move a row it wrote onto another group, past
 // the ceiling it was judged by. An unreadable scope counts as naming it.
 func peerNameBindsAGrant(name string) (bool, error) {
-	scopes, err := db.ListPeerWrittenGroupPermissionScopes()
+	scopes, err := db.ListPeerWrittenPermissionScopes()
 	if err != nil {
 		return true, err
 	}

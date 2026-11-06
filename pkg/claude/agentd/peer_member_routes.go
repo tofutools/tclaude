@@ -33,7 +33,8 @@ const (
 // lifecycle and move (peer_actions.go).
 var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove, PermAgentBundleExport, PermSessionsFilesRead,
 	PermGroupsMembersInterrupt, PermGroupsMembersCompact, PermGroupsMembersReincarnate, PermGroupsMembersContextInfo, PermGroupsMembersPR,
-	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl}
+	PermGroupsMembersDelete, PermGroupsMembersDebugExport, PermGroupsMembersRemoteControl,
+	PermPermissionsGrant, PermPermissionsRevoke}
 
 // peerOwnerFootprintGrants are the ones whose footprint also covers the
 // groups the agent owns (cloneAuthorizationGroups). A delete purges the
@@ -62,6 +63,10 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 		}
 		rules[pattern] = rule
 	}
+	// An agent's own permission overrides, under permissions.grant and
+	// permissions.revoke held in every group of the agent, within the peer
+	// ceiling (peer_agent_permissions.go).
+	rules["/api/permissions"] = peerViewRule{feature: "permissions.agent", requires: PermPermissionsGrant, orGrants: []string{PermPermissionsRevoke}, group: true, write: servePeerAgentPermissions}
 	// An agent's permanent delete and its debug export, under their own
 	// grants held in every group of the agent (peer_agent_delete.go).
 	rules["DELETE /api/agents/{id}"] = peerViewRule{feature: "members.delete", requires: PermGroupsMembersDelete, group: true, write: servePeerAgentDelete}

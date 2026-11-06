@@ -2391,6 +2391,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A peer's write is recorded as the peer's: a group= scope it wrote
+	// then pins the group's name (peerNameBindsAGrant).
+	granter := dashboardGranter
+	if a := peerGrantFromRequest(r); a != nil {
+		granter = "peer:" + a.peer
+	}
 	changed := 0
 	for slug, effect := range body.Overrides {
 		stored, held := currentOverrides[slug]
@@ -2423,7 +2429,7 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		if held && stored.Effect == effect && stored.Scope == desired {
 			continue // already at the requested grant/deny with the same scope
 		}
-		if err := db.SetAgentPermissionOverrideWithScope(res.ConvID, slug, effect, desired, dashboardGranter); err != nil {
+		if err := db.SetAgentPermissionOverrideWithScope(res.ConvID, slug, effect, desired, granter); err != nil {
 			http.Error(w, "set "+slug+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -2434,6 +2440,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+	// A peer reads the agent's overrides from its own projection, which
+	// leaves out what it may not see; the editor reloads from it.
+	if peerGrantFromRequest(r) != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": res.ConvID, "changed": changed})
+		return
 	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)

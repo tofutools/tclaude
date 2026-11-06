@@ -175,6 +175,10 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'toggle-remote-control': ['groups.members.remote-control'],
   'debug-export': ['groups.members.debug-export'],
   'delete-agent': ['groups.members.delete'],
+  // Its own permission overrides, held to the peer ceiling: the editor
+  // starts from the overrides the grant shows (peer_agent_permissions.go),
+  // and its save refuses what the peer could not grant itself.
+  'perm-edit': ['permissions.grant'],
   // Fast mode and the sandbox implementation reach what no peer grant hands
   // out yet: unrestricted trust only (a feature no restricted peer shares).
   'sandbox-impl': ['feature:agents.manage.full'],
@@ -194,7 +198,6 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'reinstate-agent': ['feature:local_dashboard'],
   'delete-generation': ['feature:local_dashboard'],
   'hide': ['feature:local_dashboard'],
-  'perm-edit': ['feature:local_dashboard'],
   'sudo-grant': ['feature:local_dashboard'],
   // Its node's snapshot library and PAF export; the file downloads from
   // there (dashboard_peer_downloads.go).
