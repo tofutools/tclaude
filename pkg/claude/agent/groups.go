@@ -992,17 +992,10 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/retire?" + q.Encode()
 
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID string `json:"agent_id,omitempty"`
-			ConvID  string `json:"conv_id"`
-			Title   string `json:"title,omitempty"`
-			Action  string `json:"action"`
-			Detail  string `json:"detail,omitempty"`
-			TmuxSes string `json:"tmux_session,omitempty"`
-		} `json:"members"`
-		Warnings []string `json:"warnings,omitempty"`
+		Group    string              `json:"group"`
+		Action   string              `json:"action"`
+		Members  []groupMemberResult `json:"members"`
+		Warnings []string            `json:"warnings,omitempty"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
@@ -1013,24 +1006,9 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "ID", Width: 12},
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
-	for _, m := range resp.Members {
-		name := m.Title
-		if name == "" {
-			name = "(unnamed)"
-		}
-		tbl.AddRow(table.Row{Cells: []string{
-			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-		}})
-	}
+	rendered := renderMemberResults(resp.Members)
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
-	fmt.Fprintln(stdout, tbl.Render())
+	fmt.Fprintln(stdout, rendered)
 	for _, warn := range resp.Warnings {
 		fmt.Fprintf(stdout, "⚠ %s\n", warn)
 	}
@@ -1097,23 +1075,49 @@ func runGroupsRebrief(p *groupsRebriefParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// groupMemberResult is one member's row in the reply of a command that acts
+// on every member of a group (retire, stop, resume, stand-down).
+type groupMemberResult struct {
+	AgentID  string   `json:"agent_id,omitempty"`
+	ConvID   string   `json:"conv_id"`
+	Title    string   `json:"title,omitempty"`
+	Action   string   `json:"action"`
+	Detail   string   `json:"detail,omitempty"`
+	TmuxSes  string   `json:"tmux_session,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Changes  []string `json:"changes,omitempty"`
+}
+
+// renderMemberResults renders those rows as the ID/NAME/ACTION/DETAIL table
+// the commands share.
+func renderMemberResults(members []groupMemberResult) string {
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 12},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
+		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, m := range members {
+		name := m.Title
+		if name == "" {
+			name = "(unnamed)"
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
+		}})
+	}
+	return tbl.Render()
+}
+
 // runGroupsLifecycle is shared between stop/resume — both endpoints
 // return the same per-member result shape, only the action label
 // changes.
 func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer) int {
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID  string   `json:"agent_id,omitempty"`
-			ConvID   string   `json:"conv_id"`
-			Title    string   `json:"title,omitempty"`
-			Action   string   `json:"action"`
-			Detail   string   `json:"detail,omitempty"`
-			TmuxSes  string   `json:"tmux_session,omitempty"`
-			Warnings []string `json:"warnings,omitempty"`
-			Changes  []string `json:"changes,omitempty"`
-		} `json:"members"`
+		Group   string              `json:"group"`
+		Action  string              `json:"action"`
+		Members []groupMemberResult `json:"members"`
 	}
 	// Both endpoints WAIT: stop holds until each agent's pane is actually gone,
 	// resume until each resumed agent is confirmed online. With a fan-out over a
@@ -1131,24 +1135,9 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "ID", Width: 12},
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
-	for _, m := range resp.Members {
-		name := m.Title
-		if name == "" {
-			name = "(unnamed)"
-		}
-		tbl.AddRow(table.Row{Cells: []string{
-			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-		}})
-	}
+	rendered := renderMemberResults(resp.Members)
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
-	fmt.Fprintln(stdout, tbl.Render())
+	fmt.Fprintln(stdout, rendered)
 	for _, member := range resp.Members {
 		for _, warning := range member.Warnings {
 			fmt.Fprintf(stdout, "Warning (%s): %s\n",

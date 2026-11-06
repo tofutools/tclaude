@@ -11,7 +11,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -288,18 +287,12 @@ func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/stand-down?" + q.Encode()
 
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID string `json:"agent_id,omitempty"`
-			ConvID  string `json:"conv_id"`
-			Title   string `json:"title,omitempty"`
-			Action  string `json:"action"`
-			Detail  string `json:"detail,omitempty"`
-		} `json:"members"`
-		RhythmsRemoved int      `json:"rhythms_removed"`
-		WavesCancelled int      `json:"waves_cancelled"`
-		Warnings       []string `json:"warnings,omitempty"`
+		Group          string              `json:"group"`
+		Action         string              `json:"action"`
+		Members        []groupMemberResult `json:"members"`
+		RhythmsRemoved int                 `json:"rhythms_removed"`
+		WavesCancelled int                 `json:"waves_cancelled"`
+		Warnings       []string            `json:"warnings,omitempty"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
@@ -311,23 +304,8 @@ func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer
 	if len(resp.Members) == 0 {
 		fmt.Fprintf(stdout, "  (no members to retire)\n")
 	} else {
-		tbl := table.New(
-			table.Column{Header: "ID", Width: 12},
-			table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-			table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-			table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-		)
-		tbl.SetTerminalWidth(table.GetTerminalWidth())
-		for _, m := range resp.Members {
-			name := m.Title
-			if name == "" {
-				name = "(unnamed)"
-			}
-			tbl.AddRow(table.Row{Cells: []string{
-				shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-			}})
-		}
-		fmt.Fprintln(stdout, tbl.Render())
+		rendered := renderMemberResults(resp.Members)
+		fmt.Fprintln(stdout, rendered)
 	}
 	fmt.Fprintf(stdout, "Swept: %d rhythm job%s removed, %d pending wave%s cancelled.\n",
 		resp.RhythmsRemoved, plural(resp.RhythmsRemoved),
