@@ -497,7 +497,7 @@ func runBoardSnapshot(p *boardSnapshotParams, id string, stdout, stderr io.Write
 	if p.Region > 0 {
 		path += "?region=" + strconv.Itoa(p.Region)
 	}
-	data, hdr, err := DaemonGetRaw(path)
+	data, hdr, err := DaemonGetRawWithOptions(path, boardOpts())
 	if err != nil {
 		return boardErr(stderr, err)
 	}

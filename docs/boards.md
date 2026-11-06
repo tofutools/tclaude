@@ -231,7 +231,7 @@ whatever its access: see
 
 Every board command takes `--ask-human <timeout>`: when the agent lacks the
 slug, the operator gets an approval popup instead of a refusal, as with other
-permission-gated commands (`board snapshot` excepted).
+permission-gated commands.
 
 An agent that changes a board becomes one of its participants. The operator
 can also add or remove participants from the dashboard.
