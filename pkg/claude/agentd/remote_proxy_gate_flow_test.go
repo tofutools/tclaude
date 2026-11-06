@@ -100,3 +100,24 @@ func TestRemoteProxies_PassAScopedGrantForTheResolvedRemote(t *testing.T) {
 		})
 	}
 }
+
+// A push is judged on where it pushes: a grant scoped to the fetch URL does
+// not reach a push URL elsewhere, and one scoped to the push URL does.
+func TestRemoteProxies_PushIsJudgedOnThePushURL(t *testing.T) {
+	for _, c := range []struct {
+		scope string
+		code  int
+	}{
+		{`{"remote":["github.com/tofutools/tclaude"]}`, http.StatusForbidden},
+		{`{"remote":["github.com/tofutools/mirror"]}`, http.StatusOK},
+	} {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		rec.pushRemotes["origin"] = "git@github.com:tofutools/mirror.git"
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitPush, c.scope, "test"))
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
+		require.Equal(t, c.code, res.Code, "%s: %s", c.scope, res.Body.String())
+		if c.code == http.StatusForbidden {
+			assert.Empty(t, rec.networkCalls(), "refused before the credentialed push")
+		}
+	}
+}
