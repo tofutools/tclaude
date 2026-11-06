@@ -170,10 +170,11 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   const notes = [];
   const unbind = dnd.bindResourceDnd(doc, { api: { moveBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {} });
   t.after(unbind);
-  const dataTransfer = { setData: () => {}, dropEffect: 'none', effectAllowed: 'all' };
-  const fire = (type, target) => {
+  const dataTransfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
+  const member = { setData: () => {}, types: ['application/x-tclaude-member', 'text/plain'], dropEffect: 'none', effectAllowed: 'all' };
+  const fire = (type, target, transfer = dataTransfer) => {
     const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
     target.dispatchEvent(event);
     return event;
   };
@@ -193,4 +194,15 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   assert.deepEqual(notes, [['Moved Plan to ops']]);
   fire('dragend', row);
   assert.equal(doc.querySelector('.dnd-drop-over'), null);
+
+  // A resource drag whose row a re-render detached never reaches the
+  // document's dragend; a later member drag must not carry the board along.
+  fire('dragstart', row);
+  row.remove();
+  const agentRow = ops.appendChild(doc.createElement('div'));
+  fire('dragstart', agentRow, member);
+  assert.equal(fire('dragover', crew, member).defaultPrevented, false, 'another drag is not a resource drag');
+  fire('drop', crew, member);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(moved, [['plan', 'ops']], 'no second move');
 });

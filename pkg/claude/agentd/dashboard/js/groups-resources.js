@@ -158,7 +158,7 @@ async function reopenPage(page, api, source, notify) {
 // focusOr brings a resource's overlay forward, or runs open when it has none.
 const focusOr = (key, open) => () => { if (!revealResourceOverlay(key)) void open(); };
 
-function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, groupId, groupName }) {
+function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, groupId, groupName, draggable = true }) {
   const label = page.title || page.name;
   const [renaming, setRenaming] = useState(false);
   const view = resourceView(snapshotValue, groupId, 'page', page.id, page.state === 'closed' ? 'closed' : 'running');
@@ -194,7 +194,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
   // page only while closed.
   const groups = page.groupOwned ? (view === 'closed' ? moveTargets(snapshotValue, groupId) : []) : moveTargets(snapshotValue, groupId, page.owner);
   return html`<${ResourceRow} kind="page" attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
-    drag=${{ id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
+    drag=${draggable && { id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
     closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
     action=${view !== 'closed' && { glyph: '↻', title: `Reload ${label} in every view`, attrs: { 'data-page-reload': page.id }, run: reload }}
@@ -204,7 +204,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
-function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId, groupName }) {
+function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId, groupName, draggable = true }) {
   const label = board.title || board.id;
   const [renaming, setRenaming] = useState(false);
   const act = rowAction(label, source, notify);
@@ -223,7 +223,7 @@ function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId,
     }
   };
   return html`<${ResourceRow} kind="board" attrs=${{ 'data-resource-board': board.id }} glyph="▦" label=${label}
-    drag=${{ id: board.id, group: groupName }}
+    drag=${draggable && { id: board.id, group: groupName }}
     meta=${board.editing > 0 ? `board · ${board.editing} editing` : 'board'} view=${view}
     primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
     renaming=${renaming && { value: label, onSave: rename, onDone: () => setRenaming(false) }}
@@ -261,7 +261,9 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
   const snapshotValue = snapshot?.value;
   const shell = groupShellOf(snapshotValue, group);
   if (!boards.length && !pages.length && !shell) return null;
-  const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '' };
+  // A row drags onto this node's group boxes (resource-dnd.js), which the
+  // fused fleet view does not have.
+  const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
   return html`<div class="gr-resources" data-group-resources=${group.name}>
     ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
       <span class="ui-eyebrow gr-kind-label">Boards</span>

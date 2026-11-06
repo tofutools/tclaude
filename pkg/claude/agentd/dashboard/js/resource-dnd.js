@@ -57,7 +57,11 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     row.draggable = false;
     suppressed = row;
   };
+  // Every drag starts clean: a resource drag whose row a re-render detached
+  // never told the document it ended, and must not take a later drag's drop.
   const start = (e) => {
+    dragged = null;
+    mark(null);
     const row = e.target.closest?.('[data-dnd-resource]');
     if (!row) return;
     dragged = readResource(row);
@@ -65,9 +69,12 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     e.dataTransfer?.setData(RESOURCE_DRAG_MIME, JSON.stringify(dragged));
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
     row.classList.add('dnd-source-row');
+    // dragend goes to the source, which a re-render may have detached.
+    row.addEventListener('dragend', end, { once: true });
   };
+  const ours = (e) => !!e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes(RESOURCE_DRAG_MIME);
   const target = (e) => {
-    if (!dragged) return null;
+    if (!dragged || !ours(e)) return null;
     const box = e.target.closest?.(TARGET_SEL) || null;
     const to = dropGroupOf(box);
     return to !== null && canMoveResource(dragged, to, snapshot()) ? { box, to } : null;

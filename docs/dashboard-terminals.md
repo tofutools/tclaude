@@ -71,9 +71,10 @@ this does anything on touch screens.
   tab.
 - Drag an agent, board or page onto another group's section in the panel to
   move it there, as you would in the Groups tab. An agent goes through the same
-  confirm as there. To take an agent or a board out of every group, drop it on
-  **Not in a group**. A page always stays in a group, and only moves to a group
-  its agent is in.
+  confirm as there. Drop an agent on **Not in a group** to take it out of the
+  group it is listed under (it stays in any others), or a board to take it out
+  of its group. A page always stays in a group, and only moves to a group its
+  agent is in.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
 - **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
