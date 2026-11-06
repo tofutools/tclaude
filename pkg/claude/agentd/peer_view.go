@@ -305,6 +305,7 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerSpawnWorktreeRules(rules)
 	addPeerHumanInboxRules(rules)
 	addPeerBoardRules(rules)
+	addPeerHostRules(rules)
 	addPeerMailboxRules(rules)
 	addPeerUsageRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
