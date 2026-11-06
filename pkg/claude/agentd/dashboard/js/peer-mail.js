@@ -1,9 +1,10 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { requestJSON } from './request-json.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -117,8 +118,9 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       <label><input type="radio" name="peer-mail-kind" value="agents" checked=${kind === 'agents'} onChange=${() => setKind('agents')} /> agents on it</label>
     </div>
     ${kind === 'operator'
-      ? html`<label class="peer-mail-opt">Peer <${Select} size="sm" id="peer-mail-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-          ${(peers || []).map((p) => html`<option key=${p.id} value=${p.id}>${p.label}${p.online ? '' : ' (offline: queued)'}</option>`)}<//></label>`
+      ? html`<label class="peer-mail-opt">Peer <${PeerCombobox} id="peer-mail-peer" value=${peer} ariaLabel="Peer"
+          items=${namedItems((peers || []).map((p) => ({ name: p.id, label: p.label, descr: p.online ? '' : 'offline: queued' })))}
+          onChange=${setPeer} /></label>`
       : html`<label class="peer-mail-opt">To <input id="peer-mail-to" value=${to} onInput=${(e) => setTo(e.currentTarget.value)} placeholder="agent@peer or group:<group>@peer" /></label>
         <label class="peer-mail-opt">Role <input id="peer-mail-role" value=${role} onInput=${(e) => setRole(e.currentTarget.value)} placeholder="only with group:…, e.g. reviewer" /></label>`}
     <label class="peer-mail-opt">Subject <input id="peer-mail-subject" value=${subject} onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
@@ -218,8 +220,8 @@ export function AwayControl({ confirm, toast, actions = defaultActions(), now = 
       title=${peers.length ? 'Have a trusted peer\'s operator answer your agents\' access requests while you are away' : 'Trust a peer first'} onClick=${() => setEditing(true)}>away…<//></span>`;
   }
   return html`<span id="fleet-away" class="fa-away-edit">
-    <${Select} size="sm" id="fleet-away-cover" aria-label="Covering peer" value=${cover} onChange=${(e) => setCover(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//>
+    <${PeerCombobox} id="fleet-away-cover" ariaLabel="Covering peer" value=${cover}
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setCover} />
     <input id="fleet-away-until" type="datetime-local" aria-label="Until (optional)" min=${localInput(new Date(now()))} value=${until} onInput=${(e) => setUntil(e.currentTarget.value)} />
     <${Button} size="sm" id="fleet-away-go" disabled=${!cover} onClick=${set}>Go away…<//>
     <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setEditing(false)}>cancel<//>

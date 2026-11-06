@@ -10,6 +10,7 @@ import { pickToolbarNode, toolbarNode, toolbarNodes, toolbarRefusal, toolbarTarg
 import { featureState } from './peer-view-limits.js';
 import { FleetUsageChip, NodeUsageRulesButton, UsageProfileChip, RemoteUsageRulesButton } from './usage-profile-chip.js';
 import { Select } from './ui-components.js';
+import { NodeCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
@@ -86,10 +87,8 @@ function ToolbarNodeChip() {
   return html`<span class=${`toolbar-node${flash ? ' flash' : ''}`} style=${`--nc:${node.color || 'currentColor'}`}
     title="The node whose global defaults and + new group this toolbar shows and sets. It follows the group you last clicked; pick another here.">
     <i aria-hidden="true"></i>
-    <select data-ui-exempt class="toolbar-node-select" aria-label="Node the toolbar's global defaults act on" value=${node.id}
-      onChange=${(event) => pickToolbarNode(event.currentTarget.value)}>
-      ${nodes.map((n) => html`<option key=${n.id} value=${n.id}>${n.local ? '⌂ ' : ''}${n.name}</option>`)}
-    </select>
+    <${NodeCombobox} className="toolbar-node-select" ariaLabel="Node the toolbar's global defaults act on" value=${node.id}
+      items=${namedItems(nodes.map((n) => ({ name: n.id, label: `${n.local ? '⌂ ' : ''}${n.name}` })))} onChange=${pickToolbarNode} />
   </span>`;
 }
 

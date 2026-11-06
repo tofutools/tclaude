@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AUDIT_WINDOWS, auditSince, shortID } from './fleet-admin-model.js';
 import { Button, Select } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -55,10 +56,9 @@ export function AuditPage({ view, actions, now }) {
   const list = rows || [];
   return html`<div class="fa-audit">
     <div class="fa-grant-form">
-      <label><span class="fa-k">Peer</span><${Select} size="sm" id="fleet-audit-peer" value=${peer} onChange=${(e) => { setPeer(e.currentTarget.value); setLimit(PAGE); }}>
-        <option value="">all peers</option>
-        ${options.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-      <//></label>
+      <label><span class="fa-k">Peer</span><${PeerCombobox} id="fleet-audit-peer" value=${peer} noneLabel="all peers"
+        items=${namedItems(options.map((r) => ({ name: r.id, label: r.label, descr: shortID(r.id) })))}
+        onChange=${(next) => { setPeer(next); setLimit(PAGE); }} /></label>
       <label><span class="fa-k">When</span><${Select} size="sm" id="fleet-audit-window" value=${String(windowMs)} onChange=${(e) => { setWindowMs(Number(e.currentTarget.value)); setLimit(PAGE); }}>
         ${AUDIT_WINDOWS.map((w) => html`<option key=${w.ms} value=${String(w.ms)}>${w.label}</option>`)}
       <//></label>

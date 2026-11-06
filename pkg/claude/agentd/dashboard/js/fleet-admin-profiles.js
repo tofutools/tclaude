@@ -2,9 +2,10 @@ import { h } from 'preact';
 import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -44,9 +45,9 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
   };
   return html`<${Dialog} id="fleet-apply-modal" onClose=${onClose} blocked=${busy} title=${html`Apply profile ${profile.name}`}>
     <label class="cron-create-row"><span class="cron-create-label">To peer</span>
-      <${Select} size="sm" id="fleet-apply-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-        ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label} (${p.level})</option>`)}
-      <//></label>
+      <${PeerCombobox} id="fleet-apply-peer" value=${peer} ariaLabel="To peer"
+        items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label, descr: p.level })))}
+        onChange=${setPeer} /></label>
     ${!plan && !error ? html`<div class="empty">Previewing…</div>` : plan && html`<div class="fa-plan">
       <div>${changes.length ? `${changes.length} change(s), ${plan.security_changes || 0} security-relevant${plan.future_workers_only ? ' (worker defaults apply to future workers only)' : ''}:` : 'No changes: the peer already matches this profile.'}</div>
       ${changes.length > 0 && html`<ul id="fleet-apply-changes">${changes.map((c, i) => html`<li key=${i} class=${c.security ? 'fa-sensitive' : ''}>${changeText(c, poolNames)}</li>`)}</ul>`}
@@ -169,9 +170,9 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
         return html`<tr key=${pool.name} data-pool=${pool.name}>
           <td><b>${pool.name}</b></td>
           <td>${ids.length ? ids.map((id) => html`<span key=${id} class="fa-member">${label(id)} <${Button} size="sm" variant="link" class="fa-link" data-fa="remove-member" title="Remove from the pool" onClick=${() => removeMember(pool, id)}>×<//></span>`) : html`<span class="muted">none</span>`}</td>
-          <td>${candidates.length ? html`<${Select} size="sm" data-fa="member-pick" value=${adding[pool.name] || ''} onChange=${(e) => setAdding({ ...adding, [pool.name]: e.currentTarget.value })}>
-              <option value="">trusted peer…</option>${candidates.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-            <//> <${Button} size="sm" data-fa="add-member" disabled=${!adding[pool.name]} onClick=${() => addMember(pool)}>Add…<//>` : html`<span class="muted">—</span>`}</td>
+          <td>${candidates.length ? html`<${PeerCombobox} attrs=${{ 'data-fa': 'member-pick' }} value=${adding[pool.name] || ''} noneLabel="trusted peer…" floating=${false}
+              ariaLabel=${`Add a peer to ${pool.name}`} items=${namedItems(candidates.map((r) => ({ name: r.id, label: r.label })))}
+              onChange=${(next) => setAdding({ ...adding, [pool.name]: next })} /> <${Button} size="sm" data-fa="add-member" disabled=${!adding[pool.name]} onClick=${() => addMember(pool)}>Add…<//>` : html`<span class="muted">—</span>`}</td>
           <td class="fa-acts"><${Button} size="sm" data-fa="pool-grants" onClick=${() => onOpenGrants(`group:${pool.name}`)}>Grants…<//>
             <${Button} size="sm" variant="ghost danger" data-fa="delete-pool" onClick=${() => deletePool(pool)}>Delete…<//></td>
         </tr>`;

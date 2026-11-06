@@ -1,13 +1,17 @@
-// registry-picker.js — the dashboard's choice of a named registry entry: a
-// group template, a role or a saved prompt (tcl-986r2g). Each registry grows
-// to tens of entries, so every such <select> is this type-to-filter choice
-// instead (ChoiceCombobox, on FilterCombobox). Profiles have their own
-// (profile-picker.js), as do groups (group-picker.js).
+// registry-picker.js — the dashboard's choice of a named entry from a list
+// that grows: a group template, a role or a saved prompt (tcl-986r2g), or a
+// federation peer, node or board (tcl-saada2). Each grows to tens of entries
+// (federation without bound), so every such <select> is this type-to-filter
+// choice instead (ChoiceCombobox, on FilterCombobox). Profiles have their
+// own (profile-picker.js), as do groups (group-picker.js).
 //
 //   namedItems(entries, opts)  entries as FilterCombobox items
 //   TemplateCombobox           the choice of a group template
 //   RoleCombobox               the choice of a role
 //   PromptCombobox             the choice of a saved prompt
+//   PeerCombobox               the choice of a peer (or pool)
+//   NodeCombobox               the choice of a node
+//   BoardCombobox              the choice of a board
 
 import { h } from 'preact';
 import { useMemo } from 'preact/hooks';
@@ -49,3 +53,6 @@ function named(noun, nouns) {
 export const TemplateCombobox = named('template', 'templates');
 export const RoleCombobox = named('role', 'roles');
 export const PromptCombobox = named('prompt', 'saved prompts');
+export const PeerCombobox = named('peer', 'peers');
+export const NodeCombobox = named('node', 'nodes');
+export const BoardCombobox = named('board', 'boards');

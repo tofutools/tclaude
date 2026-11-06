@@ -1,4 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
+import { comboKeys } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const view = {
@@ -318,8 +319,8 @@ test('re-posting sends one version, unchanged, to another board this node can po
   await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
   assert.equal(s.q('[data-item-id="itm_bad"] [data-item-act="repost"]'), null);
   await s.click(s.q('[data-item-id="itm_1"] [data-item-act="repost"]'));
-  const opts = [...s.q('#fleet-board-repost-dest').querySelectorAll('option')].map((o) => o.value);
-  assert.deepEqual(opts, ['', 'brd_team'], 'only boards this node can post to, and not frozen');
+  assert.deepEqual(await comboKeys(s.harness, s.q('#fleet-board-repost-dest')), ['brd_team'], 'only boards this node can post to, and not frozen');
+  await s.harness.act(() => s.harness.fireEvent(s.q('#fleet-board-repost-dest-input'), 'blur'));
   await s.click(s.q('#fleet-board-repost-post'));
   assert.match(s.confirms.at(-1).body, /version v2bbbbbbbb of review roles to team exactly as it is here: unchanged, still signed by forge, with this node listed as re-posting it/);
   assert.deepEqual(s.log.find((l) => l[0] === 'publish'), ['publish', 'brd_team', { source: { board: 'brd_ops', item: 'itm_1', version: 'v2bbbbbbbbbbbb' } }]);

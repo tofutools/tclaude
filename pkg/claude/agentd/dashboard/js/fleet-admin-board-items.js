@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
+import { BoardCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -150,9 +151,8 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
   };
   return html`<${Dialog} id="fleet-board-repost" onClose=${onClose} title=${html`Post ${item.name} to another board`}>
     <div class="muted">Version ${short(version)}, from ${board.name}, by ${by}. Posted unchanged; to change it, post your own config instead.</div>
-    <label class="fa-of-row"><span class="fa-k">board</span><${Select} size="sm" id="fleet-board-repost-dest" value=${dest} onChange=${(e) => setDest(e.currentTarget.value)}>
-      <option value="">pick a board…</option>
-      ${targets.map((b) => html`<option key=${b.id} value=${b.id} selected=${dest === b.id}>${b.name}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">board</span><${BoardCombobox} id="fleet-board-repost-dest" value=${dest} noneLabel="pick a board…" ariaLabel="Board"
+      items=${namedItems(targets.map((b) => ({ name: b.id, label: b.name })))} onChange=${setDest} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${dest || 'DEST'} --from-board ${board.id} --from-item ${item.id} --from-version ${version}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
