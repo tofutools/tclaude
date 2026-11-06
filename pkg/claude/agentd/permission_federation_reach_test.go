@@ -63,6 +63,11 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermGroupsMembersRetire:           "retire",
 	PermGroupsMembersClone:            "clone",
 	PermAgentMove:                     "move",
+	PermGroupsMembersInterrupt:        "interrupt",
+	PermGroupsMembersCompact:          "compact",
+	PermGroupsMembersReincarnate:      "reincarnate",
+	PermGroupsMembersContextInfo:      "context_info",
+	PermGroupsMembersPR:               "pr",
 	PermRoutesConsume:                 proto.CapRoutes,
 	PermJobsRun:                       proto.CapJobs,
 	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).
@@ -138,6 +143,10 @@ func TestFederationReachFollowsGroupSibling(t *testing.T) {
 			continue
 		}
 		sibling := slugFederationReach[entry.GroupSibling]
+		if sibling.Kind == FedLocal {
+			assert.Equal(t, FedLocal, entry.Federation.Kind, "%s: its group sibling %s never reaches a peer, so neither does it", entry.Slug, entry.GroupSibling)
+			continue
+		}
 		want := []string{entry.GroupSibling}
 		if sibling.Kind == FedPeerAlias {
 			want = sibling.Via

@@ -93,6 +93,15 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /api/agents/{id}/task":              {slugs: []string{PermAgentTask}, target: agentViewAgent},
 	"POST /api/agents/{id}/notify":            {slugs: []string{PermAgentTask}, target: agentViewAgent},
 	"PATCH /api/groups/{name}/members/{conv}": {slugs: []string{PermGroupsMembersUpdate}, target: agentViewGroup},
+	// Member controls. No text of the agent's is typed into the target's
+	// pane: the receiver refuses a follow-up, a focus hint or a forced
+	// reincarnation from a peer.
+	"POST /api/agents/{id}/interrupt":   {slugs: []string{PermAgentInterrupt}, target: agentViewAgent},
+	"POST /api/agents/{id}/compact":     {slugs: []string{PermAgentCompact}, target: agentViewAgent},
+	"POST /api/agents/{id}/reincarnate": {slugs: []string{PermAgentReincarnate}, target: agentViewAgent},
+	"GET /api/agents/{id}/context-info": {slugs: []string{PermAgentContextInfo}, target: agentViewAgent},
+	"GET /api/agents/{id}/prs":          {slugs: []string{PermAgentPR}, target: agentViewAgent},
+	"POST /api/agents/{id}/prs":         {slugs: []string{PermAgentPR}, target: agentViewAgent},
 	// Group lifecycle.
 	"POST /api/groups/{name}/shutdown": {slugs: []string{PermGroupsMembersStop}, target: agentViewGroup, destructive: true},
 	"POST /api/groups/{name}/power-on": {slugs: []string{PermGroupsMembersResume}, target: agentViewGroup},

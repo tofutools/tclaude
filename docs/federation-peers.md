@@ -138,6 +138,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.visibility.read` | a group's name, description and member count, with no message, presence, launch or roster grant. A grant that includes members also gives the roster. See [Group links](#group-links-and-peer-proposals) |
 | `groups.link.accept` | pre-authorize incoming group link proposals on that group |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
+| `groups.members.interrupt`, `.compact`, `.reincarnate`, `.context-info`, `.pr` | from the peer's dashboard: interrupt a member Codex agent's running turn, compact a member agent, ask it to reincarnate itself, read its context window use, and list or present its pull requests. Each needs the grant in every group the agent is in. No peer text is typed into the agent's pane: a peer's compact takes no follow-up, and a peer's reincarnate is the agent's own (mode `self`, no focus hint; the inbox request names your node and is not operator-authored). A peer presenting a PR names no repository directory. Unrestricted trust keeps every option |
 | `agents.receive` | offer agents into that group. See [Sharing an agent](federation-moving.md#sharing-an-agent-with-a-peer) |
 | `agents.receive.permissions` | opt-in permission carry into a receiving group, optionally limited to named slugs. It never transfers ownership or sensitive authority. See [permission carry](federation-moving.md#receiver-approved-permission-carry) |
 | `agents.teleport.receive` | automatic teleport landing in that group, with an applied node profile that sets `teleport_landing` |
@@ -392,6 +393,8 @@ the dashboard. Two gates apply, and **both** must pass:
 | `GET fleet` | `fleet.read` (scope `peer=<peer>`; the peer grants `fleet.read`) |
 | `POST agents/{id}/stop` · `resume` · `restart` · `retire` · `clone` | `agent.stop` · `agent.resume` · both for restart · `agent.retire` · `agent.clone` |
 | `POST agents/{id}/rename` · `tags` · `task` · `notify` | `agent.rename` · `agent.tags` · `agent.task` (notify too) |
+| `POST agents/{id}/interrupt` · `compact` · `reincarnate` | `agent.interrupt` · `agent.compact` · `agent.reincarnate` |
+| `GET agents/{id}/context-info`, `GET`/`POST agents/{id}/prs` | `agent.context-info`, `agent.pr` |
 | `PATCH groups/{name}/members/{conv}` | `groups.members.update` |
 | `POST groups/{name}/shutdown` · `power-on` | `groups.members.stop` · `groups.members.resume` |
 | `PATCH groups/{name}` with `descr`, `max_members`, `notify_enabled` | `groups.settings.description`, `.max-members`, `.notifications` |
@@ -417,6 +420,11 @@ tclaude agent resume agt_0123456789abcdef@bob
 tclaude agent retire builder@bob --no-shutdown
 tclaude agent rename "builder (night shift)" --target builder@bob
 tclaude agent task set https://example.com/t/42 --target builder@bob
+tclaude agent compact --target builder@bob
+tclaude agent interrupt --target builder@bob
+tclaude agent context-info --target builder@bob
+tclaude agent present-pr https://github.com/org/repo/pull/7 --target builder@bob
+tclaude agent reincarnate "unused" --target builder@bob
 tclaude agent fleet --remote bob
 ```
 
@@ -428,7 +436,12 @@ verb never falls through to the peer.
 Options that stay the peer operator's are refused locally:
 - `resume --recreate-dir` and `--send-keys`;
 - `rename --auto`;
-- `task show` (read the agent with `agent ls --node`).
+- `task show` (read the agent with `agent ls --node`);
+- a follow-up on `compact` (it would be typed into the peer's pane).
+
+A remote `reincarnate` asks the agent to reincarnate itself with its own
+handoff: the follow-up the CLI requires is not sent, and the reply says
+so. A remote `present-pr` does not send your working directory.
 
 `retire` never deletes a peer's worktree or records a reason; the reply
 says so. Replies are marked as remote and untrusted: the CLI prints an

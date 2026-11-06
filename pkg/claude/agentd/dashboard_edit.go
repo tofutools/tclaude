@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/startupctx"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Mutating endpoints for the dashboard. These live on the loopback
@@ -379,6 +380,9 @@ var dashboardAgentVerbs = map[string]dashboardAgentVerb{
 	"claude-subscription": {nil, bySelector(dashboardAgentClaudeSubscription)},
 	"reincarnate":         {postOnly, dashboardAgentTwin(dashboardReincarnateAgent)},
 	"compact":             {postOnly, dashboardAgentTwin(dashboardCompactAgent)},
+	"interrupt":           {postOnly, dashboardAgentTwin(dashboardInterruptAgent)},
+	"context-info":        {getOnly, dashboardAgentTwin(dashboardAgentContextInfo)},
+	"prs":                 {[]string{http.MethodGet, http.MethodPost}, dashboardAgentTwin(dashboardAgentPRs)},
 	"rename":              {postOnly, dashboardAgentTwin(dashboardRenameAgent)},
 	"worktree":            {getOnly, bySelector(dashboardAgentWorktree)},
 	"promote":             {nil, dashboardEnrollmentVerb},
@@ -1241,9 +1245,23 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convID st
 	if mode == "" {
 		mode = reincarnateModeSelf
 	}
+	if a := peerActionFromRequest(r); a != nil {
+		// A peer only asks the agent to reincarnate itself, in this node's
+		// own words: no peer text reaches the agent, and nothing is forced.
+		if mode != reincarnateModeSelf || strings.TrimSpace(body.FocusHint) != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"a peer may only ask the agent to reincarnate itself (mode self, no focus hint)")
+			return
+		}
+		if _, ok := peerActionGate(w, r, a, PermAgentReincarnate, convID, ActionContext{}); !ok {
+			return
+		}
+		dashboardAskSelfReincarnate(w, convID, "", peerRequesterLabel(a.peer))
+		return
+	}
 	switch mode {
 	case reincarnateModeSelf:
-		dashboardAskSelfReincarnate(w, convID, body.FocusHint)
+		dashboardAskSelfReincarnate(w, convID, body.FocusHint, "")
 	case reincarnateModeForce:
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
@@ -1325,12 +1343,15 @@ func clearContextBrief(conv string) string {
 // capability (the cookie-auth human could equally send it via
 // /api/message). Self-reincarnation itself is intrinsic to every active agent;
 // cross-agent reincarnation remains gated on agent.reincarnate or ownership.
-func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
+//
+// requester names a linked node whose peer access asked: "" is this node's
+// operator. A peer's request is not operator-authored, and says who asked.
+func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint, requester string) {
 	if pickAliveSession(target) == nil {
 		writeReincarnateOfflineError(w, target)
 		return
 	}
-	subject, instruction := buildSelfReincarnateInstruction(focusHint)
+	subject, instruction := buildSelfReincarnateInstruction(focusHint, requester)
 	// The instruction rides the inbox like any agent_messages row, so it
 	// must clear the same charset/length rule. A blank focus hint always
 	// passes; this only ever fires on a hint carrying control characters
@@ -1353,7 +1374,7 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 		Subject:          subject,
 		Body:             instruction,
 		ToRecipients:     []string{target},
-		OperatorAuthored: true,
+		OperatorAuthored: requester == "",
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
@@ -1381,10 +1402,15 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 // No backticks: the body is read by the agent and may be echoed into
 // shells / forwarded messages downstream, where backticks would be
 // eaten by shell command substitution. Plain text keeps it paste-safe.
-func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
+func buildSelfReincarnateInstruction(focusHint, requester string) (subject, body string) {
 	subject = "Please reincarnate yourself (dashboard request)"
 	var b strings.Builder
-	b.WriteString("The human has asked you, from the dashboard, to reincarnate yourself.\n\n")
+	if requester != "" {
+		subject = "Please reincarnate yourself (request from " + requester + ")"
+		b.WriteString("The operator of " + requester + " has asked you, through that node's peer access, to reincarnate yourself. It is not this node's operator.\n\n")
+	} else {
+		b.WriteString("The human has asked you, from the dashboard, to reincarnate yourself.\n\n")
+	}
 	b.WriteString("Reincarnation replaces you with a fresh Claude Code instance that inherits your ")
 	b.WriteString("identity (group memberships, permissions, ownerships) but starts with a clean ")
 	b.WriteString("context window. Doing it yourself — rather than having the daemon force it — lets ")
@@ -1424,7 +1450,97 @@ func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convID string)
 // /v1/agent/{conv}/compact: the same handler, so the same harness gate and
 // dispatch, with the dashboard human as caller.
 func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && !refusePeerFollowUp(w, r) {
+		return
+	}
 	handleAgentCompact(w, asDashboardHumanPeer(r), convID)
+}
+
+// refusePeerFollowUp refuses a peer's follow-up: it would be typed into this
+// node's pane as the agent's next prompt. It reports whether the request may
+// go on, with its body intact.
+func refusePeerFollowUp(w http.ResponseWriter, r *http.Request) bool {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
+		return false
+	}
+	var body struct {
+		FollowUp string `json:"follow_up"`
+	}
+	if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+		return false
+	}
+	if strings.TrimSpace(body.FollowUp) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a peer may not send a follow-up: it would be typed into this node's pane")
+		return false
+	}
+	r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+	return true
+}
+
+// peerRequesterLabel names a linked node in text this node writes to one of
+// its agents.
+func peerRequesterLabel(instanceID string) string {
+	p, err := db.GetFederationPeer(instanceID)
+	if err != nil || p == nil {
+		return "a linked node"
+	}
+	return "linked node " + proto.SafeName(peerDisplay(p), false)
+}
+
+// dashboardInterruptAgent, dashboardAgentContextInfo and dashboardAgentPRs
+// are the cookie-auth twins of POST /v1/agent/{conv}/interrupt, GET
+// /v1/agent/{conv}/context and GET|POST /v1/agent/{conv}/prs.
+func dashboardInterruptAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentInterrupt(w, asDashboardHumanPeer(r), convID)
+}
+
+func dashboardAgentContextInfo(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && r.URL.RawQuery != "" {
+		// A fresh read spends the agent's own budget: a peer reads the
+		// cached figures.
+		r = r.Clone(r.Context())
+		r.URL.RawQuery = ""
+	}
+	handleAgentContext(w, asDashboardHumanPeer(r), convID)
+}
+
+func dashboardAgentPRs(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && r.Method == http.MethodPost {
+		// A peer presents a pull request link and its state, nothing else:
+		// a repository directory names a path on this node, and a summary
+		// would reach this node's operator and Steward as the agent's own
+		// words. The handler gets this re-encoded body, never the peer's.
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
+			return
+		}
+		var body struct {
+			URL     string `json:"url"`
+			Summary string `json:"summary"`
+			State   string `json:"state"`
+			Handled bool   `json:"handled"`
+			RepoDir string `json:"repo_dir"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+			return
+		}
+		if body.RepoDir != "" || strings.TrimSpace(body.Summary) != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a peer presents a PR link and state only: no repository directory or summary")
+			return
+		}
+		if err := validateAgentPRURL(body.URL, true); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_pr_url", err.Error())
+			return
+		}
+		clean, _ := json.Marshal(map[string]any{"url": strings.TrimSpace(body.URL), "state": body.State, "handled": body.Handled})
+		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(clean)), int64(len(clean))
+	}
+	handleAgentPRs(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardRemoteControlAgent is the cookie-auth twin of POST
