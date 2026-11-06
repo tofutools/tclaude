@@ -21,6 +21,11 @@ func handleFederationPeerView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !human {
+		// An agent's view acts under its peer= grants (peer_view_agents.go).
+		servePeerViewForAgent(w, r, caller, r.PathValue("node"))
+		return
+	}
 	// Only operator-chosen labels and pinned identities select a destination.
 	peer, err := resolveFederationPeerOpt(r.PathValue("node"), false)
 	if err != nil {
@@ -28,11 +33,6 @@ func handleFederationPeerView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.SetPathValue("node", peer.InstanceID)
-	if !human {
-		// An agent's view acts under its peer= grants (peer_view_agents.go).
-		servePeerViewForAgent(w, r, caller, peer)
-		return
-	}
 	servePeerViewProxy(w, r)
 }
 
@@ -62,6 +62,10 @@ func handleFederationPeerAgentViews(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ref = in.Instance
+		if in.Policy != db.FederationPeerAgentViewsAllow && in.Policy != db.FederationPeerAgentViewsDeny {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "policy must be allow or deny")
+			return
+		}
 	}
 	peer, err := resolveFederationPeerOpt(ref, false)
 	if err != nil {
@@ -70,7 +74,7 @@ func handleFederationPeerAgentViews(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		if err := db.SetFederationPeerAgentViews(peer.InstanceID, in.Policy); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "policy must be allow or deny")
+			writeError(w, http.StatusServiceUnavailable, "io", "could not save the agent view policy")
 			return
 		}
 	}

@@ -109,10 +109,17 @@ func TestFederationRotationConflictingSuccessorsFailClosed(t *testing.T) {
 	p, err := GetFederationPeer(old.ID())
 	require.NoError(t, err)
 	require.NotNil(t, p)
+	require.NoError(t, SetFederationPeerAgentViews(old.ID(), FederationPeerAgentViewsDeny))
+	// A row an earlier trust left for the successor's id gives way to the
+	// predecessor's policy rather than failing the rebind.
+	require.NoError(t, SetFederationPeerAgentViews(b.ID(), FederationPeerAgentViewsAllow))
 	require.NoError(t, RebindFederationIdentity(old.ID(), b.ID(), b.Pub, now.Add(time.Hour)))
 	p, err = GetFederationPeer(b.ID())
 	require.NoError(t, err)
 	require.NotNil(t, p)
+	policy, err := GetFederationPeerAgentViews(b.ID())
+	require.NoError(t, err)
+	require.Equal(t, FederationPeerAgentViewsDeny, policy, "a denied peer stays denied across rotation")
 }
 
 func TestFederationIdentityLocalHistoryBeyondPublicProofBudget(t *testing.T) {

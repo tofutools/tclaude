@@ -56,9 +56,7 @@ func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.
 			if principal != nil {
 				if status, code, msg := agentPeerViewRefusal(instanceID, pattern, r, principal); status != 0 {
 					writeError(w, status, code, msg)
-					if r.Method != http.MethodGet && r.Method != http.MethodHead {
-						recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (agent refused)", status)
-					}
+					recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (agent refused: "+code+")", status)
 					return
 				}
 			}
@@ -93,7 +91,9 @@ func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.
 			} else {
 				rule.serve(out, r, view, rule)
 			}
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			// An agent's reads are audited too: the receiving operator sees
+			// which remote agent looked at what.
+			if principal != nil || r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// Do not audit untrusted input (body, target selector, query) as a label.
 				label := r.Method + " " + pattern
 				if view.auditDetail != "" {

@@ -139,6 +139,25 @@ func TestPeerViewAgentPrincipalReceiver(t *testing.T) {
 	require.Contains(t, string(reply.Body), "agent_footprint")
 	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/agents/"+aid+"/tags", map[string]any{"tags": []string{"x"}})
 	require.Equal(t, 403, reply.Status, "the peer's grants still decide: no manage grant")
+	// An agent's reads carry no group settings, though the peer may edit them.
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsSettings, "scope": "group=crew"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	_, err = db.SetAgentGroupDefaultContext("crew", "OPERATOR-ONLY-BRIEF")
+	require.NoError(t, err)
+	oc := openInboundPeerView(t, p)
+	writePeerViewWire(t, oc, peerViewWire{Method: "GET", URI: "/api/snapshot"})
+	require.Contains(t, string(readPeerViewWire(t, oc).Body), "OPERATOR-ONLY-BRIEF", "the operator's editor reads the setting")
+	_ = oc.Close()
+	reply = agentPeerViewExchange(t, p, worker, "GET", "/api/snapshot", nil)
+	require.Equal(t, 200, reply.Status)
+	require.NotContains(t, string(reply.Body), "OPERATOR-ONLY-BRIEF", "an agent never reads startup context")
+	reply = agentPeerViewExchange(t, p, worker, "GET", "/api/groups/crew", nil)
+	require.NotContains(t, string(reply.Body), "OPERATOR-ONLY-BRIEF")
+	audited := false
+	for _, row := range peerViewAudit(t) {
+		audited = audited || row.ActorLabel == "remote:agent:bob-worker/"+worker.ID+"@"+inst && row.Detail == "GET GET /api/groups/{name}"
+	}
+	require.True(t, audited, "the receiver audits an agent's reads")
 	reply = agentPeerViewExchange(t, p, worker, "POST", "/api/groups/crew/spawn", map[string]any{"brief": "x"})
 	require.Equal(t, 403, reply.Status, "spawn is not an agent peer view route")
 	require.Contains(t, string(reply.Body), "agent_principal")
@@ -175,7 +194,7 @@ func TestPeerViewAgentPrincipalReceiver(t *testing.T) {
 	require.Equal(t, "set by a remote agent", g.Descr)
 
 	// The operator turns the peer's agent views off without touching its grants.
-	rec := fedHuman(t, f, "POST", "/v1/federation/peers/agent-views", map[string]any{"instance": "bob", "policy": "deny"})
+	rec = fedHuman(t, f, "POST", "/v1/federation/peers/agent-views", map[string]any{"instance": "bob", "policy": "deny"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	reply = agentPeerViewExchange(t, p, worker, "GET", "/api/snapshot", nil)
 	require.Equal(t, 403, reply.Status)
@@ -228,7 +247,14 @@ func TestPeerViewAgentSender(t *testing.T) {
 		require.NoError(t, db.GrantAgentPermissionWithScope(caller, slug, `{"peer":["`+scope+`"]}`, "test"))
 	}
 
-	rec := call("POST", "agents/"+remote+"/stop", nil)
+	// An unknown peer is refused after the limit and audit, not before.
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/federation/peer/nosuch/snapshot", nil), caller))
+	require.Equal(t, 404, rec.Code, rec.Body.String())
+	probes, err := db.ListAuditLog(db.AuditLogFilter{Verb: "federation.peer_view.agent.out"})
+	require.NoError(t, err)
+	require.NotEmpty(t, probes)
+	require.Contains(t, probes[0].Detail, "peer=nosuch")
+	rec = call("POST", "agents/"+remote+"/stop", nil)
 	require.Equal(t, 403, rec.Code, "no grant: %s", rec.Body.String())
 	// Only an explicit peer= grant counts, even toward a peer this node
 	// trusts unrestricted, where an unscoped grant would otherwise bind.
@@ -355,6 +381,9 @@ func TestPeerViewAgentDestructiveGrantWarns(t *testing.T) {
 	const caller = "019fe740-43a4-7023-b8ae-0000000a6e03"
 	fh.f.HaveConvWithTitle(caller, "ops-lead")
 	fh.f.HaveEnrolledAgent(caller)
+	rec := fedHuman(t, fh.f, "POST", "/v1/permissions/grant", map[string]any{"target": caller, "slug": agentd.PermAgentRetire, "scope": map[string][]string{"peer": {"bob/lab"}}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "end sessions on", "an ordinary peer-scoped grant warns too")
 	for slug, warns := range map[string]bool{agentd.PermAgentStop: true, agentd.PermAgentRetire: true, agentd.PermAgentResume: true, agentd.PermAgentRename: false} {
 		rec := fedHuman(t, fh.f, "POST", "/v1/permissions/peer-reach", map[string]any{"target": caller, "slugs": []string{slug}, "peer": "bob/lab"})
 		require.Equal(t, 200, rec.Code, rec.Body.String())

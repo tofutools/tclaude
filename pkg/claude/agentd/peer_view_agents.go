@@ -131,6 +131,12 @@ func agentPeerViewDestructive(slug string) bool {
 	return false
 }
 
+// agentPeerViewDestructiveWarning is the warning a peer-scoped grant of a
+// session-ending slug carries.
+func agentPeerViewDestructiveWarning(slug, peer string) string {
+	return fmt.Sprintf("%s lets the holder end sessions on %s through a peer view (where that node's grants allow it)", slug, peer)
+}
+
 // initAgentPeerViewScopes lets every slug an agent peer view route needs be
 // granted peer=<peer>/<group>. A peer-scoped grant never authorizes a local
 // action (permissionScopeSatisfied), so this widens nothing locally.
@@ -222,6 +228,9 @@ const (
 	agentPeerViewRateWindow = time.Minute
 	agentPeerViewRateLimit  = 60
 	agentPeerViewInFlight   = 4
+	// agentPeerViewSweepAt is the tracked agent count past which idle ones
+	// are forgotten.
+	agentPeerViewSweepAt = 128
 )
 
 // agentPeerViewNow is the limiter's clock; tests replace it.
@@ -243,6 +252,16 @@ func (l *agentPeerViewLimiter) admit(agentID string) (release func(), reason str
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := agentPeerViewNow()
+	// Forget agents idle past the window, so retired agents do not
+	// accumulate; the limit only ever looks one window back.
+	if len(l.attempts) > agentPeerViewSweepAt {
+		for id, at := range l.attempts {
+			if id != agentID && (len(at) == 0 || now.Sub(at[len(at)-1]) >= agentPeerViewRateWindow) {
+				delete(l.attempts, id)
+				delete(l.refusedAt, id)
+			}
+		}
+	}
 	var recent []time.Time
 	for _, at := range l.attempts[agentID] {
 		if now.Sub(at) < agentPeerViewRateWindow {
@@ -285,8 +304,10 @@ func peerViewPrincipalFrom(ctx context.Context) *proto.PeerViewAgent {
 	return a
 }
 
-// servePeerViewForAgent is the sending node's gate for an agent's peer view.
-func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller string, peer *db.FederationPeer) {
+// servePeerViewForAgent is the sending node's gate for an agent's peer view
+// of the peer node names. The limit and the audit come before the peer is
+// resolved, so an agent cannot probe which peers exist uncounted.
+func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node string) {
 	agentID, err := db.AgentIDForConv(caller)
 	if err != nil || !proto.ValidAgentRef(agentID) {
 		writeError(w, http.StatusForbidden, "auth", "a peer view needs a registered agent")
@@ -296,12 +317,13 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller string
 	route := ""
 	status := 0
 	audit := true
+	peerRef := proto.SafeName(node, false)
 	defer func() {
 		if !audit {
 			return
 		}
 		_, _ = db.InsertAuditLog(db.AuditLogEntry{At: time.Now(), ActorKind: db.AuditActorAgent, ActorConv: caller, ActorAgent: agentID, ActorLabel: principal.Name,
-			Verb: "federation.peer_view.agent.out", Detail: fmt.Sprintf("peer=%s route=%s", peer.InstanceID, route), Method: r.Method, Status: status, Source: "federation"})
+			Verb: "federation.peer_view.agent.out", Detail: fmt.Sprintf("peer=%s route=%s", peerRef, route), Method: r.Method, Status: status, Source: "federation"})
 	}()
 	refuse := func(code int, reason, msg string) {
 		status = code
@@ -315,6 +337,15 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller string
 		return
 	}
 	defer release()
+	// Only operator-chosen labels and pinned identities select a destination.
+	peer, err := resolveFederationPeerOpt(node, false)
+	if err != nil {
+		status = http.StatusNotFound
+		writeFedErr(w, err)
+		return
+	}
+	peerRef = peer.InstanceID
+	r.SetPathValue("node", peer.InstanceID)
 	tail := peerProxyPath(r.PathValue("tail"))
 	pattern, values, ok := matchAgentPeerViewRoute(r.Method, tail)
 	if !ok {

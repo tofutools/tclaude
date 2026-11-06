@@ -130,6 +130,7 @@ type permissionsMutateResp struct {
 	Slug      string          `json:"slug"`
 	Scope     permissionScope `json:"scope,omitempty"`
 	Effective []string        `json:"effective"`
+	Warnings  []string        `json:"warnings,omitempty"`
 }
 
 // --- permissions ls ---
@@ -609,6 +610,9 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 		} else {
 			label = fmt.Sprintf("%s (%s)", resp.Target, who)
 		}
+	}
+	for _, w := range resp.Warnings {
+		fmt.Fprintln(stderr, "warning: "+w)
 	}
 	sort.Strings(resp.Effective)
 	if len(resp.Effective) == 0 {

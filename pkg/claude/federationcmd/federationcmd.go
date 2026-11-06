@@ -456,7 +456,7 @@ func untrustCmd() *cobra.Command {
 }
 
 type agentViewsParams struct {
-	Peer   string `pos:"true" help:"Peer label, name, or instance id"`
+	Peer   string `pos:"true" help:"Peer label or instance id"`
 	Policy string `pos:"true" optional:"true" help:"allow or deny; omit to show the current policy"`
 }
 
