@@ -41,6 +41,26 @@ func TestLockHolderReShowsOverItsLockedPage(t *testing.T) {
 	assert.Equal(t, p.ID, again.ID, "the same page")
 	assert.Contains(t, e.call(t, shower, http.MethodGet, "/v1/pages", nil).Body.String(), `"agents_locked":true`,
 		"the re-show keeps the operator's lock")
+
+	// Moving the locked page out of its group is still refused to the holder.
+	rec = e.call(t, shower, http.MethodPost, "/v1/pages", map[string]any{"target": port, "name": "app", "private": true})
+	requireLocked(t, rec, "a holder's re-show that makes the locked page private")
+
+	// The holder closes it, and reopens the saved page: still the operator's
+	// locked page, in the registry and in the saved row.
+	require.Less(t, e.call(t, shower, http.MethodDelete, "/v1/pages/app", nil).Code, 300)
+	row, err := db.GetGroupPage(p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row, "the page is saved with its group")
+	require.True(t, row.AgentsLocked)
+	reopened, rec := e.show(t, shower, port, "app", "")
+	require.Less(t, rec.Code, 300, "the holder reopens it: %s", rec.Body.String())
+	assert.Equal(t, p.ID, reopened.ID, "the saved page reopens")
+	assert.Contains(t, e.call(t, shower, http.MethodGet, "/v1/pages", nil).Body.String(), `"agents_locked":true`,
+		"the reopened page keeps the operator's lock")
+	row, err = db.GetGroupPage(p.ID)
+	require.NoError(t, err)
+	assert.True(t, row.AgentsLocked, "the saved row keeps the lock")
 }
 
 func TestLockHolderAdoptsALockedGroupPage(t *testing.T) {
@@ -69,6 +89,13 @@ func TestLockHolderAdoptsALockedGroupPage(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &took))
 	assert.Equal(t, p.ID, took.ID, "the same page")
 	assert.Equal(t, member.id, took.Owner, "now the holder's")
+	// The takeover changes the page's source, not its lock.
+	assert.Contains(t, e.call(t, member, http.MethodGet, "/v1/pages", nil).Body.String(), `"agents_locked":true`,
+		"the adopted page keeps the operator's lock")
+	row, err := db.GetGroupPage(p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.True(t, row.AgentsLocked, "the saved row keeps the lock")
 }
 
 func TestLockHolderImportsABundleOverALockedTemplate(t *testing.T) {
