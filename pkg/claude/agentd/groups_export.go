@@ -566,6 +566,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	// Previewed as the import will run it: mail and head aliases for
 	// conversations outside the file drop (import_foreign_refs.go).
 	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
@@ -846,6 +847,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	// aliases addressed to any other conversation drop, listed in the reply
 	// (import_foreign_refs.go). A peer import already refused them.
 	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
 
 	targetName := asName
 	if targetName == "" {

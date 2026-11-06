@@ -61,6 +61,8 @@ func foreignSenderArchive(t *testing.T, f *testharness.Flow) []byte {
 			msgs = append(msgs, extra)
 		}
 		m["messages"] = msgs
+		aliases, _ := m["head_aliases"].([]any)
+		m["head_aliases"] = append(aliases, map[string]any{"handle": "set-by-lead", "anchor_conv_id": foreignA, "by_conv": foreignVictim, "created_at": "2026-01-01T00:00:00Z"})
 		out, err := json.Marshal(m)
 		require.NoError(t, err)
 		return out
@@ -94,10 +96,11 @@ func TestGroupImport_RemapsASenderThatIsALocalAgentOutsideTheFile(t *testing.T) 
 	}
 	assert.Equal(t, first.FromConv, second.FromConv, "one archived sender stays one sender, so its thread reads as one")
 	// What the agent's inbox and its delivery nudge show for the sender.
-	assert.Equal(t, agent.UnknownTitle, agent.TitleFor(first.FromConv), "the inbox's from_title is unknown")
+	assert.Empty(t, first.FromTitle, "the mailbox shows no name for the sender")
+	assert.Empty(t, agent.TitleFor(first.FromConv), "the inbox's from_title names nobody")
 	label := agent.MessageSenderLabel(first.FromConv, first.FromAgent)
-	assert.NotContains(t, label, "trusted-lead", "the sender label: %s", label)
-	assert.Contains(t, label, agent.UnknownTitle)
+	assert.NotContains(t, label, "trusted-lead", "the delivery label: %s", label)
+	assert.Equal(t, first.FromConv[:8], label, "the delivery label is the unknown sender's short id alone")
 
 	assert.Equal(t, senderOutsider, bySubject["outsider"].FromConv, "a sender on no node here names nobody and is kept")
 
@@ -105,8 +108,15 @@ func TestGroupImport_RemapsASenderThatIsALocalAgentOutsideTheFile(t *testing.T) 
 		assert.NotContains(t, m.Subject, "spoofed", "the local agent's history gains nothing it did not send")
 	}
 
+	alias, err := db.GetHeadAlias("set-by-lead")
+	require.NoError(t, err)
+	require.NotNil(t, alias, "an alias of the file's own agent still lands")
+	assert.NotEqual(t, foreignVictim, alias.ByConv, "and is not credited to the local agent")
+	assert.NotEqual(t, victimAgent, alias.ByAgent)
+
 	warnings := strings.Join(res.FileWarnings, "\n")
 	assert.Contains(t, warnings, "2 archived messages", warnings)
+	assert.Contains(t, warnings, "1 head alias(es) were created by a conversation on this node outside the file")
 	assert.Contains(t, warnings, "9100")
 	assert.Contains(t, warnings, "9101")
 	assert.NotContains(t, warnings, "9102", "the outsider is not remapped")
