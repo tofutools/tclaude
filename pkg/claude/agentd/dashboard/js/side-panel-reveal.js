@@ -22,10 +22,15 @@
 //  - A pointer heading for the edge fast peeks the panel first (tcl-o4nims):
 //    side-panel-predict.js projects where the motion would stop, and when that
 //    is at or past the edge zone, only the panel's leading edge slides in
-//    (body.dock-peeking). Reaching that strip reveals the panel at once;
-//    reaching the edge zone beside it (the page scrollbar) takes the usual
-//    dwell, which a press still cancels, so a flick to grab the scrollbar is
-//    no worse than without the peek. Sustained motion keeps the peek; when the
+//    (body.dock-peeking). Moving onto that strip reveals the panel at once;
+//    the page scrollbar beside it, the one part of the edge zone the strip
+//    does not cover, takes the usual dwell, which a press still cancels, so a
+//    flick to grab the scrollbar is no worse than without the peek. A landing
+//    at the folded handle's height does not peek: the peek would move the
+//    handle out from under the click that pins the panel. A press on a strip
+//    that is still only peeking means it slid under a still pointer, a wrong
+//    prediction: the press ends the peek and is swallowed, so it acts on
+//    nothing in the panel. Sustained motion keeps the peek; when the
 //    prediction stops holding it retracts after PEEK_RETRACT_MS. A press, a
 //    drag, Escape or a tab switch takes it back at once. The peek is its own
 //    state with its own timer, never a reveal: it is never "over" and holds
@@ -107,6 +112,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let pressFromPanel = false; // a button pressed on it (its scrollbar's) and not yet released
   let samples = []; // recent pointer moves, for the prediction
   let retract = null; // a peek's retract timer
+  let last = null; // the last pointermove's position
+  let swallowClick = false; // the click after a press a peek swallowed
   const debugOn = debug ?? predictDebugOn(win);
   if (debugOn) mountPredictDebug(doc);
 
@@ -200,6 +207,11 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // A move with no button held ends a press, even one whose pointerup the
     // page never saw (a scrollbar drag released elsewhere).
     if (!event.buttons) pressFromPanel = false;
+    // Chrome sends a move at the same position when the layout changes under
+    // a still pointer (the strip sliding in): that is not the pointer going
+    // anywhere.
+    const moved = !last || last.x !== event.clientX || last.y !== event.clientY;
+    last = { x: event.clientX, y: event.clientY };
     if (isSidePanelRevealed()) {
       samples = [];
       overPanel = onPanel(event);
@@ -219,7 +231,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     }
     if (isSidePanelPeeking() && dock()?.contains(event.target)) {
       cancelDwell();
-      revealFromPeek();
+      if (moved) revealFromPeek();
       return;
     }
     if (!inEdgeZone(event)) {
@@ -246,7 +258,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const rect = dock()?.getBoundingClientRect?.();
     const band = rect?.height ? { top: rect.top, bottom: rect.bottom } : null;
     const edgeX = contentRight() - EDGE_REVEAL_PX;
-    const prediction = predictEdgeLanding(samples, edgeX, band, constants);
+    const handleRect = doc.getElementById('dock-toggle')?.getBoundingClientRect?.();
+    const handle = handleRect?.height ? { top: handleRect.top, bottom: handleRect.bottom } : null;
+    const prediction = predictEdgeLanding(samples, edgeX, band, constants, handle);
     if (debugOn) predictDebug.value = { prediction, edgeX };
     if (!prediction.peek) {
       if (isSidePanelPeeking() && !retract) armRetract();
@@ -257,14 +271,20 @@ export function bindEdgeReveal(doc = globalThis.document, {
   };
 
   // A press cancels a reveal still waiting out its dwell, and takes a peek
-  // back, unless it is on the peeking strip, which reveals the panel. It
-  // closes nothing else, so it is not the shared outside-press rule
+  // back. One on the peeking strip is swallowed with its click: the strip
+  // slid under a still pointer, and the press was meant for what was there.
+  // It closes nothing else, so it is not the shared outside-press rule
   // (ui-popover-dismiss.test.mjs).
   doc.addEventListener('pointerdown', (event) => {
     cancelDwell();
+    swallowClick = false;
     if (isSidePanelPeeking()) {
-      if (dock()?.contains(event.target) && !doc.getElementById('dock-toggle')?.contains(event.target)) revealFromPeek();
-      else endPeek();
+      if (dock()?.contains(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        swallowClick = true;
+      }
+      endPeek();
     }
     if (isSidePanelRevealed() && onPanel(event)) pressFromPanel = true;
   }, true);
@@ -273,6 +293,12 @@ export function bindEdgeReveal(doc = globalThis.document, {
     pressFromPanel = false;
     if (!overPanel) scheduleHide();
   };
+  doc.addEventListener('click', (event) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
   doc.addEventListener('pointerup', pressOver, true);
   doc.addEventListener('pointercancel', pressOver, true);
   doc.documentElement?.addEventListener('pointerleave', () => {
@@ -297,11 +323,9 @@ export function bindEdgeReveal(doc = globalThis.document, {
     overPanel = false;
     scheduleHide();
   });
-  panel?.addEventListener('pointerenter', (event) => {
-    if (isSidePanelPeeking()) {
-      if (!event.buttons && !doc.getElementById('dock-toggle')?.contains(event.target)) revealFromPeek();
-      return;
-    }
+  // A peek is never revealed by an enter alone: the strip sliding under a still
+  // pointer enters it too. A real move onto it reveals (pointermove).
+  panel?.addEventListener('pointerenter', () => {
     if (!isSidePanelRevealed()) return;
     overPanel = true;
     cancelHide();

@@ -39,6 +39,8 @@ test('each refusal names its rule', async (t) => {
   }
   const off = predictEdgeLanding(line(300, 750, { y0: 300, y1: 340, n: 5 }), EDGE, { top: 100, bottom: 320 });
   assert.equal(off.reason, 'off-panel', 'landing below the panel is not heading for it');
+  const handle = predictEdgeLanding(line(300, 750, { n: 5 }), EDGE, null, PREDICT, { top: 280, bottom: 320 });
+  assert.equal(handle.reason, 'handle', 'a landing at the folded handle is aiming at the handle');
   assert.ok(Object.isFrozen(PREDICT), 'the constants are one frozen table');
 });
 

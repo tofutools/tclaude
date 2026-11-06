@@ -569,7 +569,7 @@ test('a fast, level fling at the edge peeks the panel before the pointer gets th
   assert.equal(s.doc.body.classList.contains('dock-open'), false, 'and nothing reflows or is remembered');
 });
 
-test('reaching the peeking strip reveals at once; the edge zone beside it takes the usual dwell', async (t) => {
+test('moving onto the peeking strip reveals at once; the page scrollbar beside it takes the usual dwell', async (t) => {
   let s = await shell(t);
   s.flick(FLING);
   s.move(s.dock, WIDTH - 20);
@@ -577,11 +577,61 @@ test('reaching the peeking strip reveals at once; the edge zone beside it takes 
   assert.equal(s.peeking(), false, 'and the peek is over');
 
   s = await shell(t);
+  const { onScrollbar } = withPageScrollbar(s);
   s.flick(FLING);
-  s.atEdge();
-  assert.equal(s.revealed(), false, 'in the edge zone but not on the strip, the dwell still decides');
+  onScrollbar();
+  assert.equal(s.revealed(), false, 'on the scrollbar, the one part of the edge zone the strip leaves, the dwell still decides');
   s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
   assert.equal(s.revealed(), true);
+});
+
+// The folded handle sits at the edge, where a fling ends: a peek would move it
+// out from under the click that pins the panel, so a landing at its height
+// does not peek and the click still unfolds the panel.
+test('a fling across the page at the handle does not peek, and the click still pins the panel open', async (t) => {
+  const s = await shell(t);
+  const handle = s.doc.getElementById('dock-toggle');
+  handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
+  s.flick({ ...FLING, y0: 300 });
+  assert.equal(s.peeking(), false, 'landing at the handle’s height');
+  s.move(handle, WIDTH - 10);
+  handle.click();
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'the handle’s click unfolds it');
+
+  const away = await shell(t);
+  away.doc.getElementById('dock-toggle').getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
+  away.flick({ ...FLING, y0: 150 });
+  assert.equal(away.peeking(), true, 'a fling well above the handle still peeks');
+});
+
+// A press on the strip while it only peeks means the strip slid under a still
+// pointer (a moving one would have revealed it): the press was meant for the
+// page there, so it acts on nothing in the panel.
+test('a press on a strip that only peeks is swallowed with its click, and ends the peek', async (t) => {
+  const s = await shell(t);
+  const card = s.doc.getElementById('dock-body').appendChild(s.doc.createElement('button'));
+  s.flick(FLING);
+  assert.equal(s.peeking(), true);
+  const down = s.harness.fireEvent(card, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
+  assert.equal(s.peeking(), false, 'the peek goes');
+  assert.equal(s.revealed(), false, 'and is no reveal');
+  assert.equal(down.defaultPrevented, true, 'the press is cancelled, so it starts nothing in the panel');
+  assert.equal(s.harness.fireEvent(card, 'click').defaultPrevented, true, 'and so is its click');
+  assert.equal(s.harness.fireEvent(card, 'click').defaultPrevented, false, 'only that one click');
+});
+
+// Chrome sends a move at the same position when the layout changes under a
+// still pointer, as the strip sliding in does: that is no move onto it.
+test('the strip sliding under a still pointer does not reveal the panel; a real move onto it does', async (t) => {
+  const s = await shell(t);
+  s.flick(FLING);
+  s.move(s.content, 800);
+  s.move(s.dock, 800);
+  assert.equal(s.revealed(), false, 'same position as the last move');
+  s.harness.fireEvent(s.dock, 'pointerenter');
+  assert.equal(s.revealed(), false, 'nor does the enter that comes with it');
+  s.move(s.dock, 806);
+  assert.equal(s.revealed(), true, 'a real move onto the strip');
 });
 
 test('sustained motion keeps a peek; when it stops short the peek retracts after PEEK_RETRACT_MS', async (t) => {
@@ -611,7 +661,6 @@ test('no peek for a move that is not a fling at the edge', async (t) => {
     ['an ordinary move across the page', (s) => s.flick({ x0: 600, x1: 800, steps: 20 })],
     ['one jump', (s) => { s.move(s.content, 300); s.timers.advance(16); s.move(s.content, 900); }],
     ['a fling with a button held (a selection or a drag)', (s) => s.flick({ ...FLING, init: { buttons: 1 } })],
-    ['a fling at the handle', (s) => s.flick({ ...FLING, target: s.doc.getElementById('dock-toggle') })],
     ['a fling from right beside the edge (the zone’s own dwell)', (s) => s.flick({ x0: 900, x1: 955, steps: 4, stepMs: 10 })],
   ]) {
     const s = await shell(t);

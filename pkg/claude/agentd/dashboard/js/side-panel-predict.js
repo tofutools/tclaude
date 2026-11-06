@@ -39,6 +39,10 @@ export const PREDICT = Object.freeze({
   // MIN_DISTANCE_PX: a pointer already this close to the edge is the edge
   // zone's business (its dwell), not a prediction's.
   MIN_DISTANCE_PX: 48,
+  // HANDLE_MARGIN_PX: a landing this close above or below the folded handle
+  // is aiming at the handle (to pin the panel open), which a peek would move
+  // out from under the click.
+  HANDLE_MARGIN_PX: 40,
   // PEEK_RETRACT_MS: a peek whose prediction stopped holding retracts after
   // this, unless the pointer reached the edge zone or the panel first.
   PEEK_RETRACT_MS: 500,
@@ -51,10 +55,11 @@ export function recentSamples(samples, now, constants = PREDICT) {
 
 // predictEdgeLanding judges samples ([{ t, x, y }], oldest first) against the
 // edge: edgeX is where the edge zone starts, band the panel's vertical extent
-// ({ top, bottom }, or null for the whole height). It answers
+// ({ top, bottom }, or null for the whole height), handle the folded handle's
+// ({ top, bottom }, or null). It answers
 // { peek, reason, vx, vy, landingX, landingY }; reason names the rule that
 // refused (or 'ok'), for the debug overlay and the tests.
-export function predictEdgeLanding(samples, edgeX, band = null, constants = PREDICT) {
+export function predictEdgeLanding(samples, edgeX, band = null, constants = PREDICT, handle = null) {
   const out = { peek: false, reason: 'few', vx: 0, vy: 0, landingX: NaN, landingY: NaN };
   if (samples.length < constants.MIN_SAMPLES) return out;
   const first = samples[0];
@@ -87,5 +92,8 @@ export function predictEdgeLanding(samples, edgeX, band = null, constants = PRED
   if (edgeX - last.x < constants.MIN_DISTANCE_PX) return { ...judged, reason: 'near' };
   if (landingX < edgeX) return { ...judged, reason: 'short-of-edge' };
   if (band && (landingY < band.top || landingY > band.bottom)) return { ...judged, reason: 'off-panel' };
+  if (handle && landingY >= handle.top - constants.HANDLE_MARGIN_PX && landingY <= handle.bottom + constants.HANDLE_MARGIN_PX) {
+    return { ...judged, reason: 'handle' };
+  }
   return { ...judged, peek: true, reason: 'ok' };
 }
