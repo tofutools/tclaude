@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox, snapshotGroups } from './group-picker.js';
 import {
   createGroupCreateDraft,
   derivedCloneDestination,
@@ -284,13 +285,12 @@ function GroupCreateDialog({
     </div>
     ${draft.origin === 'group' ? html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words} plain="Source group" wizard="Source party" /></span>
-      <${Select} id="group-create-group-source" value=${draft.source}
-        data-current-value=${draft.source} disabled=${disabled}
-        onChange=${(event) => changeSource(event.currentTarget.value)}>
-        <option value="">${words('(select group)', '(choose a party)')}</option>
-        ${current.groups.filter((group) => group?.name).map((group) =>
-          html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      <//>
+      <${GroupCombobox} id="group-create-group-source" value=${draft.source}
+        attrs=${{ 'data-current-value': draft.source }} disabled=${disabled}
+        ariaLabel=${words('Source group', 'Source party')}
+        noneLabel=${words('(select group)', '(choose a party)')}
+        groups=${snapshotGroups(current)}
+        onChange=${changeSource} />
     </label>` : null}
     ${draft.origin === 'template' ? html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
@@ -322,13 +322,11 @@ function GroupCreateDialog({
     </label>
     <label class="cron-create-row group-create-placement-row">
       <span class="cron-create-label">Place under</span>
-      <${Select} id="group-create-placement" value=${draft.parent}
-        data-current-value=${draft.parent} disabled=${disabled}
-        onChange=${(event) => setField('parent', event.currentTarget.value)}>
-        <option value="">Top level</option>
-        ${current.groups.filter((group) => group?.name && group.name !== draft.name).map((group) =>
-          html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      <//>
+      <${GroupCombobox} id="group-create-placement" value=${draft.parent}
+        attrs=${{ 'data-current-value': draft.parent }} disabled=${disabled}
+        ariaLabel="Place under" noneLabel="Top level"
+        groups=${snapshotGroups(current).filter((name) => name !== draft.name)}
+        onChange=${(key) => setField('parent', key)} />
     </label>
     ${cloneMode ? html`
       <label class="cron-create-enabled">
@@ -348,12 +346,11 @@ function GroupCreateDialog({
     </div>
     <label class="cron-create-row" id="group-create-source-row" hidden=${!sourceVisible}>
       <span class="cron-create-label">Mirror settings</span>
-      <${Select} id="group-create-source" value=${draft.source} disabled=${disabled}
-        onChange=${(event) => changeSource(event.currentTarget.value)}>
-        <option value="">${words('template settings (top-level)', 'circle lore (top-level)')}</option>
-        ${current.groups.filter((group) => group?.name).map((group) =>
-          html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      <//>
+      <${GroupCombobox} id="group-create-source" value=${draft.source} disabled=${disabled}
+        ariaLabel="Mirror settings from group"
+        noneLabel=${words('template settings (top-level)', 'circle lore (top-level)')}
+        groups=${snapshotGroups(current)}
+        onChange=${changeSource} />
     </label>
     <label class="cron-create-row group-create-descr-row">
       <span class="cron-create-label">Descr</span>

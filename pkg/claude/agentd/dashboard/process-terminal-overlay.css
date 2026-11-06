@@ -101,7 +101,7 @@
 .pk-stepper-step-time { margin-left: auto; font-size: 11px; color: var(--pk-muted); }
 .pk-stepper-step-detail { color: var(--pk-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
 .pk-stepper-step-warning { color: var(--pk-waiting-text); font-size: 11px; margin-top: 2px; }
-.pk-stepper-group { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; }
+.pk-run-popover-actions > .choice-combobox { flex: 1 1 100%; }
 
 /* Tab-strip ("rail") miniatures */
 .pk-tab-icons { display: inline-flex; gap: 3px; margin: 0 2px; vertical-align: middle; }

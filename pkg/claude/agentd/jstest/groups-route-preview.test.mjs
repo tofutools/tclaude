@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboLabels } from './combobox-helpers.mjs';
 
 const LEASE = { id: `hlease_${'a'.repeat(32)}`, endpoint: '127.0.0.1:33789', consumer_kind: 'host', mode: 'http' };
 const PREVIEW = `http://route-${'a'.repeat(32)}.localhost:33789/`;
@@ -119,8 +120,10 @@ test('TCP action requests an opaque endpoint explicitly', async (t) => {
 });
 
 test('host-only routes are accessible without any group', async (t) => {
- const { root } = await setup(t, { hostOnly:true });
- assert.equal(root.querySelector('select option').textContent, 'Host only');
+ const { harness, root } = await setup(t, { hostOnly:true });
+ const group = root.querySelector('#route-map-group');
+ assert.equal(group.dataset.value, 'host-only/', 'with no group, Host only is shown');
+ assert.deepEqual(await comboLabels(harness, group), ['Host only']);
  assert.equal(root.querySelector('a.route-map-preview').getAttribute('href'), PREVIEW);
  assert.ok(getByRole(root,'button',{name:'Open on host'}));
 });

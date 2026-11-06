@@ -19,7 +19,8 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
 import { processContext, processRunApi } from './process-context.js';
@@ -145,11 +146,6 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
   };
   const pin = (group) => change(group, pinToGroup);
   const unpin = (group) => change(group, unpinFromGroup);
-  const pick = (event, act) => {
-    const group = event.currentTarget.value;
-    event.currentTarget.value = '';
-    act(group);
-  };
   return html`<div ref=${ref} class="dock-process-preview" role="dialog" aria-label=${`${row.name || row.id} preview`} style=${style} data-dock-process-preview=${row.id}>
     <div class="dpp-head"><b>${row.name || row.id}</b><span class="dpp-meta">v${row.versionCount || 1}${row.listed === false ? ' · group-only' : ''}</span>
       <span class="dpp-spacer"></span><button data-ui-exempt type="button" class="dpp-close" aria-label="Close" onClick=${onClose}>✕</button></div>
@@ -160,15 +156,11 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
         onClick=${() => unpin(group)}>×</button></span>`)}</div>`}
     <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
     <div class="dpp-acts">
-      <${Select} size="sm" class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [], setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); })}>
-        <option value="">${wizWord('▶ Start in…', '▶ Begin in…')}</option>
-        ${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
-      <//>
+      <${GroupCombobox} action groups=${groups} ariaLabel="Start in group" placeholder=${wizWord('▶ Start in…', '▶ Begin in…')}
+        attrs=${{ 'data-dock-process-start': '' }} onChange=${(group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [], setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); }} />
       <${Button} size="sm" class="process-action" data-dock-process-edit onClick=${() => { onClose(); void openProcessDraft({ id: row.id, name: row.name || row.id }); }}>✎ Edit<//>
-      <${Select} size="sm" class="dpp-pin" aria-label="Pin to group" disabled=${busy} data-dock-process-pin onChange=${(event) => pick(event, pin)}>
-        <option value="">Pin to group…</option>
-        ${groups.filter((group) => !pinned.has(group)).map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
-      <//>
+      <${GroupCombobox} action groups=${groups.filter((group) => !pinned.has(group))} ariaLabel="Pin to group" placeholder="Pin to group…"
+        disabled=${busy} attrs=${{ 'data-dock-process-pin': '' }} onChange=${pin} />
       <${WorkflowExportButton} id=${row.id} size="sm" />
       <span class="dpp-spacer"></span>
       <${Button} size="sm" variant="danger" class="process-action" data-dock-process-delete onClick=${() => onDelete(row)}>${wizWord('Delete', 'Dispel')}<//>

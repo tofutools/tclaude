@@ -34,6 +34,14 @@
 //   alwaysOpen   the list always shows (a picker dialog's own list), and
 //                Escape is left to the dialog
 //   autoFocus    focus the input on mount
+//   selectedLabel  a single choice that stands in for a <select>: the box
+//                shows this (the chosen value's label) while it is not being
+//                typed in, drops what was typed when it loses focus, and opens
+//                on a click, ↓ or typing, not on focus alone (a dialog that
+//                focuses it on open does not cover its own fields)
+//   overlay      the list opens over what follows instead of pushing it down
+//                (a toolbar or a form row); without it the list is in the flow,
+//                which a scroll box cannot clip
 //   busy         marks the list aria-busy (still loading, or a write in
 //                flight); with disabled, nothing can be chosen meanwhile
 //
@@ -117,7 +125,7 @@ export function comboGroupSummary(items) {
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
-  alwaysOpen = false, autoFocus = false, busy = false,
+  alwaysOpen = false, autoFocus = false, busy = false, selectedLabel = null, overlay = false,
 }) {
   const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
@@ -210,13 +218,21 @@ export function FilterCombobox({
   const shownGroups = summary.slice(0, 5);
   // A click in the box must not reach a <label> around it: the label would
   // hand it to its first control (a form row's radio), taking the focus.
-  return html`<div class="filter-combobox" onClick=${(event) => event.preventDefault()}>
-    <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${query}
-      placeholder=${placeholder} autocomplete="off" spellcheck=${false}
+  const standIn = selectedLabel !== null;
+  const shownText = standIn && !openState && !query ? selectedLabel : query;
+  return html`<div class=${`filter-combobox${overlay ? ' filter-combobox-floating' : ''}`} onClick=${(event) => event.preventDefault()}>
+    <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${shownText}
+      placeholder=${standIn && openState && selectedLabel ? selectedLabel : placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
       aria-autocomplete="list" aria-activedescendant=${activeID}
-      onFocus=${() => setOpen(true)} onClick=${() => setOpen(true)} onBlur=${() => setOpen(false)}
-      onInput=${(event) => { setQuery(event.currentTarget.value); resetHighlight(); setOpen(true); }}
+      onFocus=${() => { if (!standIn) setOpen(true); }} onClick=${() => setOpen(true)} onBlur=${() => { setOpen(false); if (standIn && query) setQuery(''); }}
+      onInput=${(event) => {
+        // A stand-in box shows the chosen label while closed: what is typed
+        // into it then is the start of a search, not more of that label.
+        const text = event.currentTarget.value;
+        const typed = standIn && !openState && selectedLabel && text.startsWith(selectedLabel) ? text.slice(selectedLabel.length) : text;
+        setQuery(typed); resetHighlight(); setOpen(true);
+      }}
       onKeyDown=${onKeyDown} />
     ${open && html`<div class="add-member-list filter-combobox-list" id=${listID} role="listbox" aria-busy=${busy ? 'true' : 'false'}
       aria-multiselectable=${multi ? 'true' : 'false'}
@@ -244,7 +260,7 @@ export function FilterCombobox({
           <span class="filter-combobox-check" aria-hidden="true">${chosen.has(item.key) ? '✓' : ''}</span>
           ${item.lead || null}
           <span class="rowname">${item.label || item.key}</span>
-          <span class="id">${item.hint || item.key}</span>
+          <span class="id">${item.hint ?? item.key}</span>
           ${item.tail || null}
           ${item.disabled && item.reason ? html`<span class="descr">${item.reason}</span>` : null}
         </div>`)}</div>`)}

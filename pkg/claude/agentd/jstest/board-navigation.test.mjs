@@ -87,10 +87,10 @@ test('Ctrl+wheel zooms the board over its inputs and controls, not the page', as
   assert.ok((await wheel(input, twice)).defaultPrevented, 'the browser leaves the page alone');
   assert.equal(zoom(), '200%');
 
-  assert.ok((await wheel(root.querySelector('select.board-group'), { ...twice, deltaY: Math.log(2) / 0.002 })).defaultPrevented);
+  assert.ok((await wheel(root.querySelector('[data-board-group] input'), { ...twice, deltaY: Math.log(2) / 0.002 })).defaultPrevented);
   assert.equal(zoom(), '100%', 'a control outside the canvas too');
 
-  assert.equal((await wheel(root.querySelector('select.board-group'), { deltaY: 40 })).defaultPrevented, false, 'a plain scroll out there is the page\'s');
+  assert.equal((await wheel(root.querySelector('[data-board-group] input'), { deltaY: 40 })).defaultPrevented, false, 'a plain scroll out there is the page\'s');
 });
 
 test('the grid scrolls and zooms with the board', async (t) => {
@@ -182,9 +182,9 @@ test('number keys leave typing alone', async (t) => {
   await down(harness, root.querySelector('svg.board-canvas'));
   await press(harness, harness.window.document.body, '3');
   assert.equal(toolOn(root), 'Rectangle');
-  const select = root.querySelector('select.board-group');
-  await press(harness, select, '6');
-  assert.equal(toolOn(root), 'Rectangle', 'a select in the editor keeps its type-ahead');
+  const groupBox = root.querySelector('[data-board-group] input');
+  await press(harness, groupBox, '6');
+  assert.equal(toolOn(root), 'Rectangle', 'the group box in the editor keeps its typing');
   const doc = harness.window.document;
   const editable = doc.createElement('div');
   editable.setAttribute('contenteditable', '');

@@ -1,6 +1,7 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { comboKeys } from './combobox-helpers.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
@@ -2409,12 +2410,13 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
   const mounted = await harness.mount(harness.html`<${MoveAgentDialog} peers=${peers} agents=${[{ id: 'agt_a1', label: 'ada' }]} actions=${actions} confirm=${confirm} onClose=${() => {}} onDone=${() => {}} />`);
   const q = (x) => harness.document.querySelector(x);
   const pick = async (sel, value) => { const el = q(sel); for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); } await harness.act(() => harness.fireEvent(el, 'change')); };
-  assert.deepEqual([...q('#fleet-move-agent-group-pick').querySelectorAll('option')].map((o) => o.textContent), ['pick a group that receives agents…', 'intake', 'labs', 'another group (type its name)…']);
-  await pick('#fleet-move-agent-group-pick', 'labs');
+  assert.equal(q('#fleet-move-agent-group-pick input').value, 'pick a group that receives agents…');
+  assert.deepEqual(await comboLabels(harness, q('#fleet-move-agent-group-pick')), ['intake', 'labs', 'another group (type its name)…']);
+  await comboPick(harness, q('#fleet-move-agent-group-pick'), 'labs');
   await harness.act(() => q('#fleet-move-agent-send').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.equal(sent.at(-1).group, 'labs');
-  await pick('#fleet-move-agent-group-pick', '\u0000other');
+  await comboPick(harness, q('#fleet-move-agent-group-pick'), '\u0000other');
   assert.ok(q('#fleet-move-agent-group'), 'typing is the fallback');
   await pick('#fleet-move-agent-peer', 'inst_lab');
   assert.equal(q('#fleet-move-agent-group-pick'), null, 'a peer listing no receiving group gets the text field');
@@ -2637,7 +2639,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   }) });
   await s.show();
   assert.equal(s.q('.fs-step.on').dataset.step, 'share', 'opens on the first step not done');
-  assert.equal(s.q('#fleet-setup-group').getAttribute('value'), 'build', 'the first group is picked');
+  assert.equal(s.q('#fleet-setup-group').dataset.value, 'build', 'the first group is picked');
   assert.ok(s.q('[data-preset="mail"] input').hasAttribute('checked'), 'mail is the default share');
   await s.click(s.q('#fleet-setup-share'));
   assert.equal(s.confirms.at(-1).title, 'Share build with forge?');
@@ -2649,9 +2651,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   ]);
   assert.match(s.toasts.at(-1), /Shared build with forge/);
 
-  const group = s.q('#fleet-setup-group');
-  for (const o of group.querySelectorAll('option')) { if (o.value === 'ops') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await s.harness.act(() => s.harness.fireEvent(group, 'change'));
+  await comboPick(s.harness, s.q('#fleet-setup-group'), 'ops');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await s.check(s.q('[data-preset="spawn"] input'));
   assert.match(s.q('[data-setup-step="share"] .fs-actions').textContent, /Grants message\.direct, groups\.presence\.read, groups\.members\.spawn in ops/, 'the roster grant forge holds on ops is not sent again');

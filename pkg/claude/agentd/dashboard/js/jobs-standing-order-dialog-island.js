@@ -6,6 +6,7 @@ import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { AgentCombobox } from './agent-picker.js';
+import { GroupCombobox } from './group-picker.js';
 import { nodeSnapshot } from './node-api.js';
 import {
   buildStandingOrderMutation, createStandingOrderDraft,
@@ -72,12 +73,9 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
     </div>`}
     ${value.mode === 'solo' && html`<${AgentCombobox} id="standing-order-target" value=${value.target} agents=${candidates} group=${scope}
       placeholder="Type to find an agent…" onChange=${(target) => onChange({ ...value, target })} />`}
-    ${value.mode === 'group' && html`<${Select} id="standing-order-group" value=${value.groupName}
-      disabled=${!!scope}
-      onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
-      <option value="">(pick a group)</option>
-      ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-    <//>`}
+    ${value.mode === 'group' && html`<${GroupCombobox} id="standing-order-group" value=${value.groupName}
+      disabled=${!!scope} groups=${groupOptions} noneLabel="(pick a group)"
+      onChange=${(groupName) => onChange({ ...value, groupName })} />`}
   </div>`;
 }
 

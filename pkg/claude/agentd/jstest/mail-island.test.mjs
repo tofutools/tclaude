@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 function message(id, overrides = {}) {
   return {
@@ -293,10 +294,10 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
   assert.doesNotMatch(root.textContent, /Always allow/);
   assert.match(root.textContent, /every group on this node, including future ones · 1 day/);
   assert.match(root.textContent, /Approving lets operator@inst_forge7 use sessions.watch \(read-only terminal view of member agents\) in every group on this node, including future ones for 1 day/);
-  assert.deepEqual([...root.querySelectorAll('.access-peer-group option')].map((o) => o.textContent), ['every group, including future ones', 'ops'], 'only groups the peer holds grants in narrow');
   const group = root.querySelector('.access-peer-group');
-  for (const o of group.querySelectorAll('option')) { if (o.value === '4') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-  await harness.act(() => harness.fireEvent(group, 'change'));
+  assert.equal(group.querySelector('input').value, 'every group, including future ones', 'unnarrowed by default');
+  assert.deepEqual(await comboLabels(harness, group), ['ops'], 'only groups the peer holds grants in narrow');
+  await comboPick(harness, group, '4');
   const ttl = root.querySelector('.access-peer-ttl');
   assert.deepEqual([...ttl.querySelectorAll('option')].map((o) => o.textContent), ['1 hour', '8 hours', '1 day'], 'approval never lengthens the grant');
   for (const o of ttl.querySelectorAll('option')) { if (o.value === '3600') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const SNAPSHOT = {
   groups: [{ name: 'team', members: [] }, { name: 'ops', members: [] }],
@@ -31,6 +32,7 @@ async function mountManagement(t, actions, descriptor) {
   }));
   const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const choose = async (select, value) => {
+    if (select.classList.contains('choice-combobox')) return comboPick(harness, select, value);
     [...select.options].forEach((option) => option.removeAttribute('selected'));
     [...select.options].find((option) => option.value === value).setAttribute('selected', '');
     await harness.act(() => harness.fireEvent(select, 'change'));

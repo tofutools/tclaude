@@ -6,6 +6,7 @@ import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoi
 import { pickDirectory } from './helpers.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -1268,6 +1269,7 @@ export function TemplateDeployDialog({
 }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const groups = current.templateGroups;
+  const groupNames = useMemo(() => (groups || []).map((group) => group?.name), [groups]);
   const initialTemplate =
     current.templates.find((item) => item.name === descriptor.presetName) ||
     current.templates[0];
@@ -1717,19 +1719,14 @@ export function TemplateDeployDialog({
         id="template-deploy-source-row"
         hidden=${!!dropGroup}
         ><span class="cron-create-label">Mirror settings</span
-        ><${Select}
+        ><${GroupCombobox}
           id="template-deploy-source"
           value=${source}
-          onChange=${(event) => chooseSource(event.currentTarget.value)}
-        >
-          <option value="">template defaults (top-level)</option>
-          ${groups.map(
-            (group) =>
-              html`<option key=${group.name} value=${group.name}>
-                ${group.name}
-              </option>`,
-          )}
-        <//></label
+          groups=${groupNames}
+          noneLabel="template defaults (top-level)"
+          ariaLabel="Mirror settings from group"
+          onChange=${chooseSource}
+        /></label
       ><label
         class="cron-create-enabled"
         id="template-deploy-parent-row"

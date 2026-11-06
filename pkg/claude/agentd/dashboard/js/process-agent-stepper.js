@@ -14,6 +14,7 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import {
   ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, programBounds, runIconView, runName, runSteps,
 } from './process-kit.js';
@@ -177,8 +178,7 @@ function StepRow({ row }) {
 
 // ProcessAgentStepper is mock T3. actions: { promote(run, groupName),
 // pause(run), resume(run) } — each optional; onGraph switches the popover to its graph view.
-// The group select is data-ui-exempt: the stepper paints in the process kit's
-// --pk-* palette, not the dashboard field skin.
+// The group to promote to is a GroupCombobox: an agent can sit in many groups.
 export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {}, onGraph = null, onClose = null }) {
   const view = runIconView(run, agentId);
   const rows = stepperRows(run, agentId);
@@ -214,9 +214,8 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
       <div class="pk-run-popover-actions">
         <${ProcessPauseControl} run=${run} actions=${actions} />
         <${Button} size="sm" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view<//>
-        ${groups.length > 1 ? html`<select data-ui-exempt class="pk-stepper-group" aria-label="Group to promote the run to"
-          value=${group} onChange=${(event) => setTarget(event.currentTarget.value)}>
-          ${groups.map((entry) => html`<option key=${entry.id} value=${entry.name}>${entry.name}</option>`)}</select>` : null}
+        ${groups.length > 1 ? html`<${GroupCombobox} floating=${false} attrs=${{ 'data-process-promote-group': '' }} ariaLabel="Group to promote the run to"
+          groups=${groups.map((entry) => entry.name)} value=${group} onChange=${setTarget} />` : null}
         <${Button} size="sm" disabled=${busy || !actions.promote || !groups.length}
           title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run<//>
         ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}

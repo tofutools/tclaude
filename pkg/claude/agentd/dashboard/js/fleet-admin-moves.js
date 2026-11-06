@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { sentLanding } from './fleet-admin-landing.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
@@ -35,6 +36,10 @@ export function moveErrorText(error, peer) {
   return hint ? `${hint(peer)} (${errText(error)})` : errText(error);
 }
 
+// OTHER_GROUP is the receiving-group choice that falls back to typing a name;
+// no group name holds a NUL, so it cannot shadow a listed group.
+const OTHER_GROUP = '\u0000other';
+
 // MoveAgentDialog is tclaude federation move-agent: the agent and its
 // conversation history go to a peer, and the agent retires here once the peer
 // confirms its copy is running.
@@ -51,7 +56,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   const [typed, setTyped] = useState(false);
   const picking = receiving.length > 0 && !typed;
   const pickPeer = (e) => { setForm({ ...form, peer: e.currentTarget.value, group: '' }); setTyped(false); setFindings(null); setAllow(false); };
-  const pickGroup = (e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); setForm({ ...form, group: '' }); } else set('group')(e); };
+  const pickGroup = (key) => { if (key === OTHER_GROUP) { setTyped(true); setForm({ ...form, group: '' }); } else set('group')({ currentTarget: { value: key } }); };
   const agentLabel = agents.find((a) => a.id === form.agent)?.label || form.agent;
   // The full ID is named once; after that the name reads better.
   const agentName = agents.find((a) => a.id === form.agent)?.name || agentLabel;
@@ -79,10 +84,9 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span>${picking
-      ? html`<${Select} size="sm" id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}>
-          <option value="">pick a group that receives agents…</option>
-          ${receiving.map((g) => html`<option key=${g} value=${g} selected=${form.group === g}>${g}</option>`)}
-          <option value=${'\u0000other'}>another group (type its name)…</option><//>`
+      ? html`<${GroupCombobox} id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}
+          noneLabel="pick a group that receives agents…"
+          groups=${[...receiving, { value: OTHER_GROUP, label: 'another group (type its name)…', hint: 'not listed' }]} />`
       : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} />`}</label>
     <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>

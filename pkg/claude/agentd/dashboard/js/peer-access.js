@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { requestJSON } from './request-json.js';
 
@@ -134,10 +135,9 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       <label class="peer-access-opt">Gateway
         <input id="peer-access-gateway" placeholder=${`any (${node} picks)`} value=${proxy} onInput=${(e) => setProxy(e.currentTarget.value)} /></label>`}
       ${scope !== 'node' && groups.length > 0 && html`<label class="peer-access-opt">Group
-        <${Select} id="peer-access-group" value=${groupID} onChange=${(e) => setGroupID(e.currentTarget.value)}>
-          ${scope === 'group' && html`<option value="">every group on ${node}, including future ones (it may narrow to one)</option>`}
-          ${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}
-        <//></label>`}
+        <${GroupCombobox} id="peer-access-group" value=${groupID} onChange=${setGroupID}
+          noneLabel=${scope === 'group' ? `every group on ${node}, including future ones (it may narrow to one)` : ''}
+          groups=${groups.map((g) => ({ value: String(g.id), label: g.name }))} /></label>`}
       <label class="peer-access-opt">For
         <${Select} id="peer-access-ttl" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
           ${TTL_CHOICES.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}

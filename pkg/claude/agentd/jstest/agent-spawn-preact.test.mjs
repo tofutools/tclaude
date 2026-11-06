@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const groups = [{
   name: 'alpha',
@@ -1276,9 +1277,7 @@ test('Preact agent-spawn does not apply a stale group default after an early gro
   try {
     state.open({ defaultGroup: 'alpha' });
     await flush(harness);
-    const group = host.querySelector('#agent-spawn-group');
-    setValue(group, 'beta');
-    await harness.act(() => harness.fireEvent(group, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-group'), 'beta');
     pending.resolve(profiles);
     await flush(harness);
     assert.equal(host.querySelector('#agent-spawn-cwd').value, '/beta');
@@ -2373,9 +2372,7 @@ test('undoing an agent\'s fill gives the fields back to the group: cwd follows a
     await fills.undoFill('spawn', { win: harness.window, tick });
     await flush(harness);
     assert.equal(cwd(), '/repo', 'undo puts the value back');
-    const group = host.querySelector('#agent-spawn-group');
-    setValue(group, 'beta');
-    await harness.act(() => harness.fireEvent(group, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-group'), 'beta');
     await flush(harness);
     assert.equal(cwd(), '/beta', 'and the directory follows the group again, as before the fill');
   } finally {

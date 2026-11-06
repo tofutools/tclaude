@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { GroupCombobox } from './group-picker.js';
 import { Dialog } from './ui-dialog.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
@@ -215,15 +216,17 @@ function NodePicker({ targets, value, onPick, locked }) {
   </div>`;
 }
 
+const OTHER_GROUP = { value: '\u0000other', label: 'another group (type its name)…', keywords: 'other type name' };
+
 function GroupPicker({ groups, value, onChange, idPrefix, disabled }) {
   const [typed, setTyped] = useState(false);
   // A dropped group the catalog does not list stays as typed text, so what
   // is shown is what is sent.
   if (groups.length && !typed && (!value || groups.includes(value))) {
-    return html`<${Select} size="sm" id=${`${idPrefix}-group`} value=${value} disabled=${disabled} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
-      <option value="">pick a receiving group…</option>
-      ${groups.map((g) => html`<option key=${g} value=${g} selected=${value === g}>${g}</option>`)}
-      <option value=${'\u0000other'}>another group (type its name)…</option><//>`;
+    // The last row, OTHER_GROUP, swaps the choice for the text field.
+    return html`<${GroupCombobox} id=${`${idPrefix}-group`} groups=${[...groups, OTHER_GROUP]} value=${value} disabled=${disabled}
+      noneLabel="pick a receiving group…" ariaLabel="Receiving group"
+      onChange=${(key) => { if (key === OTHER_GROUP.value) { setTyped(true); onChange(''); } else onChange(key); }} />`;
   }
   return html`<input id=${`${idPrefix}-group`} value=${value} disabled=${disabled} placeholder="receiving group there (it must grant agents.receive)" autocomplete="off" onInput=${(e) => onChange(e.currentTarget.value)} />`;
 }

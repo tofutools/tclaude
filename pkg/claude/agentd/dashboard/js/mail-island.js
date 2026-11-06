@@ -38,6 +38,7 @@ import { RemoteInboxSection } from './remote-inbox.js';
 import { openFleetPage } from './fleet-move-drop.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { Button, Select } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
@@ -482,8 +483,9 @@ function PeerAccessDecision({ request, controller, loadLinks = defaultLinks }) {
   return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
     <span class="access-peer-consequence">Approving lets ${peer} use <code>${request.perm}</code> (${info?.what || 'see the slug registry'}) ${where} ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${info?.warning ? html` <b class="fa-danger">${info.warning}</b>` : ''}</span>
     <span class="grow"></span>
-    ${narrowable && groups.length > 0 && html`<${Select} class="access-peer-group" title="Narrow to one shared group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
-      <option value="">every group, including future ones</option>${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}<//>`}
+    ${narrowable && groups.length > 0 && html`<${GroupCombobox} id=${`access-peer-group-${request.id}`} className="access-peer-group" ariaLabel="Narrow to one shared group"
+      groups=${groups.map((g) => ({ value: String(g.id), label: g.name }))} value=${group} onChange=${setGroup}
+      noneLabel="every group, including future ones" />`}
     <${Select} class="access-peer-ttl" title="How long the grant lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
       ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}<//>
     <${Button} class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m<//>

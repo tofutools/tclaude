@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const templates = [{
   name: 'builders',
@@ -36,16 +37,6 @@ function deferred() {
 async function flush(harness, turns = 6) {
   await harness.act(async () => {
     for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
-  });
-}
-
-function choose(select, value) {
-  for (const option of select.options) {
-    if (option.value === value) option.setAttribute('selected', '');
-    else option.removeAttribute('selected');
-  }
-  Object.defineProperty(select, 'value', {
-    configurable: true, writable: true, value,
   });
 }
 
@@ -338,9 +329,7 @@ test('Preact group-create owner renders preset/mirror/pinned paths and reconcile
   assert.match(host.querySelector('#group-create-template-preview').textContent, /‹group›-lead/);
   assert.equal(harness.document.activeElement.id, 'group-create-name');
 
-  const source = host.querySelector('#group-create-source');
-  choose(source, 'alpha');
-  await harness.act(() => harness.fireEvent(source, 'change'));
+  await comboPick(harness, host.querySelector('#group-create-source'), 'alpha');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
   assert.match(host.querySelector('#group-create-context').value, /Mirrored group context/);
   host.querySelector('#group-create-manage-templates').click();
@@ -371,11 +360,9 @@ test('subgroup entry metadata only prefills later Group and Template choices', a
   state.open('', 'alpha');
   await flush(harness);
 
-  const groupSource = host.querySelector('#group-create-group-source');
-  choose(groupSource, 'beta');
-  await harness.act(() => harness.fireEvent(groupSource, 'change'));
-  choose(host.querySelector('#group-create-placement'), '');
-  await harness.act(() => harness.fireEvent(host.querySelector('#group-create-placement'), 'change'));
+  await comboPick(harness, host.querySelector('#group-create-group-source'), 'beta');
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#group-create-placement .choice-combobox-clear'), 'click'));
 
   [...host.querySelectorAll('.group-create-origin-options button')][2].click();
   await flush(harness);
@@ -507,9 +494,7 @@ test('leaving a clone preset does not silently restore clone semantics', async (
 
   assert.equal(host.querySelector('#group-create-with-agents'), null);
   const model = await harness.importDashboardModule('js/group-create-model.js');
-  const groupSource = host.querySelector('#group-create-group-source');
-  choose(groupSource, 'beta');
-  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  await comboPick(harness, host.querySelector('#group-create-group-source'), 'beta');
   await harness.input(host.querySelector('#group-create-name'), 'beta-prefill');
 
   let submitted;

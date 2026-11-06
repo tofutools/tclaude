@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
 
 function deferred() {
   let resolve;
@@ -185,13 +186,13 @@ test('Links create form validates, controls bidirectional payload and exposes bu
   const to = host.querySelector('#link-modal-to');
   const mode = host.querySelector('#link-modal-mode');
   const bidir = host.querySelector('#link-modal-bidir');
-  assertSameNode(harness.document.activeElement, from);
-  await choose(harness, to, 'alpha');
+  assertSameNode(harness.document.activeElement, from.querySelector('input'));
+  await comboPick(harness, to, 'alpha');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
   assert.match(host.querySelector('#link-modal-error').textContent, /must differ/);
   assert.equal(payloads.length, 0);
 
-  await choose(harness, to, 'beta');
+  await comboPick(harness, to, 'beta');
   await choose(harness, mode, 'owners->members');
   bidir.checked = true;
   await harness.act(() => harness.fireEvent(bidir, 'change'));
@@ -199,7 +200,7 @@ test('Links create form validates, controls bidirectional payload and exposes bu
   assert.deepEqual(payloads[0], { from: 'alpha', to: 'beta', mode: 'owners->members', bidir: true, node: '' });
   assert.equal(host.querySelector('#link-modal-submit').disabled, true);
   assert.match(host.querySelector('#link-modal-submit .theme-copy-regular').textContent, /Creating/);
-  assert.equal(from.disabled, true);
+  assert.equal(from.querySelector('input').disabled, true);
 
   rejectRequest(new Error('permission denied'));
   await harness.act(() => Promise.resolve());
@@ -225,11 +226,11 @@ test('Links create submit is single-flight within one turn and releases for retr
   await harness.act(() => Promise.resolve());
 
   const submit = () => host.querySelector('#link-modal-submit').click();
-  await choose(harness, host.querySelector('#link-modal-to'), 'alpha');
+  await comboPick(harness, host.querySelector('#link-modal-to'), 'alpha');
   await harness.act(() => { submit(); submit(); });
   assert.equal(requests.length, 0, 'validation does not start a mutation');
 
-  await choose(harness, host.querySelector('#link-modal-to'), 'beta');
+  await comboPick(harness, host.querySelector('#link-modal-to'), 'beta');
   await harness.act(() => { submit(); submit(); });
   assert.equal(requests.length, 1, 'same-turn valid submits create one link');
   await harness.act(async () => {
@@ -252,8 +253,8 @@ test('Links edit form is immutable except for mode and submits the exact row ide
   await harness.act(() => Promise.resolve());
 
   assert.equal(host.querySelector('#link-modal-meta').textContent, '#2 · gamma → alpha');
-  assert.equal(host.querySelector('#link-modal-from').disabled, true);
-  assert.equal(host.querySelector('#link-modal-to').disabled, true);
+  assert.equal(host.querySelector('#link-modal-from-input').disabled, true);
+  assert.equal(host.querySelector('#link-modal-to-input').disabled, true);
   assertAbsent(host.querySelector('#link-modal-bidir'));
   assertSameNode(harness.document.activeElement, host.querySelector('#link-modal-mode'));
   await choose(harness, host.querySelector('#link-modal-mode'), 'members->members');
@@ -332,13 +333,11 @@ test('Links create dirty baseline survives live group membership changes', async
   await harness.act(() => Promise.resolve());
   const from = host.querySelector('#link-modal-from');
   const to = host.querySelector('#link-modal-to');
-  // The minimal DOM harness does not derive select.value from Preact's initial
-  // controlled value until its first change event, so pin the default tuple by
-  // the ordered options from which LinkEditor selects alpha and then beta.
-  assert.equal(from.options[0].value, 'alpha');
-  assert.equal(to.options[1].value, 'beta');
-  await choose(harness, from, 'beta');
-  await choose(harness, to, 'gamma');
+  // LinkEditor's default tuple: the first group, then the next one.
+  assert.equal(from.dataset.value, 'alpha');
+  assert.equal(to.dataset.value, 'beta');
+  await comboPick(harness, from, 'beta');
+  await comboPick(harness, to, 'gamma');
 
   await harness.act(() => state.publish({ ...sample, groups: [{ name: 'beta' }, { name: 'gamma' }] }));
   await harness.act(() => escape());
@@ -347,8 +346,8 @@ test('Links create dirty baseline survives live group membership changes', async
   assert.ok(host.querySelector('#link-modal'), 'denied discard retains the editor');
   assertSameNode(host.querySelector('#link-modal-from'), from, 'publish retains the controlled From element');
   assertSameNode(host.querySelector('#link-modal-to'), to, 'publish retains the controlled To element');
-  assert.equal(from.value, 'beta');
-  assert.equal(to.value, 'gamma');
+  assert.equal(from.dataset.value, 'beta');
+  assert.equal(to.dataset.value, 'gamma');
 
   allowDiscard = true;
   await harness.act(() => escape());
@@ -467,10 +466,10 @@ test('a cross-node link picks a shared peer group and says auto vs request', asy
   const peers = [...dialog.querySelectorAll('#link-modal-peer option')];
   assert.deepEqual(peers.map((o) => o.hasAttribute('disabled')), [false, true], 'an older peer is listed but not selectable');
   assert.match(peers[1].textContent, /group links unsupported/);
-  assert.deepEqual([...dialog.querySelectorAll('#link-modal-peer-group option')].map((o) => o.textContent), ['builders', 'docs']);
+  assert.deepEqual(await comboLabels(harness, dialog.querySelector('#link-modal-peer-group')), ['builders', 'docs']);
   assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /No prompt for bob's operator.*connecting/);
   assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Create link');
-  await choose(harness, dialog.querySelector('#link-modal-peer-group'), 'grp_b2');
+  await comboPick(harness, dialog.querySelector('#link-modal-peer-group'), 'grp_b2');
   assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /Needs bob's approval.*24 hours/);
   assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Send link request');
   await harness.act(() => dialog.querySelector('#link-modal-submit').click());
@@ -544,7 +543,7 @@ test('the link dialog hands a peer over to the proposal composer, which sends sh
   members.checked = true;
   await harness.act(() => harness.fireEvent(members, 'change'));
   await harness.act(() => composer.querySelector('#proposal-add-pair').click());
-  await choose(harness, composer.querySelector('.proposal-pair-theirs'), 'grp_b2');
+  await comboPick(harness, composer.querySelector('[data-pair-side="theirs"]'), 'grp_b2');
   assert.match(composer.querySelector('#proposal-preview').textContent, /bob sees the name and description of alpha, plus the member list of alpha/);
   assert.match(composer.querySelector('#proposal-preview').textContent, /link alpha ⇄ bob:docs/);
   await harness.act(() => composer.querySelector('#proposal-submit').click());

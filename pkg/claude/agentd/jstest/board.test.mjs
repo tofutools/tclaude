@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 import { installFastClock } from './fast-clock.mjs';
 
 // The islands under test debounce and retry on second-scale timers; run
@@ -1245,14 +1246,12 @@ test('making a board a group\'s board shows its members and tells the online one
   boardsSection(harness);
   const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
-  const select = view.container.querySelector('select.board-group');
-  assert.deepEqual([...select.options].map((o) => o.value), ['', 'team']);
-  await harness.act(async () => {
-    [...select.options].forEach((option) => option.removeAttribute('selected'));
-    select.querySelector('option[value="team"]').setAttribute('selected', '');
-    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-    await wait(10);
-  });
+  const groupBox = view.container.querySelector('[data-board-group]');
+  assert.match(groupBox.querySelector('input').value, /No group/);
+  assert.deepEqual(await comboKeys(harness, groupBox), ['team']);
+  await comboPick(harness, groupBox, 'team');
+  await harness.act(() => wait(10));
+  assert.equal(groupBox.dataset.value, 'team');
   assert.deepEqual(requests.find((r) => r.url === '/api/boards/plan/group').body, { group: 'team' });
   const chip = view.container.querySelector('.board-person.via-group');
   assert.match(chip.textContent, /alpha/);

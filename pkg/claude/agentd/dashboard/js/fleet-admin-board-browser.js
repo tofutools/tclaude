@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
 import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
@@ -308,8 +309,8 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="ui-tag ui-tag-accent fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
         ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
             onChange=${(e) => change({ harness: e.currentTarget.checked ? [...opts.harness, r.id] : opts.harness.filter((x) => x !== r.id) })} /> ${r.label} <code>${r.path}</code></label>`)}`)}
-        ${opts.target === t.id && t.id === 'group' && (!roots ? html`<span class="muted">Loading…</span>` : groups.length ? html`<${Select} size="sm" id="fleet-cb-group" value=${opts.group} onChange=${(e) => change({ group: e.currentTarget.value })}>
-            <option value="">pick a group…</option>${groups.map((r) => html`<option key=${r.id} value=${r.id} selected=${opts.group === r.id}>${r.label}</option>`)}<//>
+        ${opts.target === t.id && t.id === 'group' && (!roots ? html`<span class="muted">Loading…</span>` : groups.length ? html`<${GroupCombobox} id="fleet-cb-group" value=${opts.group} onChange=${(key) => change({ group: key })}
+            noneLabel="pick a group…" groups=${groups.map((r) => ({ value: r.id, label: r.label }))} />
             ${opts.group && html`<code class="fa-cb-path">${groups.find((r) => r.id === opts.group)?.path}</code>`}`
           : html`<span class="fa-warn">No group has a default directory${roots.some((r) => r.kind) ? '' : ', or this node does not support group targets yet'}.</span>`)}
         ${opts.target === t.id && t.id === 'custom' && html`<input id="fleet-cb-custom" class="fa-cb-input" value=${opts.customDir} placeholder="/absolute/path/to/a/skills/directory" autocomplete="off" spellcheck="false" onInput=${(e) => change({ customDir: e.currentTarget.value })} />

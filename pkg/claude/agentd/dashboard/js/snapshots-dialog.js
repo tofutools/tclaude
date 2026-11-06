@@ -10,6 +10,7 @@ import { relTime } from './helpers.js';
 import { findingsText, modelsFor, redactionText, spawnableHarnesses } from './paf-model.js';
 import { downloadBlob } from './download.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
+import { GroupCombobox } from './group-picker.js';
 
 const html = htm.bind(h);
 
@@ -101,8 +102,8 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-spawn">
     <div class="ui-eyebrow paf-sec">Spawn from ${snap.name}</div>
     <div class="paf-hint ui-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
-    <${Field} label="Group"><${Select} id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
-      <option value="">(pick a group)</option>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></${Field}>
+    <${Field} label="Group"><${GroupCombobox} id="snapshot-spawn-group" groups=${groups} value=${group} onChange=${setGroup}
+      noneLabel="(pick a group)" /></${Field}>
     <${Field} label="Count"><input id="snapshot-spawn-count" type="number" min="1" max="20" value=${count} onInput=${(e) => setCount(e.currentTarget.value)} /></${Field}>
     <${Field} label="Name"><input id="snapshot-spawn-name" value=${name} placeholder=${`default: ${snap.agent_name || 'the agent'}${Number(count) > 1 ? '-1, -2, …' : ''}`} onInput=${(e) => setName(e.currentTarget.value)} /></${Field}>
     <${Field} label="Working dir"><input id="snapshot-spawn-cwd" value=${cwd} placeholder="default: the recorded working directory" onInput=${(e) => setCwd(e.currentTarget.value)} /></${Field}>

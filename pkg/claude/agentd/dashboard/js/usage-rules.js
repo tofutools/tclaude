@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { GroupCombobox } from './group-picker.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
@@ -309,8 +310,8 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
         <option value="global">Global (whole instance)</option>
         <option value="group" disabled=${!(overview.groups || []).length}>Group</option>
       <//></label>
-      ${scope === 'group' ? html`<label>Group <${Select} size="sm" aria-label="Limit group" value=${group} disabled=${busy || !!limit.id}
-        onChange=${(e) => touch(setGroup)(e.currentTarget.value)}>${(overview.groups || []).map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></label>` : null}
+      ${scope === 'group' ? html`<label>Group <${GroupCombobox} id="usage-limit-group" ariaLabel="Limit group" groups=${overview.groups || []}
+        value=${group} disabled=${busy || !!limit.id} onChange=${touch(setGroup)} /></label>` : null}
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}

@@ -5,6 +5,7 @@ import { confirmHubSave } from './fleet-admin-node-settings.js';
 import { grantConsequence, grantRows, shortID } from './fleet-admin-model.js';
 import { ClaimDialog } from './fleet-admin-hub.js';
 import { Button, Select } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 
 const html = htm.bind(h);
 
@@ -471,8 +472,7 @@ function ShareStep({ view, groups, actions, confirm, toast, reload, onOpenGrants
     <div class="fs-share">
       <label><span class="fa-k">peer</span><${Select} size="sm" id="fleet-setup-peer" value=${current.id} onChange=${(e) => setPeer(e.currentTarget.value)}>
         ${restricted.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}<//></label>
-      <label><span class="fa-k">group</span><${Select} size="sm" id="fleet-setup-group" value=${currentGroup} onChange=${(e) => setGroup(e.currentTarget.value)}>
-        ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></label>
+      <label><span class="fa-k">group</span><${GroupCombobox} id="fleet-setup-group" groups=${groups} value=${currentGroup} onChange=${setGroup} /></label>
     </div>
     <div class="fs-presets" role="group" aria-label="What the peer may do">
       ${SHARE_PRESETS.map((p) => {
