@@ -856,20 +856,26 @@ test('a prediction that stops holding shrinks the peek back before it retracts',
   assert.equal(peekW(s), 0);
 });
 
-test('a motion that starts near the panel is never predicted: wiggling, drifting, vertical moves or a fling there', async (t) => {
+test('moving about near the panel does not peek: wiggling, drifting or vertical moves', async (t) => {
   for (const [why, run] of [
     ['wiggling', (s) => { for (let i = 0; i < 12; i++) { s.timers.advance(16); s.move(s.content, i % 2 ? 900 : 650); } }],
     ['a slow drift', (s) => s.flick({ x0: 630, x1: 900, steps: 50, stepMs: 16 })],
     ['a vertical move', (s) => s.flick({ x0: 700, x1: 700, y0: 120, y1: 580 })],
-    ['a fast flick from inside the band', (s) => s.flick({ x0: 640, x1: 920, steps: 5 })],
   ]) {
     const s = await shell(t);
     withPageScrollbar(s);
     run(s);
     assert.equal(s.peeking(), false, `${why}: no peek`);
-    s.timers.advance(2000);
     assert.equal(s.revealed(), false, `${why}: and no reveal`);
+    s.timers.advance(2000);
+    assert.equal(s.revealed(), false, `${why}: nor later`);
   }
+  // With no near band (tcl-bg5qm1) a fast flick from there is judged like
+  // any other: it crosses where the panel's edge would be, and reveals.
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.flick({ x0: 640, x1: 920, steps: 5 });
+  assert.equal(s.revealed(), true, 'a fast flick from 81px out of the panel’s edge');
 });
 
 test('the closer to the panel a motion starts, the less speed it needs; a slow drift still never peeks', async (t) => {
@@ -1036,8 +1042,12 @@ test('a three-frame snap from the left into the edge zone reveals the panel at o
   assert.equal(s.revealed(), true, 'a two-frame snap: the first frame counts from where the pointer rested');
 
   s = await shell(t);
-  snap(s, [420, 860, 990], { y: 300 });
-  assert.equal(s.revealed(), true, 'no exception at the handle');
+  const handle = s.doc.getElementById('dock-toggle');
+  handle.getBoundingClientRect = () => ({ top: 273, bottom: 327, height: 54, left: WIDTH - 22, right: WIDTH, width: 22 });
+  snap(s, [420, 860]);
+  s.timers.advance(16);
+  s.move(handle, 990);
+  assert.equal(s.revealed(), true, 'a snap onto the folded handle is no exception');
 });
 
 test('a snap that runs past the window’s edge reveals when its next frame would have reached the zone', async (t) => {
@@ -1047,9 +1057,55 @@ test('a snap that runs past the window’s edge reveals when its next frame woul
   assert.equal(s.revealed(), true, 'heading off the right at snap speed');
 
   s = await shell(t);
-  snap(s, [200, 340, 480], { frameMs: 40 });
+  snap(s, [600, 700, 800, 900, 960], { from: 500, frameMs: 120 });
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300 });
+  assert.equal(s.revealed(), false, 'a slow motion leaving by the edge is not one');
+
+  s = await shell(t);
+  snap(s, [200, 340, 480]);
   s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 480, clientY: 300 });
-  assert.equal(s.revealed(), false, 'a slow motion leaving the window is not one');
+  assert.equal(s.revealed(), false, 'a fast motion leaving well short of the edge (its next frame would not reach the zone)');
+
+  s = await shell(t);
+  snap(s, [420, 860]);
+  s.harness.fireEvent(s.doc.documentElement, 'pointerleave', { clientX: 999, clientY: 300, buttons: 1 });
+  assert.equal(s.revealed(), false, 'a drag running off the edge, button held, is not one');
+});
+
+// Only a rest the page saw starts a snap (cold review of #4107): anything that
+// interrupts the moves it sees starts the next motion where the pointer is.
+test('a gap the page did not see is no rest: after a drag, a frame, a held button or Escape, the edge takes the dwell', async (t) => {
+  for (const [why, run] of [
+    ['an HTML5 drag dropped by the edge', (s) => {
+      s.move(s.content, 300);
+      s.harness.fireEvent(s.content, 'dragstart');
+      s.timers.advance(1000);
+      s.harness.fireEvent(s.content, 'drop');
+    }],
+    ['a pass through a frame', (s) => {
+      const frame = s.doc.body.appendChild(s.doc.createElement('iframe'));
+      s.move(s.content, 300);
+      s.harness.fireEvent(s.content, 'pointerout', { relatedTarget: frame });
+      s.timers.advance(2000);
+    }],
+    ['a selection dragged with the button held', (s) => {
+      s.move(s.content, 300);
+      for (const x of [500, 700, 900]) { s.timers.advance(16); s.move(s.content, x, { buttons: 1 }); }
+    }],
+    ['Escape on a peek mid-snap', (s) => {
+      s.flick(FLING);
+      assert.equal(s.peeking(), true);
+      s.harness.fireEvent(s.doc.body, 'keydown', { key: 'Escape' });
+    }],
+  ]) {
+    const s = await shell(t);
+    run(s);
+    s.timers.advance(16);
+    s.atEdge();
+    assert.equal(s.revealed(), false, `${why}: not at once`);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true, `${why}: after the dwell, as before`);
+  }
 });
 
 test('a slow approach, or a short one from near the edge, still takes the dwell', async (t) => {
