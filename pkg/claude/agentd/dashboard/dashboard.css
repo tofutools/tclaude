@@ -17298,6 +17298,16 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-wrap { overflow-wrap: anywhere; }
 .fa-fp-full { font-size: 14px; color: #f0f6fc; }
 .fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fa-become-filter { width: 100%; margin: 4px 0 6px; }
+.fa-become-perms { max-height: 260px; overflow-y: auto; border: 1px solid var(--border, #30363d); border-radius: 6px; }
+.fa-become-perms.off { opacity: .45; }
+.fa-become-perm { display: grid; grid-template-columns: 18px 1fr auto; gap: 2px 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #21262d; }
+.fa-become-perm:last-child { border-bottom: 0; }
+.fa-become-what { grid-column: 2 / 4; font-size: 12px; }
+.fa-become-unrestricted { padding: 6px 8px; border: 1px dashed #f85149; border-radius: 6px; }
+.fa-become-warn { margin: 10px 0; padding: 10px 12px; border: 2px solid #f85149; border-radius: 6px; background: #f8514922; color: #ffa198; }
+.fa-become-warn > b:first-child { display: block; color: #ff7b72; font-size: 14px; margin-bottom: 4px; }
+.fa-become-warn ul { margin: 6px 0; padding-left: 18px; }
 .fa-request { margin: 8px 0; padding: 8px 10px; border: 1px solid #58a6ff55; border-radius: 6px; background: #58a6ff14; color: #a5d6ff; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
