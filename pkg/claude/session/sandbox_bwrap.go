@@ -370,6 +370,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// carried around it and re-attached: they occupy their own sandbox paths, so
 	// they never fold with a contract dir, and dropping them here would silently
 	// launch without the mount the operator authored.
+	// The launch's own reopens, harness state included, may not fall under the
+	// spawn-time deny overlay: it covers each path's whole subtree.
+	if input.Snapshot != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(input.Snapshot.DenyOverlay,
+			launchReadDirs, launchWriteDirs, contractWriteDirs, stateDirs, readOnlyStateDirs); err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
+	}
 	effective.Filesystem = append(
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs),
 		remappedGrants...)

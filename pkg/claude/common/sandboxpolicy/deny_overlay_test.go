@@ -98,15 +98,16 @@ func TestDenyOverlaySurvivesAProfileEditBeneathIt(t *testing.T) {
 	assert.Equal(t, AccessWrite, access)
 }
 
-func TestDenyOverlayRemovesTmpfsAndAgentDirectoriesBeneathIt(t *testing.T) {
-	home, _, secrets := denyLineageDirs(t)
-	cache := filepath.Join(secrets, "cache")
-	base := snapshotFor(t, FilesystemGrant{Path: home, Access: AccessRead})
-	base.Effective.AgentDirectories = []string{cache, filepath.Join(home, "other-cache")}
-	got, err := ApplyDenyOverlay(base, []string{secrets})
-	require.NoError(t, err)
-	assert.Equal(t, []string{filepath.Join(home, "other-cache")}, got.Effective.AgentDirectories)
-	assert.Contains(t, overlayNotice(got).Detail, "agent directory "+cache)
+// A launch that would open a path under the overlay, as its own workspace,
+// Git or harness-state reopen, is refused and the path named.
+func TestValidateDenyOverlayHeldNamesALaunchReopen(t *testing.T) {
+	home, workspace, secrets := denyLineageDirs(t)
+	require.NoError(t, ValidateDenyOverlayHeld(nil, []string{secrets}))
+	require.NoError(t, ValidateDenyOverlayHeld([]string{secrets}, []string{home, workspace}),
+		"a path above or beside the deny is not under it")
+	err := ValidateDenyOverlayHeld([]string{secrets}, []string{workspace}, []string{filepath.Join(secrets, "state")})
+	require.ErrorIs(t, err, ErrDenyOverlayReopened)
+	assert.Contains(t, err.Error(), filepath.Join(secrets, "state")+" (under "+secrets+")")
 }
 
 func TestDenyOverlayNormalizesAndRefusesAnOmittedLaunch(t *testing.T) {

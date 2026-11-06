@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -182,4 +183,32 @@ func TestSandboxDenyRefusesALaunchThatWouldNotEnforceIt(t *testing.T) {
 	inherited := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
 		"name": "inherited-off", "cwd": t.TempDir(), "sandbox": "on", "sandbox_implementation": "off"})
 	assert.NotEqualf(t, http.StatusOK, inherited.Code, "an inherited overlay binds too: body=%s", inherited.Raw)
+}
+
+// A deny over a path the launch itself must reopen fails closed too: a linked
+// worktree whose repository lies under the denied path would have its Git
+// administrative directories opened for writing, so the spawn is refused and
+// names the path.
+func TestSandboxDenyRefusesAGitDirTheLaunchReopens(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	fx := newDenyFixture(t)
+	repo := filepath.Join(fx.secrets, "repo")
+	worktree := filepath.Join(fx.root, "wt")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	for _, args := range [][]string{
+		{"-C", repo, "init", "-q"},
+		{"-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"},
+		{"-C", repo, "worktree", "add", "-q", worktree},
+	} {
+		out, err := exec.Command("git", args...).CombinedOutput()
+		require.NoErrorf(t, err, "git %v: %s", args, out)
+	}
+
+	refused := spawnDenied(t, f, "git-reopen", map[string]any{"sandbox_deny": []string{fx.secrets}, "cwd": worktree})
+	assert.Equalf(t, http.StatusBadRequest, refused.Code, "spawn body=%s", refused.Raw)
+	assert.Contains(t, string(refused.Raw), "a Git directory the launch opens for writing", "the refusal names the Git path")
+
+	other := spawnDenied(t, f, "git-ok", map[string]any{"sandbox_deny": []string{fx.inner}, "cwd": worktree})
+	assert.Equalf(t, http.StatusOK, other.Code, "a deny beside the repository leaves it alone: body=%s", other.Raw)
 }

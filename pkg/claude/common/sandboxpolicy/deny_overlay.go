@@ -16,6 +16,10 @@ import (
 // A denied path covers its whole subtree. A more specific grant beneath it,
 // which ordinary profile composition would keep (the most specific rule wins),
 // is removed instead, and the removal is named in a composition notice. The
+// paths a launch itself must open (the workspace, its Git administrative
+// directories, the harness's state, materialized agent directories) are not
+// the profiles' to remove: a launch that would open one beneath a denied path
+// is refused instead (ValidateDenyOverlayHeld). The
 // overlay is a promise that nothing under the path stays reachable, and since
 // it outlives the profiles it was laid over, a later profile edit that adds a
 // grant beneath it must not quietly reopen it. Removing rather than refusing
@@ -176,16 +180,6 @@ func ApplyDenyOverlay(s Snapshot, add []string) (Snapshot, error) {
 	if err := validateTmpfsAgainstFilesystem(effective.Tmpfs, effective.Filesystem); err != nil {
 		return Snapshot{}, fmt.Errorf("apply sandbox deny: %w", err)
 	}
-	directories := effective.AgentDirectories[:0:0]
-	for _, dir := range effective.AgentDirectories {
-		if DenyOverlayCovers(denies, dir) != "" {
-			removed = append(removed, "agent directory "+dir)
-			delete(effective.Provenance.AgentDirectories, dir)
-			continue
-		}
-		directories = append(directories, dir)
-	}
-	effective.AgentDirectories = directories
 	aliases := effective.MountAliases[:0:0]
 	for _, alias := range effective.MountAliases {
 		if DenyOverlayCovers(denies, alias.Target) != "" || DenyOverlayCovers(denies, alias.Link) != "" {
@@ -236,4 +230,39 @@ func describeGrantPath(grant FilesystemGrant) string {
 		return fmt.Sprintf("%s (mounted at %s)", grant.Path, grant.GuestPath())
 	}
 	return grant.Path
+}
+
+// ErrDenyOverlayReopened refuses a launch that would open a path the deny
+// overlay covers.
+var ErrDenyOverlayReopened = errors.New("the sandbox deny overlay covers a path this launch must open")
+
+// ValidateDenyOverlayHeld is the launch-time check that no path the launch
+// will open, read or write, lies under the overlay. The profiles' own grants
+// were already removed by ApplyDenyOverlay, so a hit is one of the launch's
+// own reopens (the workspace, its Git administrative directories, the
+// harness's state, an agent-owned directory, a scratch mount): it would
+// quietly reopen a denied path, so the launch is refused and the path named.
+func ValidateDenyOverlayHeld(overlay []string, dirs ...[]string) error {
+	if len(overlay) == 0 {
+		return nil
+	}
+	var hits []string
+	seen := map[string]bool{}
+	for _, list := range dirs {
+		for _, dir := range list {
+			dir = strings.TrimSpace(dir)
+			if dir == "" || seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			if deny := DenyOverlayCovers(overlay, dir); deny != "" {
+				hits = append(hits, fmt.Sprintf("%s (under %s)", dir, deny))
+			}
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	sort.Strings(hits)
+	return fmt.Errorf("%w: %s", ErrDenyOverlayReopened, strings.Join(hits, ", "))
 }

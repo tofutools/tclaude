@@ -212,6 +212,14 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 		launchReadDirs = AppendUniqueDir(launchReadDirs, in.params.ManagedInstructionsRoot)
 	}
 	launchDenyDirs := sandboxSnapshotDirs(in.launchSandbox, sandboxpolicy.AccessDeny)
+	// A spawn-time deny covers its whole subtree, so a launch whose own
+	// reopens (the workspace, Git admin paths, agent directories) fall under
+	// it is refused rather than quietly reopening it.
+	if in.launchSandbox != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(in.launchSandbox.DenyOverlay, launchReadDirs, launchWriteDirs); err != nil {
+			return launchDirs{}, err
+		}
+	}
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
 	// gate saw only the authored profile, but the launch contract above adds
 	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
