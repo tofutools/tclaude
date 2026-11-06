@@ -752,6 +752,39 @@ test('a press on a strip that only peeks is swallowed with its click, and ends t
   assert.equal(s.harness.fireEvent(card, 'click').defaultPrevented, false, 'only that one click');
 });
 
+// The handle rides the peek, and a press on it is the operator pinning
+// (tcl-bg5qm1): it is never swallowed, and the peek holds until its click.
+test('a press on the handle of a peeking panel pins it', async (t) => {
+  const { PEEK_RETRACT_MS } = (await (await createPreactHarness(t)).importDashboardModule('js/side-panel-predict.js')).PREDICT;
+  const s = await shell(t);
+  const handle = s.doc.getElementById('dock-toggle');
+  s.flick(FLING);
+  assert.equal(s.peeking(), true);
+  const down = s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
+  assert.equal(down.defaultPrevented, false, 'the press goes through');
+  s.harness.fireEvent(handle, 'pointermove', { clientX: WIDTH - 39, clientY: 301, buttons: 1, pointerType: 'mouse' });
+  assert.equal(s.peeking(), true, 'a real click\'s jitter, button held, keeps the peek under it');
+  s.timers.advance(PEEK_RETRACT_MS * 2);
+  assert.equal(s.peeking(), true, 'and the peek holds under it until the click');
+  const click = s.harness.fireEvent(handle, 'click');
+  assert.equal(click.defaultPrevented, false, 'its click is not swallowed');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'and pins the panel open');
+  assert.equal(s.peeking(), false, 'which ends the peek');
+  s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
+  s.harness.fireEvent(handle, 'click');
+  assert.equal(s.side.isSidePanelOpen('groups'), false, 'and a second click unpins it');
+});
+
+test('a press on the peeking panel\'s handle dragged off it lets the peek go', async (t) => {
+  const s = await shell(t);
+  const handle = s.doc.getElementById('dock-toggle');
+  s.flick(FLING);
+  s.harness.fireEvent(handle, 'pointerdown', { clientX: WIDTH - 40, clientY: 300, buttons: 1, pointerType: 'mouse' });
+  s.move(s.content, WIDTH - 200, { buttons: 1 });
+  assert.equal(s.peeking(), false);
+  assert.equal(s.side.isSidePanelOpen('groups'), false);
+});
+
 // Chrome sends a move at the same position when the layout changes under a
 // still pointer, as the strip sliding in does: that is no move onto it.
 test('the strip sliding under a still pointer does not reveal the panel; a real move onto it does', async (t) => {
