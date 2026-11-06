@@ -385,3 +385,155 @@ test('end to end over the real dashboard markup: the panel auto-hides', async (t
   harness.fireEvent(doc.body, 'keydown', { key: 'Escape' });
   assert.ok(!doc.body.classList.contains('dock-revealed'), 'Escape sends it away');
 });
+
+// tcl-vv7jn8: the page's own vertical scrollbar sits at the right edge,
+// right of the fixed panel. A pointer on it targets <html>, not the panel.
+const SCROLLBAR = 15;
+const PANEL_W = 264;
+
+// withPageScrollbar gives the page a scrollbar and the panel its real box: off
+// screen right of the content while folded, left of the scrollbar while it
+// floats in.
+// width is the scrollbar's layout width: 0 for no scrollbar and for an
+// overlay scrollbar (macOS), which takes no width but still sits at the edge.
+// setWidth changes it live, as a scrollbar appearing or going does.
+function withPageScrollbar(s, width = SCROLLBAR) {
+  let bar = width;
+  const contentRight = () => WIDTH - bar;
+  Object.defineProperty(s.doc.documentElement, 'clientWidth', { configurable: true, get: contentRight });
+  s.dock.getBoundingClientRect = () => {
+    const left = s.revealed() ? contentRight() - PANEL_W : contentRight();
+    return { top: 100, bottom: 600, left, right: left + PANEL_W, width: PANEL_W, height: 500 };
+  };
+  const onScrollbar = (init) => s.move(s.doc.documentElement, WIDTH - 5, init);
+  return { right: contentRight(), onScrollbar, setWidth: (w) => { bar = w; } };
+}
+
+test('the pointer on the page scrollbar, under the edge zone, reveals the panel and does not flicker it', async (t) => {
+  const s = await shell(t);
+  const { onScrollbar } = withPageScrollbar(s);
+  onScrollbar();
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true, 'resting on the scrollbar strip is resting at the edge');
+  // The loop was: on the scrollbar, not "over" the panel, so it went after the
+  // hover-out delay, and the dwell brought it straight back.
+  for (let i = 0; i < 10; i++) {
+    onScrollbar({ clientY: 300 + (i % 2 ? 3 : -3) });
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), true, `still shown after move ${i + 1}: the scrollbar beside it counts as over it`);
+  }
+});
+
+test('the edge zone is EDGE_REVEAL_PX wide from the content edge, plus the page scrollbar', async (t) => {
+  const s = await shell(t);
+  const { right } = withPageScrollbar(s);
+  assert.ok(s.reveal.EDGE_REVEAL_PX >= 24 && s.reveal.EDGE_REVEAL_PX <= 40, 'a zone a quick flick can hit');
+  s.move(s.content, right - s.reveal.EDGE_REVEAL_PX - 1);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), false, 'just outside');
+  s.move(s.content, right - s.reveal.EDGE_REVEAL_PX);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true, 'at the zone\'s inner edge');
+});
+
+test('dragging the panel\'s own scrollbar, or the page scrollbar beside it, does not retract it', async (t) => {
+  await t.test('its own scrollbar, dragged out past its left edge', async (t) => {
+    const s = await shell(t);
+    withPageScrollbar(s);
+    s.restAtEdge();
+    const body = s.doc.getElementById('dock-body');
+    s.move(body, WIDTH - 30);
+    s.harness.fireEvent(body, 'pointerdown', { clientX: WIDTH - 30, clientY: 300, buttons: 1, pointerType: 'mouse' });
+    s.harness.fireEvent(s.dock, 'pointerleave');
+    s.move(s.content, 300, { buttons: 1 });
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'held while the press that started on it is down');
+    s.harness.fireEvent(s.content, 'pointerup', { clientX: 300, clientY: 300, pointerType: 'mouse' });
+    s.timers.advance(s.hoverClose - 1);
+    assert.equal(s.revealed(), true, 'released away from it, it waits the hover-out delay');
+    s.timers.advance(1);
+    assert.equal(s.revealed(), false, 'then goes');
+  });
+  await t.test('the page scrollbar, dragged below the panel', async (t) => {
+    const s = await shell(t);
+    const { onScrollbar } = withPageScrollbar(s);
+    onScrollbar();
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    s.harness.fireEvent(s.doc.documentElement, 'pointerdown', { clientX: WIDTH - 5, clientY: 300, buttons: 1, pointerType: 'mouse' });
+    onScrollbar({ clientY: 700, buttons: 1 });
+    s.timers.advance(s.hoverClose * 3);
+    assert.equal(s.revealed(), true, 'a scrollbar drag that started beside it holds it');
+    // Chrome may not deliver the pointerup of a scrollbar drag: the next plain
+    // move ends the press.
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false, 'and the next plain move away lets it go after the delay');
+  });
+});
+
+test('leaving the panel retracts it after exactly the popover hover-out delay', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.restAtEdge();
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  s.move(s.content, 300);
+  s.timers.advance(s.hoverClose - 1);
+  assert.equal(s.revealed(), true, 'still shown just before HOVER_CLOSE_MS');
+  s.timers.advance(1);
+  assert.equal(s.revealed(), false, 'gone at HOVER_CLOSE_MS');
+});
+
+test('the zone and the no-flicker hold work the same with no scrollbar, an overlay scrollbar, or one that comes and goes', async (t) => {
+  const steady = async (s, at, what) => {
+    for (let i = 0; i < 6; i++) {
+      at({ clientY: 300 + (i % 2 ? 3 : -3) });
+      s.timers.advance(s.hoverClose);
+      assert.equal(s.revealed(), true, `${what}: still shown after move ${i + 1}`);
+    }
+  };
+  await t.test('no vertical scrollbar (clientWidth equals innerWidth)', async (t) => {
+    const s = await shell(t);
+    withPageScrollbar(s, 0);
+    s.move(s.content, WIDTH - s.reveal.EDGE_REVEAL_PX - 1);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), false, 'just outside the zone');
+    s.move(s.content, WIDTH - 5);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true, 'the same zone reveals');
+    // The panel now reaches the window edge, so the pointer is on it.
+    await steady(s, (init) => s.move(s.doc.getElementById('dock-body'), WIDTH - 5, init), 'no scrollbar');
+  });
+  await t.test('an overlay scrollbar: no width, but a pointer on it targets <html>', async (t) => {
+    const s = await shell(t);
+    const { onScrollbar } = withPageScrollbar(s, 0);
+    onScrollbar();
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true);
+    await steady(s, onScrollbar, 'overlay scrollbar');
+  });
+  await t.test('a scrollbar that appears, then goes, while the panel floats', async (t) => {
+    const s = await shell(t);
+    const { onScrollbar, setWidth } = withPageScrollbar(s, 0);
+    s.move(s.content, WIDTH - 5);
+    s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+    assert.equal(s.revealed(), true);
+    setWidth(SCROLLBAR); // the panel shifts left; the pointer is now on the new scrollbar
+    await steady(s, onScrollbar, 'scrollbar appeared');
+    setWidth(0); // the panel shifts back under the pointer
+    await steady(s, (init) => s.move(s.doc.getElementById('dock-body'), WIDTH - 5, init), 'scrollbar gone');
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false, 'and it still goes once the pointer leaves');
+  });
+});
+
+test('a dialog or popover drawn over the panel\'s band is not the panel', async (t) => {
+  const s = await shell(t);
+  withPageScrollbar(s);
+  s.restAtEdge();
+  const dialog = s.doc.body.appendChild(s.doc.createElement('div'));
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  s.move(dialog, WIDTH - 100);
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'over something else in its band, it goes after the delay');
+});

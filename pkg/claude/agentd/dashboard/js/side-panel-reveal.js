@@ -12,14 +12,23 @@
 //  - It floats over the content (body.dock-revealed); nothing reflows.
 //  - It goes the standard hover-out delay after the pointer leaves it, but
 //    not while it holds focus, while one of its menus is open, or while a drag
-//    that started in it is under way. Escape sends it away.
+//    or a press (its scrollbar's) that started on it is under way. Escape, its
+//    Hide button, unfolding it, a tab switch and the config switch send it
+//    away at once; nothing else skips the delay.
+//  - "On it" is geometric as well as the DOM: the page's own scrollbar sits
+//    to the right of the panel, under the edge zone, and a pointer there
+//    targets <html>, not the panel. Without that, the pointer that revealed
+//    the panel was never over it, and it went and came back in a loop.
 //  - config dashboard.side_panel_edge_reveal (default on) turns it off.
 
 import { HOVER_CLOSE_MS } from './popover-watch.js';
 import { canRevealSidePanel, concealSidePanel, isSidePanelRevealed, revealSidePanel } from './side-panel.js';
 
-// EDGE_REVEAL_PX is how close to the right edge the pointer has to be.
-export const EDGE_REVEAL_PX = 10;
+// EDGE_REVEAL_PX is how close to the right edge the pointer has to be. It is
+// measured from the content's edge (left of any page scrollbar), so the
+// scrollbar strip always counts on top, and 32px is a target a fast flick can
+// land on without taking a wide band of the page's right-hand content.
+export const EDGE_REVEAL_PX = 32;
 // EDGE_REVEAL_DWELL_MS is how long it has to stay there.
 export const EDGE_REVEAL_DWELL_MS = 150;
 
@@ -70,6 +79,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let dragging = false; // an HTML5 drag anywhere
   let dragFromPanel = false;
   let overPanel = false;
+  let pressFromPanel = false; // a button pressed on it (its scrollbar's) and not yet released
 
   const cancelDwell = () => {
     if (dwell) timers.clearTimeout(dwell);
@@ -82,7 +92,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   const held = () => {
     const panel = dock();
     const focused = doc.activeElement;
-    return dragFromPanel || (!!panel?.contains(focused) && typing(focused)) || openMenu(panel, doc);
+    return dragFromPanel || pressFromPanel || (!!panel?.contains(focused) && typing(focused)) || openMenu(panel, doc);
   };
   // scheduleHide sends a floating panel away after the hover-out delay, unless
   // it is held then; whatever ends the hold (the pointer moving on, focus
@@ -94,10 +104,27 @@ export function bindEdgeReveal(doc = globalThis.document, {
       if (!overPanel && !held()) concealSidePanel(doc);
     }, HOVER_CLOSE_MS);
   };
+  // contentRight is the right edge of the page's content: innerWidth less any
+  // page scrollbar.
+  const contentRight = () => doc.documentElement?.clientWidth || win.innerWidth;
   const inEdgeZone = (event) => {
-    if (event.clientX < win.innerWidth - EDGE_REVEAL_PX) return false;
+    if (event.clientX < contentRight() - EDGE_REVEAL_PX) return false;
     const rect = dock()?.getBoundingClientRect?.();
     return !rect?.height || (event.clientY >= rect.top && event.clientY <= rect.bottom);
+  };
+
+  // onPanel is whether the pointer is on the floating panel: on one of its
+  // elements, or on the page scrollbar beside it. A pointer on the page
+  // scrollbar targets <html>, so only that target counts in the panel's band
+  // (its left edge to the window's right edge); a dialog or popover drawn over
+  // the band is not the panel.
+  const onPanel = (event) => {
+    const panel = dock();
+    if (panel?.contains(event.target)) return true;
+    if (event.target !== doc.documentElement) return false;
+    const rect = panel?.getBoundingClientRect?.();
+    if (!rect?.width) return false;
+    return event.clientX >= rect.left && event.clientY >= rect.top && event.clientY <= rect.bottom;
   };
 
   // No pointer events fire during an HTML5 drag, so a pointermove means any
@@ -114,8 +141,11 @@ export function bindEdgeReveal(doc = globalThis.document, {
   doc.addEventListener('pointermove', (event) => {
     dragOver();
     if (event.pointerType && event.pointerType !== 'mouse') return;
+    // A move with no button held ends a press, even one whose pointerup the
+    // page never saw (a scrollbar drag released elsewhere).
+    if (!event.buttons) pressFromPanel = false;
     if (isSidePanelRevealed()) {
-      overPanel = !!dock()?.contains(event.target);
+      overPanel = onPanel(event);
       if (overPanel) cancelHide();
       else scheduleHide();
       return;
@@ -136,7 +166,17 @@ export function bindEdgeReveal(doc = globalThis.document, {
   });
   // A press cancels a reveal still waiting out its dwell. It closes nothing,
   // so it is not the shared outside-press rule (ui-popover-dismiss.test.mjs).
-  doc.addEventListener('pointerdown', cancelDwell);
+  doc.addEventListener('pointerdown', (event) => {
+    cancelDwell();
+    if (isSidePanelRevealed() && onPanel(event)) pressFromPanel = true;
+  }, true);
+  const pressOver = () => {
+    if (!pressFromPanel) return;
+    pressFromPanel = false;
+    if (!overPanel) scheduleHide();
+  };
+  doc.addEventListener('pointerup', pressOver, true);
+  doc.addEventListener('pointercancel', pressOver, true);
   doc.documentElement?.addEventListener('pointerleave', () => {
     cancelDwell();
     overPanel = false;
