@@ -34,6 +34,7 @@ import { companionAgents } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import { onPeerPage } from './node-api.js';
 import { peerBoardAccess, peerBoardsShared, peerName } from './peer-boards.js';
 import { LockChip, rememberLock } from './resource-lock.js';
@@ -1708,7 +1709,7 @@ export function BoardEditor({
   // setGroup makes the board a group's board (tcl-4yhow7): its members are
   // on it without one-by-one invitations. The online ones newly on it are
   // told how to use it.
-  async function setGroup(group, select = null) {
+  async function setGroup(group) {
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/group`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -1721,8 +1722,7 @@ export function BoardEditor({
       await Promise.allSettled(fresh.map((id) => sendInvite(id, 'Your group now has')));
       notify(result.group ? `This is now ${result.group}'s board${fresh.length ? `; told ${fresh.length} online member${fresh.length === 1 ? '' : 's'}` : ''}.` : 'The board no longer belongs to a group.');
     } catch (error) {
-      // The select shows the old group again.
-      if (select) select.value = meta.group;
+      // The group choice keeps showing meta.group, the old group.
       notify(`Could not change the board's group: ${error?.message || error}`, true);
     }
   }
@@ -1773,6 +1773,7 @@ export function BoardEditor({
   const paper = gridStyle(view);
   const drawing = [...presence].filter(([, state]) => state === 'drawing').map(([id]) => agents.get(id)?.name || id.slice(0, 12));
   const groupNames = [...new Set([meta.group, ...(snapshot.value?.groups || []).filter((g) => g?.name && !g.scribe && !g.archived).map((g) => g.name)].filter(Boolean))].sort();
+  const groupChoices = groupNames.map((name) => ({ value: name, label: `Group: ${name}` }));
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
   void tick;
   // A pan or a zoom renders the editor without changing an element: the same
@@ -1815,11 +1816,8 @@ export function BoardEditor({
               : html`<div class="board-invite-empty ui-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
           </div>`}
         </span>
-        <${Select} size="sm" class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
-          value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value, event.currentTarget)}>
-          <option value="">No group</option>
-          ${groupNames.map((name) => html`<option key=${name} value=${name}>Group: ${name}</option>`)}
-        <//>`}
+        <${GroupCombobox} ariaLabel="The board's group" attrs=${{ 'data-board-group': '', title: "A group's members are on its board without invitations" }}
+          groups=${groupChoices} value=${meta.group} noneLabel="No group" onChange=${(group) => setGroup(group)} />`}
       </div>
       <${Button} size="sm" class="board-export" title="Download as .excalidraw"
         onClick=${() => import('./download.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>

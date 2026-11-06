@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const PREVIEW = Object.freeze({
   title: 'Ship a feature', summary: 'Implement, review, approve, merge.', root: 'ship@sha256:aa', rootId: 'ship',
@@ -190,9 +191,8 @@ test('import flow: each choice is reviewed again, and the apply carries the revi
   assert.equal(doc.querySelector('[data-pwf-replace]'), null, 'renaming needs no replace consent');
   assert.match(doc.querySelector('[data-pwf-template="review"]').textContent, /as review-2/);
 
-  const group = doc.querySelector('[data-pwf-group]');
-  Object.defineProperty(group, 'value', { configurable: true, value: 'webshop' });
-  await harness.act(async () => { harness.fireEvent(group, 'change'); await settle(); });
+  await comboPick(harness, doc.querySelector('[data-pwf-group]'), 'webshop');
+  await harness.act(settle);
   const reviewed = calls.length;
   assert.equal(calls.at(-1), '/v1/process/import?map=dev%3Dengineer&rename=1&group=webshop');
 

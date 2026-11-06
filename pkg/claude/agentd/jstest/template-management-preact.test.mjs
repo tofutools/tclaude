@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 test('template model preserves the complete replace payload and stale references', async (t) => {
   const harness = await createPreactHarness(t);
@@ -416,12 +417,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-preview').textContent,
     /owner/,
   );
-  const mirrorSelect = host.querySelector('#template-deploy-source');
-  mirrorSelect.querySelector('option[value="team"]').selected = true;
-  mirrorSelect.dispatchEvent(
-    new harness.window.Event('change', { bubbles: true }),
-  );
-  await harness.act(() => Promise.resolve());
+  await comboPick(harness, host.querySelector('#template-deploy-source'), 'team');
   const templateSelect = host.querySelector('#template-deploy-template');
   templateSelect.querySelector('option[value="review-force"]').selected = true;
   templateSelect.dispatchEvent(

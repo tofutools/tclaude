@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { PEER_SLUGS, REQUESTER_PAYS, UNRESTRICTED_CONSEQUENCE, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -112,9 +113,8 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
         <${Select} size="sm" id="fleet-profile-slug" value=${slug} onChange=${(e) => { setSlug(e.currentTarget.value); setScope(''); }}>
           ${PEER_SLUGS.map((s) => html`<option key=${s.slug} value=${s.slug}>${s.slug}</option>`)}<//>
         ${info.gateway ? html`<input id="fleet-profile-scope" value=${scope} placeholder="all gateways (or a name)" onInput=${(e) => setScope(e.currentTarget.value)} />`
-          : info.kind !== 'node' && html`<${Select} size="sm" id="fleet-profile-scope" value=${scope} onChange=${(e) => setScope(e.currentTarget.value)}>
-            ${info.kind === 'group' ? html`<option value="">all groups (incl. future)</option>` : html`<option value="">pick a group…</option>`}
-            ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//>`}
+          : info.kind !== 'node' && html`<${GroupCombobox} id="fleet-profile-scope" groups=${groups} value=${scope} onChange=${setScope}
+            noneLabel=${info.kind === 'group' ? 'all groups (incl. future)' : 'pick a group…'} ariaLabel="Grant scope" />`}
         <${Button} size="sm" id="fleet-profile-add-grant" onClick=${addGrant}>add<//>
         <span class="muted">${info.what}</span>
       </div>

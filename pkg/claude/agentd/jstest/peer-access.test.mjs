@@ -1,5 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys } from './combobox-helpers.mjs';
 
 function fakeTimers() {
   const queue = []; let seq = 0;
@@ -20,7 +21,9 @@ test('the request dialog sends permission, group, TTL and reason and follows the
   };
   const mounted = await harness.mount(harness.html`<${mod.RequestAccessDialog} node="forge" perm="groups.members.clone" groups=${[{ id: 4, name: 'ops' }]} onClose=${() => {}} actions=${actions} timers=${timers} />`);
   const doc = harness.document; const q = (s) => doc.querySelector(s);
-  assert.deepEqual([...q('#peer-access-group').querySelectorAll('option')].map((o) => o.value), ['', '4'], 'a group permission may leave the group to the peer');
+  assert.match(q('#peer-access-group input').value, /every group on forge, including future ones/, 'focused on open, it shows its value and stays closed');
+  assert.deepEqual(await comboKeys(harness, q('#peer-access-group')), ['4']);
+  assert.equal(q('#peer-access-group').dataset.value, '', 'a group permission may leave the group to the peer');
   assert.match(doc.body.textContent, /every group on forge, including ones created later/);
   const ttl = q('#peer-access-ttl'); for (const o of ttl.querySelectorAll('option')) { if (o.value === '86400') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
   await harness.act(() => harness.fireEvent(ttl, 'change'));

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 const SNAPSHOT = {
   groups: [{ name: 'team', members: [{ agent_id: 'agt_rev', title: 'reviewer' }] }, { name: 'trial', members: [] }],
@@ -79,7 +80,7 @@ async function mount(t, { descriptor = { kind: 'snapshots' }, overrides = {} } =
 }
 
 test('the Snapshots view lists the library and resilience status, and spawns from a snapshot', async (t) => {
-  const { host, calls, settle, choose, input } = await mount(t);
+  const { harness, host, calls, settle, choose, input } = await mount(t);
   const rows = [...host.querySelectorAll('#snapshots-list tbody tr')];
   assert.deepEqual(rows.map((row) => row.dataset.snapshot), ['known-good', 'flagged']);
   assert.match(rows[0].textContent, /before the refactor[\s\S]*claude · claude-opus-5-5[\s\S]*2\.3 MB/);
@@ -88,7 +89,9 @@ test('the Snapshots view lists the library and resilience status, and spawns fro
   rows[0].querySelector('[data-snap="spawn"]').click();
   await settle();
   assert.equal(host.querySelector('#snapshot-spawn-submit').disabled, true, 'needs a group');
-  await choose(host.querySelector('#snapshot-spawn-group'), 'trial');
+  const groupBox = host.querySelector('#snapshot-spawn-group');
+  assert.deepEqual(await comboKeys(harness, groupBox), ['team', 'trial']);
+  await comboPick(harness, groupBox, 'trial');
   await input(host.querySelector('#snapshot-spawn-count'), '3');
   await choose(host.querySelector('#snapshot-spawn-harness'), 'codex');
   host.querySelector('#snapshot-spawn-submit').click();

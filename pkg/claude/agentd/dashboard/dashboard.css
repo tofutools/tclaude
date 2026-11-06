@@ -6547,6 +6547,17 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .filter-combobox-group { padding: 2px 10px 0; color: #a9b1c0; font-size: 11px; }
 .filter-combobox-tip { padding: 4px 10px; color: var(--ui-muted-text); font-size: 11px; }
 .filter-combobox-foot { border-top: 1px solid #2a3340; padding: 4px 10px; color: #e3b341; font-size: 11px; }
+/* An in-form choice (choice-combobox.js), sized like the <select> it
+   replaced: the box shows the chosen value, × follows it, and the list opens
+   over what is below. */
+.choice-combobox { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.choice-combobox .filter-combobox { margin-top: 0; flex: 1 1 auto; min-width: 0; max-width: none; }
+.choice-combobox.missing .filter-combobox-input { color: #d29922; }
+.filter-combobox-floating { position: relative; }
+.filter-combobox-floating .filter-combobox-list {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 9; min-width: 220px;
+  background: #0d1117; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
 /* The agent picker (agent-picker.js): in its dialog the list fills the
    dialog, under a full-size box; in a form, the chosen agent sits above it. */
 .agent-picker { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -6554,12 +6565,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .agent-picker .filter-combobox .filter-combobox-input { padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
 .agent-picker .filter-combobox .filter-combobox-list { flex: 1 1 auto; min-height: 80px; max-height: 50vh; margin-top: 0; border-color: #2a3340; }
 .agent-picker .filter-combobox .add-member-row { padding: 6px 10px; }
-.agent-combobox { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.agent-combobox > .agent-combobox-chosen { order: -1; }
-.agent-combobox .filter-combobox { margin-top: 0; }
-.agent-combobox-chosen { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; font-size: 12px; }
-.agent-combobox-chosen .rowname { color: #d4d4d4; font-weight: bold; }
-.agent-combobox-chosen .id { color: #7d8590; font-size: 11px; }
 .perm-scope-more { cursor: pointer; border-style: dashed; color: #58a6ff; background: transparent; font-family: inherit; }
 .perm-scope-sheet {
   margin-top: 4px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 4px 8px; max-width: 460px;
@@ -16654,6 +16659,7 @@ body.wizard .usage-history-note {
 .route-map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
 .route-map-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-toolbar select:where(:not(.ui-select)) { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
+.route-map-toolbar .choice-combobox { width: 260px; }
 .route-map-count { color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-disclosure { margin: 0 0 10px; padding: 8px 10px; border: 1px solid #8b6b2e; border-radius: 5px; color: #e3b341; background: rgba(187, 128, 9, .10); font-size: 12px; }
 .route-map-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 12px; align-items: start; }
@@ -16712,7 +16718,7 @@ body.wizard .usage-history-note {
 
 @media (max-width: 560px) {
   .route-map-toolbar { align-items: stretch; flex-direction: column; }
-  .route-map-toolbar label, .route-map-toolbar select { width: 100%; }
+  .route-map-toolbar label, .route-map-toolbar select, .route-map-toolbar .choice-combobox { width: 100%; }
   .route-map-toolbar select { box-sizing: border-box; }
   .route-map-mode { width: 100%; }
   .route-map-mode .ui-btn { flex: 1; }
@@ -17150,6 +17156,7 @@ html.remote-node body::before {
 .peer-access-reason { align-items: flex-start; }
 .access-peer-consequence { font-size: 12px; color: #c9d1d9; }
 .access-peer-ttl, .access-peer-group { font-size: 12px; }
+.choice-combobox.access-peer-group { flex: 0 1 260px; }
 /* Peer view limits (js/peer-view-limits.js): what the peer does not offer
    stays in place, greyed, with the reason on hover and on click. Refused
    data-act controls are greyed by a rule generated from the peer's peer_view,
@@ -17447,6 +17454,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fs-pre { margin: 6px 0; padding: 6px 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; overflow-x: auto; font-size: 12px; }
 .fs-share { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 10px; }
 .fs-share label { display: inline-flex; align-items: center; gap: 6px; }
+.fs-share .choice-combobox { width: 240px; }
 .fs-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-width: 900px; }
 .fs-preset { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; }
 .fs-preset.on { border-color: #1f6feb; background: #1f6feb14; }
@@ -17631,7 +17639,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-opt-body > .muted { font-size: 12px; }
 .fa-cb-sub { display: block; font-size: 12px; }
 .fa-cb-path { font-size: 12px; color: #7ee2b8; overflow-wrap: anywhere; }
-.fa-cb-input, #fleet-cb-group:where(:not(.ui-select)) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; font-size: 12px; }
+.fa-cb-input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; font-size: 12px; }
 .fa-cb-input { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .fa-cb-check { display: block; margin: 6px 0; font-size: 12.5px; }
 .fa-cb-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -18457,13 +18465,12 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .dpp-graph { overflow-x: auto; margin: 4px 0 8px; }
 .dpp-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dpp-acts select:where(:not(.ui-select)) { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
-/* Start in… is the preview's main action, so its picker keeps the primary fill. */
-.dpp-acts .dpp-start { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+/* The Start in… and Pin to group… choices share the row with the buttons. */
+.dpp-acts .choice-combobox { flex: 1 1 140px; }
 .dpp-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; font-size: 11px; color: #6e7681; }
 .dpp-unpin { background: none; border: 0; padding: 0 0 0 4px; color: inherit; cursor: pointer; font: inherit; }
 .dpp-unpin:hover:not(:disabled), .dpp-unpin:focus-visible { color: #ff7b72; outline: none; }
 body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; color: #f3e6c0; }
-body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
 /* Auto-close terminal tabs: event rows × terminal-kind columns of checkboxes. */
 .cfg-close-tabs { border-collapse: collapse; font-size: 12px; }

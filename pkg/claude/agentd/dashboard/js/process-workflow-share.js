@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { downloadBlob } from './download.js';
 import { shellConfirm } from './shell-state.js';
 import { managementController } from './management-controller.js';
@@ -309,10 +310,9 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
       ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
     ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4 class="ui-eyebrow">Save to a group</h4>
-      <label class="pwf-group">Pin it to <${Select} data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
-        <option value="">no group (library only)</option>
-        ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
-      <//></label></div>`}
+      <label class="pwf-group">Pin it to <${GroupCombobox} attrs=${{ 'data-pwf-group': '' }} disabled=${busy} value=${choices.group}
+        groups=${[...new Set([...(choices.group ? [choices.group] : []), ...groups])]} noneLabel="no group (library only)"
+        ariaLabel="Pin it to group" onChange=${(group) => choose({ group })} /></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</${Button}></div>

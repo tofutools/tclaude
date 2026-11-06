@@ -13,9 +13,11 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { FilterCombobox } from './filter-combobox.js';
+import { ChoiceCombobox } from './choice-combobox.js';
+import { GroupCombobox } from './group-picker.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -104,34 +106,16 @@ export function AgentPickerDialog({ descriptor, snapshot, onChoose, onClose, con
 }
 
 // AgentCombobox is an in-form choice of one agent from agents (snapshot
-// agents or group members): the chosen one shows above the filter box, with
-// × to clear it. A value no agent has stays, marked missing. group names the
-// group agents are members of, when they do not say (a group's members).
-//   ariaLabel, disabled: the box's; attrs: more attributes on the wrapper
-//   (a data-* hook the surrounding view finds it by)
+// agents or group members): ChoiceCombobox over them, × to clear it, and a
+// value no agent has stays, marked missing. group names the group agents are
+// members of, when they do not say (a group's members). Every other prop is
+// ChoiceCombobox's (ariaLabel, disabled, attrs, …).
 export function AgentCombobox({
-  id, value, onChange, agents, group = '', placeholder = 'Type to find an agent…', emptyHint = 'No agents.',
-  ariaLabel = 'Find an agent', disabled = false, attrs = {},
+  agents, group = '', placeholder = 'Type to find an agent…', emptyHint = 'No agents.', ariaLabel = 'Find an agent', ...props
 }) {
   const items = useMemo(() => agents.map((agent) => agentPickerItem(agent, { group })), [agents, group]);
-  const chosen = value ? items.find((item) => item.key === value) : null;
-  // A click on the chosen agent must not reach a <label> around the form
-  // row either: it would hand it to the row's first radio (a standing
-  // order's "Everyone"), changing the target. The chosen line comes after
-  // the box in the markup (CSS shows it above), so a <label> around the
-  // field hands its own clicks to the box, never to the × that clears it.
-  // Enter in the box never submits a form around it, as a <select> did not.
-  return html`<div ...${attrs} class="agent-combobox" id=${id} data-value=${value || ''} onClick=${(event) => event.preventDefault()}
-    onKeyDown=${(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
-    <${FilterCombobox} id=${id ? `${id}-list` : undefined} inputId=${id ? `${id}-input` : undefined} items=${items} value=${value || ''} multi=${false}
-      cap=${PICKER_CAP} ariaLabel=${ariaLabel} disabled=${disabled} placeholder=${value ? 'Type to change…' : placeholder} emptyHint=${emptyHint}
-      onChange=${(key) => onChange(key)} />
-    ${value && html`<div class="agent-combobox-chosen">
-      ${chosen ? html`${chosen.lead}<span class="rowname">${chosen.label}</span><span class="id">${chosen.hint}</span>`
-        : html`<span class="rowname">${value}</span><span class="muted">(missing)</span>`}
-      ${!disabled && html`<${Button} size="sm" variant="ghost" class="agent-combobox-clear" title="Clear" aria-label="Clear the agent" onClick=${() => onChange('')}>×<//>`}
-    </div>`}
-  </div>`;
+  return html`<${ChoiceCombobox} ...${props} className="agent-combobox" clearable items=${items}
+    placeholder=${placeholder} emptyHint=${emptyHint} ariaLabel=${ariaLabel} />`;
 }
 
 // TargetPicker is a message's or a job's target: a solo agent (typed, or
@@ -173,12 +157,11 @@ export function TargetPicker({ prefix, value, onChange, snapshot, onPick, groupL
         onChange=${(target) => onChange({ ...value, target })} />
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
-      <${Select} id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
-        onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
-        ${groupOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${groups.includes(name) ? '' : ' (missing)'}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      <//>
+      <${GroupCombobox} id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
+        groups=${groupOptions.map((name) => (groups.includes(name) ? name : { value: name, label: `${name} (missing)` }))}
+        noneLabel=${groupOptions.length ? wizWord('(pick a group)', '(pick a party)') : wizWord('(no groups — create one first)', '(no parties — form one first)')}
+        emptyHint=${wizWord('No groups.', 'No parties.')}
+        onChange=${(groupName) => onChange({ ...value, groupName })} />
     </div>`}
   </div>`;
 }

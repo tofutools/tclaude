@@ -10,6 +10,7 @@ import { SpawnOnResumeRow } from './spawn-on-resume.js';
 import { Button, OptionalSelect, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
+import { GroupCombobox, snapshotGroups } from './group-picker.js';
 import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
@@ -1414,10 +1415,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
-      <${Select} id="agent-spawn-group" value=${draft.group} disabled=${busy}
-        onChange=${(event) => changeGroup(event.currentTarget.value)}>
-        ${context.groups.filter((group) => group?.name).map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      <//>
+      <${GroupCombobox} id="agent-spawn-group" value=${draft.group} disabled=${busy}
+        groups=${snapshotGroups(context)} onChange=${changeGroup} />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>

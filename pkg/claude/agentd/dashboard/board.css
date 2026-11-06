@@ -253,10 +253,8 @@ body.slop, body.vegas {
 /* A group's board (tcl-4yhow7): members are on it without an invitation. */
 .board-person.via-group { border-style: dashed; }
 .board-person.via-group button { padding-right: 10px; }
-.board-group {
-  border: 1px solid var(--board-line); border-radius: 14px; background: var(--board-bar); color: var(--board-text);
-  font: inherit; font-size: 12px; padding: 3px 8px; max-width: 180px;
-}
+/* The board's group choice (group-picker.js) keeps to the header's width. */
+.board-people [data-board-group] { flex: 0 1 200px; max-width: 220px; font-size: 12px; }
 
 /* The overlay (js/board-overlay.js, tcl-h4y60w): a board in its own window, on
    the companion's layer. Whichever was clicked last is on top. */

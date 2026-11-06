@@ -67,14 +67,16 @@ test('a scoped target picks among its group\'s members by typing, and shows the 
   }
   const { container } = await harness.mount(harness.html`<${Holder} />`);
   const box = container.querySelector('#t-scoped-member');
-  assert.match(box.querySelector('.agent-combobox-chosen').textContent, /agt_gone.*missing/, 'a target no member has stays, marked');
+  assert.equal(box.querySelector('input').value, 'agt_gone (missing)', 'a target no member has stays, marked');
   const input = container.querySelector('#t-scoped-member-input');
   await harness.act(() => harness.fireEvent(input, 'focus'));
   await harness.input(input, 'bet');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.equal(container.querySelector('#t-scoped-member').dataset.value, 'agt_b');
-  assert.match(container.querySelector('.agent-combobox-chosen').textContent, /beta/);
-  await harness.act(() => harness.fireEvent(container.querySelector('.agent-combobox-clear'), 'click'));
+  harness.fireEvent(input, 'blur');
+  await harness.act(() => Promise.resolve());
+  assert.equal(input.value, 'beta');
+  await harness.act(() => harness.fireEvent(container.querySelector('.choice-combobox-clear'), 'click'));
   assert.equal(container.querySelector('#t-scoped-member').dataset.value, '');
 });
 

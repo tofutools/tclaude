@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
 import {
@@ -308,10 +309,7 @@ export function AgentImportPreview({ preview, choices, setChoices, overrides, se
     <label class="cron-create-row"><span class="cron-create-label">Name</span>
       <input id="agent-import-name" value=${choices.name} placeholder=${agent.name || ''} onInput=${(event) => set('name')(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label">Group</span>
-      <${Select} id="agent-import-group" value=${choices.group} onChange=${(event) => set('group')(event.currentTarget.value)}>
-        <option value="">(pick a group)</option>
-        ${groups.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-      <//></label>
+      <${GroupCombobox} id="agent-import-group" groups=${groups} value=${choices.group} onChange=${set('group')} noneLabel="(pick a group)" /></label>
     <label class="cron-create-row"><span class="cron-create-label">Working dir</span>
       <input id="agent-import-cwd" value=${choices.cwd} placeholder=${agent.paths?.cwd || 'absolute path on this machine'} disabled=${choices.keepPaths}
         onInput=${(event) => set('cwd')(event.currentTarget.value)} /></label>

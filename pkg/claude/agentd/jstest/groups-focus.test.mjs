@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 function memoryPrefs(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -241,11 +242,7 @@ test('the Route map group is in the URL', async (t) => {
   t.after(() => mapHost.remove());
   const map = await harness.mount(harness.html`<${GroupsRouteMap} state=${state} />`, mapHost);
   await harness.act(() => harness.fireEvent(getByRole(map.container, 'tab', { name: 'Route map' }), 'click'));
-  const select = map.container.querySelector('select');
-  await harness.act(() => {
-    select.querySelector('option[value="infra"]').selected = true;
-    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  });
+  await comboPick(harness, map.container.querySelector('#route-map-group'), 'infra');
   assert.deepEqual(navigated.at(-1), { tab: 'groups', subtab: 'routes', params: { group: 'infra' } });
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
     detail: { location: { tab: 'groups', subtab: 'routes', params: { group: 'webshop' } } },
@@ -258,5 +255,5 @@ test('the Route map group is in the URL', async (t) => {
     detail: { location: { tab: 'groups', subtab: 'routes' } },
   })));
   assert.equal(state.routeView.value, 'graph');
-  assert.equal(map.container.querySelector('select').getAttribute('value'), 'webshop');
+  assert.equal(map.container.querySelector('#route-map-group').dataset.value, 'webshop');
 });
