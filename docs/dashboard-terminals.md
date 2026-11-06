@@ -69,6 +69,12 @@ this does anything on touch screens.
   page reopens. Drag it onto the tab strip or the home to open it as a tab, or
   anywhere else to float it in a window. A terminal that cannot float stays a
   tab.
+- Drag an agent, board or page onto another group's section in the panel to
+  move it there, as you would in the Groups tab. An agent goes through the same
+  confirm as there. Drop an agent on **Not in a group** to take it out of the
+  group it is listed under (it stays in any others), or a board to take it out
+  of its group. A page always stays in a group, and only moves to a group its
+  agent is in.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
 - **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,

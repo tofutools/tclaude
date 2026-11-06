@@ -151,7 +151,9 @@ Below the sections is the group's list of links, with **+ link**.
 
 Drag a group header onto another group to nest it, or to its top or bottom edge
 to reorder. Ctrl-drag (⌘-drag on a Mac) a header to clone the group. Drag an agent's row to
-another group to move it. A **Retire** bin appears while you drag: drop a row there
+another group to move it. In Resources, drag a board or page row to another
+group the same way; drop a board on **Ungrouped** to take it out of every group.
+A **Retire** bin appears while you drag: drop a row there
 to retire it, or a queued spawn to discard it. Drag from **Retired** to a group to
 reinstate an agent. Dragging a **Conversations** row to a group promotes it
 and adds it. From the library, drag a profile, role or template onto a group to
