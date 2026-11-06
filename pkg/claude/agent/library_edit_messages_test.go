@@ -59,7 +59,9 @@ func TestLibraryEditResultMessages(t *testing.T) {
 				var calls []capturedReq
 				stubDaemon(t, &calls, ok(`{"id":1,"name":"`+to+`"}`))
 				var stdout, stderr bytes.Buffer
-				rc := c.run("orig", "-", strings.NewReader(strings.ReplaceAll(c.body, "%s", to)), &stdout, &stderr)
+				// The submitted name differs from what the daemon stored, so the
+				// output is pinned to the daemon's answer.
+				rc := c.run("orig", "-", strings.NewReader(strings.ReplaceAll(c.body, "%s", "submitted")), &stdout, &stderr)
 				require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 				want := "Updated " + c.noun + ` "orig"` + "\n"
 				if to != "orig" {
