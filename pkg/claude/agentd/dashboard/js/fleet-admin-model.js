@@ -166,6 +166,9 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.context-info', kind: 'group', what: 'read member agents\' context window usage' },
   { slug: 'groups.members.pr', kind: 'group', sensitive: true, what: 'list and present pull requests for member agents on this node\'s dashboard' },
   { slug: 'groups.members.process', kind: 'group', sensitive: true, what: 'start a process run bound to one member agent (no program steps; the run spawns no agents)', warning: 'The run tasks the agent with this node\'s template; your parameters reach it marked as remote content.' },
+  { slug: 'groups.members.delete', kind: 'group', sensitive: true, what: 'permanently delete a member agent, holding this grant in every group the agent is in or owns; deleting its git worktree too stays this node\'s', warning: 'A delete cannot be undone: the agent\'s conversation, history and records on this node are gone.' },
+  { slug: 'groups.members.debug-export', kind: 'group', sensitive: true, what: 'download a member agent\'s recorded launch and sandbox configuration, with environment values redacted', warning: 'The export shows this node\'s sandbox posture for the agent: its paths, grants and launch settings.' },
+  { slug: 'groups.members.remote-control', kind: 'group', sensitive: true, what: 'turn a member agent\'s Claude Code Remote Access on or off', warning: 'Remote Access exposes the agent\'s session to this node\'s claude.ai account, reachable from its apps.' },
   { slug: 'process.runs.start', kind: 'group', sensitive: true, what: 'start a process run scoped to the group, of a template with no program steps; it tasks only the group\'s members and spawns none', warning: 'The run tasks the group\'s members with this node\'s template; your parameters reach them marked as remote content.' },
   { slug: 'process.advance', kind: 'group', sensitive: true, what: 'advance the group\'s advisory process to the next or a named phase (the nudge names your node)' },
   { slug: 'groups.messages.schedule', kind: 'group', sensitive: true, what: 'schedule recurring messages to the group as its own cron jobs (messages only, never spawns; rechecked at every fire), and list, read the runs of and disable the group\'s cron jobs', warning: 'Its jobs message the group\'s agents on schedule, marked as remote content; it can also pause this node\'s own scheduled group messages and spawns, including this node\'s operator\'s.' },
@@ -226,7 +229,7 @@ export function slugInfo(slug) {
 // order.
 export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
-const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'groups.members.schedule', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
+const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'groups.members.interrupt', 'groups.members.compact', 'groups.members.reincarnate', 'groups.members.pr', 'groups.members.process', 'groups.members.schedule', 'groups.members.delete', 'groups.members.debug-export', 'groups.members.remote-control', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
 const GROUP_ADMIN = new Set(['process.runs.start', 'process.advance', 'groups.messages.schedule', 'groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
 
 export function slugCategory(slug) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +40,7 @@ func peerAgentActionAllowed(peer, conv, slug string) bool {
 		return false
 	}
 	names, err := activeGroupNamesForConvs(conv)
-	if slug == PermGroupsMembersClone || slug == PermGroupsMembersRetire || slug == PermAgentMove {
+	if slices.Contains(peerOwnerFootprintGrants, slug) {
 		names, err = cloneAuthorizationGroups(conv)
 	}
 	if err != nil || len(names) == 0 {
