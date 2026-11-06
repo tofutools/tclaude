@@ -152,3 +152,29 @@ test('Enter only adds: an exact entry wins, a literal one is taken as typed, a c
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.deepEqual(changes.at(-1), ['board:roadmap', 'board:plan', 'board:planning'], 'otherwise the highlighted row');
 });
+
+test('the keyboard walks the rows in the order they show, section by section', async (t) => {
+  const harness = await createPreactHarness(t);
+  // Ranked a, b, c, d; shown in sections crew (a, c) then web (b, d).
+  const items = [
+    { key: 'a', label: 'a', group: 'crew' }, { key: 'b', label: 'b', group: 'web' },
+    { key: 'c', label: 'c', group: 'crew' }, { key: 'd', label: 'd', group: 'web' },
+  ];
+  const { host, input } = await mountCombobox(harness, { items, value: '', multi: false, alwaysOpen: true });
+  const shown = [...host.querySelectorAll('[role="option"]')].map((row) => row.dataset.key);
+  assert.deepEqual(shown, ['a', 'c', 'b', 'd']);
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'ArrowDown' }));
+  assert.equal(host.querySelector('.highlighted').dataset.key, 'c', '↓ goes to the row below, not the next-ranked one');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Escape' }));
+  assert.ok(host.querySelector('[role="listbox"]'), 'an always-open list leaves Escape to its dialog');
+});
+
+test('Enter on a label two rows share takes the highlighted one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const items = [{ key: 'agt_1', label: 'reviewer' }, { key: 'agt_2', label: 'reviewer' }];
+  const { input, changes } = await mountCombobox(harness, { items, value: '', multi: false, alwaysOpen: true });
+  await harness.input(input, 'reviewer');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'ArrowDown' }));
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(changes, ['agt_2']);
+});

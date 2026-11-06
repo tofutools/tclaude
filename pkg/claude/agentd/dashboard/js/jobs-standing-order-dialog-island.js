@@ -5,8 +5,8 @@ import { Button, Select } from './ui-components.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
+import { AgentCombobox } from './agent-picker.js';
 import { nodeSnapshot } from './node-api.js';
-import { idTooltip, shortAgentId } from './helpers.js';
 import {
   buildStandingOrderMutation, createStandingOrderDraft,
   standingOrderDraftDirty, STANDING_ORDER_MATCH_FIELDS, validateStandingOrderDraft,
@@ -57,11 +57,6 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
   );
   const groupOptions = value.groupName && !groups.includes(value.groupName)
     ? [value.groupName, ...groups] : groups;
-  const targetOptions = value.target && !candidates.some(
-    (agent) => (agent.agent_id || agent.key || agent.conv_id) === value.target,
-  )
-    ? [{ agent_id: value.target, title: `${value.target} (missing)`, online: false }, ...candidates]
-    : candidates;
   const setMode = (mode) => onChange({ ...value, mode });
   return html`<div class="cron-create-target standing-order-target-picker">
     <div class="cron-target-modes">
@@ -75,18 +70,8 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
     ${value.mode === 'global' && html`<div class="muted">
       Applies to every active enrolled agent. This is explicit and remains inert until the order is enabled.
     </div>`}
-    ${value.mode === 'solo' && html`<${Select} id="standing-order-target" value=${value.target}
-      onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
-      <option value="">(pick an agent)</option>
-      ${targetOptions.map((agent) => {
-        const key = agent.agent_id || agent.key || agent.conv_id;
-        return html`<option key=${key} value=${key}
-          title=${idTooltip(agent.agent_id || agent.key, agent.conv_id)}>
-          ${agent.title || shortAgentId(agent.agent_id || agent.key, agent.conv_id)}
-          ${agent.online ? '' : ' (offline)'}
-        </option>`;
-      })}
-    <//>`}
+    ${value.mode === 'solo' && html`<${AgentCombobox} id="standing-order-target" value=${value.target} agents=${candidates} group=${scope}
+      placeholder="Type to find an agent…" onChange=${(target) => onChange({ ...value, target })} />`}
     ${value.mode === 'group' && html`<${Select} id="standing-order-group" value=${value.groupName}
       disabled=${!!scope}
       onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>

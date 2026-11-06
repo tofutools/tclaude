@@ -31,6 +31,11 @@
 //   initialQuery the box's text on mount: a caller that keeps uncommitted
 //                text (onQuery) hands it back, so a remount does not hide it
 //   disabled     the input takes no typing and opens no list
+//   alwaysOpen   the list always shows (a picker dialog's own list), and
+//                Escape is left to the dialog
+//   autoFocus    focus the input on mount
+// An item may also carry lead and tail: what renders before its label (an
+// online dot) and after its hint (badges), for a picker whose rows say more.
 //   placeholder, emptyHint, ariaLabel, id (the listbox's)
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -105,10 +110,12 @@ export function comboGroupSummary(items) {
 export function FilterCombobox({
   items = [], value, multi = true, onChange, cap = 8, kindLabels = {}, freeText = null, literal = null, onQuery = null,
   placeholder = 'Type to filter…', emptyHint = 'No matches.', ariaLabel = 'Filter', id, inputId, initialQuery = '', disabled = false,
+  alwaysOpen = false, autoFocus = false,
 }) {
   const [query, setQueryState] = useState(initialQuery || '');
   const setQuery = (text) => { setQueryState(text); onQuery?.(text); };
-  const [open, setOpen] = useState(false);
+  const [openState, setOpen] = useState(false);
+  const open = alwaysOpen || openState;
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef(null);
   const highlightedRef = useRef(null);
@@ -116,12 +123,15 @@ export function FilterCombobox({
   const chosen = new Set(multi ? (value || []) : (value ? [value] : []));
   const matches = useMemo(() => filterComboItems(items, query), [items, query]);
   const summarize = !query.trim() && items.length > cap;
-  const visible = summarize ? [] : matches.slice(0, cap);
+  // The rows show in sections (comboSections), so the keyboard walks them in
+  // that order, not the ranking's: ↓ always goes to the row below.
+  const visible = summarize ? [] : comboSections(matches.slice(0, cap)).flatMap((section) => section.rows.map((row) => row.item));
   const choosable = (item) => item && !item.disabled;
   const bounded = Math.max(0, Math.min(highlight, Math.max(0, visible.length - 1)));
   const activeID = open && visible[bounded] ? `${listID}-option-${bounded}` : undefined;
   useEffect(() => { if (bounded !== highlight) setHighlight(bounded); }, [bounded, highlight]);
   useEffect(() => { highlightedRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [bounded, open]);
+  useEffect(() => { if (autoFocus) inputRef.current?.focus?.(); }, []);
 
   const choose = (item) => {
     if (!choosable(item)) return;
@@ -162,8 +172,11 @@ export function FilterCombobox({
       // row is the one added. Taking a value away is the ✓ row's or the
       // chip's, never Enter's: a stray Enter must not empty a dimension.
       const typed = query.trim();
-      const exact = typed && items.find((item) => !item.disabled
-        && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase()));
+      // A label two rows share (two agents both titled "reviewer") names
+      // neither: the highlighted row is the one meant.
+      const exacts = typed ? items.filter((item) => !item.disabled
+        && (item.key === typed || String(item.label || '').toLowerCase() === typed.toLowerCase())) : [];
+      const exact = exacts.find((item) => item.key === typed) || (exacts.length === 1 ? exacts[0] : null);
       if (exact) { event.preventDefault(); add(exact); }
       else if (typed && freeText && literal?.(typed)) { event.preventDefault(); commitFree(); }
       else if (open && visible[bounded]) { event.preventDefault(); add(visible[bounded]); }
@@ -173,7 +186,7 @@ export function FilterCombobox({
       // a shell completes; a second Tab moves focus on as usual.
       const label = visible[bounded].label || visible[bounded].key;
       if (label.toLowerCase() !== query.trim().toLowerCase()) { event.preventDefault(); setQuery(label); }
-    } else if (event.key === 'Escape' && open) {
+    } else if (event.key === 'Escape' && open && !alwaysOpen) {
       event.preventDefault(); event.stopPropagation(); setOpen(false);
     }
   };
@@ -182,7 +195,9 @@ export function FilterCombobox({
     .filter(Boolean).map((example) => `“${example}”`).join(' or ');
   const summary = summarize ? comboGroupSummary(items) : [];
   const shownGroups = summary.slice(0, 5);
-  return html`<div class="filter-combobox">
+  // A click in the box must not reach a <label> around it: the label would
+  // hand it to its first control (a form row's radio), taking the focus.
+  return html`<div class="filter-combobox" onClick=${(event) => event.preventDefault()}>
     <input ref=${inputRef} id=${inputId} disabled=${disabled} type="text" class="add-member-search filter-combobox-input" value=${query}
       placeholder=${placeholder} autocomplete="off" spellcheck=${false}
       role="combobox" aria-label=${ariaLabel} aria-controls=${listID} aria-expanded=${open ? 'true' : 'false'}
@@ -213,8 +228,10 @@ export function FilterCombobox({
           class=${`add-member-row filter-combobox-option${index === bounded ? ' highlighted' : ''}${item.disabled ? ' disabled' : ''}`}
           onMouseDown=${() => choose(item)}>
           <span class="filter-combobox-check" aria-hidden="true">${chosen.has(item.key) ? '✓' : ''}</span>
+          ${item.lead || null}
           <span class="rowname">${item.label || item.key}</span>
           <span class="id">${item.hint || item.key}</span>
+          ${item.tail || null}
           ${item.disabled && item.reason ? html`<span class="descr">${item.reason}</span>` : null}
         </div>`)}</div>`)}
       ${!summarize && matches.length > visible.length ? html`<div class="filter-combobox-foot">Showing ${visible.length} of ${matches.length} matches. Refine your search: type more${refineExample ? `, or narrow it with ${refineExample}` : ''}.</div>` : null}
