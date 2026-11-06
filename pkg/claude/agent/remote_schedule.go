@@ -79,3 +79,11 @@ func flattenDeep(v any) any {
 	}
 	return v
 }
+
+// remoteSuffix is " on <peer>" for a verb run on a linked node.
+func remoteSuffix(remote string) string {
+	if remote = strings.TrimSpace(remote); remote != "" {
+		return " on " + proto.SafeName(remote, false)
+	}
+	return ""
+}
