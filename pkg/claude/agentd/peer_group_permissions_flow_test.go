@@ -183,3 +183,47 @@ func TestPeerConferredScopesPinTheirGroupNames(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 }
+
+// The editor builds its rows from the slug catalogue, so a peer shown a
+// group's member permissions is sent the catalogue too. A row whose new scope
+// only narrows the stored one needs no ceiling; adding a peer dimension does
+// not narrow, since it turns a local row into a remote one.
+func TestPeerGroupPermissionsCatalogueAndNarrowing(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	h.f.HaveGroup("other")
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(h.group.ID, []db.PermissionGrant{
+		{Slug: agentd.PermGroupsMembersStop},
+	}, "human"))
+	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
+	slugs := func() int {
+		code, body := h.call("GET", "/api/snapshot", nil)
+		require.Equal(t, 200, code, body)
+		var snap struct {
+			Slugs []struct{ Slug string } `json:"slugs"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &snap))
+		return len(snap.Slugs)
+	}
+	require.Zero(t, slugs(), "no catalogue without the grant")
+	h.grant(t, agentd.PermGroupsSettingsMemberPermissions, "group=crew")
+	require.NotZero(t, slugs(), "the editor's rows")
+
+	patch := func(scope map[string]any) (int, string) {
+		return h.call("PATCH", "/api/groups/crew", map[string]any{"permissions": []any{
+			map[string]any{"slug": agentd.PermGroupsMembersStop, "scope": scope},
+		}})
+	}
+	// groups.members.stop is outside the ceiling, yet narrowing it is fine.
+	code, body := patch(map[string]any{"peer": []string{"bob/crew"}})
+	require.Equal(t, 403, code, "a peer dimension moves the row, not narrows it: %s", body)
+	code, body = patch(map[string]any{"group": []string{"crew", "other"}})
+	require.Equal(t, 200, code, "a narrowing of an unscoped row: %s", body)
+	code, body = patch(map[string]any{"group": []string{"other", "crew", "x"}})
+	require.Equal(t, 403, code, "a widening: %s", body)
+	code, body = patch(map[string]any{"group": []string{"crew"}})
+	require.Equal(t, 200, code, "a narrowing: %s", body)
+	rows, err := db.ListAgentGroupPermissionRows(h.group.ID)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.JSONEq(t, `{"group":["crew"]}`, rows[0].ScopeJSON)
+}

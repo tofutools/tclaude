@@ -53,6 +53,12 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 		}
 	}
 	filterPeerFields(reflect.ValueOf(&out).Elem(), peerSnapshotGate(fields))
+	// The permission editor builds its rows from the slug catalogue, so a
+	// peer shown a group's member permissions gets it too: without it the
+	// editor would list no rows and save an empty list over them.
+	if v.agent == nil && peerReadsAnyGroupPermissions(v.peer.InstanceID, groups) {
+		out.Slugs = visiblePermissionRegistry(configuredProxyVisibility())
+	}
 	emptyPeerCollections(reflect.ValueOf(&out).Elem())
 	// The restricted projection always sends its (small) registry fields. Never
 	// accept a local static_version, or let cached blobs cross a peer switch or

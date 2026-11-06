@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -22,6 +23,17 @@ import (
 // list takes the same, so a peer never replaces rows it was not shown.
 func peerReadsGroupPermissions(peer string, g *db.AgentGroup) bool {
 	return fedPeerAllows(peer, g.ID, PermGroupsSettingsMemberPermissions)
+}
+
+// peerReadsAnyGroupPermissions reports whether peer is shown the member
+// permission rows of any of the groups in its view.
+func peerReadsAnyGroupPermissions(peer string, groups []dashboardGroup) bool {
+	for _, row := range groups {
+		if g, err := db.GetAgentGroupByName(row.Name); err == nil && g != nil && peerReadsGroupPermissions(peer, g) {
+			return true
+		}
+	}
+	return false
 }
 
 // peerReadsGroupOwnerScopes is peerReadsGroupPermissions for owner scopes.
@@ -86,7 +98,8 @@ func peerOwnerRemoveFailure(v *peerView, _ *http.Request, g *db.AgentGroup, _ []
 // peerGroupPermissionsFailure checks a peer's replacement of g's member
 // permission rows. The peer must have been shown the current rows; every row
 // it adds or changes must be within its ceiling, and a row it drops needs
-// nothing more. A row given with no scope keeps the stored one
+// nothing more, nor does one whose new scope only narrows the stored one. A
+// row given with no scope keeps the stored one
 // (ReplaceAgentGroupPermissionGrants), so it is unchanged.
 func peerGroupPermissionsFailure(peer string, g *db.AgentGroup, next []db.PermissionGrant) error {
 	if !peerReadsGroupPermissions(peer, g) {
@@ -106,7 +119,7 @@ func peerGroupPermissionsFailure(peer string, g *db.AgentGroup, next []db.Permis
 		if scope == "" && !row.ScopeSpecified && held {
 			scope = stored
 		}
-		if held && scope == stored {
+		if held && (scope == stored || peerRowNarrows(scope, stored)) {
 			continue
 		}
 		if err := peerCeilingCoversGrant(peer, db.PermissionGrant{Slug: row.Slug, Scope: scope}); err != nil {
@@ -148,10 +161,31 @@ func peerOwnerScopesFailure(peer string, g *db.AgentGroup, next string) error {
 	return nil
 }
 
+// peerRowNarrows is peerScopeNarrows for a stored row's canonical scope JSON
+// ("" for none). A scope that does not parse narrows nothing.
+func peerRowNarrows(now, was string) bool {
+	parse := func(raw string) (PermissionScope, bool) {
+		if raw == "" {
+			return PermissionScope{}, true
+		}
+		scope, _, err := parsePermissionScope(json.RawMessage(raw))
+		return scope, err == nil
+	}
+	n, okNow := parse(now)
+	w, okWas := parse(was)
+	return okNow && okWas && peerScopeNarrows(n, w)
+}
+
 // peerScopeNarrows reports whether scope now permits no more than was: every
 // dimension was constrains, now constrains to a subset of the same matchers
-// (dimensions AND, matchers OR). A dimension now adds narrows further.
+// (dimensions AND, matchers OR). A dimension now adds narrows further, except
+// a peer dimension: a row with one authorizes remote actions in place of
+// local ones (permissionScopeSatisfied), so adding it moves what the row
+// reaches rather than narrowing it.
 func peerScopeNarrows(now, was PermissionScope) bool {
+	if len(now[ScopeDimPeer]) > 0 && len(was[ScopeDimPeer]) == 0 {
+		return false
+	}
 	for dim, matchers := range was {
 		got, ok := now[dim]
 		if !ok || len(got) == 0 {

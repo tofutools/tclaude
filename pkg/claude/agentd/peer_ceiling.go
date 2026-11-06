@@ -45,7 +45,9 @@ import (
 //     redacts (debug export), checks a footprint the local gate leaves out
 //     (delete's owned and archived groups, add's and remove's other groups,
 //     a link's other end, nesting's parent), takes extra grants (exports, clone, template
-//     instantiation, process runs), withholds text a local reader sees
+//     instantiation, process runs), reaches what the peer route keeps
+//     back (process.templates.read also exports a workflow file this node
+//     signs), withholds text a local reader sees
 //     (trigger instruction templates), or sends no text into another agent's
 //     context where the local verb may (compact's focus, reincarnate's
 //     follow-up, cron jobs);
@@ -82,10 +84,9 @@ var peerCeilingSlugs = map[string]bool{
 	PermMessageAttachments:                true,
 	PermProcessAdvance:                    true,
 	// This node's libraries and its reads, instance-wide.
-	PermPromptsManage:        true,
-	PermCostsRead:            true,
-	PermUsageRead:            true,
-	PermProcessTemplatesRead: true,
+	PermPromptsManage: true,
+	PermCostsRead:     true,
+	PermUsageRead:     true,
 }
 
 // peerCeilingCovers reports whether peer holds everything a local permission
