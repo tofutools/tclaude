@@ -658,26 +658,9 @@ func handleGLProxyMREdit(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	title := strings.TrimSpace(body.Title)
-	hasBody := strings.TrimSpace(body.Body) != ""
-	if title == "" && !hasBody {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to edit: pass a title, a body, or both")
+	payload, ok := proxyEditPayload(w, body.Title, body.Body, "description")
+	if !ok {
 		return
-	}
-	payload := map[string]any{}
-	if title != "" {
-		if fault := validateGHTitle(title); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["title"] = title
-	}
-	if hasBody {
-		if fault := validateGHBody(body.Body, true); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["description"] = body.Body
 	}
 	raw, failure, err := g.rest(r.Context(), glAPIRequest{
 		Method: http.MethodPut,
