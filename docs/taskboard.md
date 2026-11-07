@@ -92,8 +92,8 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   one group, it lists that group's board. Otherwise (the operator, or an agent
   in several groups) it lists every board you can read: its counts and its
   first five live tasks.
-- `ls` numbers the live tasks as the dashboard's list does: one sequence
-  through the queue and then the ideas. Done and dropped tasks are not
+- `ls` numbers the live tasks in board order: one sequence through the
+  queue and then the ideas. Done and dropped tasks are not
   numbered.
 - `ls --all` also lists done and dropped tasks that are not archived yet.
 - `ls --summary` prints one line of counts for every group board you can
@@ -630,7 +630,8 @@ the **Quest board**), below its Agents and Resources sections.
   *Last* (its last change) and *Age*, in line with the Agents table's
   columns of the same names. After those come *Who* holds it (the tooltip
   says who assigned it, and when), *Ref* (a chip that links to the tracker),
-  *Deps* (`after #n`, amber until that task is done) and *Files*. A blocked
+  *Deps* (`after` and the task's title, amber until that task is done; the
+  tooltip has its whole title and id) and *Files*. A blocked
   task shows its reason under its title. The *history* line counts the tasks
   done this week and the dropped ones. Click *history* to list the recently
   closed tasks in the same table.

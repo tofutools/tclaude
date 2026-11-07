@@ -28,7 +28,7 @@ import {
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
-import { DepChips, RefChip, actorLabel, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
+import { DepChips, RefChip, actorLabel, boardTasks, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
@@ -250,15 +250,15 @@ function cardHint(task) {
 // A card's title opens the edit form (onEdit), as the List's does, and so
 // does a double-click on the card; hovering the title shows the task's
 // card (groups-taskboard-card.js), which carries its id.
-function Card({ task, numbers, drag, api = null, nameOf = null, onEdit = null }) {
+function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null }) {
   const done = task.status === 'done';
   return html`<div class=${`ui-card tb-card${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
-    <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} numbers=${numbers} onOpen=${onEdit ? () => onEdit(task.id) : null}
-      chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} numbers=${numbers} />` }} /></div>
-    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} numbers=${numbers} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
+    <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
+      chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
+    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
   </div>`;
 }
 
@@ -323,7 +323,7 @@ function useLaneDrag(actions, group, tasks = []) {
 
 // BlockForm asks the reason a drop onto Blocked needs, then runs the drop
 // (with an assign or unassign first, for a move across lanes too).
-function BlockForm({ task, drop, numbers, actions, group, onClose }) {
+function BlockForm({ task, drop, actions, group, onClose }) {
   const [reason, setReason] = useState('');
   const submit = async () => {
     if (!reason.trim() || actions.busy) return;
@@ -331,9 +331,8 @@ function BlockForm({ task, drop, numbers, actions, group, onClose }) {
     if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     if (ok) onClose();
   };
-  const n = numbers.get(task.id);
   return html`<div class="tb-form tb-lanes-block" data-task-form="block">
-    <span class="ui-hint">${drop.kind === 'block' ? 'Block' : drop.label.replace(/ \(asks why\)$/, '')} ${n ? `#${n}` : task.id} “${task.title}”:</span>
+    <span class="ui-hint">${drop.kind === 'block' ? 'Block' : drop.label.replace(/ \(asks why\)$/, '')} “${task.title}”:</span>
     <${Input} size="sm" class="tb-form-reason" aria-label="Block reason" autoFocus placeholder="why is it blocked? (required)"
       value=${reason} maxLength=${400} onInput=${(event) => setReason(event.currentTarget.value)}
       onKeyDown=${(event) => {
@@ -516,7 +515,7 @@ function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
 
 export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null }) {
   const tasks = entry.tasks || [];
-  const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
+  const byId = boardTasks(entry);
   const [, bumpLayout] = useState(0);
   const relayout = () => { bumpLayout((n) => n + 1); onLayout?.(); };
   const model = laneModel(entry, group, by, snapshot, now);
@@ -539,7 +538,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
-      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} numbers=${numbers} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
         onEdit=${actions ? onEdit : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
@@ -554,7 +553,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
   return html`<div class="tb-lanes-wrap">
-    ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking.task} drop=${drag.blocking.drop} numbers=${numbers} actions=${actions}
+    ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
         style=${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}` : undefined}

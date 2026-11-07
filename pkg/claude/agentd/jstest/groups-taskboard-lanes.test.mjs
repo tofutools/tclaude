@@ -243,7 +243,7 @@ test('a diagonal drag runs both writes through the real handlers, the lane first
   assert.equal(out.label, 'assign to builder · block (asks why)');
   assert.deepEqual(api.calls, [], 'nothing runs before the reason');
   const form = c.querySelector('.tb-lanes-block');
-  assert.match(form.textContent, /assign to builder · block #1/);
+  assert.match(form.textContent, /assign to builder · block “queued one”/);
   await harness.input(form.querySelector('input'), 'waits on the API');
   await harness.act(async () => {
     harness.fireEvent([...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block'), 'click');

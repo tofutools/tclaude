@@ -18781,7 +18781,6 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .tb-new-deps { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; padding: 4px 6px;
   border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
-.tb-new-dep-n { color: var(--ui-muted-text); font-variant-numeric: tabular-nums; }
 .tb-new-single { align-self: flex-start; }
 .tb-new-cli code { font-size: 11px; }
 .tb-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -157,13 +157,29 @@ export function RefChip({ task }) {
   return html`<span class="ui-tag ui-tag-accent tb-ref" title=${title}>🔗 ${label}</span>`;
 }
 
-export function DepChips({ task, numbers }) {
+// boardTasks maps a board's tasks, live and closed, by id: what a
+// dependency names.
+export function boardTasks(entry) {
+  return new Map([...(entry?.tasks || []), ...(entry?.closed || [])].map((task) => [task.id, task]));
+}
+
+// taskLabel names a task by its title, clipped to max, or by its id where
+// the board does not have it (archived, or another board's).
+export function taskLabel(id, byId, max = 28) {
+  const title = byId?.get(id)?.title;
+  if (!title) return id;
+  return title.length > max ? `${title.slice(0, max - 1)}…` : title;
+}
+
+// taskFullLabel is a task's whole title and its id, for a tooltip.
+const taskFullLabel = (id, byId) => (byId?.get(id)?.title ? `“${byId.get(id).title}” (${id})` : id);
+
+export function DepChips({ task, byId }) {
   const unmet = new Set(task.unmet || []);
   return (task.depends_on || []).map((dep) => {
-    const n = numbers.get(dep);
-    const text = n ? `after #${n}` : `after ${dep}`;
+    const text = `after ${taskLabel(dep, byId)}`;
     return html`<span key=${dep} class=${`tb-dep${unmet.has(dep) ? ' unmet' : ''}`}
-      title=${`${unmet.has(dep) ? 'Waits on' : 'Done:'} ${dep}`}>${text}</span>`;
+      title=${`${unmet.has(dep) ? 'Waits on' : 'Done:'} ${taskFullLabel(dep, byId)}`}>${text}</span>`;
   });
 }
 
@@ -181,13 +197,13 @@ function Who({ task, group, snapshot }) {
   </span>`;
 }
 
-function StatePill({ task, numbers }) {
+function StatePill({ task, byId }) {
   const state = taskRowState(task);
   let text = STATE_LABELS[state];
   if (state === 'in-progress' && task.assigned_at) text = `in progress · ${relTime(task.assigned_at).replace(/ ago$/, '')}`;
   if (state === 'stalled' && task.idle_since) text = `stalled · idle ${relTime(task.idle_since).replace(/ ago$/, '')}`;
   if (state === 'queued') {
-    const waits = (task.unmet || []).map((dep) => (numbers.get(dep) ? `#${numbers.get(dep)}` : dep));
+    const waits = (task.unmet || []).map((dep) => taskLabel(dep, byId, 20));
     if (waits.length) text = `queued · waits on ${waits.join(', ')}`;
   }
   if (state === 'idea' && task.created_at) text = `idea · ${relTime(task.created_at)}`;
@@ -362,7 +378,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, readApi, drag, form, onForm }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, form, onForm }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -380,17 +396,17 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, readApi, d
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell">
-      <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} numbers=${numbers} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
-        chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} numbers=${numbers} />` }} />
+      <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
+        chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
     </td>
-    <td><${StatePill} task=${task} numbers=${numbers} /></td>
+    <td><${StatePill} task=${task} byId=${byId} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
     <td class="tb-ref-cell"><${RefChip} task=${task} /></td>
-    <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} numbers=${numbers} />` : html`<span class="tb-none">—</span>`}</td>
+    <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} byId=${byId} />` : html`<span class="tb-none">—</span>`}</td>
     <td class="tb-files-cell">${files ? html`<span class="tb-files" title=${`${files} file${files === 1 ? '' : 's'} on this task`}>📎 ${files}</span>` : html`<span class="tb-none">—</span>`}</td>
   </tr>`;
   if (!form || !actions) return row;
@@ -441,7 +457,7 @@ function clearAgentTarget(state) {
   state.row = null;
 }
 
-function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
+function useRowDrag(tasks, actions, group = null) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
   const [dragging, setDragging] = useState('');
@@ -466,10 +482,9 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
       clearAgentTarget(state);
       state.row = hit.row;
       hit.row.classList.add(ASSIGN_OVER);
-      const n = numbers.get(dragged.current.id);
       const already = dragged.current.assignee?.agent_id === hit.member.agent_id;
       hit.row.querySelector('td.name-cell')?.setAttribute('data-tb-assign',
-        already ? 'already assigned here' : `assign ${n ? `#${n}` : dragged.current.id} to ${hit.member.title || hit.member.agent_id}`);
+        already ? 'already assigned here' : `assign “${taskLabel(dragged.current.id, new Map([[dragged.current.id, dragged.current]]))}” to ${hit.member.title || hit.member.agent_id}`);
     };
     const onDrop = (event) => {
       const hit = target(event);
@@ -661,18 +676,17 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [history, setHistory] = useState(false);
   const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
-  const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
-  const drag = useRowDrag(tasks, actions, group, numbers);
+  const byId = boardTasks(entry);
+  const drag = useRowDrag(tasks, actions, group);
   const queue = tasks.filter((task) => task.stage !== 'idea');
   const ideas = tasks.filter((task) => task.stage === 'idea');
-  // Numbers run down the whole list, as the operator reads it.
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
   // ✎ opens the edit form; the row's ⋯ Block… and Drop… are inline.
   const [editing, setEditing] = useState('');
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setForms((current) => ({ ...current, [id]: mode })));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
-  const rowProps = { numbers, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
+  const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
   const tableRef = useRef(null);
   useAgentColumns(tableRef, alignWithAgents);
   const ideasBand = (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
@@ -686,11 +700,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
-        ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} form=${forms[task.id]} ...${rowProps} />`)}
+        ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${forms[task.id]} ...${rowProps} />`)}
         ${ideasBand}
-        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} form=${forms[task.id]} ...${rowProps} />`)}
+        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${forms[task.id]} ...${rowProps} />`)}
         ${historyLine}
-        ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} form=${null} ...${rowProps} />`)}
+        ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${null} ...${rowProps} />`)}
       </tbody>
     </table>` : null;
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
@@ -708,7 +722,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table tb-closed-table">${COLUMNS}<tbody>
-      ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} form=${null} ...${rowProps} />`)}
+      ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${null} ...${rowProps} />`)}
     </tbody></table>`}
   </div>`;
 }
