@@ -16,9 +16,11 @@ function board(group, extra = {}) {
   };
 }
 
+// The owner is listed as the snapshot lists a non-member owner (role
+// "owner"); the server takes an owner as well as a member.
 const members = () => [
   { agent_id: 'agt_dev', title: 'dev', role: 'dev', online: true },
-  { agent_id: 'agt_lead', title: 'lead', role: 'lead', online: true, owner: true },
+  { agent_id: 'agt_lead', title: 'lead', role: 'owner', online: true, owner: true },
   { agent_id: 'agt_away', title: 'away', online: false },
 ];
 
@@ -190,6 +192,7 @@ test('a pasted list is one task per line, and a title that is only a tracker id 
   assert.equal(list.value, 'one\ntcl-fb0bfz\n');
   assert.equal(dialog().querySelector('.tb-new-body'), null, 'a list takes no brief');
   assert.match(dialog().querySelector('#taskboard-new-submit').textContent, /Add 2 tasks/);
+  assert.doesNotMatch(dialog().querySelector('.modal-meta').textContent, /not used/, 'nothing else was filled in');
   await click(dialog().querySelector('#taskboard-new-submit'));
   assert.deepEqual(api.calls, [['capture', 'tbn-list', 'one\ntcl-fb0bfz', { next: false }]]);
 
@@ -225,6 +228,25 @@ test('Ask an agent mails the lead by default, and any online member who may writ
   await harness.input(modal().querySelector('.tb-ask-prompt'), 'more');
   await click(modal().querySelector('#taskboard-ask-submit'));
   assert.deepEqual(api.calls, [['ask', 'tbn-ask', 'agt_dev', 'more']]);
+});
+
+test('the Ask dialog falls back to the default when its pick goes offline', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AskAgentDialog } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const calls = [];
+  const api = { ask: async (...args) => { calls.push(args); return {}; } };
+  const group = { name: 'crew', members: members() };
+  const view = (g) => harness.html`<${AskAgentDialog} group=${g} entry=${board('crew')} api=${api} onClose=${() => {}} />`;
+  const mounted = await harness.mount(view(group));
+  const modal = () => mounted.container.querySelector('#taskboard-ask-modal');
+  await selectValue(harness, modal().querySelector('.tb-ask-to'), 'agt_dev');
+  await harness.input(modal().querySelector('.tb-ask-prompt'), 'tasks');
+  const gone = { ...group, members: members().map((m) => (m.agent_id === 'agt_dev' ? { ...m, online: false } : m)) };
+  await mounted.rerender(view(gone));
+  const submit = modal().querySelector('#taskboard-ask-submit');
+  assert.equal(submit.disabled, false, 'still ready: the owner stands in');
+  await harness.act(async () => { harness.fireEvent(submit, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(calls, [['crew', 'agt_lead', 'tasks']]);
 });
 
 test('the client sends create and ask to their routes with only the fields given', async (t) => {

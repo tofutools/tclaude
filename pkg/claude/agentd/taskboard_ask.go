@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -18,13 +19,57 @@ import (
 // maxTaskboardAskBytes bounds the request's prose, as a task's brief is.
 const maxTaskboardAskBytes = maxTaskBodyBytes
 
-// taskboardMemberWrites reports whether the member behind conv may change g's
-// board: the writer lock is the only narrowing a member meets (membership
-// grants taskboard.write). It is evaluated for that member alone, so none of
+// taskboardMemberWrites reports whether the member (or owner) behind conv may
+// change g's board under its writer lock; membership and ownership grant
+// taskboard.write. (An explicit deny of taskboard.write on a member is not
+// looked at: its own `add` would be refused.) It is evaluated for that member alone, so none of
 // the caller's own grants (a sudo, say) count for it.
 func taskboardMemberWrites(r *http.Request, g *db.AgentGroup, conv string) bool {
 	ok, err := taskboardLockPasses(r.WithContext(context.Background()), g, conv)
 	return err == nil && ok
+}
+
+// activeGroupOwner returns the live conv of agentID when it is an owner of g
+// that is not retired, "" otherwise. An owner may change the board (it
+// passes the writer lock), so it can be asked even when it is not a member.
+func activeGroupOwner(g *db.AgentGroup, agentID string) string {
+	if g == nil || g.IsArchived() || agentID == "" {
+		return ""
+	}
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		return ""
+	}
+	for _, o := range owners {
+		if o.AgentID != agentID {
+			continue
+		}
+		conv, err := db.CurrentConvForAgent(agentID)
+		if err != nil || conv == "" {
+			return ""
+		}
+		if state, err := db.AgentState(conv); err != nil || state == db.AgentStateRetired {
+			return ""
+		}
+		return conv
+	}
+	return ""
+}
+
+// resolveTaskboardAskee resolves who to ask: an active member of g, or an
+// active owner of it.
+func resolveTaskboardAskee(g *db.AgentGroup, selector string) (agentID, conv string, err error) {
+	if agentID, conv, err = resolveTaskboardMember(g, selector); err == nil {
+		return agentID, conv, nil
+	}
+	if res, _, rerr := agent.ResolveSelector(selector); rerr == nil && res.ConvID != "" {
+		if id, _ := db.AgentIDForConv(res.ConvID); id != "" {
+			if c := activeGroupOwner(g, id); c != "" {
+				return id, c, nil
+			}
+		}
+	}
+	return "", "", fmt.Errorf("%s is not an active member or owner of %s; the agent asked must be", guideText(selector, 60), g.Name)
 }
 
 // taskboardAskBrief is the inbox message the asked agent gets: what to do
@@ -43,7 +88,7 @@ func taskboardAskBrief(g *db.AgentGroup, by, prompt string) string {
 }
 
 // POST /v1/groups/{name}/taskboard/ask {"to": "<agent>", "prompt": "…"} —
-// mail an active member who may change the board a request to turn prose
+// mail an active member (or owner) who may change the board a request to turn prose
 // into tasks. The caller needs taskboard.write on the group, as an add does.
 func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) || !requireGroupActive(w, g) {
@@ -67,9 +112,9 @@ func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	agentID, conv, err := resolveTaskboardMember(g, strings.TrimSpace(body.To))
+	agentID, conv, err := resolveTaskboardAskee(g, strings.TrimSpace(body.To))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "not_member", strings.Replace(err.Error(), "an assignee must be", "the agent asked must be", 1))
+		writeError(w, http.StatusBadRequest, "not_member", err.Error())
 		return
 	}
 	if !taskboardMemberWrites(r, g, conv) {

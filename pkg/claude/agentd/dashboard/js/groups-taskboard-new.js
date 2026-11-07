@@ -219,7 +219,8 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     footerStart=${html`<span class="ui-hint tb-new-cli"><code>tclaude agent taskboard add ${group.name} …</code></span>`}
     footer=${html`<${Button} variant="primary" id="taskboard-new-submit" busy=${busy} disabled=${!ready || busy} onClick=${() => void submit()}>${submitLabel}<//>`}>
     <div class="modal-meta">${listMode
-      ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.`
+      ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.${
+        draft.body.trim() || draft.ref.trim() || draft.after.length || draft.to ? ' A list takes no brief, ref, dependencies or assignee: they are not used.' : ''}`
       : wizard ? 'The quest lands among the visions unless you queue it as next.' : 'The task lands in the ideas unless you queue it as next.'}</div>
     ${listMode
       ? row('Tasks', html`<${Textarea} class="tb-new-list" rows="6" aria-label="Tasks, one per line" value=${draft.list} disabled=${busy}
@@ -252,7 +253,11 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
 // inbox, never as keys into its pane.
 export function AskAgentDialog({ group, entry, api, wizard = false, onClose }) {
   const members = askableMembers(group, entry);
-  const [to, setTo] = useState(defaultAskee(members)?.agent_id || '');
+  const [pickedId, setTo] = useState(defaultAskee(members)?.agent_id || '');
+  // The pick falls back to the default while it is not (or no longer) one
+  // of them: an agent can go offline, or the writer lock change, while the
+  // dialog is open.
+  const to = members.some((member) => member.agent_id === pickedId) ? pickedId : (defaultAskee(members)?.agent_id || '');
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

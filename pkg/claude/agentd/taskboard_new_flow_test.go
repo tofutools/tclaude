@@ -83,8 +83,14 @@ func TestTaskboardAskMailsAMember(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "task request from "+h.peer)
 
-	code, _ = ask("", map[string]any{"to": h.lead, "prompt": "not a member"})
-	assert.Equal(t, http.StatusBadRequest, code, "the owner here is not a member")
+	// The owner is not a member here, but it may change the board: it can be
+	// asked (the dashboard picks it by default).
+	code, body = ask("", map[string]any{"to": h.lead, "prompt": "plan the sprint"})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.lead), "\n"), "task request from the operator")
+	h.agent(t, "tb-outsider-9999")
+	code, _ = ask("", map[string]any{"to": "tb-outsider-9999", "prompt": "not in the group"})
+	assert.Equal(t, http.StatusBadRequest, code, "neither member nor owner")
 	code, _ = ask("", map[string]any{"to": h.worker, "prompt": "   "})
 	assert.Equal(t, http.StatusBadRequest, code)
 	code, _ = ask("", map[string]any{"prompt": "who?"})
@@ -112,7 +118,7 @@ func TestTaskboardAskMailsAMember(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
 	require.Len(t, ctx.Groups, 1)
 	assert.True(t, ctx.Groups[0].Locked)
-	assert.Equal(t, []string{tbAgentID(t, h.worker)}, ctx.Groups[0].Writers)
+	assert.ElementsMatch(t, []string{tbAgentID(t, h.lead), tbAgentID(t, h.worker)}, ctx.Groups[0].Writers, "the owner and the listed writer")
 
 	// A member the lock keeps off the board may not ask either.
 	code, _ = ask(h.peer, map[string]any{"to": h.worker, "prompt": "from outside the lock"})

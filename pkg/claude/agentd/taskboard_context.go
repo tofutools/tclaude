@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -236,7 +237,8 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 }
 
 // taskboardContextWriters fills Locked and Writers: with the lock set, the
-// active members who pass it.
+// active members and owners who pass it. Listed writers and owners pass
+// without a permission lookup; only the other members are looked up.
 func taskboardContextWriters(r *http.Request, g *db.AgentGroup, entry *taskboardGroupContext) error {
 	lock, err := db.GetTaskboardLock(g.ID)
 	if err != nil || !lock.Locked {
@@ -244,17 +246,36 @@ func taskboardContextWriters(r *http.Request, g *db.AgentGroup, entry *taskboard
 	}
 	entry.Locked = true
 	entry.Writers = []string{}
+	seen := map[string]bool{}
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			entry.Writers = append(entry.Writers, id)
+		}
+	}
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		return err
+	}
+	for _, o := range owners {
+		if activeGroupOwner(g, o.AgentID) != "" {
+			add(o.AgentID)
+		}
+	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return err
 	}
 	for _, m := range members {
 		id, err := db.AgentIDForConv(m.ConvID)
-		if err != nil || id == "" || activeGroupMember(g, id) == "" {
+		if err != nil || id == "" || seen[id] {
 			continue
 		}
-		if taskboardMemberWrites(r, g, m.ConvID) {
-			entry.Writers = append(entry.Writers, id)
+		if state, err := db.AgentState(m.ConvID); err != nil || state == db.AgentStateRetired {
+			continue
+		}
+		if slices.Contains(lock.Writers, id) || taskboardMemberWrites(r, g, m.ConvID) {
+			add(id)
 		}
 	}
 	return nil
