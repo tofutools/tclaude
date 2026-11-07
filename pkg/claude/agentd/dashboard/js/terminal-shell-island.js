@@ -46,6 +46,7 @@ import { collabSnapAim, collabSnapsAt } from './overlay-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
+import { TabResourceRename, tabRenameKey, tabRenameTarget } from './tab-resource-rename.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch, onPeerPage } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
@@ -878,6 +879,23 @@ function PaneTab({
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
   const costLine = costTooltip(agentStatus.agent);
   const gear = tabGearMember(pane, agentStatus.agent, snapshot?.value, scope);
+  // A drawing board's or a page's tab renames it in place: double-click or F2.
+  const renameTarget = tabRenameTarget(pane.seed);
+  const [renaming, setRenaming] = useState(false);
+  const tabRef = useRef(null);
+  const wasRenaming = useRef(false);
+  // A rename ended from the keyboard leaves focus on the tab, not the page.
+  useEffect(() => {
+    if (wasRenaming.current && !renaming && (!document.activeElement || document.activeElement === document.body)) tabRef.current?.focus();
+    wasRenaming.current = renaming;
+  }, [renaming]);
+  const startRename = (event) => {
+    if (!renameTarget || renaming) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    setRenaming(true);
+    return true;
+  };
   const activate = (event) => {
     if (inTabGear(event)) return;
     if (event.type === 'keydown' && event.target.closest('button')) return;
@@ -916,7 +934,12 @@ function PaneTab({
     return true;
   };
   const onKeyDown = (event) => {
+    if (event.target === event.currentTarget && tabRenameKey(event) && startRename(event)) return;
     if (!openContextMenu(event)) activate(event);
+  };
+  const onDblClick = (event) => {
+    if (inTabGear(event) || event.target.closest?.('button')) return;
+    startRename(event);
   };
   // The whole tab is the drag handle, not just the label, so the grab target is
   // the full tab. A drag that starts on the close button is cancelled, so the ×
@@ -930,12 +953,13 @@ function PaneTab({
   };
   return html`
     <div
-      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
+      ref=${tabRef}
+      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}${scope?.hidden ? ' scope-hidden' : ''}${renaming ? ' renaming' : ''}`}
       role="tab"
       data-pane-key=${pane.key}
       data-agent-status=${agentStatus.key}
       tabIndex="0"
-      draggable="true"
+      draggable=${renaming ? 'false' : 'true'}
       aria-selected=${active ? 'true' : 'false'}
       aria-label=${ariaLabel}
       aria-controls=${pane.id}
@@ -943,8 +967,9 @@ function PaneTab({
       aria-describedby="terminal-tab-reorder-help"
       aria-haspopup="menu"
       aria-expanded=${menuOpen ? 'true' : 'false'}
-      title=${`${agentStatus.title}.${costLine ? ` ${costLine}.` : ''} Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
+      title=${`${agentStatus.title}.${costLine ? ` ${costLine}.` : ''} Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · ${renameTarget ? 'double-click or F2 to rename · ' : ''}Right-click or Shift+F10 for actions`}
       onClick=${activate}
+      onDblClick=${onDblClick}
       onKeyDown=${onKeyDown}
       onContextMenu=${openContextMenu}
       onDragStart=${startDrag}
@@ -963,7 +988,9 @@ function PaneTab({
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
-      <span class="mux-tab-label">${paneTitle(pane)}</span>
+      ${renaming ? html`<${TabResourceRename} target=${renameTarget} label=${paneTitle(pane)}
+        onRenamed=${(title) => actions.setPaneLabel?.(pane.key, title)} onDone=${() => setRenaming(false)} />`
+        : html`<span class="mux-tab-label">${paneTitle(pane)}</span>`}
       ${(drawingBoard || process || page) && html`<${LockBadge} kind=${drawingBoard ? 'drawing_board' : process ? 'process' : 'page'}
         locked=${resourceLocked(snapshot?.value, drawingBoard ? 'drawing_board' : process ? 'process' : 'page', pane.seed.drawingBoard || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />

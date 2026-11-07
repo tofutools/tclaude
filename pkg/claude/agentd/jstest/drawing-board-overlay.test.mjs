@@ -1403,3 +1403,47 @@ scenario('a drawing board dragged back over a strip tab shows no targets, and le
   const saved = JSON.parse(dashPrefs.getItem(`${island.DRAWING_BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
   assert.equal(saved.snap, '', 'let go outside the page, it floats');
 });
+
+// A drawing board's tab in a window's title bar renames it as its Collab tab
+// does: a double-click or F2 turns the label into the name field, Enter saves.
+scenario('a double-click or F2 on a window\'s drawing board tab renames the drawing board', async ({ harness, overlayHost, overlayState, t }) => {
+  const posted = [];
+  let title = 'Release plan';
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url);
+    if (init.method === 'POST' && path === '/api/drawing-boards/plan/title') {
+      title = JSON.parse(init.body).title;
+      posted.push(title);
+      return { ok: true, status: 200, json: async () => ({ id: 'plan', title }) };
+    }
+    if (path.startsWith('/api/drawing-boards/plan')) return { ok: true, status: 200, json: async () => ({ id: 'plan', title, version: 1, participants: [], elements: [] }) };
+    return previous(url, init);
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  await harness.act(async () => { overlayState.openDrawingBoardOverlay('plan', 'Release plan'); await wait(); });
+  const win = () => overlayHost.querySelector('.drawing-board-overlay');
+  const field = () => win().querySelector('input.mux-tab-rename');
+  const until = async (condition, message) => {
+    const deadline = Date.now() + 3000;
+    while (!condition()) {
+      if (Date.now() > deadline) assert.fail(message);
+      await harness.act(() => wait(5));
+    }
+  };
+
+  await harness.act(() => harness.fireEvent(win().querySelector('[role="tab"]'), 'keydown', { key: 'F2' }));
+  assert.ok(field(), 'F2 opens the name field in the title bar');
+  assert.equal(field().value, 'Release plan');
+  await harness.act(() => harness.fireEvent(field(), 'keydown', { key: 'Escape' }));
+  assertAbsent(field(), 'Escape ends the edit');
+  assert.deepEqual(posted, [], 'and saves nothing');
+
+  await harness.act(() => harness.fireEvent(win().querySelector('[role="tab"]'), 'dblclick'));
+  assert.ok(field(), 'a double-click opens it too');
+  field().value = 'Launch plan';
+  await harness.act(() => harness.fireEvent(field(), 'keydown', { key: 'Enter' }));
+  await until(() => posted.length === 1, 'the rename reaches the daemon');
+  assert.deepEqual(posted, ['Launch plan']);
+  await until(() => /Launch plan/.test(win().querySelector('[role="tab"]')?.textContent || ''), 'the window\'s tab carries the new name');
+});

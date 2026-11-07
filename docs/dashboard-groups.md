@@ -508,9 +508,16 @@ processes, drawing boards, pages and shells (runs are not counted), and a sectio
 nothing at all says *No resources yet*.
 The **＋** menu starts a process for the group or for one agent, adds a new drawing board
 linked to the group or a blank live page, or opens the group's shell (once the
-group has a directory). A live page is a web page a member serves (its dev
-server or static files), shown live for you to view and mark up, and for
-the group to read your marks. A new one starts blank: sketch on it what to build, and a
+group has a directory). A new drawing board or page first asks for its name, in
+a small dialog that says what is made and in which group, with the usual name
+filled in and selected: type to replace it, then Enter (or Ctrl/Cmd+Enter) or
+**Create** makes it, and Escape or **Cancel** makes nothing. The Collab
+panel's **＋ New** and the command palette's *Make a drawing board in …* and
+*Make a live page in …* ask the same way. A page's name is its title; members
+still address it by its handle in the group (`sketch`, `sketch-2`, …). A live
+page is a web page a member serves (its dev server or static files), shown
+live for you to view and mark up, and for the group to read your marks. A new
+one starts blank: sketch on it what to build, and a
 member serves the real page into it (see
 [Live page › A page the operator creates in a group](live-page.md#a-page-the-operator-creates-in-a-group)).
 
@@ -531,7 +538,8 @@ brighten when you point at the row.
   dock, opens it, attaches a running shell or reopens a closed page.
   Clicking a shell's name does the same. Clicking a drawing board's or a
   page's name renames it, as clicking an agent's name does: Enter saves,
-  Escape keeps the old name.
+  Escape keeps the old name. Its Collab tab renames it too: double-click the
+  tab or press F2 on it.
 - **🗑** deletes a drawing board or a page, or kills a running shell, after a
   confirm. Killing works while the shell is open too; its tab then shows
   the session ended, or closes, as your close-tab setting says. Dragging the

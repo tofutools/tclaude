@@ -145,7 +145,8 @@ tclaude agent page css agt_1234…/app 'button { color: red }'
 ### A page the operator creates in a group
 
 The operator can create a page in a group from the dashboard, as they create
-a drawing board (`POST /api/pages` with the group and a name). No agent shows it, so
+a drawing board (`POST /api/pages` with the group, a name and the title the
+operator typed in the dashboard's name dialog). No agent shows it, so
 the group owns it:
 
 - **It serves a blank scratch sheet.** This is tclaude's own fixed page, with
