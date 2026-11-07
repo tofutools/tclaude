@@ -159,6 +159,19 @@ test('order: Groups tab order lists parents before their children, in the operat
   assert.deepEqual(names, ['zeta', 'mid', 'alpha', 'Not in a group', 'Other sessions']);
 });
 
+test('order: Groups tab order follows the order the operator dragged the groups into there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const { sortGroupsByPref, GROUP_ORDER_KEY } = await harness.importDashboardModule('js/group-order.js');
+  const prefs = { getItem: (key) => (key === GROUP_ORDER_KEY ? JSON.stringify(['mid', 'zeta']) : null) };
+  const all = m.railItems({
+    resources: ORDER_FIXTURE.resources, groups: ORDER_FIXTURE.groups, background: ORDER_FIXTURE.background, statusOf: orderStatus,
+    order: { groups: 'groups', items: 'name' }, tabOrder: (list) => sortGroupsByPref(list, prefs),
+  });
+  assert.deepEqual(all.sections.map((s) => s.name), ['mid', 'alpha', 'zeta', 'Not in a group', 'Other sessions'],
+    'mid dragged above zeta, its subgroup alpha under it');
+});
+
 test('order: Activity puts a group with something open first, then the snapshot order; items by what is in use', async (t) => {
   const { names, mid } = await orderedRail(t, { order: { groups: 'activity', items: 'activity' }, open: ['page:pz', 'page:p2'] });
   assert.deepEqual(names.slice(0, 3), ['zeta', 'mid', 'alpha'], 'zeta and mid have a page open here');

@@ -195,9 +195,12 @@ export function agentGroupName(agent, names) {
 //   statusOf(item) is a terminal item's terminalTabStatus (its agent and
 //   what it is doing), if any; the item keeps it as status.
 //   used is a Map of item key → the last time it was opened here.
+//   order is the panel's order ({ groups, items }); tabOrder sorts the groups
+//   as the operator ordered them on the Groups tab, for Groups tab order.
 export function railItems({
   resources = [], groups = [], places = new Map(), panes = [], overlays = [], background = [],
   titleOf = (row) => row.label || row.tmux_session, statusOf = () => null, used = new Map(), order: chosen = DEFAULT_ORDER,
+  tabOrder = (list) => list,
 } = {}) {
   const order = readOrder(chosen);
   const names = new Map(groups.map((g) => [g.id, g.name]));
@@ -328,15 +331,16 @@ export function railItems({
     const name = id === UNGROUPED.id ? UNGROUPED.name : id === OTHER_SESSIONS.id ? OTHER_SESSIONS.name : names.get(id);
     return { id, name, items: sorted };
   });
-  return { sections: sortSections(sections, groups, order.groups) };
+  return { sections: sortSections(sections, groups, order.groups, tabOrder) };
 }
 
 // groupsTabRank is each group's place in the Groups tab: its tree, parents
-// before their children, in the operator's order.
-function groupsTabRank(groups) {
+// before their children, in the operator's order. tabOrder is the order the
+// operator dragged the groups into there (group-order.js sortGroupsByPref).
+function groupsTabRank(groups, tabOrder) {
   const rank = new Map();
   const walk = (nodes) => nodes.forEach((node) => { if (!rank.has(node.group.name)) rank.set(node.group.name, rank.size); walk(node.children); });
-  walk(buildGroupTree(groups.filter((g) => !g.virtual), () => true));
+  walk(buildGroupTree(tabOrder(groups.filter((g) => !g.virtual)), () => true));
   return new Map(groups.map((g) => [g.id, rank.get(g.name) ?? Infinity]));
 }
 
@@ -347,12 +351,12 @@ function groupsTabRank(groups) {
 // within each, the snapshot's group order. Groups tab order and Name A–Z read
 // nothing that opening, attaching or detaching changes; recent use moves no
 // group in any order, so a click never shifts the list under the pointer.
-function sortSections(sections, groups, mode) {
+function sortSections(sections, groups, mode, tabOrder) {
   const live = (i) => i.bucket !== 'closed';
   const tier = (s) => (s.items.some(needsYou) ? 0 : s.items.some((i) => i.bucket === 'open') ? 1
     : s.items.some((i) => live(i) && isAgentItem(i)) ? 2 : s.items.some(live) ? 3 : 4);
   const snapshotRank = new Map(groups.map((g, index) => [g.id, index]));
-  const tabRank = mode === 'groups' ? groupsTabRank(groups) : null;
+  const tabRank = mode === 'groups' ? groupsTabRank(groups, tabOrder) : null;
   const last = (s) => (s.id === OTHER_SESSIONS.id ? 2 : s.id === UNGROUPED.id ? 1 : 0);
   // ahead compares two ranks, Infinity (a group not listed) included.
   const ahead = (ranks, a, b) => { const x = ranks.get(a.id) ?? Infinity; const y = ranks.get(b.id) ?? Infinity; return x === y ? 0 : x < y ? -1 : 1; };

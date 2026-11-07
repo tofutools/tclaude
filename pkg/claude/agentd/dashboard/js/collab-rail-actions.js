@@ -13,6 +13,7 @@ import { processContext, processRunApi } from './process-context.js';
 import { onPeerPage } from './node-api.js';
 import { peerDrawingBoardResources, peerDrawingBoards } from './peer-drawing-boards.js';
 import { overlayResourceKey } from './resource-model.js';
+import { sortGroupsByPref } from './group-order.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { moveTabsToCollab } from './overlay-tab-moves.js';
@@ -76,7 +77,7 @@ export function collabItems(panes, snapshot, peer = onPeerPage(), order = undefi
   return railItems({
     resources, groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
-    titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(), order,
+    titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(), order, tabOrder: sortGroupsByPref,
   });
 }
 
