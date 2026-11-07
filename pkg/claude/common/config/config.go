@@ -135,6 +135,10 @@ type Config struct {
 	// Processes holds operator policy for processes. Absent → all defaults.
 	Processes *ProcessesConfig `json:"processes,omitempty"`
 
+	// Taskboard is the group task board's retention policy — see
+	// TaskboardConfig. The board itself is behind features.taskboard.
+	Taskboard *TaskboardConfig `json:"taskboard,omitempty"`
+
 	// Dashboard holds display toggles for the agentd web dashboard that
 	// don't belong to the slop / cost / notification blocks — see
 	// DashboardConfig. Absent → all defaults.
@@ -193,6 +197,12 @@ type FeaturesConfig struct {
 	// per-directory grants: the agent can write inside each directory but cannot
 	// delete the directory itself because its parent is not writable.
 	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
+
+	// Taskboard enables the group task board: a short-term, ordered task list
+	// per agent group (tclaude agent taskboard, /v1/groups/{g}/taskboard). It
+	// defaults off while the board is built in slices; off, its routes answer
+	// 404 and the sweep does nothing. Stored tasks are kept either way.
+	Taskboard bool `json:"taskboard,omitempty"`
 }
 
 // GroupAttachmentsMode values — config features.group_attachments.
@@ -215,6 +225,45 @@ type ProcessesConfig struct {
 	// valid signature. A review still shows such a file, and why it is
 	// refused. Off by default: an unsigned file is valid but unverified.
 	RefuseUnsignedImports bool `json:"refuse_unsigned_imports,omitempty"`
+}
+
+// TaskboardConfig is the group task board's retention policy. A done or
+// dropped task leaves the live list at once; it is hidden from `ls --all`
+// after ArchiveAfterDays and deleted, with its history, after RetentionDays.
+type TaskboardConfig struct {
+	// ArchiveAfterDays defaults to 14 when absent or not positive.
+	ArchiveAfterDays int `json:"archive_after_days,omitempty"`
+	// RetentionDays defaults to 90 when absent or not positive. A value below
+	// the archive period is raised to it.
+	RetentionDays int `json:"retention_days,omitempty"`
+}
+
+// Default task board retention, in days.
+const (
+	DefaultTaskboardArchiveAfterDays = 14
+	DefaultTaskboardRetentionDays    = 90
+)
+
+// TaskboardEnabled reports whether features.taskboard is on. Nil-safe.
+func (c *Config) TaskboardEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.Taskboard
+}
+
+// TaskboardRetention returns the archive and purge periods, in days.
+func (c *Config) TaskboardRetention() (archiveDays, retentionDays int) {
+	archiveDays, retentionDays = DefaultTaskboardArchiveAfterDays, DefaultTaskboardRetentionDays
+	if c != nil && c.Taskboard != nil {
+		if c.Taskboard.ArchiveAfterDays > 0 {
+			archiveDays = c.Taskboard.ArchiveAfterDays
+		}
+		if c.Taskboard.RetentionDays > 0 {
+			retentionDays = c.Taskboard.RetentionDays
+		}
+	}
+	if retentionDays < archiveDays {
+		retentionDays = archiveDays
+	}
+	return archiveDays, retentionDays
 }
 
 // RefuseUnsignedWorkflows reports whether importing an unsigned .pwf is refused.

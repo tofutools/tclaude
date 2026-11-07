@@ -2362,3 +2362,52 @@ CREATE TABLE sandbox_profile_peer_owners (
 			profile_id INTEGER PRIMARY KEY REFERENCES sandbox_profiles(id) ON DELETE CASCADE,
 			peer       TEXT NOT NULL
 		);
+
+CREATE TABLE group_tasks (
+			id           TEXT PRIMARY KEY,
+			group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			title        TEXT NOT NULL,
+			body         TEXT NOT NULL DEFAULT '',
+			stage        TEXT NOT NULL CHECK(stage IN ('idea','next')),
+			status       TEXT NOT NULL CHECK(status IN ('open','blocked','done','dropped')),
+			rank         TEXT NOT NULL,
+			block_reason TEXT NOT NULL DEFAULT '',
+			ref_kind     TEXT NOT NULL DEFAULT '' CHECK(ref_kind IN ('','awb','linear','github','url')),
+			ref_url      TEXT NOT NULL DEFAULT '',
+			ref_label    TEXT NOT NULL DEFAULT '',
+			assignee_id  TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+			assigned_by  TEXT NOT NULL DEFAULT '',
+			assigned_at  INTEGER,
+			outcome      TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','succeeded','failed')),
+			outcome_note TEXT NOT NULL DEFAULT '',
+			failures     INTEGER NOT NULL DEFAULT 0,
+			created_by   TEXT NOT NULL,
+			created_at   INTEGER NOT NULL,
+			updated_at   INTEGER NOT NULL,
+			closed_at    INTEGER,
+			archived_at  INTEGER
+		) STRICT;
+
+CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
+
+CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
+
+CREATE TABLE group_task_deps (
+			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			PRIMARY KEY (task_id, depends_on),
+			CHECK (task_id <> depends_on)
+		) STRICT;
+
+CREATE INDEX idx_group_task_deps_on ON group_task_deps(depends_on);
+
+CREATE TABLE group_task_events (
+			id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			at      INTEGER NOT NULL,
+			actor   TEXT NOT NULL,
+			kind    TEXT NOT NULL,
+			detail  TEXT NOT NULL DEFAULT ''
+		) STRICT;
+
+CREATE INDEX idx_group_task_events_task ON group_task_events(task_id, id);

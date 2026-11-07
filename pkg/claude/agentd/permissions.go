@@ -222,6 +222,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set/clear own task-reference link — the Task column's Linear/GitHub/ticket URL (tclaude agent task set/clear). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug:        PermSelfTaskboard,
+		Description: "Take and release tasks on your own group's task board and report on a task assigned to you (tclaude agent taskboard take/release/report, from the assign slice on). Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
 		Slug:        PermSelfPR,
 		Description: "Present own pull request to the operator dashboard (tclaude agent present-pr). Default-granted, mirroring the self-lifecycle slugs.",
 	},
@@ -769,6 +773,18 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug: PermGroupsResourcesLock, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Lock and unlock the resources linked to a group (its boards, the process templates pinned to it, its live pages) against agent changes, and still change them while they are locked (tclaude agent resources lock/unlock). A resource in several groups needs it in each; one in no group needs an unscoped grant. Never default-granted, never conferred by group ownership or membership, and not covered by groups.admin: the operator grants it. Also a federation peer grant (group-scoped): lock and unlock them from the peer's dashboard, as this node's operator does. Unrestricted trust holds it.",
+	},
+	{
+		Slug: PermTaskboardRead, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true, MemberImplied: true,
+		Description: "Read a group's task board: list its tasks, show one and its history (tclaude agent taskboard ls/show/history). Scope with group=<name> for named groups; unscoped reaches every group, future ones included. Conferred by active membership and by ownership of the group; never default-granted. A task in a group the caller cannot read answers 404.",
+	},
+	{
+		Slug: PermTaskboardWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true, MemberImplied: true,
+		Description: "Change a group's task board: add, edit, move, promote/demote, block/unblock, drop and close tasks (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. Scope with group=<name>. Conferred by active membership and by ownership of the group; never default-granted.",
+	},
+	{
+		Slug: PermTaskboardManage, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Manage a group's task board as a whole: its writer lock and retention. Scope with group=<name>. Conferred by ownership of the group, not by membership; never default-granted.",
 	},
 	{Slug: PermGroupsSettings, Description: "Federation peer grant (group-scoped): change the group's ordinary settings from the peer's dashboard — description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting (under a group this node shows the peer). What every spawn into the group inherits also needs the matching spawn grant: its default directory groups.members.spawn.cwd, its default saved prompts groups.members.spawn.prompts, its sandbox profile groups.members.spawn.sandbox, and a default profile must be one the peer may pick for a spawn there. Its environment needs groups.settings.environment. Unrestricted trust holds it."},
 	{Slug: PermNodeSpawnRead, Description: "Read the spawn dialog's catalogs on this node, so a peer's remote spawn dialog shows what this node would apply and offers its profiles and prompts: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model. Read-only; spawn and sandbox profiles carry their environment values (often tokens) and paths. Default off; instance-wide peer grant."},
