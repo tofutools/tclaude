@@ -34,8 +34,8 @@ export function buildResourceCreateCommands(groups = [], {
     cmds.push({
       icon: wiz('▭', '🪞'),
       label: wiz(`Make a live page in ${group}`, `Raise a looking glass in ${group}`),
-      hint: wiz(`a web page a member of ${group} serves, shown live to view and mark up together; starts blank`,
-        `a blank glass you mark; a hero of ${group} fills it with its own vision`),
+      hint: wiz(`a web page a member of ${group} serves, live here for you to view and mark up; starts blank`,
+        `a glass a hero of ${group} fills with its vision, live for you to scry and mark; starts clear`),
       keywords: `new create make add open start live page web page blank sketch mock resource group ${group}`
         + ' looking glass mirror vision party',
       run: run('page'),
