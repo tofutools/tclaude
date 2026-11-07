@@ -16,7 +16,8 @@ import { freeDrawingBoardId } from './drawing-board-manage.js';
 import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem, MenuSep, SortTh } from './ui-components.js';
-import { applySortState, tableSortState } from './sort.js';
+import { applySortState, tableSortState, timestampSortValue } from './sort.js';
+import { relTime } from './helpers.js';
 import { LockChip } from './resource-lock.js';
 import { moveTargets } from './resource-moves.js';
 import { nodeFetch } from './node-api.js';
@@ -47,13 +48,15 @@ function pageDetail(page, nameOf) {
 export const KIND_WORD = Object.freeze({ drawing_board: 'drawing board', page: 'page', shell: 'shell', process: 'process' });
 
 // RESOURCE_COLS are ResourceTable's columns, in the agents table's order
-// where they share one: the controls, Name, State, then what only a
-// resource has. A col is sortable (sort table "resources", sort.js), as an
+// where they share one: the controls, Name, State, Last, Age, then what only
+// a resource has. A col is sortable (sort table "resources", sort.js), as an
 // agent column is.
 export const RESOURCE_COLS = Object.freeze([
   { key: 'ctl', label: '' },
   { key: 'name', label: 'Name', col: 'name' },
   { key: 'state', label: 'State', col: 'state' },
+  { key: 'last', label: 'Last', col: 'last' },
+  { key: 'age', label: 'Age', col: 'age' },
   { key: 'kind', label: 'Kind', col: 'kind' },
   { key: 'lock', label: 'Lock', col: 'lock' },
   { key: 'detail', label: 'Detail', col: 'detail' },
@@ -63,20 +66,52 @@ export const RESOURCE_COLS = Object.freeze([
 // table and the other resources' table sort alike.
 export const RESOURCE_SORT = 'resources';
 
+// Last and Age sort as instants (RFC3339 parsed, as the agents table's Age
+// does), not by their "5m ago" text; a row without one sorts last.
 const RESOURCE_ACCESSORS = Object.freeze({
-  name: (r) => r.name, state: (r) => r.state, kind: (r) => r.kind, lock: (r) => (r.lock == null ? null : r.lock ? 'locked' : 'open'), detail: (r) => r.detail,
+  name: (r) => r.name, state: (r) => r.state, last: (r) => timestampSortValue(r.last), age: (r) => timestampSortValue(r.age),
+  kind: (r) => r.kind, lock: (r) => (r.lock == null ? null : r.lock ? 'locked' : 'open'), detail: (r) => r.detail,
 });
 
-// sortResourceRows orders rows ({ name, state, kind, lock, detail, … }) by
-// the Resources headers' sort, or keeps them as they are with none.
+// resourceTimes is a resource's Last and Age as the snapshot's group_resources
+// give them ({ last, age }, RFC3339, '' when unknown), found as resourceView
+// finds its state.
+export function resourceTimes(snapshotValue, groupId, kind, id) {
+  const entry = (snapshotValue?.group_resources || []).find((r) => r.kind === kind && r.id === id && r.group_id === groupId);
+  return { last: entry?.last_at || '', age: entry?.created_at || '' };
+}
+
+// TimeCells are a resource row's Last and Age cells, rendered as the agents
+// table renders an agent's: a relative time, the raw one on Age's title.
+export function TimeCells({ times }) {
+  return html`<td class="gr-timecell"><span class="last-hook" title=${times?.last || ''}>${relTime(times?.last)}</span></td>
+    <td class="gr-timecell"><span class="last-hook" title=${times?.age || ''}>${relTime(times?.age)}</span></td>`;
+}
+
+// sortResourceRows orders rows ({ name, state, last, age, kind, lock, detail,
+// … }) by the Resources headers' sort, or keeps them as they are with none.
 export function sortResourceRows(rows) {
   return applySortState(rows, RESOURCE_ACCESSORS, tableSortState(RESOURCE_SORT, RESOURCE_COLS));
 }
 
+// ALIGNED_COLS are the agents table's headers (data-sort-col) a Resources
+// table lines its own up under, in order, each with this table's width
+// variable: the controls take whatever lies left of Name.
+const ALIGNED_COLS = Object.freeze([
+  { col: 'title', key: 'name', min: 60 },
+  { col: 'state', key: 'state', min: 40 },
+  { col: 'last', key: 'last', min: 30 },
+  { col: 'age', key: 'age', min: 30 },
+]);
+
 // agentColumns finds, for a Resources table, where the agents table above it
-// in the same group starts its Name and State columns, as widths for this
-// table's controls and Name columns; null when there is no agents table to
-// line up with (folded, or none).
+// in the same group starts its Name, State, Last and Age columns, as widths
+// for this table's controls, Name, State, Last and Age columns ({ ctl, name,
+// state, last, age }, 0 for one not to set); null when there is no agents
+// table to line up with (folded, or none). A column runs to where the next
+// of these starts, so one the agents table shows between them (Process) is
+// taken in and the next still lines up; without that next one (hidden), it
+// is its header's own width.
 export function agentColumns(table) {
   const section = table?.closest?.('[data-fused-section]');
   // The members table, by its Name header: a pending-spawns table may come
@@ -84,18 +119,24 @@ export function agentColumns(table) {
   const name = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] thead th[data-sort-col="title"]');
   const head = name?.closest('thead');
   if (!head) return null;
-  const state = head.querySelector('th[data-sort-col="state"]');
   const left = table.getBoundingClientRect().left;
   const nameLeft = name?.getBoundingClientRect().left;
   if (!name || !(nameLeft > left)) return null;
-  const ctl = Math.round(nameLeft - left);
-  const nameWidth = state ? Math.round(state.getBoundingClientRect().left - nameLeft) : 0;
-  return { ctl, name: nameWidth > 60 ? nameWidth : 0 };
+  const out = { ctl: Math.round(nameLeft - left) };
+  const rects = ALIGNED_COLS.map(({ col }) => (col === 'title' ? name : head.querySelector(`th[data-sort-col="${col}"]`))?.getBoundingClientRect() || null);
+  ALIGNED_COLS.forEach(({ key, min }, i) => {
+    const own = rects[i];
+    const next = rects[i + 1];
+    // Name has no width of its own to fall back to: the table's rest takes it.
+    const width = !own ? 0 : next ? Math.round(next.left - own.left) : key === 'name' ? 0 : Math.round(own.width);
+    out[key] = width > min ? width : 0;
+  });
+  return out;
 }
 
-// useAgentAlignment keeps table's controls and Name columns as wide as the
-// agents table's above it, so Name and State line up across the two: on
-// every render and whenever the agents table changes size.
+// useAgentAlignment keeps table's controls, Name, State, Last and Age columns
+// as wide as the agents table's above it, so those line up across the two:
+// on every render and whenever the agents table changes size.
 function useAgentAlignment(ref) {
   const apply = () => {
     const table = ref.current;
@@ -103,7 +144,7 @@ function useAgentAlignment(ref) {
     const cols = agentColumns(table);
     // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
     table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
-    table.style.setProperty('--gr-name-w', cols?.name ? `${cols.name}px` : '');
+    for (const key of ['name', 'state', 'last', 'age']) table.style.setProperty(`--gr-${key}-w`, cols?.[key] ? `${cols[key]}px` : '');
   };
   useLayoutEffect(apply);
   useEffect(() => {
@@ -275,13 +316,14 @@ export function renameResource(resource, { api, source, notify }) {
 // ResourceRow is one resource, a row of ResourceTable: a light for its
 // state, then 👁 (open, focus or attach it), 🗑 (delete it, or kill a shell)
 // and ⚙ (its other actions), the same buttons in the same places on every
-// row, then its name, kind, state pill, agent lock and detail. remove is
+// row, then its name, state pill, Last and Age (times, resourceTimes), kind,
+// agent lock and detail. remove is
 // { title, attrs, run } or null (the 🗑 stays, disabled, so the buttons line
 // up); a row that has one is also deleted by a drop on the trash bin
 // (resource-dnd.js).
 // rename, when the row has one, starts its name field: a click on the name
 // renames, as an agent's does, and 👁 opens.
-function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, rename = null, drag = null }) {
+function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, times, primary, remove = null, menu, lock, renaming = null, rename = null, drag = null }) {
   // A rename ended from the keyboard leaves focus on the name, as an
   // agent's does, not on the page.
   const nameRef = useRef(null);
@@ -313,6 +355,7 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, r
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
       onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</td>
     <td><${ResourcePill} view=${view} kind=${kind} /></td>
+    <${TimeCells} times=${times} />
     <td class="gq-dim gr-kindcell">${KIND_WORD[kind] || kind}</td>
     <td class="gr-lockcell">${lock || html`<span class="gq-dim">—</span>`}</td>
     <td class="gq-dim gr-meta" title=${meta}>${meta}</td>
@@ -351,7 +394,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
   const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="page" attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
     drag=${draggable && { id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
-    closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageDetail(page, nameOf)} view=${view}
+    closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageDetail(page, nameOf)} view=${view} times=${resourceTimes(snapshotValue, groupId, 'page', page.id)}
     primary=${{ label: primaryLabel('page', view), run }}
     remove=${{ title: `Delete page ${label}`, attrs: { 'data-page-trash': page.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }} rename=${ctx.startRename}
@@ -367,7 +410,7 @@ function DrawingBoardRow({ drawingBoard, api, source, notify, confirm, snapshotV
   const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="drawing_board" attrs=${{ 'data-resource-drawing-board': drawingBoard.id }} glyph="▦" label=${label}
     drag=${draggable && { id: drawingBoard.id, group: groupName }}
-    meta=${drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : ''} view=${view}
+    meta=${drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : ''} view=${view} times=${resourceTimes(snapshotValue, groupId, 'drawing_board', drawingBoard.id)}
     primary=${{ label: primaryLabel('drawing_board', view), run: focusOr(`drawing_board:${drawingBoard.id}`, () => openDrawingBoardPane(drawingBoard.id, label)) }}
     remove=${{ title: `Delete drawing board ${label}`, attrs: { 'data-drawing-board-trash': drawingBoard.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }} rename=${ctx.startRename}
@@ -390,7 +433,7 @@ function ShellRow({ group, shell, notify, confirm, snapshotValue, draggable = tr
   const killable = view !== 'closed' && !!shell.session;
   return html`<${ResourceRow} kind="shell" attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
     label=${agentShell ? shell.title : 'Group shell'} drag=${draggable && killable && { id: shell.id, group: group.name }}
-    meta=${shell.detail || ''} view=${view}
+    meta=${shell.detail || ''} view=${view} times=${{ last: shell.last_at || '', age: shell.created_at || '' }}
     primary=${{ label: primaryLabel('shell', view), run: open }}
     remove=${killable && { title: `Kill ${label}`, attrs: { 'data-shell-kill': agentShell ? shell.id : group.name }, run: kill }}
     menu=${[{ label: 'Kill…', danger: true, attrs: { 'data-shell-kill-menu': shell.id }, run: kill }].filter(() => killable)} lock=${null} />`;
@@ -416,14 +459,15 @@ export function GroupResources({ group, drawingBoards = [], pages = [], api, sou
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
   // One list across kinds, so a header sorts the whole table; unsorted it
   // keeps drawing boards, then pages, then shells.
+  const times = (kind, id) => resourceTimes(snapshotValue, group.id, kind, id);
   const rows = sortResourceRows([
-    ...drawingBoards.map((drawingBoard) => ({ key: `drawing_board:${drawingBoard.id}`, name: drawingBoard.title || drawingBoard.id, state: resourceView(snapshotValue, group.id, 'drawing_board', drawingBoard.id), kind: KIND_WORD.drawing_board,
+    ...drawingBoards.map((drawingBoard) => ({ ...times('drawing_board', drawingBoard.id), key: `drawing_board:${drawingBoard.id}`, name: drawingBoard.title || drawingBoard.id, state: resourceView(snapshotValue, group.id, 'drawing_board', drawingBoard.id), kind: KIND_WORD.drawing_board,
       lock: !!drawingBoard.agentsLocked, detail: drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : '',
       render: () => html`<${DrawingBoardRow} key=${`drawing_board:${drawingBoard.id}`} drawingBoard=${drawingBoard} ...${props} />` })),
-    ...pages.map((page) => ({ key: `page:${page.id}`, name: page.title || page.name, state: resourceView(snapshotValue, group.id, 'page', page.id, page.state === 'closed' ? 'closed' : 'running'),
+    ...pages.map((page) => ({ ...times('page', page.id), key: `page:${page.id}`, name: page.title || page.name, state: resourceView(snapshotValue, group.id, 'page', page.id, page.state === 'closed' ? 'closed' : 'running'),
       kind: KIND_WORD.page, lock: !!page.agentsLocked, detail: pageDetail(page, nameOf),
       render: () => html`<${PageRow} key=${`page:${page.id}`} page=${page} nameOf=${nameOf} ...${props} />` })),
-    ...shells.map((shell) => ({ key: `shell:${shell.id}`, name: shell.agent ? shell.title : 'Group shell', state: resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state),
+    ...shells.map((shell) => ({ last: shell.last_at || '', age: shell.created_at || '', key: `shell:${shell.id}`, name: shell.agent ? shell.title : 'Group shell', state: resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state),
       kind: KIND_WORD.shell, lock: null, detail: shell.detail || '',
       render: () => html`<${ShellRow} key=${`shell:${shell.id}`} group=${group} shell=${shell} ...${props} />` })),
   ]);
