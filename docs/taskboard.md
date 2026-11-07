@@ -414,7 +414,8 @@ A move happens in two steps, so a failure never leaves a silent duplicate:
    the original is left for you to drop.
 
 The task's history, assignee and dependencies stay behind with the dropped
-original. A clone runs only the first step.
+original. A clone runs only the first step. Only an open or blocked task moves
+to another node; a done or dropped one can be cloned.
 
 An agent running the command also needs its own grant for the linked node,
 as for any `--peer` verb: `taskboard.transfer` scoped with

@@ -1139,6 +1139,10 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	if !p.Clone && t.Status != "open" && t.Status != "blocked" {
+		fmt.Fprintf(stderr, "Error: %s is %s; only an open or blocked task moves to another node (--clone copies it)\n", t.ID, t.Status)
+		return rcInvalidArg
+	}
 	stage := p.Stage
 	if stage == "" {
 		stage = "idea"

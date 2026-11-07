@@ -180,6 +180,23 @@ test('a clone to another node only creates; a failed drop is retried once, then 
   assert.match(toasts.at(-1), /could not be closed here \(node offline\): both copies are live, drop this one by hand/);
 });
 
+test('a done task does not move to another node, so no copy is left behind', async (t) => {
+  const harness = await createPreactHarness(t);
+  const transfer = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const saved = { ...transfer.transferDeps };
+  t.after(() => Object.assign(transfer.transferDeps, saved));
+  const toasts = [];
+  let created = 0;
+  transfer.transferDeps.toast = (text) => toasts.push(text);
+  transfer.transferDeps.confirm = async () => true;
+  transfer.transferDeps.nodeApi = async () => ({ transferIn: async () => { created++; return { id: 'tk_x' }; } });
+  const out = await transfer.runCrossTransfer({ task: { id: 'tk_1', title: 'shipped', status: 'done' }, group: { name: 'a' },
+    actions: { run: async (_k, _l, fn) => fn({ movedAway: async () => ({}) }) }, to: 'b', node: 'nd_other', nodeName: 'other', stage: 'idea', clone: false });
+  assert.equal(out, null);
+  assert.equal(created, 0);
+  assert.match(toasts[0], /only an open or blocked task moves to another node/);
+});
+
 test('the confirmation says what a move keeps and undoes', async (t) => {
   const harness = await createPreactHarness(t);
   const { transferMessage } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');

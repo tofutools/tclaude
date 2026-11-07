@@ -237,6 +237,12 @@ export async function runTransfer({ task, group, tasks = [], actions, to, stage,
 // node `node`: create there first, then drop the original here.
 export async function runCrossTransfer({ task, group, actions, to, node, nodeName, fromNodeName = '', stage, clone }) {
   const toNode = nodeName || node;
+  // Only a live task moves to another node (its original is dropped); a
+  // done or dropped one is cloned instead.
+  if (!clone && task.status !== 'open' && task.status !== 'blocked') {
+    transferDeps.toast(`"${task.title}" is ${task.status}: only an open or blocked task moves to another node. Hold Ctrl/Cmd to clone it.`, true);
+    return null;
+  }
   const text = crossMessage({ task, from: group.name, fromNode: fromNodeName, to, toNode, stage, clone });
   const ok = await transferDeps.confirm({ ...text, meta: task.title || task.id });
   if (!ok) return null;
