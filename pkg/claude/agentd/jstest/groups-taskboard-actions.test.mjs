@@ -98,13 +98,15 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'blocked', 'waiting on CI']]);
   assert.equal(c.querySelector('[data-task-form]'), null, 'the form closes on success');
 
-  // Edit changes only what changed; an emptied ref clears it.
+  // ✎ opens the edit form; it saves only what changed.
   api.calls.length = 0;
   await click(button('tk_00000001', 'Edit'));
-  const edit = c.querySelector('[data-task-form="edit"]');
-  await harness.input(edit.querySelector('.tb-form-title'), 'first, renamed');
-  await harness.act(async () => { harness.fireEvent(c.querySelector('.tb-form-title'), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
+  const edit = harness.document.querySelector('#taskboard-edit-modal');
+  assert.ok(edit, 'the edit form opens');
+  await harness.input(edit.querySelector('.tb-edit-title'), 'first, renamed');
+  await harness.act(async () => { harness.fireEvent(edit.querySelector('.tb-edit-title'), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['edit', 'tk_00000001', { title: 'first, renamed' }]]);
+  assert.equal(harness.document.querySelector('#taskboard-edit-modal'), null, 'a full Save closes it');
 
   // Drop takes an optional reason.
   api.calls.length = 0;
@@ -117,7 +119,7 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   await click(c.querySelector('.tb-history-toggle'));
   const closed = rowOf('tk_00000005');
   assert.ok(closed.matches('.tb-closed') && closed.closest('table') === rowOf('tk_00000001').closest('table'), 'history rows share the list\'s table');
-  assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Nothing more for finished'], 'a closed task has nothing more here: no group to clone to');
+  assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit', 'Nothing more for finished'], 'a closed task has nothing more here: no group to clone to');
   await click(button('tk_00000005', 'Reopen'));
   assert.deepEqual(api.calls, [['status', 'tk_00000005', 'open']]);
 });
