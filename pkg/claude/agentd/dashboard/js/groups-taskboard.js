@@ -197,15 +197,15 @@ function useBoardActions(source, api) {
 // canAssign says whether the viewer may assign on this board. The api may
 // carry `can.assign` (a peer node's board sets it from its peer_view grants);
 // the local operator may always.
+export function canAssign(actions) {
+  return !!actions && actions.api?.can?.assign !== false;
+}
+
 // canClose reports whether the viewer may mark the task done or drop it: an
 // assigned task is closed by its assignee or an assigner (taskboard.assign),
 // as the status route checks; an unassigned one by any writer.
 export function canClose(task, actions) {
   return !task?.assignee?.agent_id || canAssign(actions);
-}
-
-export function canAssign(actions) {
-  return !!actions && actions.api?.can?.assign !== false;
 }
 
 // RowActions are a row's buttons for its state. Each names its CLI verb.
