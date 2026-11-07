@@ -432,7 +432,7 @@ test('the adapter reads the open editor id from the island, not the DOM', async 
   ]);
 });
 
-async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden = false } = {}) {
+async function bootGroupsFocus(t, startPath, { processesHidden = false } = {}) {
   const harness = await createPreactHarness(t);
   installShell(harness);
   if (processesHidden) harness.document.body.classList.add('hide-processes');
@@ -441,10 +441,9 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     harness.importDashboardModule('js/feature-state-registry.js'),
     harness.importDashboardModule('js/nav-history.js'),
   ]);
-  const groupsFocus = harness.signals.signal(focus);
   const focusedRun = harness.signals.signal(null);
   const unregister = registerFeatureState('groups', {
-    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focus: groupsFocus, focusedRun,
+    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focusedRun,
   });
   t.after(unregister);
   const restores = [];
@@ -452,121 +451,44 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     restores.push(event.detail.location);
     if (event.detail.location.tab === 'groups') {
       const { subtab } = event.detail.location;
-      if (subtab === 'runs') {
-        focusedRun.value = { group: event.detail.location.selection, runId: event.detail.location.item };
-        return;
-      }
-      focusedRun.value = null;
-      groupsFocus.value = subtab === 'processes' || subtab === 'agents' ? subtab : 'both';
+      focusedRun.value = subtab === 'runs' ? { group: event.detail.location.selection, runId: event.detail.location.item } : null;
     }
   });
   initNavHistory();
-  return { harness, browsing, restores, groupsFocus, focusedRun };
+  return { harness, browsing, restores, focusedRun };
 }
 
-test('a /groups/processes deep link restores the Processes focus', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/processes');
-  assert.equal(browsing.at(), '/groups/processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
-});
+for (const path of ['/groups/processes', '/groups/agents']) {
+  test(`the retired ${path} deep link lands on bare Groups`, async (t) => {
+    const { browsing, restores } = await bootGroupsFocus(t, path);
+    assert.equal(browsing.at(), '/');
+    assert.deepEqual(restores, [], 'nothing to restore: it is the default view');
+  });
+}
 
-test('a /groups/agents deep link restores the Agents focus; bare Groups is Both', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/agents');
-  assert.equal(browsing.at(), '/groups/agents');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'agents' }]);
-  assert.equal(groupsFocus.value, 'agents');
-});
-
-test('a fresh bare load in Both keeps the bare URL', async (t) => {
-  const fused = await bootGroupsFocus(t, '/');
-  assert.equal(fused.browsing.at(), '/');
-  assert.equal(fused.groupsFocus.value, 'both');
-});
-
-test('a fresh bare load names the remembered Agents focus in the URL', async (t) => {
-  const { browsing, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'agents' });
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/groups/agents' }]);
-  assert.equal(groupsFocus.value, 'agents');
-});
-
-test('a /groups/processes deep link falls back to Groups while processes are off', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/processes', { processesHidden: true });
+test('a fresh bare load keeps the bare URL', async (t) => {
+  const { browsing, restores } = await bootGroupsFocus(t, '/');
   assert.equal(browsing.at(), '/');
   assert.deepEqual(restores, []);
-  assert.equal(groupsFocus.value, 'both');
 });
 
-test('a fresh bare load names the remembered Processes focus in the URL', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'processes' });
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/groups/processes' }],
-    'the entry is rewritten in place, so a later Back onto it restores Processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
+test('a /groups/runs deep link opens the run', async (t) => {
+  const on = await bootGroupsFocus(t, '/groups/runs/ops/run_1');
+  assert.equal(on.browsing.at(), '/groups/runs/ops/run_1');
+  assert.deepEqual(on.focusedRun.value, { group: 'ops', runId: 'run_1' });
 });
 
-test('a remembered Processes focus stays out of the URL while processes are off, and survives', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'processes', processesHidden: true });
+test('a /groups/runs deep link falls back to Groups while processes are off', async (t) => {
+  const { browsing, restores, focusedRun } = await bootGroupsFocus(t, '/groups/runs/ops/run_1', { processesHidden: true });
   assert.equal(browsing.at(), '/');
-  assert.deepEqual(restores, [], 'no synthetic restore clobbers the remembered lens');
-  assert.equal(groupsFocus.value, 'processes');
+  assert.deepEqual(restores, []);
+  assert.equal(focusedRun.value, null);
 });
 
-test('a stale-target fallback lands on the remembered Processes lens', async (t) => {
+test('a stale-target fallback lands on bare Groups', async (t) => {
   // /terminals with no panes (they do not survive a reload) is unavailable.
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/terminals', { focus: 'processes' });
-  assert.equal(browsing.at(), '/groups/processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
-});
-
-test('focus switches push entries and Back returns to the Both focus', async (t) => {
-  const { harness, browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/');
-  browsing.calls.length = 0;
-  groupsFocus.value = 'processes';
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
-    detail: { location: { tab: 'groups', subtab: 'processes' } },
-  }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/groups/processes' }]);
-
-  // Leaving and re-entering Groups through the nav reads the focus back.
-  const nav = (tab) => {
-    for (const b of harness.document.querySelectorAll('nav [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
-    harness.document.querySelector(`nav [data-tab="${tab}"]`).click();
-  };
-  nav('jobs');
-  nav('groups');
-  assert.equal(browsing.at(), '/groups/processes');
-
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
-  restores.length = 0;
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Processes is an explicit restore');
-  assert.equal(groupsFocus.value, 'both');
-});
-
-test('the Agents lens keeps its URL across tabs, and Back onto bare Groups returns to Both', async (t) => {
-  const { harness, browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/');
-  browsing.calls.length = 0;
-  groupsFocus.value = 'agents';
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
-    detail: { location: { tab: 'groups', subtab: 'agents' } },
-  }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/groups/agents' }]);
-
-  const nav = (tab) => {
-    for (const b of harness.document.querySelectorAll('nav [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
-    harness.document.querySelector(`nav [data-tab="${tab}"]`).click();
-  };
-  nav('jobs');
-  nav('groups');
-  assert.equal(browsing.at(), '/groups/agents', 're-entering Groups names the Agents lens');
-
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
-  restores.length = 0;
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Agents is an explicit restore');
-  assert.equal(groupsFocus.value, 'both');
+  const { browsing } = await bootGroupsFocus(t, '/terminals');
+  assert.equal(browsing.at(), '/');
 });
 
 // installTabsShell is a nav whose buttons switch the active tab on click, the
@@ -709,7 +631,7 @@ test('a Messages search survives the deep link next to the page-global theme', a
   assert.equal(browsing.at(), '/messages/human?slop=1&q=rollback');
 });
 
-test('Back from a run opened in Both closes it on bare Groups', async (t) => {
+test('Back from an open run closes it on bare Groups', async (t) => {
   const { harness, browsing, restores, focusedRun } = await bootGroupsFocus(t, '/');
   focusedRun.value = { group: 'ops', runId: 'run_1' };
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
@@ -785,10 +707,10 @@ test('a navigation right after an overlay close waits for the step back to land'
   browsing.calls.length = 0;
   open = '';
   overlays.announceOverlay({ closed: true, doc: harness.document });
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: { tab: 'groups', subtab: 'processes' } } }));
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: { tab: 'groups', subtab: 'runs', selection: 'ops', item: 'run_1' } } }));
   assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'the push waits for the traversal');
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
   assert.equal(browsing.calls.at(-1).kind, 'push');
-  assert.equal(browsing.at(), '/groups/processes');
+  assert.equal(browsing.at(), '/groups/runs/ops/run_1');
 });

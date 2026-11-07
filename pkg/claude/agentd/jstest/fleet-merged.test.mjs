@@ -519,13 +519,13 @@ test("this node's groups run the Groups actions under their own names; a peer's 
 
 // fusedGroups mounts the fused view with its own Groups toolbar state and a
 // process context covering this node's groups only.
-async function mountFusedLens(t, { focus = 'agents', query = '' } = {}) {
+async function mountFusedLens(t, { query = '' } = {}) {
   const harness = await createPreactHarness(t);
   const [stateMod, island, groupsStateMod, islandMod] = await Promise.all([
     harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
     harness.importDashboardModule('js/groups-state.js'), harness.importDashboardModule('js/groups-island.js'),
   ]);
-  const values = new Map([['tclaude.dash.groups.lens', focus]]);
+  const values = new Map();
   const prefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
   const groups = groupsStateMod.createGroupsState({ prefs, resetOffsets: () => {}, reorder: (g) => g,
     columns: { list: () => [{ key: 'id', label: 'ID' }], hidden: () => false, setHidden: () => {}, deviationCount: () => 0 } });
@@ -560,11 +560,11 @@ test('fused Groups is driven by the Groups toolbar: its filter narrows every nod
   assert.equal(toolbar.querySelector('#filter-groups-count').textContent, '1 / 3', 'the toolbar counts the fused listing');
   for (const key of ['ungrouped', 'retired', 'conversations', 'replaced']) assert.ok(toolbar.querySelector(`#filter-groups-${key}`), `show ${key} is offered while fused`);
   assert.ok(toolbar.querySelector('#filter-groups-offline'));
-  assert.ok(toolbar.querySelector('[data-groups-focus="processes"]'), 'the lens switch is there');
+  assert.equal(toolbar.querySelector('[data-groups-focus]'), null, 'there is no lens switch');
 });
 
-test('fused Processes shows this node\'s runs on its groups, and says a peer\'s are not shared', async (t) => {
-  const { root } = await mountFusedLens(t, { focus: 'processes' });
+test('fused Groups shows this node\'s runs on its groups, and says a peer\'s are not shared', async (t) => {
+  const { root } = await mountFusedLens(t);
   const home = root.querySelector('details[data-group-key="frontend-squad@desk"]');
   const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
   assert.deepEqual([...home.querySelectorAll('[data-process-run-card]')].map((c) => c.dataset.processRunCard), ['run_migrate', 'run_release', 'run_reindex'],
@@ -576,8 +576,8 @@ test('fused Processes shows this node\'s runs on its groups, and says a peer\'s 
   assert.equal(peer.querySelector('summary .gpi-graphs'), null, 'the peer header shows none');
 });
 
-test('fused Both keeps a peer group\'s member table beside the not-shared note', async (t) => {
-  const { root } = await mountFusedLens(t, { focus: 'both' });
+test('fused Groups keeps a peer group\'s member table beside the not-shared note', async (t) => {
+  const { root } = await mountFusedLens(t);
   const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
   assert.ok(peer.querySelector('[data-fused-section="agents"]'), 'the Agents section is there');
   assert.match(peer.textContent, /far-away/);
@@ -587,7 +587,7 @@ test('fused Both keeps a peer group\'s member table beside the not-shared note',
 });
 
 test('fused view lets this node\'s process drags through, the run focus\'s performer dock included', async (t) => {
-  const { harness, root } = await mountFusedLens(t, { focus: 'processes' });
+  const { harness, root } = await mountFusedLens(t);
   const add = (inner) => { const d = harness.document.createElement('div'); d.innerHTML = inner; root.appendChild(d); return d; };
   const dock = add('<div data-run-dock><span draggable="true" data-run-dock-agent="agt_fe_lead">fe</span></div>').querySelector('[data-run-dock-agent]');
   assert.equal(harness.fireEvent(dock, 'dragstart').defaultPrevented, false, 'a performer drags onto a step');
