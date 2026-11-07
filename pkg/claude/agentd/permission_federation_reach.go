@@ -78,6 +78,8 @@ func (f FedReach) peerGrantable() bool {
 
 // peerPagesWhy: a live page is served from this node's stage origin into
 // its local operator's own dashboard and to its agents.
+const peerTaskboardWhy = "a group's task board takes peer grants (read, write, assign, manage, scoped per group) once its peer routes land; until then no peer reaches it"
+
 const peerPagesWhy = "a page is this node's stage origin, shown to the local operator's own dashboard and its agents; a peer has no view of it"
 
 // peerCredentialProxyWhy: the git, forge, HTTP, Linear and awb proxies carry
@@ -139,12 +141,13 @@ var slugFederationReach = map[string]FedReach{
 	PermSelfTask:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTaskboard:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	// A group's task board is meant to be read and worked by trusted peers
-	// under group-scoped peer grants (default nothing); the peer routes land
-	// with the federation slice (V1.9), so until then the grants are pending.
-	PermTaskboardRead:                     {Kind: FedPeerGroup, Pending: true},
-	PermTaskboardWrite:                    {Kind: FedPeerGroup, Pending: true},
-	PermTaskboardManage:                   {Kind: FedPeerGroup, Pending: true},
-	PermTaskboardAssign:                   {Kind: FedPeerGroup, Pending: true},
+	// under group-scoped peer grants (default nothing). Those grants become
+	// FedPeerGroup with the peer routes in the federation slice (V1.9); the
+	// registry allows no pending entries, so until then they are local.
+	PermTaskboardRead:                     {Kind: FedLocal, Why: peerTaskboardWhy},
+	PermTaskboardWrite:                    {Kind: FedLocal, Why: peerTaskboardWhy},
+	PermTaskboardManage:                   {Kind: FedLocal, Why: peerTaskboardWhy},
+	PermTaskboardAssign:                   {Kind: FedLocal, Why: peerTaskboardWhy},
 	PermSelfPR:                            {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTags:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfDirRepair:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
