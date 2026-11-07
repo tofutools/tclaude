@@ -226,7 +226,8 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
     return html`<span key=${process.templateId} class=${`gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
         data-saved-process-group=${group.name} data-saved-process-name=${process.name}
-        title=${`Drag onto the bin to remove ${process.name} from ${group.name}`}>
+        data-dnd-resource=${JSON.stringify({ kind: 'process', id: process.templateId, label: process.name, group: group.name })}
+        title=${`Drag onto another group to move ${process.name} there (Ctrl/Cmd: add it there too), or onto the bin to remove it from ${group.name}`}>
         <span class="agent-ctl gr-acts">
           <button data-ui-exempt type="button" class=${`gr-light gr-light-btn gr-light-${pill}`} data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
             aria-label=${`Start ${process.name}`} title=${`${pill} — click to start ${process.name} in ${group.name}`} onClick=${start}>●</button>

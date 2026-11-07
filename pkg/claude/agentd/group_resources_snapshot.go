@@ -40,6 +40,9 @@ type groupResource struct {
 	// directories. A group's own shell has neither.
 	Agent string `json:"agent,omitempty"`
 	Which string `json:"which,omitempty"`
+	// Pinned marks a process saved to the group, as opposed to one the group
+	// only lists for an active run of it: only a pinned one moves out.
+	Pinned bool `json:"pinned,omitempty"`
 	// Locked is the lock against agent changes (group_resource_locks.go), for
 	// the Collab panel's and tab strip's lock icon.
 	Locked bool `json:"locked,omitempty"`
@@ -290,22 +293,22 @@ func groupProcessResources(active map[int64]*db.AgentGroup) []groupResource {
 			running[id]++
 		}
 		seen := map[string]bool{}
-		add := func(id string) {
+		add := func(id string, pinned bool) {
 			if id == "" || seen[id] {
 				return
 			}
 			seen[id] = true
-			r := groupResource{Kind: resourceKindProcess, ID: id, GroupID: groupID, Title: id, State: resourceStateClosed}
+			r := groupResource{Kind: resourceKindProcess, ID: id, GroupID: groupID, Title: id, State: resourceStateClosed, Pinned: pinned}
 			if n := running[id]; n > 0 {
 				r.State, r.Detail = resourceStateRunning, pluralCount(n, "running")
 			}
 			out = append(out, r)
 		}
 		for _, id := range pins[groupID] {
-			add(id)
+			add(id, true)
 		}
 		for _, id := range order {
-			add(id)
+			add(id, false)
 		}
 	}
 	return out

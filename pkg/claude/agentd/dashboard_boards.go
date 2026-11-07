@@ -508,33 +508,43 @@ func serveBoardCreate(w http.ResponseWriter, r *http.Request, by, agentID string
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid board: "+err.Error())
 		return
 	}
-	id, title := strings.TrimSpace(req.ID), strings.TrimSpace(req.Title)
+	b, ok := createBoard(w, req.ID, req.Title, req.Group, by, agentID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusCreated, boardToJSON(b, nil))
+}
+
+// createBoard makes a board (id from title when blank) linked to group,
+// writing the refusal to w when it cannot.
+func createBoard(w http.ResponseWriter, rawID, rawTitle, group, by, agentID string) (*db.CollabBoard, bool) {
+	id, title := strings.TrimSpace(rawID), strings.TrimSpace(rawTitle)
 	if title == "" {
 		title = id
 	}
 	if title == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a board needs a title or an id")
-		return
+		return nil, false
 	}
 	if len(title) > boardMaxTitleBytes || !boardPrintable(title, false) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("title must be printable text of at most %d bytes", boardMaxTitleBytes))
-		return
+		return nil, false
 	}
 	if id == "" {
 		id = boardIDFromTitle(title)
 	}
 	if !boardIDPattern.MatchString(id) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "board id must match [a-z0-9][a-z0-9-]{0,63}")
-		return
+		return nil, false
 	}
-	groupID, ok := resolveBoardGroup(w, req.Group, agentID)
+	groupID, ok := resolveBoardGroup(w, group, agentID)
 	if !ok {
-		return
+		return nil, false
 	}
 	b, err := db.CreateCollabBoard(id, title, by, boardMaxBoards)
 	if err != nil {
 		writeBoardStoreError(w, err)
-		return
+		return nil, false
 	}
 	if groupID > 0 {
 		if err := db.SetCollabBoardGroup(id, groupID); err != nil {
@@ -543,9 +553,66 @@ func serveBoardCreate(w http.ResponseWriter, r *http.Request, by, agentID string
 				slog.Warn("boards: remove board after failed group link", "board", id, "error", delErr)
 			}
 			writeBoardStoreError(w, err)
-			return
+			return nil, false
 		}
 		if b, err = db.GetCollabBoard(id); err != nil {
+			writeBoardStoreError(w, err)
+			return nil, false
+		}
+	}
+	return b, true
+}
+
+// handleDashboardBoardCopy copies a board: a new board, linked to group,
+// holding the source's live elements. The Groups tab's Ctrl/Cmd-drag of a
+// board row onto another group's box makes one.
+//
+//	POST /api/boards/{id}/copy {id, title, group}
+func handleDashboardBoardCopy(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	srcID, ok := boardPathID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid board copy: "+err.Error())
+		return
+	}
+	src, err := db.GetCollabBoard(srcID)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	elems, err := db.ListCollabBoardElements(srcID, -1)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	title := req.Title
+	if strings.TrimSpace(title) == "" {
+		title = src.Title + " (copy)"
+	}
+	b, ok := createBoard(w, req.ID, title, req.Group, boardAuthorOperator, "")
+	if !ok {
+		return
+	}
+	if len(elems) > 0 {
+		if _, _, err := db.ApplyCollabBoardEdit(b.ID, boardAuthorOperator, "", elems, nil, boardMaxLiveElements, boardMaxStoredRows); err != nil {
+			if delErr := deleteBoardAndSnapshot(b.ID); delErr != nil {
+				slog.Warn("boards: remove board after failed copy", "board", b.ID, "error", delErr)
+			}
+			writeBoardStoreError(w, err)
+			return
+		}
+		if b, err = db.GetCollabBoard(b.ID); err != nil {
 			writeBoardStoreError(w, err)
 			return
 		}
@@ -691,6 +758,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/events", handleDashboardBoardEvent)
 	mux.HandleFunc("POST /api/boards/{id}/view", handleDashboardBoardView)
 	mux.HandleFunc("POST /api/boards/{id}/group", handleDashboardBoardGroup)
+	mux.HandleFunc("POST /api/boards/{id}/copy", handleDashboardBoardCopy)
 	mux.HandleFunc("POST /api/boards/{id}/title", handleDashboardBoardTitle)
 	mux.HandleFunc("POST /api/resource-locks", handleDashboardResourceLock)
 	mux.HandleFunc("GET /api/boards/{id}/live", handleDashboardBoardLive)

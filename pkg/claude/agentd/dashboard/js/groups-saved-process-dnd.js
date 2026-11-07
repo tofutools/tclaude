@@ -87,7 +87,10 @@ function bind() {
     source = chip;
     chip.addEventListener('dragend', endDrag, { once: true });
     e.dataTransfer.setData(SAVED_PROCESS_DRAG_MIME, spec.templateId);
-    e.dataTransfer.effectAllowed = 'move';
+    // copyMove: the chip is also a resource row (resource-dnd.js), whose
+    // Ctrl/Cmd-drop onto another group copies it there; 'move' alone would
+    // make that drop refused.
+    e.dataTransfer.effectAllowed = 'copyMove';
     chip.classList.add('gq-saved-drag-source');
     $('#dnd-trash')?.classList.add('show', 'dnd-trash-unpin-mode');
   });

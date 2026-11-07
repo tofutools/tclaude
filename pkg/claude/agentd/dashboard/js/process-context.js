@@ -211,6 +211,7 @@ async function processRequest(path, init, fetchImpl) {
     // names the version it did store ({id, ref}).
     const error = new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
     error.body = body;
+    error.status = response.status;
     throw error;
   }
   return body;
@@ -374,6 +375,12 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async moveBoard(id, group) {
       return processRequest(`/api/boards/${encodeURIComponent(id)}/group`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
+      }, fetchImpl);
+    },
+    // copyBoard copies a board into group as a new board (id, title).
+    async copyBoard(id, group, title, newId) {
+      return processRequest(`/api/boards/${encodeURIComponent(id)}/copy`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, title, id: newId }),
       }, fetchImpl);
     },
     // deleteGroupPage closes a page if open and removes it from its group.
