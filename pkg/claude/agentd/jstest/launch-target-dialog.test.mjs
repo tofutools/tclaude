@@ -409,7 +409,10 @@ test('provider outage continuation requires an explicit loss checkbox and works 
 test('encrypted compaction requests a handoff using the summary wait without a large-cut confirmation',async(t)=>{
  const sent=[];
  const pending={history:'summary',handoff_reason:'encrypted_compaction_summary',expires_at:new Date(Date.now()+60000).toISOString()};
- const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
+ const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>(sent.length?{conv_id:AGENT.conv,pending_morph:pending}:{}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
+ // morphStatus reports the pending morph once it is requested, as the daemon
+ // does: the dialog's first status poll runs at once, and a fake that never
+ // reports it would end the wait before the test could see it.
  await s.pickProfile('small');
  await s.until(()=>/Request handoff/.test(s.q('#lt-ok')?.textContent||''),'the dry run to ask for a handoff');
  assert.match(s.q('#launch-target').textContent,/Compaction summary unreadable/);
