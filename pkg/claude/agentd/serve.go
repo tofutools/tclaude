@@ -765,6 +765,10 @@ func runServe(p *serveParams) error {
 	// stop channel.
 	startPendingSpawnSweeper(cronStop)
 
+	// Group task board housekeeping: archives and purges done and dropped
+	// tasks, hourly. Does nothing while features.taskboard is off.
+	startTaskboardSweep(cronStop)
+
 	// Size-based rotation of ~/.tclaude/output.log. agentd holds the
 	// log fd for its whole life, so rotation renames the file and
 	// reopens a fresh one in-process. Shares the daemon-wide stop
@@ -1445,6 +1449,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
+	registerTaskboardRoutes(mux)
 	registerManagedInstructionRoutes(mux)
 	// Per-agent export (JOH-265). The agent half: `tclaude agent export
 	// show` reads the brief, `… submit` uploads the artifact. Self-scoped —

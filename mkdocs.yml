@@ -71,6 +71,7 @@ nav:
       - Notifications: notifications.md
   - Fleet operations:
       - Agents and groups: agents-and-groups.md
+      - Task boards: taskboard.md
       - Spawning and lifecycle: spawning-and-lifecycle.md
       - Launch resolution: launch-resolution.md
       - Permissions and audit: permissions-and-audit.md

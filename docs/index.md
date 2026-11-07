@@ -40,6 +40,7 @@ agents, and the daemon, read [Architecture](architecture.md).
 | Work on branches in parallel | [Worktrees](worktrees.md) |
 | Get alerted when an agent needs you | [Notifications](notifications.md) |
 | Form agent teams that talk to each other | [Agents and groups](agents-and-groups.md) |
+| Keep a short list of what each group does next | [Task boards](taskboard.md) |
 | Spawn agents and manage their lifecycle | [Spawning and lifecycle](spawning-and-lifecycle.md) |
 | Control what agents may do, and see what they did | [Permissions and audit](permissions-and-audit.md) |
 | Deploy whole rosters from templates, on a schedule | [Teams at scale](teams-at-scale.md) |
