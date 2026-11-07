@@ -90,10 +90,10 @@ It reads the credential once when it starts, so restart it after a renewal.
 | `reply` | Replies to a message it received | Always available: having received a message is enough |
 | `notify_human` | Sends you a message in the dashboard | Needs `human.notify`, or owning a group |
 | `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | Always watches mail; `fleet.read` adds what needs attention |
-| `list_boards` | Lists the collab boards | Needs `boards.read` |
-| `read_board` | Reads a board's elements | Needs `boards.read` |
-| `create_board` | Creates a board | Needs `boards.write` |
-| `update_board` | Adds, changes or deletes board elements | Needs `boards.write` |
+| `list_drawing_boards` | Lists the collab drawing boards | Needs `drawing-boards.read` |
+| `read_drawing_board` | Reads a drawing board's elements | Needs `drawing-boards.read` |
+| `create_drawing_board` | Creates a drawing board | Needs `drawing-boards.write` |
+| `update_drawing_board` | Adds, changes or deletes drawing board elements | Needs `drawing-boards.write` |
 | `dashboard_view` | Reads which view your dashboard is on | Needs `dashboard.view.read` |
 | `dashboard_cue` | Moves your dashboard to a view or highlights something there | Needs `dashboard.guide` |
 | `dashboard_capture` | Sees your dashboard as an image | Off until you grant `dashboard.capture`, because the image goes to your assistant's provider |
@@ -104,7 +104,7 @@ So taking `message.direct` away doesn't stop it messaging agents it can reach th
 
 **Config** › **Steward** shows this list whether or not the feature is on.
 
-Boards work with no dashboard open. The dashboard tools depend on your page, and say so
+Drawing boards work with no dashboard open. The dashboard tools depend on your page, and say so
 when it isn't there. `dashboard_view` reports `known: false` if no dashboard has reported
 since the daemon started. `dashboard_capture` fails and gives the reason. `dashboard_cue`
 answers `dashboard_on_screen: false` when no dashboard is showing, and a cue expires
@@ -114,8 +114,8 @@ unseen if you don't get to it in time.
 on screen, including what's typed into fields. Passwords and fields marked secret are
 masked. No tool fills forms.
 
-Board edits don't reach it as mail, and `wait_for_activity` doesn't watch boards, so it
-reads a board again to see what you changed.
+Drawing board edits don't reach it as mail, and `wait_for_activity` doesn't watch drawing boards, so it
+reads a drawing board again to see what you changed.
 
 Nothing wakes an idle assistant: it only sees new mail when it asks. Call `wait_for_activity`
 in a loop to stay current, passing back the `cursor` from the last call. Past 10 unread
@@ -144,7 +144,7 @@ editor. There are four differences:
 It uses the same permissions and the same routes as any other agent, and shows in the
 audit log as `external:<name>`.
 
-Dashboard tools need an open dashboard page. The fleet, messages, boards and
+Dashboard tools need an open dashboard page. The fleet, messages, drawing boards and
 notifications work without one.
 
 ### What it can never do

@@ -26,7 +26,7 @@
 // would rewrite the address bar to a terminal the operator is not looking at,
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
-import { boardPaneKey, isBoardId } from './board-model.js';
+import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 
 const RESTORE_EVENT = 'tclaude:restore-location';
@@ -77,19 +77,19 @@ function knownAgent(snapshotValue, agent) {
 // openWebWindowPane the "focus this agent" row action uses, which is what makes
 // a deep link land on exactly the pane a click would have produced.
 //
-// Board and process tabs live in the same strip under their own routes
-// (/boards/<id>, /collab/processes/<id>), so a location here is any of the
+// Drawing board and process tabs live in the same strip under their own routes
+// (/drawing-boards/<id>, /collab/processes/<id>), so a location here is any of the
 // three kinds. selectionOf keeps the id spaces apart.
 function selectionOf(location) {
   const selection = location?.selection ? String(location.selection) : '';
-  if (selection && location.tab === 'boards') return boardPaneKey(selection);
+  if (selection && location.tab === 'drawing-boards') return drawingBoardPaneKey(selection);
   if (selection && location.tab === COLLAB_PROCESSES) return processPaneKey(selection);
   return selection;
 }
 
 // A process tab's route, /collab/processes/<template-id> (tcl-tnbtwp).
 const COLLAB_PROCESSES = 'collab-processes';
-const STRIP_TABS = new Set(['terminals', 'boards', COLLAB_PROCESSES]);
+const STRIP_TABS = new Set(['terminals', 'drawing-boards', COLLAB_PROCESSES]);
 
 // `isTabActive()` reports whether the Terminals section is the one on screen.
 // A pane change while the operator is looking at another tab is never their
@@ -97,7 +97,7 @@ const STRIP_TABS = new Set(['terminals', 'boards', COLLAB_PROCESSES]);
 export function bindTerminalNavRouting({
   state,
   openAgentPane,
-  openBoardPane = () => null,
+  openDrawingBoardPane = () => null,
   openProcessPane = () => null,
   snapshot = null,
   documentRef = globalThis.document,
@@ -136,17 +136,17 @@ export function bindTerminalNavRouting({
   }
 
   async function applyLocation(loc) {
-    if (loc.tab === 'boards') {
-      // A bare /boards names no tab to show, so it offers the list; answering
+    if (loc.tab === 'drawing-boards') {
+      // A bare /drawing-boards names no tab to show, so it offers the list; answering
       // false corrects the URL to what is on screen.
-      if (!loc.selection) { state.requestBoardMenu(); return false; }
-      if (!isBoardId(loc.selection)) return false;
-      const key = boardPaneKey(loc.selection);
+      if (!loc.selection) { state.requestDrawingBoardMenu(); return false; }
+      if (!isDrawingBoardId(loc.selection)) return false;
+      const key = drawingBoardPaneKey(loc.selection);
       if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
-      return !!(await openBoardPane(loc.selection));
+      return !!(await openDrawingBoardPane(loc.selection));
     }
     if (loc.tab === COLLAB_PROCESSES) {
-      if (!loc.selection) { state.requestBoardMenu('processes'); return false; }
+      if (!loc.selection) { state.requestDrawingBoardMenu('processes'); return false; }
       if (!isProcessTemplateId(loc.selection)) return false;
       const key = processPaneKey(loc.selection);
       if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);

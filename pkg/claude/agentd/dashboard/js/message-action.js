@@ -7,7 +7,7 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { openBoardPane } from './board-overlay-state.js';
+import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
 import { shellToast } from './shell-state.js';
 import { openWebTermPane } from './terminals-tab.js';
 import { Button } from './ui-components.js';
@@ -18,7 +18,7 @@ const SHELL_WHICH = 'worktree';
 
 const defaultOpeners = {
   terminal: (target) => openWebTermPane(target.agent, `shell · ${target.title || 'agent'}`, SHELL_WHICH, { group: target.group || '' }),
-  board: (target) => openBoardPane(target.board, target.title),
+  drawingBoard: (target) => openDrawingBoardPane(target.drawingBoard, target.title),
   url: (target) => globalThis.open(target.url, '_blank', 'noopener'),
   path: async (target) => (await import('./nav-history.js')).navigateToPath(target.path),
 };
@@ -27,7 +27,7 @@ const defaultOpeners = {
 // a terminal could not open here.
 export async function runMessageAction(target, openers = defaultOpeners) {
   if (target?.kind === 'terminal') return !!(await openers.terminal(target));
-  if (target?.kind === 'board') await openers.board(target);
+  if (target?.kind === 'drawing_board') await openers.drawingBoard(target);
   else if (target?.kind === 'pr' && /^https?:\/\//.test(target.url || '')) await openers.url(target);
   else if (target?.kind === 'tab' && String(target.path || '').startsWith('/')) return (await openers.path(target)) !== false;
   else return false;

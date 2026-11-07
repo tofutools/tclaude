@@ -146,7 +146,7 @@ func TestStewardHandover_RosterSwitchIsReversible(t *testing.T) {
 	s.mustHandover(handoverWorker, "roster")
 	require.NoError(t, db.GrantAgentPermission(handoverOther, agentd.PermAgentRename, "dashboard"))
 	// The operator takes one slug off this Steward. Coming back must not restore it.
-	_, err := db.RevokeAgentPermission(handoverWorker, agentd.PermBoardsWrite)
+	_, err := db.RevokeAgentPermission(handoverWorker, agentd.PermDrawingBoardsWrite)
 	require.NoError(t, err)
 
 	s.mustHandover(handoverOther, "roster")
@@ -154,10 +154,10 @@ func TestStewardHandover_RosterSwitchIsReversible(t *testing.T) {
 	require.False(t, held)
 	assert.Equal(t, s.agentID(handoverOther), activeOf(s.roster()))
 
-	assert.Contains(t, s.preview(handoverWorker).Withheld, agentd.PermBoardsWrite)
+	assert.Contains(t, s.preview(handoverWorker).Withheld, agentd.PermDrawingBoardsWrite)
 	s.mustHandover(handoverWorker, "keep")
 	assert.Equal(t, "grant", stewardOverride(t, handoverWorker, agentd.PermFleetRead))
-	_, held = stewardOverrideHeld(t, handoverWorker, agentd.PermBoardsWrite)
+	_, held = stewardOverrideHeld(t, handoverWorker, agentd.PermDrawingBoardsWrite)
 	assert.False(t, held, "what the operator took off stays off")
 
 	assert.Equal(t, map[string]string{s.agentID(handoverWorker): "active"}, s.roster(), "keep leaves the roster")
@@ -262,7 +262,7 @@ func TestSteward_SummonWithoutABriefGetsTheDaemons(t *testing.T) {
 	rows, err := db.ListAgentMessagesForConv(decodeScribeResp(t, rec).ConvID, 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
-	assert.Contains(t, rows[len(rows)-1].Body, "tclaude agent board show")
+	assert.Contains(t, rows[len(rows)-1].Body, "tclaude agent drawing-board show")
 	assert.Contains(t, rows[len(rows)-1].Body, "--ask-human")
 }
 

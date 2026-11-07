@@ -251,8 +251,8 @@ test('a terminals deep link survives boot with the tab still hidden', async (t) 
     'the island is asked to reattach the agent named in the URL');
 });
 
-test('a /boards deep link shows the Terminals section and asks the shell for the tab', async (t) => {
-  // A board is a tab of the Terminals section, so its route has no nav anchor
+test('a /drawing-boards deep link shows the Terminals section and asks the shell for the tab', async (t) => {
+  // A drawing board is a tab of the Terminals section, so its route has no nav anchor
   // of its own to click.
   const harness = await createPreactHarness(t);
   installShell(harness);
@@ -260,7 +260,7 @@ test('a /boards deep link shows the Terminals section and asks the shell for the
   terminals.dataset.tab = 'terminals';
   const clicks = [];
   terminals.addEventListener('click', () => clicks.push('terminals'));
-  const browsing = installBrowsingContext(t, harness, '/boards/plan');
+  const browsing = installBrowsingContext(t, harness, '/drawing-boards/plan');
   const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
   const restores = [];
   harness.document.addEventListener('tclaude:restore-location',
@@ -269,16 +269,16 @@ test('a /boards deep link shows the Terminals section and asks the shell for the
   initNavHistory();
 
   assert.deepEqual(clicks, ['terminals']);
-  assert.equal(browsing.at(), '/boards/plan', 'the URL keeps naming the board');
-  assert.deepEqual(restores, [{ tab: 'boards', selection: 'plan' }]);
+  assert.equal(browsing.at(), '/drawing-boards/plan', 'the URL keeps naming the drawing board');
+  assert.deepEqual(restores, [{ tab: 'drawing-boards', selection: 'plan' }]);
 });
 
-test('a /boards deep link falls back on a peer\'s page', async (t) => {
+test('a /drawing-boards deep link falls back on a peer\'s page', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);
   globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
   t.after(() => { delete globalThis.__tclaudeRemoteNode; });
-  const browsing = installBrowsingContext(t, harness, '/boards/plan');
+  const browsing = installBrowsingContext(t, harness, '/drawing-boards/plan');
   const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
   const restores = [];
   harness.document.addEventListener('tclaude:restore-location',
@@ -287,7 +287,7 @@ test('a /boards deep link falls back on a peer\'s page', async (t) => {
   initNavHistory();
 
   assert.equal(browsing.at(), '/?node=inst_forge7');
-  assert.deepEqual(restores, [], 'no board is asked for');
+  assert.deepEqual(restores, [], 'no drawing board is asked for');
 });
 
 test('a bare /terminals with no terminals open still falls back', async (t) => {

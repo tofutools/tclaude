@@ -151,7 +151,7 @@ test('a Steward shut down from its window ✕ leaves Resume behind its chip', as
 
 test('moving to the Collab tab leaves no tab behind, and a Terminals tab floats as a chat', async (t) => {
   const { view, harness, controller } = await setup(t, { openTerminalsPane: () => {} });
-  const tabOfAlpha = () => [...view.container.querySelectorAll('.board-overlay-titlebar .companion-tab')].find((tab) => tab.textContent.includes('alpha'));
+  const tabOfAlpha = () => [...view.container.querySelectorAll('.drawing-board-overlay-titlebar .companion-tab')].find((tab) => tab.textContent.includes('alpha'));
   await harness.act(() => controller().open(A));
   await harness.act(() => view.container.querySelector('[aria-label="Open in the Collab tab"]').click());
   assert.ok(!tabOfAlpha(), 'nothing left to close by hand');
@@ -370,8 +370,8 @@ test('a kept agent that needs the operator says so on its dock pill, which peeks
   assert.match(view.container.textContent, /1 companion need you/);
   const facade = await harness.importDashboardModule('js/companion-facade.js');
   t.after(facade.registerCompanionController(controller()));
-  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
-  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  const { DrawingBoardOverlay } = await harness.importDashboardModule('js/drawing-board-overlay.js');
+  const dock = await harness.mount(harness.html`<${DrawingBoardOverlay} snapshot=${snap} />`);
   const pill = dock.container.querySelector('.overlay-dock-pill');
   assert.ok(pill.classList.contains('needs'));
   await harness.act(async () => {
@@ -385,8 +385,8 @@ test('a kept agent that needs the operator says so on its dock pill, which peeks
 test('the Steward chip stands for its window, and other windows keep their pills', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S, A]) });
   const { view, harness, snap, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
-  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
-  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  const { DrawingBoardOverlay } = await harness.importDashboardModule('js/drawing-board-overlay.js');
+  const dock = await harness.mount(harness.html`<${DrawingBoardOverlay} snapshot=${snap} />`);
   assert.ok(!dock.container.querySelector('.overlay-dock-pill'), 'its window minimized holds the Steward');
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /steward-k3x: / }).click());
   assert.match(view.container.querySelector('.chat-window').getAttribute('aria-label'), /steward-k3x/);
@@ -480,7 +480,7 @@ test('a click on empty window space gives focus back to the terminal', async (t)
   const { view, harness, mounted } = await setup(t, { prefs });
   await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  const titlebar = view.container.querySelector('.board-overlay-titlebar');
+  const titlebar = view.container.querySelector('.drawing-board-overlay-titlebar');
   const click = () => harness.act(() => titlebar.click());
   harness.window.document.activeElement?.blur?.();
   const before = mounted.at(-1).focused;
@@ -530,10 +530,10 @@ test('no window is home: an agent joins the chats used last, or gets a window of
   await harness.act(async () => {
     overlays.closeOverlayTab(`chat:${A}`);
     overlays.closeOverlayTab(`chat:${B}`);
-    overlays.openTabInWindow('', '', { id: 'board-1', kind: 'board', label: 'plan' });
+    overlays.openTabInWindow('', '', { id: 'drawing-board-1', kind: 'drawing_board', label: 'plan' });
   });
   await harness.act(() => controller().open(A));
-  assert.deepEqual(windowsOf(), [['board-1'], [`chat:${A}`]], 'with no chat up, it takes a window of its own');
+  assert.deepEqual(windowsOf(), [['drawing-board-1'], [`chat:${A}`]], 'with no chat up, it takes a window of its own');
 });
 
 test('Ctrl+. opens the Steward past a worker\'s window, never minimizing that', async (t) => {

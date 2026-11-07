@@ -20,7 +20,7 @@ type scopeValueItem struct {
 
 // Scenario: the operator opens the resource= picker in the permission editor.
 // The editor loads the resource catalogue once, from its own endpoint rather
-// than the 2s snapshot poll: every board and process template, with its
+// than the 2s snapshot poll: every drawing board and process template, with its
 // title and the groups it belongs to, in the kind:id shape a resource= scope
 // names.
 func TestPermissionScopeValues_ResourceCatalogue(t *testing.T) {
@@ -35,9 +35,9 @@ func TestPermissionScopeValues_ResourceCatalogue(t *testing.T) {
 	for _, item := range out.Items {
 		got[item.Kind+":"+item.ID] = item
 	}
-	assert.Equal(t, scopeValueItem{Kind: "board", ID: "plan", Title: "plan", Groups: []string{"crew"}}, got["board:plan"])
-	assert.Equal(t, scopeValueItem{Kind: "board", ID: "loose", Title: "loose"}, got["board:loose"])
-	assert.Equal(t, []string{"hidden"}, got["board:secret"].Groups)
+	assert.Equal(t, scopeValueItem{Kind: "drawing_board", ID: "plan", Title: "plan", Groups: []string{"crew"}}, got["drawing_board:plan"])
+	assert.Equal(t, scopeValueItem{Kind: "drawing_board", ID: "loose", Title: "loose"}, got["drawing_board:loose"])
+	assert.Equal(t, []string{"hidden"}, got["drawing_board:secret"].Groups)
 	assert.Equal(t, scopeValueItem{Kind: "process_template", ID: "shared", Title: "shared", Groups: []string{"crew", "hidden"}},
 		got["process_template:shared"])
 	assert.Equal(t, scopeValueItem{Kind: "process_template", ID: "solo", Title: "solo"}, got["process_template:solo"])

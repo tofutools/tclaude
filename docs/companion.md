@@ -6,7 +6,7 @@ what you can do, how things are set up, or to get work started.
 
 ## Opting out of stewards
 
-The companion, the Steward, [boards](boards.md), the fleet brief and decisions
+The companion, the Steward, [drawing boards](drawing-boards.md), the fleet brief and decisions
 are always on. None of this spawns an agent or grants a permission: a Steward
 exists only once you make one.
 
@@ -18,11 +18,11 @@ To opt out of stewards, uncheck **Stewards** at the top of
   404 `stewards_disabled`.
 - The companion shows no Steward: no chips, no summon or resume in its ＋ menu,
   and Ctrl+. and the Steward's spoken phrase do nothing. Its windows stay, so
-  boards, pages, terminals and agents' chats still float over the dashboard.
+  drawing boards, pages, terminals and agents' chats still float over the dashboard.
 - [External stewards](external-steward.md) are refused, whatever
   `steward.external_enabled` says.
 
-Boards, live pages, overlay windows, the approval panel, decisions and the
+Drawing boards, live pages, overlay windows, the approval panel, decisions and the
 fleet brief stay on. A Steward already running is not stopped; retire it
 yourself. You don't need to restart anything; the next dashboard refresh picks
 it up.
@@ -58,7 +58,7 @@ else the chats you used last. With none of those, it gets a window of its own. T
 blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
-- **Split the room** with any windows, boards and chats alike: snap one to the left and one to the right, and they
+- **Split the room** with any windows, drawing boards and chats alike: snap one to the left and one to the right, and they
   fill the room and share a line. A corner stays a corner beside a half or another
   corner, and the cell nobody took stays empty. Drag a line to redistribute,
   and it is remembered.
@@ -165,7 +165,7 @@ Dragging a maximized window by its title bar also restores it.
 ### Overlay tabs
 
 Every overlay window is a row of tabs, and a window can hold any mix of chats, shells,
-boards and process editors ([Processes](processes.md#in-the-dashboard)). The title bar tools belong to the tab showing. A chat's draft stays while
+drawing boards and process editors ([Processes](processes.md#in-the-dashboard)). The title bar tools belong to the tab showing. A chat's draft stays while
 another tab shows, and a minimized chat keeps its terminal for a few minutes.
 
 - **Reorder:** drag a tab along its strip.
@@ -184,7 +184,7 @@ another tab shows, and a minimized chat keeps its terminal for a few minutes.
   `Move to a new window`. Drop a tab inside a group to join it, or outside to leave it.
 - **Leave the overlay:** the same menu has `Open in the Collab tab` and `Open in separate
   window`, for every kind of tab that can go there. They are the same moves, in the same
-  words, as a shell's or board's title bar buttons and a chat's ⚙.
+  words, as a shell's or drawing board's title bar buttons and a chat's ⚙.
 - **Work with a group:** click its pill to collapse or expand it, double-click or press F2 to
   rename it, and drag it to move the whole group along the strip, onto another window, or
   off into a window of its own. A pill that is all its window has drags the window.
@@ -201,7 +201,7 @@ once, each only when there is something for it to do:
 
 - **Show all windows** (**Ctrl ,** from anywhere, a terminal included) dims the page and
   spreads the open windows themselves out side by side, scaled down so none overlaps,
-  gliding from where they stand. They stay live: terminals, boards and editors keep
+  gliding from where they stand. They stay live: terminals, drawing boards and editors keep
   drawing, but take no clicks or typing while spread. Hover a window to highlight it and
   see its title and how many tabs it holds. Minimized windows and tabs waiting on the
   dock are not drawn, so they show as a row of cards along the bottom, each with its kind,
@@ -251,7 +251,7 @@ A floating process editor with unsaved edits asks first, and stays if you keep t
 A running Steward is the exception: it asks first, then shuts down.
 
 To take something off for good, use the × on its pill: it unpins an agent, which keeps
-running, and closes a shell's or board's window. A pill for several tabs has no ×, so bring
+running, and closes a shell's or drawing board's window. A pill for several tabs has no ×, so bring
 the window back first. A Steward's pill has none either: shut one down from its ⚙.
 
 ### Talking to an agent
@@ -319,7 +319,7 @@ chat by marking the message read.
 | Action | What the button does |
 |---|---|
 | `terminal` | Opens a shell in the agent's own directory |
-| `board:<id>` | Opens that board |
+| `drawing_board:<id>` | Opens that drawing board |
 | `pr:<url>` | Opens a GitHub PR the agent presented with `present-pr` |
 | `tab:<name>` | Goes to a dashboard tab: `groups`, `terminals`, `automations`, `processes`, `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config` |
 
@@ -332,7 +332,7 @@ A terminal runs as you, outside the agent's sandbox, and the agent can write to 
 directory, so check the path on the button first. If the agent moves before you
 click, the click is refused and the button shows the new path. A shell already open
 for that agent is reused, wherever it is now. The agent never gets the shell's
-input or output. If the agent has retired, the board was deleted or the PR is no
+input or output. If the agent has retired, the drawing board was deleted or the PR is no
 longer presented, the button is off and says why.
 
 Action links only work on the node that holds
@@ -486,13 +486,13 @@ it to apply a change.
 
 | Setting | Options |
 |---|---|
-| **Reads** | **Operator level (default)**: fleet, boards, the dashboard view, processes, triggers, usage, costs, host and federation activity. **Fleet and boards only**: just those. Both list every agent and group. |
-| **Writes** | **Message agents (default)**: can reach any agent. **Boards and notifying you only**. **Message agents and start workers**: can also spawn and set task links. |
+| **Reads** | **Operator level (default)**: fleet, drawing boards, the dashboard view, processes, triggers, usage, costs, host and federation activity. **Fleet and drawing boards only**: just those. Both list every agent and group. |
+| **Writes** | **Message agents (default)**: can reach any agent. **Drawing boards and notifying you only**. **Message agents and start workers**: can also spawn and set task links. |
 | **Default permissions** | What a new Steward gets beyond Reads and Writes, or is denied from them. Opens the permission editor, and saves from there. |
 
-Every level can draw on boards, point at the dashboard and notify you. Anything else
+Every level can draw on drawing boards, point at the dashboard and notify you. Anything else
 it asks for with `--ask-human`, and you approve it in the dashboard. **Message
-agents** also reaches agents on linked instances that accept mail, so use **Boards
+agents** also reaches agents on linked instances that accept mail, so use **Drawing boards
 and notifying you only** to rule that out.
 
 To change a running Steward's access, use **⚙ > Permissions** and **⚙ > Sudo** in
@@ -687,7 +687,7 @@ it's summoned, and aren't granted to other agents by default.
 you see, with `dashboard.capture`, which it gets when summoned and other agents
 do not. It saves an image of your dashboard and prints the cursor position and
 what is under it, the focused control, any selected page text, the viewport, and the
-open board with the region on screen. `--json` gives the same as data.
+open drawing board with the region on screen. `--json` gives the same as data.
 
 The tab renders its own page, so a capture holds only that dashboard page,
 never another window or your desktop, and needs no browser prompt. Terminals are

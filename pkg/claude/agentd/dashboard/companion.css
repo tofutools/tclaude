@@ -153,7 +153,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-tab-buttons { display: flex; align-items: center; gap: 1px; padding-right: 2px; }
 .companion-tab:not(.selected) .companion-tab-buttons {
   position: absolute; right: 0; top: 0; bottom: 0; display: none; border-radius: 0 6px 6px 0;
-  background: var(--board-bar, var(--cmp-bar)); box-shadow: -6px 0 6px var(--board-bar, var(--cmp-bar));
+  background: var(--drawing-board-bar, var(--cmp-bar)); box-shadow: -6px 0 6px var(--drawing-board-bar, var(--cmp-bar));
 }
 .companion-tab:not(.selected):is(:hover, :focus-within) .companion-tab-buttons { display: flex; }
 .companion-tab-minimize, .companion-tab-close {
@@ -476,7 +476,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 @media (prefers-reduced-motion: reduce) { .companion-guide-marks path { animation: none; stroke-dashoffset: 0; } }
 
 /* A decision an agent put to the operator (notify-human --option). Chrome, a
-   layer over the chips: an open window or board never hides its question, and
+   layer over the chips: an open window or drawing board never hides its question, and
    whatever else the operator opens covers it. */
 .knowledge-source-card {
   position: fixed; left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: var(--z-chrome);
@@ -552,7 +552,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 /* A window's tabs. The marker shows where the tab in flight lands. */
 .overlay-tab-strip { flex: 1 1 auto; border-radius: 6px; }
 /* In a narrow window the active tab's tools give way, so every tab stays reachable. */
-.overlay-tab-strip ~ .board-overlay-action { flex-shrink: 1000; }
+.overlay-tab-strip ~ .drawing-board-overlay-action { flex-shrink: 1000; }
 /* The drag owns a touch on a tab: left to the browser it would be cancelled as a pan. */
 .overlay-tab-strip .companion-tab > button[role="tab"], .overlay-tab-group .mux-group-pill { touch-action: none; -webkit-touch-callout: none; }
 /* A title bar is shorter than the Terminals strip these stacks come from. */

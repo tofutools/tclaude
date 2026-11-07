@@ -1,12 +1,12 @@
-// resource-dnd.js -- dragging a board, page or saved-process row of a
+// resource-dnd.js -- dragging a drawing board, page or saved-process row of a
 // group's Resources
 // (groups-resources.js, [data-dnd-resource]) onto another group's box in the
-// Groups tab moves it there (tcl-eq8pq9); a board dropped on Ungrouped
-// leaves every group. With Ctrl/Cmd held, as for an agent's clone, a board
+// Groups tab moves it there (tcl-eq8pq9); a drawing board dropped on Ungrouped
+// leaves every group. With Ctrl/Cmd held, as for an agent's clone, a drawing board
 // or a process is copied there instead (resource-moves.js copyResource).
 // The move is the ⚙ → Move to group one
 // (resource-moves.js), so the drag offers only what that menu would. A row
-// with a 🗑 (a board, a page, a running shell) shows the shared #dnd-trash
+// with a 🗑 (a drawing board, a page, a running shell) shows the shared #dnd-trash
 // bin while it is dragged, and a drop there is that 🗑: the row registered
 // its remover (registerResourceRemover), which confirms first. It rides its
 // own MIME type, which the member drag (dnd.js) ignores.
@@ -16,6 +16,7 @@ import { clearDropBox, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext, processRunApi } from './process-context.js';
 import { defaultNotify } from './groups-quickstart.js';
+import { shellConfirm } from './shell-state.js';
 
 // removers maps a resource key (<kind>:<id>) to its row's 🗑, while the row
 // is mounted.
@@ -59,6 +60,8 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   const notify = deps.notify || defaultNotify;
   const snapshot = deps.snapshot || (() => dashboardState.snapshot.value);
   const refresh = deps.refresh || (() => processContext.refresh());
+  // A drop asks first, as an agent's drop does.
+  const confirm = deps.confirm || shellConfirm;
   let dragged = null;
   let over = null;
   // binShown is whether this drag showed the bin, so its end hides it even
@@ -109,7 +112,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   };
   const ours = (e) => !!e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes(RESOURCE_DRAG_MIME);
   // target is what a drop here would do: { box, to, copy }. Ctrl/Cmd held
-  // copies (a board or a process into a real group), as it clones an agent;
+  // copies (a drawing board or a process into a real group), as it clones an agent;
   // otherwise it moves.
   const target = (e, onDrop = false) => {
     if (!dragged || !ours(e)) return null;
@@ -153,7 +156,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     e.preventDefault();
     e.stopPropagation();
     dragged = null;
-    void (hit.copy ? copyResource : moveResource)(resource, hit.to, { api, notify, refresh });
+    void (hit.copy ? copyResource : moveResource)(resource, hit.to, { api, notify, refresh, confirm });
   };
   const end = () => {
     if (binShown) binOf(doc)?.classList.remove('show', 'dnd-drop-over', 'dnd-trash-template-mode');

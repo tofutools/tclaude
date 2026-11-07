@@ -10,9 +10,9 @@ import { createPreactHarness } from './preact-harness.mjs';
 function catalogue(count) {
   const groups = ['crew', 'infra', 'web'];
   return Array.from({ length: count }, (_, i) => ({
-    key: `${i % 2 ? 'board' : 'process_template'}:item-${i}`,
+    key: `${i % 2 ? 'drawing_board' : 'process_template'}:item-${i}`,
     label: `${i % 5 === 0 ? 'Release' : 'Roadmap'} ${i}`,
-    kind: i % 2 ? 'board' : 'process_template',
+    kind: i % 2 ? 'drawing_board' : 'process_template',
     group: i % 7 === 0 ? '' : groups[i % groups.length],
   }));
 }
@@ -34,14 +34,14 @@ async function mountCombobox(harness, props) {
 test('query prefixes narrow by kind and group, and ranking follows the palette', async (t) => {
   const harness = await createPreactHarness(t);
   const { filterComboItems, parseComboQuery } = await harness.importDashboardModule('js/filter-combobox.js');
-  assert.deepEqual(parseComboQuery('board:rel group:infra x', ['board']), { kind: 'board', group: 'infra', text: 'rel x' });
-  assert.deepEqual(parseComboQuery('nokind:rel', ['board']), { kind: '', group: '', text: 'nokind:rel' },
+  assert.deepEqual(parseComboQuery('drawing_board:rel group:infra x', ['drawing_board']), { kind: 'drawing_board', group: 'infra', text: 'rel x' });
+  assert.deepEqual(parseComboQuery('nokind:rel', ['drawing_board']), { kind: '', group: '', text: 'nokind:rel' },
     'a prefix that names no kind is searched as typed');
 
   const items = catalogue(60);
-  const boards = filterComboItems(items, 'board:release');
-  assert.ok(boards.length > 0);
-  assert.ok(boards.every((item) => item.kind === 'board' && /Release/.test(item.label)));
+  const drawingBoards = filterComboItems(items, 'drawing_board:release');
+  assert.ok(drawingBoards.length > 0);
+  assert.ok(drawingBoards.every((item) => item.kind === 'drawing_board' && /Release/.test(item.label)));
   assert.ok(filterComboItems(items, 'group:infra').every((item) => item.group === 'infra'));
   const ranked = filterComboItems([{ key: 'a', label: 'Unrelease' }, { key: 'b', label: 'Release notes' }], 'release');
   assert.deepEqual(ranked.map((item) => item.key), ['b', 'a'], 'a prefix hit outranks a mid-word one');
@@ -50,7 +50,7 @@ test('query prefixes narrow by kind and group, and ranking follows the palette',
 test('a long catalogue opens to a group summary and cuts results at the cap', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, input } = await mountCombobox(harness, {
-    items: catalogue(300), value: [], cap: 8, kindLabels: { board: 'Boards', process_template: 'Process templates' },
+    items: catalogue(300), value: [], cap: 8, kindLabels: { drawing_board: 'Drawing boards', process_template: 'Process templates' },
   });
   assertAbsent(host.querySelector('[role="listbox"]'), 'closed until focused');
   await harness.act(() => harness.fireEvent(input, 'focus'));
@@ -68,35 +68,35 @@ test('a long catalogue opens to a group summary and cuts results at the cap', as
   assert.match(host.querySelector('.filter-combobox-foot').textContent, /Showing 8 of \d+ matches\. Refine your search/);
   const kinds = [...host.querySelectorAll('.filter-combobox-kind')].map((node) => node.textContent);
   assert.deepEqual([...new Set(kinds)], kinds, 'each kind heads one section');
-  assert.ok(kinds.every((kind) => ['Boards', 'Process templates'].includes(kind)));
+  assert.ok(kinds.every((kind) => ['Drawing boards', 'Process templates'].includes(kind)));
 });
 
 test('the keyboard moves, picks, toggles and completes; a disabled row is not choosable', async (t) => {
   const harness = await createPreactHarness(t);
   const items = [
-    { key: 'board:plan', label: 'Plan', kind: 'board' },
-    { key: 'board:planning', label: 'Planning', kind: 'board' },
-    { key: 'board:locked', label: 'Planet', kind: 'board', disabled: true, reason: 'locked by the operator' },
+    { key: 'drawing_board:plan', label: 'Plan', kind: 'drawing_board' },
+    { key: 'drawing_board:planning', label: 'Planning', kind: 'drawing_board' },
+    { key: 'drawing_board:locked', label: 'Planet', kind: 'drawing_board', disabled: true, reason: 'locked by the operator' },
   ];
   const { host, input, changes } = await mountCombobox(harness, { items, value: [] });
   await harness.act(() => harness.fireEvent(input, 'focus'));
   await harness.input(input, 'plan');
   assert.equal(input.getAttribute('aria-activedescendant'), host.querySelector('[role="option"]').id);
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'ArrowDown' }));
-  assert.equal(host.querySelector('.highlighted').dataset.key, 'board:planning');
+  assert.equal(host.querySelector('.highlighted').dataset.key, 'drawing_board:planning');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Tab' }));
   assert.equal(input.value, 'Planning', 'Tab completes to the highlighted row');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
-  assert.deepEqual(changes.at(-1), ['board:planning']);
+  assert.deepEqual(changes.at(-1), ['drawing_board:planning']);
   assert.equal(input.value, '', 'choosing clears the search');
 
-  const disabled = host.querySelector('[data-key="board:locked"]');
+  const disabled = host.querySelector('[data-key="drawing_board:locked"]');
   assert.equal(disabled.getAttribute('aria-disabled'), 'true');
   assert.match(disabled.textContent, /locked by the operator/);
   await harness.act(() => harness.fireEvent(disabled, 'mousedown'));
   assert.equal(changes.length, 1, 'a disabled row changes nothing');
 
-  await harness.act(() => harness.fireEvent(host.querySelector('[data-key="board:planning"]'), 'mousedown'));
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-key="drawing_board:planning"]'), 'mousedown'));
   assert.deepEqual(changes.at(-1), [], 'choosing a chosen row again removes it');
 });
 
@@ -129,11 +129,11 @@ test('single-select and the opt-in free-text commit', async (t) => {
 test('Enter only adds: an exact entry wins, a literal one is taken as typed, a chosen row stays', async (t) => {
   const harness = await createPreactHarness(t);
   const items = [
-    { key: 'board:planning', label: 'Planning', kind: 'board' },
-    { key: 'board:roadmap', label: 'Roadmap', kind: 'board' },
+    { key: 'drawing_board:planning', label: 'Planning', kind: 'drawing_board' },
+    { key: 'drawing_board:roadmap', label: 'Roadmap', kind: 'drawing_board' },
   ];
   const { input, changes } = await mountCombobox(harness, {
-    items, value: ['board:roadmap'], freeText: (text) => text, literal: (text) => /^[a-z_]+:\S+$/.test(text),
+    items, value: ['drawing_board:roadmap'], freeText: (text) => text, literal: (text) => /^[a-z_]+:\S+$/.test(text),
   });
   await harness.act(() => harness.fireEvent(input, 'focus'));
   await harness.input(input, 'roadmap');
@@ -143,14 +143,14 @@ test('Enter only adds: an exact entry wins, a literal one is taken as typed, a c
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.equal(changes.length, 0, 'nor does Enter on a highlighted row that is already chosen');
 
-  await harness.input(input, 'board:plan');
+  await harness.input(input, 'drawing_board:plan');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
-  assert.deepEqual(changes.at(-1), ['board:roadmap', 'board:plan'],
-    'a whole kind:id the catalogue lacks is added as typed, not as the fuzzy match board:planning');
+  assert.deepEqual(changes.at(-1), ['drawing_board:roadmap', 'drawing_board:plan'],
+    'a whole kind:id the catalogue lacks is added as typed, not as the fuzzy match drawing_board:planning');
 
   await harness.input(input, 'plan');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
-  assert.deepEqual(changes.at(-1), ['board:roadmap', 'board:plan', 'board:planning'], 'otherwise the highlighted row');
+  assert.deepEqual(changes.at(-1), ['drawing_board:roadmap', 'drawing_board:plan', 'drawing_board:planning'], 'otherwise the highlighted row');
 });
 
 test('the keyboard walks the rows in the order they show, section by section', async (t) => {

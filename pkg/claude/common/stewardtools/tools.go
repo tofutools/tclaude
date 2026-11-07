@@ -25,24 +25,24 @@ type Tool struct {
 
 // The tools by name. The server's handlers are keyed on these.
 const (
-	Whoami           = "whoami"
-	FleetBrief       = "fleet_brief"
-	ListAgents       = "list_agents"
-	Inbox            = "inbox"
-	ReadMessage      = "read_message"
-	SendMessage      = "send_message"
-	Reply            = "reply"
-	NotifyHuman      = "notify_human"
-	WaitForActivity  = "wait_for_activity"
-	ListBoards       = "list_boards"
-	ReadBoard        = "read_board"
-	CreateBoard      = "create_board"
-	UpdateBoard      = "update_board"
-	DashboardView    = "dashboard_view"
-	DashboardCue     = "dashboard_cue"
-	DashboardCapture = "dashboard_capture"
-	SetTaskLink      = "set_task_link"
-	SpawnAgent       = "spawn_agent"
+	Whoami             = "whoami"
+	FleetBrief         = "fleet_brief"
+	ListAgents         = "list_agents"
+	Inbox              = "inbox"
+	ReadMessage        = "read_message"
+	SendMessage        = "send_message"
+	Reply              = "reply"
+	NotifyHuman        = "notify_human"
+	WaitForActivity    = "wait_for_activity"
+	ListDrawingBoards  = "list_drawing_boards"
+	ReadDrawingBoard   = "read_drawing_board"
+	CreateDrawingBoard = "create_drawing_board"
+	UpdateDrawingBoard = "update_drawing_board"
+	DashboardView      = "dashboard_view"
+	DashboardCue       = "dashboard_cue"
+	DashboardCapture   = "dashboard_capture"
+	SetTaskLink        = "set_task_link"
+	SpawnAgent         = "spawn_agent"
 )
 
 // List returns the tools in the order they are offered.
@@ -111,34 +111,34 @@ func List() []Tool {
 			Permissions: []string{"fleet.read"},
 		},
 		{
-			Name:        ListBoards,
-			Description: "List the collab boards.",
-			Routes:      []string{"GET /v1/boards"},
-			Access:      "Needs boards.read",
-			Permissions: []string{"boards.read"},
+			Name:        ListDrawingBoards,
+			Description: "List the collab drawing boards.",
+			Routes:      []string{"GET /v1/drawing-boards"},
+			Access:      "Needs drawing-boards.read",
+			Permissions: []string{"drawing-boards.read"},
 		},
 		{
-			Name:        ReadBoard,
-			Description: "Read a board's elements. Works with no dashboard open. Read again to see what the human changed: nothing announces board edits.",
-			Routes:      []string{"GET /v1/boards/{id}"},
-			Access:      "Needs boards.read",
-			Permissions: []string{"boards.read"},
+			Name:        ReadDrawingBoard,
+			Description: "Read a drawing board's elements. Works with no dashboard open. Read again to see what the human changed: nothing announces drawing board edits.",
+			Routes:      []string{"GET /v1/drawing-boards/{id}"},
+			Access:      "Needs drawing-boards.read",
+			Permissions: []string{"drawing-boards.read"},
 		},
 		{
-			Name:        CreateBoard,
-			Description: "Create a collab board, optionally for a group.",
-			Routes:      []string{"POST /v1/boards"},
-			Access:      "Needs boards.write",
-			Permissions: []string{"boards.write"},
+			Name:        CreateDrawingBoard,
+			Description: "Create a collab drawing board, optionally for a group.",
+			Routes:      []string{"POST /v1/drawing-boards"},
+			Access:      "Needs drawing-boards.write",
+			Permissions: []string{"drawing-boards.write"},
 			Writes:      true,
 		},
 		{
-			Name: UpdateBoard,
-			Description: "Add, change or delete board elements. To change an element, send it whole with version + 1. " +
+			Name: UpdateDrawingBoard,
+			Description: "Add, change or delete drawing board elements. To change an element, send it whole with version + 1. " +
 				"To delete one, send it with isDeleted true and version + 1.",
-			Routes:      []string{"PATCH /v1/boards/{id}"},
-			Access:      "Needs boards.write",
-			Permissions: []string{"boards.write"},
+			Routes:      []string{"PATCH /v1/drawing-boards/{id}"},
+			Access:      "Needs drawing-boards.write",
+			Permissions: []string{"drawing-boards.write"},
 			Writes:      true,
 		},
 		{

@@ -66,8 +66,8 @@ processes are available.
 Extra rows appear at the end of the list, depending on ▾ view:
 
 - **Ungrouped**: agents in no group. It has the same Agents and Resources
-  sections as a real group. Resources lists the boards that are in
-  no group, such as one made from the Collab panel's ＋ New. To move a board
+  sections as a real group. Resources lists the drawing boards that are in
+  no group, such as one made from the Collab panel's ＋ New. To move a drawing board
   into a group, use its ⋯ → **Move to group**.
 - **Conversations**: sessions tclaude knows that are not agents yet.
   **promote** makes one an agent.
@@ -155,8 +155,8 @@ Below the sections is the group's list of links, with **+ link**.
 
 Drag a group header onto another group to nest it, or to its top or bottom edge
 to reorder. Ctrl-drag (⌘-drag on a Mac) a header to clone the group. Drag an agent's row to
-another group to move it. In Resources, drag a board or page row to another
-group the same way; drop a board on **Ungrouped** to take it out of every group.
+another group to move it. In Resources, drag a drawing board or page row to another
+group the same way; drop a drawing board on **Ungrouped** to take it out of every group.
 A **Retire** bin appears while you drag: drop a row there
 to retire it, or a queued spawn to discard it. Drag from **Retired** to a group to
 reinstate an agent. Dragging a **Conversations** row to a group promotes it
@@ -489,7 +489,7 @@ agents table, with the columns Name, Kind, State, Lock and Detail. Its saved
 processes come first, then their runs, then the rest of the table. The kinds
 are:
 - **Processes:** its saved processes and runs.
-- **Drawing boards:** the collab boards linked to the group.
+- **Drawing boards:** the collab drawing boards linked to the group.
 - **Pages:** the live pages its members showed into it, including closed
   ones saved with the group.
 - **Shells:** the group's terminal, in its default directory, and every
@@ -499,9 +499,9 @@ are:
   killed) the row goes away, and the **＋** menu starts a new group shell.
 
 The section's count is its saved
-processes, boards, pages and shells (runs are not counted), and a section with
+processes, drawing boards, pages and shells (runs are not counted), and a section with
 nothing at all says *No resources yet*.
-The **＋** menu starts a process for the group or for one agent, adds a new board
+The **＋** menu starts a process for the group or for one agent, adds a new drawing board
 linked to the group or a blank live page, or opens the group's shell (once the
 group has a directory). Draw on the blank page to show what to build, and a
 member takes it over with its own source (see
@@ -523,11 +523,11 @@ brighten when you point at the row.
 - **👁** follows the state: it brings an open one forward, takes it off the
   dock, opens it, attaches a running shell or reopens a closed page.
   Clicking the name does the same.
-- **🗑** deletes a board or a page, or kills a running shell, after a
+- **🗑** deletes a drawing board or a page, or kills a running shell, after a
   confirm. Killing works while the shell is open too; its tab then shows
   the session ended, or closes, as your close-tab setting says. Dragging the
   row onto the trash bin does the same.
-- **⚙** holds the rest. For a page or a board:
+- **⚙** holds the rest. For a page or a drawing board:
 - **Rename…**: the name becomes a field; Enter saves it, Escape keeps the old
   one. Your title for a page stays when its agent shows the page again,
   unless the agent passes a title of its own; the audit log says when one
@@ -552,12 +552,12 @@ click it (or focus it and press Enter) to switch between:
 
 You toggle the lock here; an agent can only when you grant it
 `groups.resources.lock`, which also lets it change the locked resource. The
-same chip is on the resource's own header: the process editor, the board and
+same chip is on the resource's own header: the process editor, the drawing board and
 the page. In the Collab view, a locked resource also wears a small 🔒 on its
 tab name; its tooltip says what the lock means. Its row in the side panel has
 a lock toggle at its right end: an amber closed lock, always shown, while the
 resource is locked, and a dim open lock on hover or keyboard focus while it
-is unlocked. Click it to lock or unlock. A board tab's right-click menu has
+is unlocked. Click it to lock or unlock. A drawing board tab's right-click menu has
 **Lock for agents** / **Unlock for agents**. All of these show the same
 state, so a toggle in one shows in the others at once. See
 [Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
@@ -565,7 +565,7 @@ state, so a toggle in one shows in the others at once. See
 A peer's group in the fused view lists its resources too, read from that
 node, where that node grants you `groups.resources.read` for the group (the
 roster grant alone no longer shows it, nor does `groups.resources.lock`
-without the read grant). Its boards and pages are named
+without the read grant). Its drawing boards and pages are named
 but not opened here. Its lock chips toggle only where that node grants you
 `groups.resources.lock`; otherwise a chip is greyed out and its tooltip says
 so. If the node refuses a toggle, a toast says why. See
@@ -606,7 +606,7 @@ findings, with these actions:
 
 - **Spawn…** starts a new agent from the snapshot.
 - **⤓** exports it as a [PAF](paf.md).
-- **Share…** puts it on a [board](boards.md) for named members. You review a
+- **Share…** puts it on a [Board](federation-boards.md) for named members. You review a
   consent summary and type `share`. A snapshot with suspected credentials must be
   redacted first.
 - **Publish…** makes a public copy, always masking credentials, paths and
@@ -619,7 +619,7 @@ exist, a table here shows each one's last good snapshot and when the next is due
 Snapshots stay on their node. If a peer trusts this node unrestricted, its agents
 show **📸 snapshot…** and **⤓ export (PAF)…**, and its groups **⤓ export…**, on its
 own page and in the fused Groups view. The dialog acts on that node's library, and
-files download through this node. A public copy or a board share is made here, from
+files download through this node. A public copy or a Board share is made here, from
 the downloaded file. A restricted peer hides these items.
 
 ## Pull or sync group repositories

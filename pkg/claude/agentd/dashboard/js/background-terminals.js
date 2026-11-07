@@ -13,18 +13,18 @@
 // unrestricted peer). A peer's agents and shells open as remote terminals,
 // and its shells can be ended from here.
 //
-// The listing also has a row per board with an agent's board session on it: the
+// The listing also has a row per drawing board with an agent's drawing board session on it: the
 // agent works with no tab open, and the row is how the operator resumes the
-// board. It opens as a board tab and ends without touching the board. Boards
+// drawing board. It opens as a drawing board tab and ends without touching the drawing board. Drawing boards
 // stay with their own node, so a peer never lists one, and a peer's per-node
-// view drops this node's, whose board routes the page would send to the peer.
+// view drops this node's, whose drawing board routes the page would send to the peer.
 
 import { signal } from '@preact/signals';
 import {
   openGroupWebTermPane, openWebTermPane, openWebWindowPane, waitForTerminalSettled,
 } from './terminals-tab.js';
-import { boardPaneKey } from './board-model.js';
-import { boardOverlays, openBoardPane } from './board-overlay-state.js';
+import { drawingBoardPaneKey } from './drawing-board-model.js';
+import { drawingBoardOverlays, openDrawingBoardPane } from './drawing-board-overlay-state.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
@@ -120,7 +120,7 @@ async function readListing(fetchImpl, path) {
 
 // localBackgroundRows is the rows of this node's listing the page can open.
 export function localBackgroundRows(rows, remote = globalThis.__tclaudeRemoteNode?.id) {
-  return remote ? rows.filter((row) => row.kind !== 'board') : rows;
+  return remote ? rows.filter((row) => row.kind !== 'drawing_board') : rows;
 }
 
 // startBackgroundTerminalsPoll reads the listing now and then every few
@@ -182,16 +182,16 @@ export function startBackgroundTerminalsPoll({
 
 // visibleBackgroundTerminals drops rows whose pane is already open here: the
 // listing lags an attach by up to one poll. A peer's agent is open when a
-// remote pane shows it, whichever mode it opened in. A board is open in its tab
+// remote pane shows it, whichever mode it opened in. A drawing board is open in its tab
 // or floating in a window.
-export function visibleBackgroundTerminals(rows, panes, floating = boardOverlays.value) {
+export function visibleBackgroundTerminals(rows, panes, floating = drawingBoardOverlays.value) {
   const open = new Set();
   for (const pane of panes || []) {
     open.add(pane.key);
     const remote = pane.seed?.remote;
     if (remote?.peer && remote.agent) open.add(`peer:${remote.peer}:${remote.agent}`);
   }
-  for (const window of floating || []) open.add(boardPaneKey(window.board));
+  for (const window of floating || []) open.add(drawingBoardPaneKey(window.drawingBoard));
   return (rows || []).filter((row) => !row.key || !open.has(row.key));
 }
 
@@ -199,19 +199,19 @@ function selectorOf(row) {
   return row.agent_id || row.conv_id || '';
 }
 
-// boardRowView reads a board row: its title and who has a session on it, by
+// drawingBoardRowView reads a drawing board row: its title and who has a session on it, by
 // the roster's live titles like the other rows.
-function boardRowView(row, snapshotValue) {
+function drawingBoardRowView(row, snapshotValue) {
   const roster = new Map((snapshotValue?.agents || []).map((agent) => [agent.agent_id, agent.title]));
   const names = (row.agents || []).map((agent) => roster.get(agent.agent_id) || agent.title).filter(Boolean);
-  const title = row.label || row.board;
+  const title = row.label || row.drawingBoard;
   return { label: names.length ? `${title} · ${names.join(', ')}` : title, title, status: null };
 }
 
 // rowLabel prefers the roster's live title so a renamed agent reads right
 // before the next listing.
 export function rowView(row, snapshotValue) {
-  if (row.kind === 'board') return boardRowView(row, snapshotValue);
+  if (row.kind === 'drawing_board') return drawingBoardRowView(row, snapshotValue);
   const selector = selectorOf(row);
   const seed = row.node ? { remote: { peer: row.node.id, agent: row.agent_id } } : { agent: selector };
   const status = selector ? terminalTabStatus({ label: row.label, seed }, snapshotValue, remoteSessionAgents.value) : null;
@@ -240,8 +240,8 @@ export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, ac
   const selector = selectorOf(row);
   const options = { reveal, activate };
   let opened = null;
-  if (row.kind === 'board' && row.board) {
-    opened = openBoardPane(row.board, title, options);
+  if (row.kind === 'drawing_board' && row.drawingBoard) {
+    opened = openDrawingBoardPane(row.drawingBoard, title, options);
   } else if (row.node && row.shell) {
     opened = openShell({ instance: row.node.id, ...row.shell, peerLabel: row.node.name, label: title, options });
   } else if (row.node) {
@@ -274,15 +274,15 @@ function openRemoteShellPane({ options, ...rest }) {
 // superseded generation, an unrecognised session) on its node and re-reads
 // the listing. Like the listing, it goes past a peer view's fetch routing: a
 // row of this node's ends here, a peer's through the peer proxy. Resolves to
-// '' on success or the server's error text. A board row has no tmux session:
-// this ends the agents' board sessions, and the board itself stays.
+// '' on success or the server's error text. A drawing board row has no tmux session:
+// this ends the agents' drawing board sessions, and the drawing board itself stays.
 export async function killBackgroundTerminal(row, {
   fetchImpl = globalThis.__tclaudeRemoteNode?.localFetch || ((...args) => fetch(...args)),
 } = {}) {
   const path = row.node ? `/api/peer/${encodeURIComponent(row.node.id)}/background-terminals/kill` : BACKGROUND_TERMINAL_KILL_PATH;
   try {
-    const response = row.kind === 'board'
-      ? await fetchImpl(`/api/boards/${encodeURIComponent(row.board)}/sessions`, { method: 'DELETE', credentials: 'same-origin' })
+    const response = row.kind === 'drawing_board'
+      ? await fetchImpl(`/api/drawing-boards/${encodeURIComponent(row.drawingBoard)}/sessions`, { method: 'DELETE', credentials: 'same-origin' })
       : await fetchImpl(path, {
         method: 'POST',
         credentials: 'same-origin',

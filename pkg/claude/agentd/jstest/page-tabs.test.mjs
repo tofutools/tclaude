@@ -109,7 +109,7 @@ test('the page model keeps the token in the frame src and nowhere else', async (
   assert.equal(model.isPageId('pg_../x'), false);
   assert.deepEqual(normalizeSeed({ page: PAGE.id, label: 'x', url: PAGE.url, origin: ORIGIN }), { page: PAGE.id, label: 'x', key: `page:${PAGE.id}` },
     'a seed never carries the page URL');
-  assert.equal(normalizeSeed({ page: PAGE.id, board: 'b' }), null, 'a mixed seed is refused');
+  assert.equal(normalizeSeed({ page: PAGE.id, drawingBoard: 'b' }), null, 'a mixed seed is refused');
   assert.equal(normalizeSeed({ page: 'nope' }), null);
   assert.equal(model.pageFrameSrc(PAGE), PAGE.url);
   assert.equal(model.pageFrameSrc({ ...PAGE, origin: 'http://127.0.0.1:7777', url: 'http://127.0.0.1:7777/api/snapshot' }), '', 'the dashboard origin never loads in the frame');

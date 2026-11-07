@@ -81,7 +81,19 @@ export const SYNONYMS = {
   // "party" must rank the plain label and "group" the arcane one.
   party: ['group'],
   group: ['party'],
+  // The palette makes a group's resources (palette-resources.js): a drawing
+  // board is also a "whiteboard", and 🧙 calls it a slate, a page a looking
+  // glass and a process a rite. One way only: matching is by substring, so
+  // process → rite would also find "write" and "favorite".
+  whiteboard: ['drawing board'],
+  slate: ['drawing board'],
+  rite: ['process'],
 };
+
+// FILLER are the words a phrased query carries that no command needs to
+// match ("open a drawing board in tclaude"): the scattered-token tiers skip
+// them, so the phrasing does not hide the command.
+const FILLER = new Set(['a', 'an', 'the', 'in', 'into', 'to', 'for', 'on', 'at', 'of']);
 
 // scoreMatch ranks how directly a (possibly synonym-substituted) query
 // answers one command's text. Ladder, high→low:
@@ -106,8 +118,10 @@ export function scoreMatch(q, tokens, label, hay) {
   if (label.includes(' ' + q)) return 80;          // query at a non-first word start
   if (label.includes(q)) return 60;                // query somewhere in the label
   if (hay.includes(q)) return 50;                  // query as a phrase in hint/keywords
-  if (tokens.every(t => label.includes(t))) return 40;
-  if (tokens.every(t => hay.includes(t))) return 20;
+  const words = tokens.filter(t => !FILLER.has(t));
+  const need = words.length ? words : tokens;
+  if (need.every(t => label.includes(t))) return 40;
+  if (need.every(t => hay.includes(t))) return 20;
   return 0;
 }
 

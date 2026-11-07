@@ -40,8 +40,8 @@ import (
 // reach: absent, closed, private, or in a group the caller is not in.
 var errPageNotShared = errors.New("no such page")
 
-// The link is the group's id, as a board's is (POST /api/boards/{id}/group),
-// so it survives a rename, and a group's resources (pages, boards,
+// The link is the group's id, as a drawing board's is (POST /api/drawing-boards/{id}/group),
+// so it survives a rename, and a group's resources (pages, drawing boards,
 // processes) can be listed the same way, by the page view's group_id.
 
 // pageShareGroup resolves the group a page is shown into: the named one,

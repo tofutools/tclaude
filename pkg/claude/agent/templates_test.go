@@ -544,7 +544,7 @@ func TestRunTemplatesExport_FileBranchKeepsEnvelopeAndCountsAgents(t *testing.T)
 func TestTemplates_OwnerDisplayUsesEffectiveOwnership(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`[
-		{"name":"board","agents":[
+		{"name":"drawing_board","agents":[
 			{"name":"chair","permissions":[],"spawn_profile":"boss-kit","effective_is_owner":true},
 			{"name":"guest","permissions":[]}]}]`))
 
@@ -556,12 +556,12 @@ func TestTemplates_OwnerDisplayUsesEffectiveOwnership(t *testing.T) {
 	// show: the tag distinguishes a profile-granted owner from the legacy flag
 	// (flipping is_owner would not clear it).
 	stubDaemon(t, &calls, ok(`
-		{"name":"board","agents":[
+		{"name":"drawing_board","agents":[
 			{"name":"chair","permissions":[],"spawn_profile":"boss-kit","effective_is_owner":true},
 			{"name":"boss","permissions":[],"is_owner":true,"effective_is_owner":true},
 			{"name":"guest","permissions":[]}]}`))
 	stdout.Reset()
-	rc = runTemplatesShow(&templatesShowParams{Name: "board"}, &stdout, &stderr)
+	rc = runTemplatesShow(&templatesShowParams{Name: "drawing_board"}, &stdout, &stderr)
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
 	out := stdout.String()
 	assert.Contains(t, out, "owner(via profile)", "profile-granted owner tagged with its source")

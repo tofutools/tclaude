@@ -1,5 +1,5 @@
 // overlay-window.js -- the one window every floating dashboard window sits in.
-// The companion and the board overlay bring their content; this owns the rest:
+// The companion and the drawing board overlay bring their content; this owns the rest:
 // where the window is (placement and persistence), dragging, resizing from any
 // edge or corner, edge snapping and maximize, minimize and open animations, the
 // native-look controls, which window is in front, and handing focus back after

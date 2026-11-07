@@ -75,7 +75,7 @@ class PathPredicates(unittest.TestCase):
             self.assertFalse(cc.is_known(p), p)
 
     def test_is_ui(self):
-        for p in ("pkg/claude/agentd/dashboard/board.css",
+        for p in ("pkg/claude/agentd/dashboard/drawing-board.css",
                   "pkg/claude/agentd/dashboard/js/app.js",
                   "pkg/claude/agentd/dashboard/dashboard.html",
                   "pkg/claude/agentd/dashboard/third_party/x/y.js",
@@ -175,7 +175,7 @@ class Decisions(unittest.TestCase):
                   "scripts/ci/classify-changes.py", "scripts/ci/pi/package.json",
                   "scripts/ci/affected/main.go", "go.mod", "go.sum", "mise.toml",
                   "scripts/test.sh"):
-            for extra in ([], ["docs/x.md"], ["pkg/claude/agentd/dashboard/board.css"],
+            for extra in ([], ["docs/x.md"], ["pkg/claude/agentd/dashboard/drawing-board.css"],
                           ["pkg/claude/common/db/db.go"]):
                 self.assert_full([p, *extra])
 
@@ -183,7 +183,7 @@ class Decisions(unittest.TestCase):
         for p in ("verify.sh", ".goreleaser.yaml", "Makefile", "internal/a.go",
                   "vendor/m/a.go", "newdir/thing.txt"):
             self.assert_full([p])
-            self.assert_full([p, "pkg/claude/agentd/dashboard/board.css"])
+            self.assert_full([p, "pkg/claude/agentd/dashboard/drawing-board.css"])
 
     def test_docs_only(self):
         for paths in (["docs/x.md"], ["README.md", "mkdocs.yml", "docs/img/a.png"],
@@ -195,7 +195,7 @@ class Decisions(unittest.TestCase):
             self.assertEqual(matrix, [{"os": LINUX, "shard": "none"}])
 
     def test_ui_only(self):
-        for paths in (["pkg/claude/agentd/dashboard/board.css"],
+        for paths in (["pkg/claude/agentd/dashboard/drawing-board.css"],
                       ["pkg/claude/agentd/dashboard/js/app.js", "docs/dashboard.md"],
                       ["pkg/claude/agentd/jstest/x.test.mjs",
                        "pkg/claude/agentd/dashboard/dashboard.html", "README.md"]):
@@ -222,7 +222,7 @@ class Decisions(unittest.TestCase):
                    "pkg/claude/agentd/dashboard.go",
                    "pkg/claude/agent/skills/review/SKILL.md",
                    "docs/paf/schema/v0.1/common.schema.json"):
-            mode, run, matrix = self.decide(["pkg/claude/agentd/dashboard/board.css", go])
+            mode, run, matrix = self.decide(["pkg/claude/agentd/dashboard/drawing-board.css", go])
             self.assertEqual(mode, "code", go)
             self.assertTrue(run["lint"] and run["test"] and run["sandbox-v2-smoke"])
             self.assertEqual(matrix, LINUX_ENTRIES)
@@ -266,7 +266,7 @@ class Decisions(unittest.TestCase):
     def test_macos_opt_in_adds_macos_wherever_tests_run(self):
         cases = (
             (["docs/x.md"], "docs", None),
-            (["pkg/claude/agentd/dashboard/board.css"], "ui",
+            (["pkg/claude/agentd/dashboard/drawing-board.css"], "ui",
              [{"os": LINUX, "shard": s} for s in cc.UI_SHARDS]),
             (["pkg/claude/agentd/handlers.go"], "code", LINUX_ENTRIES),
             (["go.mod"], "full", LINUX_ENTRIES),
@@ -318,7 +318,7 @@ class Decisions(unittest.TestCase):
 RANK = {m: i for i, m in enumerate(MODES)}
 POOL = [
     "docs/x.md", "README.md", "mkdocs.yml",
-    "pkg/claude/agentd/dashboard/board.css", "pkg/claude/agentd/dashboard/js/a.js",
+    "pkg/claude/agentd/dashboard/drawing-board.css", "pkg/claude/agentd/dashboard/js/a.js",
     "pkg/claude/agentd/jstest/x.test.mjs", "pkg/claude/agentd/dashboard/assets.go",
     "pkg/claude/agentd/dashboard_wizard_html_test.go",
     "pkg/claude/agentd/dashboard_tagged_test.go",
@@ -436,7 +436,7 @@ class GitPlumbing(unittest.TestCase):
         self.write("README.md", "x\n")
         self.commit("docs")
         self.assertEqual(self.outputs(self.base)["mode"], "docs")
-        self.write("pkg/claude/agentd/dashboard/board.css", "a{}\n")
+        self.write("pkg/claude/agentd/dashboard/drawing-board.css", "a{}\n")
         self.commit("ui")
         out = self.outputs(self.base)
         self.assertEqual(out["mode"], "ui")

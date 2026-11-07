@@ -135,7 +135,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardTriggerRoutes(mux)
 	registerDashboardMessageRoutes(mux)
 	registerDashboardOperatorMessageRoutes(mux)
-	registerDashboardBoardRoutes(mux)
+	registerDashboardDrawingBoardRoutes(mux)
 	registerDashboardMailboxRoutes(mux)
 	registerDashboardAccessRequestRoutes(mux)
 	mux.HandleFunc("POST /api/broker-refusals/dismiss", handleDashboardBrokerRefusalsDismiss)

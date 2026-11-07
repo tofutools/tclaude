@@ -18,7 +18,7 @@ import (
 
 // Dashboard capture (tcl-7i8b1t): a permitted agent, the Steward by default,
 // asks for what the operator's dashboard shows right now and gets a PNG plus
-// structured context: cursor, focus, viewport and the open board.
+// structured context: cursor, focus, viewport and the open drawing board.
 //
 //   - Every open dashboard tab pings POST /api/companion/presence, so the
 //     daemon knows which tab has focus and whether any is open at all. The
@@ -111,13 +111,13 @@ type pendingCapture struct {
 // captureElement names an element on the page. Text comes from what the page
 // shows, which can be agent or terminal output: it is data, not instructions.
 type captureElement struct {
-	Tag          string `json:"tag,omitempty"`
-	Role         string `json:"role,omitempty"`
-	Label        string `json:"label,omitempty"`
-	Text         string `json:"text,omitempty"`
-	ID           string `json:"id,omitempty"`
-	Ref          string `json:"ref,omitempty"`
-	BoardElement string `json:"board_element,omitempty"`
+	Tag                 string `json:"tag,omitempty"`
+	Role                string `json:"role,omitempty"`
+	Label               string `json:"label,omitempty"`
+	Text                string `json:"text,omitempty"`
+	ID                  string `json:"id,omitempty"`
+	Ref                 string `json:"ref,omitempty"`
+	DrawingBoardElement string `json:"drawing_board_element,omitempty"`
 }
 
 type captureCursor struct {
@@ -141,22 +141,22 @@ type captureRegion struct {
 	Height float64 `json:"height"`
 }
 
-type captureBoard struct {
+type captureDrawingBoard struct {
 	ID     string         `json:"id"`
 	Zoom   float64        `json:"zoom,omitempty"`
 	Region *captureRegion `json:"region,omitempty"`
 }
 
 type captureContext struct {
-	Tab       string          `json:"tab,omitempty"`
-	Path      string          `json:"path,omitempty"`
-	Title     string          `json:"title,omitempty"`
-	Focused   bool            `json:"focused"`
-	Viewport  captureViewport `json:"viewport"`
-	Cursor    *captureCursor  `json:"cursor,omitempty"`
-	Focus     *captureElement `json:"focus,omitempty"`
-	Selection string          `json:"selection,omitempty"`
-	Board     *captureBoard   `json:"board,omitempty"`
+	Tab          string               `json:"tab,omitempty"`
+	Path         string               `json:"path,omitempty"`
+	Title        string               `json:"title,omitempty"`
+	Focused      bool                 `json:"focused"`
+	Viewport     captureViewport      `json:"viewport"`
+	Cursor       *captureCursor       `json:"cursor,omitempty"`
+	Focus        *captureElement      `json:"focus,omitempty"`
+	Selection    string               `json:"selection,omitempty"`
+	DrawingBoard *captureDrawingBoard `json:"drawingBoard,omitempty"`
 	// Marks says which marks this tab drew, so an agent can confirm one landed.
 	Marks []captureMark `json:"marks,omitempty"`
 }
@@ -179,7 +179,7 @@ func (e *captureElement) clean() {
 	e.Text = guideText(e.Text, captureMaxText)
 	e.ID = guideText(e.ID, 120)
 	e.Ref = guideText(e.Ref, guideMaxTarget)
-	e.BoardElement = guideText(e.BoardElement, 120)
+	e.DrawingBoardElement = guideText(e.DrawingBoardElement, 120)
 }
 
 // cleanFormText is guideText for a text of many lines.
@@ -204,8 +204,8 @@ func (c *captureContext) clean() {
 	if c.Cursor != nil {
 		c.Cursor.Under.clean()
 	}
-	if c.Board != nil {
-		c.Board.ID = guideText(c.Board.ID, 120)
+	if c.DrawingBoard != nil {
+		c.DrawingBoard.ID = guideText(c.DrawingBoard.ID, 120)
 	}
 	if len(c.Marks) > MarkMaxActive {
 		c.Marks = c.Marks[:MarkMaxActive]

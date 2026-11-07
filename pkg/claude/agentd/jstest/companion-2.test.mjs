@@ -479,7 +479,7 @@ test('with stewards opted out the companion keeps its windows but has no Steward
     fetchImpl=${async () => ({ ok: true, status: 200, json: async () => ({}) })} widgetFactory=${fakeWidgetFactory([])} closeTerminalPanes=${() => {}}
     registerController=${(c) => { controllers.push(c); return () => {}; }} />`);
   assert.ok(!view.container.querySelector('.companion-chips'));
-  assert.equal(controllers.length, 1, 'still the overlay host: boards, pages and terminals can float');
+  assert.equal(controllers.length, 1, 'still the overlay host: drawing boards, pages and terminals can float');
   await harness.act(async () => { snap.value = snapshotWith(); });
   assert.ok(view.container.querySelector('.companion-chips'), 'turning it on needs no reload');
   await harness.act(async () => { snap.value = { ...snapshotWith(), stewards_disabled: true }; });

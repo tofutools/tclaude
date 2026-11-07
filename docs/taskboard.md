@@ -345,13 +345,13 @@ dependencies. Deleting a group deletes its board.
 Each group card on the Groups tab has a **Task board** section (in wizard mode,
 the **Quest board**), below its Agents and Resources sections.
 
-- **Folded**, the section is one line of counts, for example
-  `5 · 1 needs you · 1 in progress · 2 next · 1 idea`. *Needs you* counts the
-  blocked and the stalled tasks, and *in progress* counts the other assigned
-  tasks. *Next* and
-  *ideas* count the unassigned open tasks in each stage. The group's summary
-  line carries the same counts, so a folded group still shows what is on its
-  board.
+- The section head shows the number of live tasks, then the ＋▾ add button
+  and the List | Lanes switch. The group's summary line carries the breakdown,
+  for example `task board: 1 needs you · 1 in progress · 2 next · 1 idea`, so
+  a folded group still shows what is on its board (the count's tooltip has it
+  too). *Needs you* counts the blocked and the stalled tasks, and *in
+  progress* counts the other assigned tasks. *Next* and *ideas* count the
+  unassigned open tasks in each stage.
 - **Open**, the section lists the queue in your order and then the Ideas band.
   Each row shows its number, title and id, a ref chip that links to the
   tracker, who holds the task, and its state. A blocked task shows its reason

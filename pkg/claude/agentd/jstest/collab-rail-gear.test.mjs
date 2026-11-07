@@ -10,21 +10,21 @@ const SNAP = {
   ],
   agents: [{ agent_id: 'agt_a', conv_id: 'ca', title: 'alpha', groups: ['crew'] }],
   group_resources: [
-    { kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
-    { kind: 'board', id: 'loose', group_id: 0, title: 'Loose', state: 'closed' },
+    { kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
+    { kind: 'drawing_board', id: 'loose', group_id: 0, title: 'Loose', state: 'closed' },
   ],
 };
 
 const settle = (harness) => harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
-test('a board\'s ⚙ is its Groups row menu: Rename…, Move to group › and Delete…', async (t) => {
+test('a drawing board\'s ⚙ is its Groups row menu: Rename…, Move to group › and Delete…', async (t) => {
   const harness = await createPreactHarness(t);
   const gear = await harness.importDashboardModule('js/collab-rail-gear.js');
   const calls = [];
   const notes = [];
-  const api = { moveBoard: async (...a) => calls.push(['move', ...a]), deleteBoard: async (...a) => calls.push(['delete', ...a]) };
+  const api = { moveDrawingBoard: async (...a) => calls.push(['move', ...a]), deleteDrawingBoard: async (...a) => calls.push(['delete', ...a]) };
   let renamed = 0;
-  const item = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: SNAP.group_resources[0] };
+  const item = { key: 'drawing_board:plan', kind: 'drawing_board', title: 'Plan', group: 'crew', resource: SNAP.group_resources[0] };
   const { container } = await harness.mount(harness.html`<${gear.RailGear} item=${item} snapshot=${{ value: SNAP }}
     notify=${(...a) => notes.push(a)} onRename=${() => { renamed++; }} ctx=${{ api, source: { refresh: () => {} }, confirm: async () => true }} />`);
   const button = container.querySelector('.cr-gear-btn');
@@ -41,7 +41,7 @@ test('a board\'s ⚙ is its Groups row menu: Rename…, Move to group › and De
   await harness.act(() => harness.fireEvent(container.querySelector('[data-move-to="lab"]'), 'click'));
   await settle(harness);
   await harness.act(() => harness.fireEvent(button, 'click'));
-  await harness.act(() => harness.fireEvent(container.querySelector('[data-board-delete="plan"]'), 'click'));
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-drawing-board-delete="plan"]'), 'click'));
   await settle(harness);
   assert.deepEqual(calls, [['move', 'plan', 'lab'], ['delete', 'plan']]);
   assert.deepEqual(notes, [['Moved Plan to lab'], ['Deleted Plan']]);
@@ -97,26 +97,26 @@ test('a shell, a process and another node\'s agent get no ⚙', async (t) => {
   assert.deepEqual(gear.agentMoveTargets(SNAP, ''), ['crew', 'lab'], 'an agent in no group can only go into one');
 });
 
-test('the panel lists a board in no group under Not in a group, and its ⚙ renames it in place', async (t) => {
+test('the panel lists a drawing board in no group under Not in a group, and its ⚙ renames it in place', async (t) => {
   const harness = await createPreactHarness(t);
   const [rail, pc] = await Promise.all([
     harness.importDashboardModule('js/collab-rail.js'),
     harness.importDashboardModule('js/process-context.js'),
   ]);
   const renamed = [];
-  const real = pc.processRunApi.renameBoard;
-  pc.processRunApi.renameBoard = async (...args) => renamed.push(args);
-  t.after(() => { pc.processRunApi.renameBoard = real; });
+  const real = pc.processRunApi.renameDrawingBoard;
+  pc.processRunApi.renameDrawingBoard = async (...args) => renamed.push(args);
+  t.after(() => { pc.processRunApi.renameDrawingBoard = real; });
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
-  dashPrefs.setItem('tclaude.dash.collab.filter', JSON.stringify({ states: ['closed', 'open', 'background'], kinds: ['boards'] }));
+  dashPrefs.setItem('tclaude.dash.collab.filter', JSON.stringify({ states: ['closed', 'open', 'background'], kinds: ['drawing-boards'] }));
   const { container } = await harness.mount(harness.html`<${rail.CollabRail} panes=${[]} actions=${{}} snapshot=${{ value: SNAP }} />`);
   const root = container.querySelector('[data-collab-rail]');
   const none = root.querySelector('[data-rail-group="Not in a group"]');
-  assert.ok(none?.querySelector('[data-rail-item="board:loose"]'), 'the loose board is listed');
-  const row = none.querySelector('[data-rail-item="board:loose"]');
+  assert.ok(none?.querySelector('[data-rail-item="drawing_board:loose"]'), 'the loose drawing board is listed');
+  const row = none.querySelector('[data-rail-item="drawing_board:loose"]');
   await harness.act(() => harness.fireEvent(row.querySelector('.cr-gear-btn'), 'click'));
   await harness.act(() => harness.fireEvent(row.querySelector('[data-resource-rename="loose"]'), 'click'));
-  const input = root.querySelector('[data-rail-item="board:loose"] input[data-resource-rename-input]');
+  const input = root.querySelector('[data-rail-item="drawing_board:loose"] input[data-resource-rename-input]');
   assert.ok(input, 'the name turns into a field');
   input.value = 'Roadmap';
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));

@@ -121,13 +121,13 @@ test('the panel\'s ＋ New lists processes by pinned group, filters them, and op
   const { harness, host, widgets, processes } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
   const kinds = [...host.querySelectorAll('[data-new-kind]')].map((node) => node.dataset.newKind);
-  assert.ok(kinds.includes('board') && kinds.includes('process'), 'with Processes on, the menu offers Boards and Processes');
+  assert.ok(kinds.includes('drawing_board') && kinds.includes('process'), 'with Processes on, the menu offers Boards and Processes');
   await harness.act(async () => { harness.fireEvent(host.querySelector('[data-new-kind="process"]'), 'click'); await wait(); });
   await harness.act(() => wait());
   assert.ok(requests.includes('GET /v1/process/templates'));
-  const sections = () => [...host.querySelectorAll('.process-menu-list .board-section')].map((section) => ({
-    name: section.querySelector('.board-section-name span')?.textContent,
-    rows: [...section.querySelectorAll('.board-row-title')].map((row) => row.textContent),
+  const sections = () => [...host.querySelectorAll('.process-menu-list .drawing-board-section')].map((section) => ({
+    name: section.querySelector('.drawing-board-section-name span')?.textContent,
+    rows: [...section.querySelectorAll('.drawing-board-row-title')].map((row) => row.textContent),
   }));
   assert.deepEqual(sections(), [
     { name: 'tclaude', rows: ['Code review', 'Release train'] },
@@ -138,10 +138,10 @@ test('the panel\'s ＋ New lists processes by pinned group, filters them, and op
   await harness.act(async () => { box.value = 'train'; harness.fireEvent(box, 'input'); await wait(); });
   assert.deepEqual(sections(), [{ name: 'tclaude', rows: ['Release train'] }]);
 
-  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-process-menu-row="release-train"] .board-row-open'), 'click'); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-process-menu-row="release-train"] .drawing-board-row-open'), 'click'); await wait(); });
   await harness.act(() => wait());
   assert.deepEqual(tabLabels(host), ['Release train']);
-  assertAbsent(host.querySelector('.mux-board-menu'), 'picking a process closes the menu');
+  assertAbsent(host.querySelector('.mux-drawing-board-menu'), 'picking a process closes the menu');
   assert.equal(widgets.length, 0, 'a process tab mounts no terminal');
   assert.equal(host.querySelector('.mux-tab[data-agent-status="process"]')?.getAttribute('data-pane-key'), 'process:release-train');
   const pane = host.querySelector('.mux-pane-process.active');
@@ -156,7 +156,7 @@ test('a new process from the ＋ menu is stored and opens as a tab', async (t) =
   const requests = fakeDaemon(t);
   const env = await mountShell(t);
   const { harness, host, state } = env;
-  await harness.act(async () => { state.requestBoardMenu('processes'); await wait(); });
+  await harness.act(async () => { state.requestDrawingBoardMenu('processes'); await wait(); });
   await harness.act(() => wait());
   const box = host.querySelector('.process-menu-list input');
   await harness.act(async () => { box.value = 'Night shift'; harness.fireEvent(box, 'input'); await wait(); });
@@ -246,7 +246,7 @@ test('/collab/processes/<id> opens that tab; bare /collab/processes offers the l
   assert.equal(state.panes.value.length, 1, 'an invalid id opens nothing');
   await restore({ tab: 'collab-processes' });
   await harness.act(() => wait());
-  assert.ok(host.querySelector('.mux-board-menu .process-menu-list'), 'a bare route opens the Processes half of the menu');
+  assert.ok(host.querySelector('.mux-drawing-board-menu .process-menu-list'), 'a bare route opens the Processes half of the menu');
 
   const core = await harness.importDashboardModule('js/nav-history-core.js');
   assert.deepEqual(core.fromPath('/collab/processes/triage', ''), { tab: 'collab-processes', selection: 'triage' });
@@ -259,7 +259,7 @@ test('a crafted seed cannot give a process tab a socket or a colliding key', asy
   const harness = await createPreactHarness(t);
   const { normalizeSeed } = await harness.importDashboardModule('js/terminals-core.js');
   assert.equal(normalizeSeed({ process: '../etc', ws: '/x' }), null);
-  assert.equal(normalizeSeed({ process: 'triage', board: 'plan' }), null);
+  assert.equal(normalizeSeed({ process: 'triage', drawingBoard: 'plan' }), null);
   const seed = normalizeSeed({ process: 'triage', ws: 'wss://evil', key: 'window:agt_x' });
   assert.equal(seed.ws, undefined);
   assert.equal(seed.key, 'process:triage');
@@ -270,7 +270,7 @@ test('on a peer without Processes the ＋ New menu offers no processes', async (
   const env = await mountShell(t, { ...ON, peer_view: { level: 'restricted' } });
   const { harness, host } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
-  assert.ok(host.querySelector('[data-new-kind="board"]'));
+  assert.ok(host.querySelector('[data-new-kind="drawing_board"]'));
   assertAbsent(host.querySelector('[data-new-kind="process"]'), 'no Processes entry');
   assertAbsent(host.querySelector('.process-menu-list'));
   env.stop();

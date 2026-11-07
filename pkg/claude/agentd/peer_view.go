@@ -304,7 +304,7 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerGroupStructureRules(rules)
 	addPeerSpawnWorktreeRules(rules)
 	addPeerHumanInboxRules(rules)
-	addPeerBoardRules(rules)
+	addPeerDrawingBoardRules(rules)
 	addPeerTaskboardRules(rules)
 	addPeerHostRules(rules)
 	addPeerMailboxRules(rules)

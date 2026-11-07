@@ -14,14 +14,14 @@ import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
-import { settleBoardEdits } from './board-island.js';
+import { settleDrawingBoardEdits } from './drawing-board-island.js';
 import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
 import { bindShortcutOverrides } from './snapshot-store.js';
 
 export { decodeTerminalOpenHash };
 
 export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
-// A board pop-out has no agent to watch, but names agents: it reads the full
+// A drawing board pop-out has no agent to watch, but names agents: it reads the full
 // roster, a far heavier read, this often.
 export const STANDALONE_ROSTER_POLL_MS = 30000;
 
@@ -157,13 +157,13 @@ export function createStandaloneTerminalsPage({
   let statusPollSelector = null;
 
   function ensureStatusPoll() {
-    const selector = soloSeed?.board ? 'board' : soloSeed?.page ? 'page' : soloSeed?.agent || soloSeed?.hideConv;
+    const selector = soloSeed?.drawingBoard ? 'drawing_board' : soloSeed?.page ? 'page' : soloSeed?.agent || soloSeed?.hideConv;
     if (disposed || authExpired || !selector || statusPollSelector === selector) return;
     stopStatusPolling();
     statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
       selector, snapshot, fetchImpl, documentRef,
-      ...(soloSeed.board || soloSeed.page ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
+      ...(soloSeed.drawingBoard || soloSeed.page ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
     });
   }
 
@@ -177,8 +177,8 @@ export function createStandaloneTerminalsPage({
   async function reattachPane(pane, { overlay = false } = {}) {
     if (disposed || !pane) return false;
     // This window is about to close, which would cut a save off. An edit that
-    // could not be saved keeps the board here, where it still exists.
-    if (pane.seed.board && !(await settleBoardEdits(pane.seed.board))) return false;
+    // could not be saved keeps the drawing board here, where it still exists.
+    if (pane.seed.drawingBoard && !(await settleDrawingBoardEdits(pane.seed.drawingBoard))) return false;
     if (!state.panes.value.some((candidate) => candidate.key === pane.key)) return false;
     const seed = {
       ...pane.seed,

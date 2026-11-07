@@ -14,8 +14,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// An agent locks its group's board under groups.resources.lock, which no
-// membership or ownership confers. A locked board stays readable to members
+// An agent locks its group's drawing board under groups.resources.lock, which no
+// membership or ownership confers. A locked drawing board stays readable to members
 // and refuses their changes; the lock holder and the operator still change it.
 func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 	f := newFlow(t)
@@ -34,22 +34,22 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 	}
 	dash := agentd.BuildDashboardHandlerForTest()
 	operator := func(method, path string, body any) *httptest.ResponseRecorder {
-		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+		return testharness.Serve(dash, drawingBoardDashReq(t, method, path, body))
 	}
 	agent := func(conv, method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
 	}
 	lock := func(conv string, locked bool) *httptest.ResponseRecorder {
-		return agent(conv, http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "board", "id": "ux", "locked": locked})
+		return agent(conv, http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "drawing_board", "id": "ux", "locked": locked})
 	}
 	draw := func(conv, el string, v int64) *httptest.ResponseRecorder {
-		return agent(conv, http.MethodPatch, "/v1/boards/ux", map[string]any{"elements": []any{rect(el, v, 1, 0)}})
+		return agent(conv, http.MethodPatch, "/v1/drawing-boards/ux", map[string]any{"elements": []any{rect(el, v, 1, 0)}})
 	}
 	type resources struct {
-		Boards []struct {
+		DrawingBoards []struct {
 			ID           string `json:"id"`
 			AgentsLocked bool   `json:"agentsLocked"`
-		} `json:"boards"`
+		} `json:"drawingBoards"`
 		CanLock bool `json:"canLock"`
 	}
 	listed := func(conv string) resources {
@@ -60,7 +60,7 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 		return out
 	}
-	require.Equal(t, http.StatusCreated, agent(member, http.MethodPost, "/v1/boards", map[string]any{"id": "ux", "title": "UX", "group": "design"}).Code)
+	require.Equal(t, http.StatusCreated, agent(member, http.MethodPost, "/v1/drawing-boards", map[string]any{"id": "ux", "title": "UX", "group": "design"}).Code)
 
 	// Locking needs the slug: membership does not confer it.
 	rec := lock(member, true)
@@ -78,16 +78,16 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 
 	// Locked: the member reads but cannot change it, and is told it is locked.
 	got := listed(member)
-	require.Len(t, got.Boards, 1)
-	assert.True(t, got.Boards[0].AgentsLocked)
-	assert.Equal(t, http.StatusOK, agent(member, http.MethodGet, "/v1/boards/ux", nil).Code)
+	require.Len(t, got.DrawingBoards, 1)
+	assert.True(t, got.DrawingBoards[0].AgentsLocked)
+	assert.Equal(t, http.StatusOK, agent(member, http.MethodGet, "/v1/drawing-boards/ux", nil).Code)
 	rec = draw(member, "a", 1)
 	require.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Contains(t, rec.Body.String(), "resource_locked")
 	assert.Contains(t, rec.Body.String(), "is locked")
 	// The lock holder and the operator still change it.
 	require.Equal(t, http.StatusOK, draw(keeper, "k", 1).Code)
-	require.Equal(t, http.StatusOK, operator(http.MethodPatch, "/api/boards/ux", map[string]any{"elements": []any{rect("op", 1, 1, 0)}}).Code)
+	require.Equal(t, http.StatusOK, operator(http.MethodPatch, "/api/drawing-boards/ux", map[string]any{"elements": []any{rect("op", 1, 1, 0)}}).Code)
 	assert.Equal(t, http.StatusForbidden, lock(member, false).Code, "unlocking needs the slug too")
 
 	// The holder unlocks it; the member draws again.
@@ -115,7 +115,7 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 		map[string]any{"kind": "page", "id": "pg_saved", "locked": false}).Code)
 
 	assert.Equal(t, http.StatusNotFound, agent(keeper, http.MethodPost, "/v1/resource-locks",
-		map[string]any{"kind": "board", "id": "nope", "locked": true}).Code)
+		map[string]any{"kind": "drawing_board", "id": "nope", "locked": true}).Code)
 }
 
 // tcl-xrs9v5: an agent's resource list says per template whether it may lock

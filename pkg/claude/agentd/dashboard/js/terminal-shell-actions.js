@@ -3,7 +3,7 @@ import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures, elementScreenPoint } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
-import { boardWindowId, openBoardOverlay } from './board-overlay-state.js';
+import { drawingBoardWindowId, openDrawingBoardOverlay } from './drawing-board-overlay-state.js';
 import { chatWindowId } from './chat-window-model.js';
 import { moveOverlayTab, openOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
 import { snapOverlayWindowAt } from './overlay-window.js';
@@ -69,8 +69,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
-        // A board, a process or a page has no attach to wait for.
-        if (pane?.seed.board || pane?.seed.process || pane?.seed.page) { resolve(true); return; }
+        // A drawing board, a process or a page has no attach to wait for.
+        if (pane?.seed.drawingBoard || pane?.seed.process || pane?.seed.page) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -256,7 +256,7 @@ export function createTerminalShellActions({
       return false;
     }
     const seed = {
-      ...(pane.seed.board ? { board: pane.seed.board } : pane.seed.page ? { page: pane.seed.page } : { ws: pane.seed.ws }),
+      ...(pane.seed.drawingBoard ? { drawingBoard: pane.seed.drawingBoard } : pane.seed.page ? { page: pane.seed.page } : { ws: pane.seed.ws }),
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
@@ -276,8 +276,8 @@ export function createTerminalShellActions({
     return true;
   }
 
-  // openPaneInOverlay moves a board, a shell or an agent from its tab into a
-  // floating window. A board's editor saves what it holds as it goes, and a
+  // openPaneInOverlay moves a drawing board, a shell or an agent from its tab into a
+  // floating window. A drawing board's editor saves what it holds as it goes, and a
   // shell's tmux session outlives the tab's view of it. An agent goes to its chat
   // window, which attaches only after this tab let go: the tab's own detach
   // would drop a chat that got there first. at places a window dragged out,
@@ -296,10 +296,10 @@ export function createTerminalShellActions({
   // floatPane answers the id of the overlay tab that now holds the pane, or ''.
   async function floatPane(pane, at = null) {
     const { key } = pane;
-    if (pane.seed.board) {
+    if (pane.seed.drawingBoard) {
       await closePane(key);
-      openBoardOverlay(pane.seed.board, pane.label, at);
-      return boardWindowId(pane.seed.board);
+      openDrawingBoardOverlay(pane.seed.drawingBoard, pane.label, at);
+      return drawingBoardWindowId(pane.seed.drawingBoard);
     }
     if (pane.seed.process) return floatProcessTab(pane.seed.process, pane.label, at);
     if (pane.seed.page) {
