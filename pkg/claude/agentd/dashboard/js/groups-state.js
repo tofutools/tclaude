@@ -16,7 +16,7 @@ import {
   setMemberColHidden,
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
-import { GROUPS_FOCUS_PREF, normalizeGroupsFocus, restoreGroupsFocus } from './groups-focus.js';
+import { clearStaleGroupsLensPrefs } from './groups-focus.js';
 import { DEFAULT_RUN_FILTER, normalizeRunFilter } from './process-context.js';
 
 // The run filter became a checklist (process-context.js RUN_KINDS). A fresh
@@ -209,13 +209,11 @@ export function createGroupsState({
   const routeGroup = signal('');
   // The Route map's view: 'graph' or the exact 'list' (?view=list).
   const routeView = signal('graph');
-  // Both | Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
-  const focus = signal('both');
-  // The ticked run kinds (running / planned / done) over the Processes
-  // lens's run cards, as a canonical "running,planned" string.
+  // The ticked run kinds (running / planned / done) over the group cards'
+  // Processes sections, as a canonical "running,planned" string.
   const processFilter = signal(DEFAULT_RUN_FILTER);
-  // The single-run focus (G5): { group, runId } while one run is open in the
-  // Processes lens, else null. Session-only: a reload lands on the cards.
+  // The single-run focus (G5): { group, runId } while one run is open in
+  // place of the group tree, else null. Session-only: a reload lands on the cards.
   const focusedRun = signal(null);
   const renderRevision = signal(0);
   // listed is the view another list shows with these controls -- the fused
@@ -252,9 +250,9 @@ export function createGroupsState({
       const saved = prefs.getItem(option.pref);
       restored[option.key] = saved === null ? option.defaultValue : saved === '1';
     }
+    clearStaleGroupsLensPrefs(prefs);
     batch(() => {
       query.value = prefs.getItem(FILTER_KEY) || '';
-      focus.value = restoreGroupsFocus(prefs);
       processFilter.value = normalizeRunFilter(prefs.getItem(PROCESS_FILTER_PREF));
       visibility.value = restored;
       renderRevision.value++;
@@ -305,13 +303,6 @@ export function createGroupsState({
 
   function setRouteView(value) {
     routeView.value = value === 'list' ? 'list' : 'graph';
-  }
-
-  function setFocus(value) {
-    const next = normalizeGroupsFocus(value);
-    if (focus.value === next) return;
-    focus.value = next;
-    prefs.setItem(GROUPS_FOCUS_PREF, next);
   }
 
   function setFocusedRun(value) {
@@ -435,9 +426,9 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, contentSearchOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, focus, processFilter, focusedRun, renderRevision, listed,
+    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, processFilter, focusedRun, renderRevision, listed,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,

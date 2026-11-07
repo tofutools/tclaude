@@ -104,25 +104,13 @@ function usageSubtabAvailable(subtab) {
 // back to the default tab.
 function staleFallback(loc) {
   if (loc.tab === 'usage' && tabAvailable('usage')) return normalizeLocation({ tab: 'usage' });
-  return defaultGroupsLocation();
-}
-
-// defaultGroupsLocation is bare Groups in its remembered lens: a fallback or
-// fresh load that lands on Groups says /groups/agents or /groups/processes
-// when that is what shows, so neither the URL nor a later Back disagrees with
-// the screen. Bare /groups is the default Both lens.
-function defaultGroupsLocation() {
-  const focus = featureState('groups')?.focus?.value;
-  if ((focus === 'processes' || focus === 'agents') && groupsProcessesFocusAvailable()) {
-    return normalizeLocation({ tab: 'groups', subtab: focus });
-  }
   return normalizeLocation({ tab: DEFAULT_TAB });
 }
 
-// The Groups lenses (/groups/agents, /groups/processes) and the single-run
-// focus (/groups/runs/...) exist wherever processes are available (always on
-// this node); processes.js mirrors a peer without them onto
-// body.hide-processes. Without them there is one lens, at bare /groups.
+// The single-run focus (/groups/runs/...) exists wherever processes are
+// available (always on this node); processes.js mirrors a peer without them
+// onto body.hide-processes. The retired lens links (/groups/agents,
+// /groups/processes) are not known subtabs, so they parse as bare /groups.
 function groupsProcessesFocusAvailable() {
   return !document.body.classList.contains('hide-processes');
 }
@@ -130,7 +118,7 @@ function groupsProcessesFocusAvailable() {
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
-    && !(loc.tab === 'groups' && ['processes', 'agents', 'runs'].includes(loc.subtab) && !groupsProcessesFocusAvailable())
+    && !(loc.tab === 'groups' && loc.subtab === 'runs' && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
@@ -168,14 +156,11 @@ function activeLocationFromDOM() {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
       loc.params = { group: island.routeGroup?.value, view: island.routeView?.value === 'list' ? 'list' : '' };
-    } else if (island?.focusedRun?.value && island.focus?.value !== 'agents' && groupsProcessesFocusAvailable()) {
-      // The single-run focus shows in Both and Processes alike, so the lens
-      // stays out of its URL (groups-focus.js groupsRunLocation).
+    } else if (island?.focusedRun?.value && groupsProcessesFocusAvailable()) {
+      // groups-focus.js groupsRunLocation.
       loc.subtab = 'runs';
       loc.selection = island.focusedRun.value.group;
       loc.item = island.focusedRun.value.runId;
-    } else if ((island?.focus?.value === 'processes' || island?.focus?.value === 'agents') && groupsProcessesFocusAvailable()) {
-      loc.subtab = island.focus.value;
     }
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
@@ -274,7 +259,7 @@ function activate(loc, { traversal = false } = {}) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
-  if (!peerViewTabUsable(loc.tab)) { loc = defaultGroupsLocation(); correct(loc); }
+  if (!peerViewTabUsable(loc.tab)) { loc = normalizeLocation({ tab: DEFAULT_TAB }); correct(loc); }
   // Diagnostics is usable on a peer view for its audit log only; a Logs or
   // Performance location there lands on Audit instead.
   if (loc.tab === 'diagnostics' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
@@ -337,14 +322,11 @@ function activate(loc, { traversal = false } = {}) {
       // example /terminals with no panes), which would look like a user
       // navigation to observers. A bare Groups pop from Route map still has
       // to return the island to Members; explicit route locations always do.
-      // The same holds for a Back/Forward onto bare Groups (Both) from the
-      // Agents or Processes focus — but only a traversal: a boot or stale
-      // fallback must not turn the remembered lens into Both.
+      // Back/Forward from an open run onto bare Groups must close the run
+      // -- only a traversal: a boot or stale fallback leaves it alone.
       const groups = featureState('groups');
-      const singleLens = groups?.focus?.value === 'processes' || groups?.focus?.value === 'agents';
-      // Back from an open run onto bare Groups (Both) must close the run.
       if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
-        || (traversal && (singleLens || groups?.focusedRun?.value) && groupsProcessesFocusAvailable())) {
+        || (traversal && groups?.focusedRun?.value && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
@@ -626,9 +608,6 @@ export function initNavHistory() {
       const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
       if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
     }
-    // A fresh bare Groups load shows the remembered focus, so the URL says
-    // so too: otherwise a later Back onto this entry would restore Agents.
-    if (loc.tab === DEFAULT_TAB && !loc.subtab && !loc.selection) loc = defaultGroupsLocation();
     stack = initialState(loc);
   }
 

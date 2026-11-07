@@ -81,26 +81,25 @@ async function mountGraphs(t) {
   return { harness, state, navigated, counter, click };
 }
 
-test('from Agents, a header graph opens the Processes focus on its filter without toggling the group', async (t) => {
+test('from the Route map, a header graph leaves it and ticks its filter without toggling the group', async (t) => {
   const { state, navigated, counter, click } = await mountGraphs(t);
-  state.setFocus('agents');
+  state.setSubview('routes', '');
   await click();
   assert.equal(counter.toggles, 0);
-  assert.equal(state.focus.value, 'processes');
+  assert.equal(state.subview.value, 'members');
   state.setProcessFilter('done');
   await click();
   assert.equal(state.processFilter.value, 'planned,done', 'the clicked kind is ticked without unticking the others');
-  assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
+  assert.deepEqual(navigated, [{ tab: 'groups' }], 'leaving the Route map is the one entry');
 });
 
-test('in Both, a header graph stays in Both and opens the group\'s Processes section', async (t) => {
+test('a header graph opens the group\'s Processes section', async (t) => {
   const { harness, state, navigated, counter, click } = await mountGraphs(t);
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem('tclaude.dash.groups.fused.processes.frontend-squad', '0');
   await click();
   assert.equal(counter.toggles, 0);
-  assert.equal(state.focus.value, 'both');
-  assert.deepEqual(navigated, [], 'no lens change, no history entry');
+  assert.deepEqual(navigated, [], 'no view change, no history entry');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.frontend-squad'), '1', 'a folded section is opened');
   assert.equal(state.processFilter.value, 'running,planned');
 });

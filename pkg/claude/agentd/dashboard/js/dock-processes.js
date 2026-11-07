@@ -29,7 +29,7 @@ import { handOffProcessDraft, openProcessDraft } from './process-draft-handoff.j
 import { requestProcessStart } from './process-start-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { groupsState } from './groups-state.js';
-import { showRunsLens } from './groups-focus.js';
+import { showGroupRuns } from './groups-focus.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { managementController } from './management-controller.js';
@@ -157,7 +157,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
     <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
     <div class="dpp-acts">
       <${GroupCombobox} action groups=${groups} ariaLabel="Start in group" placeholder=${wizWord('▶ Start in…', '▶ Begin in…')}
-        attrs=${{ 'data-dock-process-start': '' }} onChange=${(group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [], setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); }} />
+        attrs=${{ 'data-dock-process-start': '' }} onChange=${(group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [], showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender }); }} />
       <${Button} size="sm" class="process-action" data-dock-process-edit onClick=${() => { onClose(); void openProcessDraft({ id: row.id, name: row.name || row.id }); }}>✎ Edit<//>
       <${GroupCombobox} action groups=${groups.filter((group) => !pinned.has(group))} ariaLabel="Pin to group" placeholder="Pin to group…"
         disabled=${busy} attrs=${{ 'data-dock-process-pin': '' }} onChange=${pin} />

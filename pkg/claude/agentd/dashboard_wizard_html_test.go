@@ -263,7 +263,7 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 	must("'Matches party name + hero title/class/lore/grove/branch'", "the party filter's tooltip explains its wizard-search fields")
 	must("document.addEventListener('tclaude:wizard', onWizard)", "the filter placeholder follows a live theme flip")
 	must("function useWizardTheme()", "the controls and group list share live wizard-theme state")
-	must("const wizard = useWizardTheme();\n  const focus = effectiveGroupsFocus(state);", "the group list repaints theme-dependent title attributes")
+	must("export function GroupsList({ host, state, actions, processSource = undefined }) {\n  const wizard = useWizardTheme();", "the group list repaints theme-dependent title attributes")
 	must("const hoveredGroupKey = useGroupsHover(host, current.groups);", "the group list owns hover state")
 	must("'Parties shown / all parties'", "the match count's tooltip names parties")
 	must("wizardLabel: 'show unbound'", "the view menu names the unbound tray")

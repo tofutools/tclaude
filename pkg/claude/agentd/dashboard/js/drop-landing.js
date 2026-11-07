@@ -54,8 +54,8 @@ function listings(group, node) {
 }
 
 // revealDropTarget opens a group where it is listed: its row, every ancestor
-// and its Subgroups line, and `section` (agents / processes / subgroups) in
-// the Both lens. `virtualKey` names a virtual group (Ungrouped) instead. A
+// and its Subgroups line, and `section` (agents / processes / subgroups) of
+// the group card. `virtualKey` names a virtual group (Ungrouped) instead. A
 // dropped group itself (`header`) keeps its own fold: only its ancestors open.
 export function revealDropTarget({ group = '', node = '', section = '', virtualKey = '', header = false, prefs = dashPrefs } = {}) {
   try {

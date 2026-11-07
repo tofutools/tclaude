@@ -44,7 +44,6 @@ import { openGitRepositories } from './git-repositories-controller.js';
 
 import { $, $$ } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
-import { chooseGroupsFocus } from './groups-focus.js';
 import { setActivitySubtab } from './activity-state.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
@@ -133,27 +132,12 @@ function gotoGroupsTab() {
   if (btn) btn.click();
 }
 
-// openGroupsFocus switches the Groups lens. From another tab the focus is set
-// first so the Groups nav click records /groups/<focus> as one entry.
 function openConversationSearch() {
   const groups = featureState('groups');
   if (!groups?.contentSearchOpen) return;
   groups.contentSearchOpen.value = true;
   const btn = $('nav [data-tab="groups"]');
   if (btn && !btn.classList.contains('active')) btn.click();
-}
-
-function openGroupsFocus(focus) {
-  const groups = featureState('groups');
-  if (!groups?.setFocus) return;
-  const btn = $('nav [data-tab="groups"]');
-  if (btn && !btn.classList.contains('active')) {
-    groups.setSubview?.('members', '');
-    groups.setFocus(focus);
-    btn.click();
-    return;
-  }
-  chooseGroupsFocus(groups, focus);
 }
 
 // openRemote opens a peer's agent terminal or shell here, through the
@@ -686,21 +670,6 @@ export function buildCommands(snapshot) {
     keywords: 'search find grep conversation conversations transcript content text history scrolls',
     run: openConversationSearch,
   });
-  // The Groups Both | Agents | Processes focus switch (where processes are).
-  if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
-    for (const [focus, plain, arcane, words] of [
-      ['both', 'Both', 'Whole party', 'both fused combined agents processes heroes rites'],
-      ['processes', 'Processes', 'Rites', 'processes process runs graphs rites'],
-      ['agents', 'Agents', 'Heroes', 'agents members tables heroes'],
-    ]) {
-      cmds.push({
-        peerView: 'view', icon: wiz('◈', '🔮'), label: wiz(`Groups › ${plain} focus`, `Party lens: ${arcane}`),
-        hint: wiz('switch the Groups tab focus', 'turn the party lens'),
-        keywords: `groups focus lens view switch toggle ${words}`,
-        run: () => openGroupsFocus(focus),
-      });
-    }
-  }
   // The Usage tab's Quota and Costs views were tabs of their own: keep them
   // one command away (and findable as "costs") rather than behind Usage.
   const usageBtn = $('nav [data-tab="usage"]');

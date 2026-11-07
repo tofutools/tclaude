@@ -19,9 +19,8 @@ Above the groups, from left to right:
   **×** clears it.
 - **📜 search conversations.** Opens a panel that searches the text of past
   conversations. See [Searching conversations](#searching-conversations).
-- **The view switch.** Three icons: **Both**, **Agents** and **Processes**. See
-  [Agents and processes](#agents-and-processes). With
-  `features.groups_route_map` on, a Route map view joins them; see
+- **Route map.** With `features.groups_route_map` on, a Route map view sits
+  beside the list; see
   [Group routes](group-routes.md#open-a-published-route-on-the-host).
 - **▾ view.** What the list includes and which columns it shows. A badge on it
   counts what you changed from the defaults. See
@@ -57,12 +56,17 @@ Below them, **Columns** lists what you can hide: ID, State, Process, Last, Age,
 CWD, Branch, Role, Task link and Description. ID is off by default. Click a
 column header to sort.
 
+Last, **Processes** picks which runs each group's Processes section shows:
+**Running**, **Planned** and **Done**, each with its count. Running and
+Planned are on by default, and at least one stays on. It is there only where
+processes are available.
+
 ### Bottom of the page
 
 Extra rows appear at the end of the list, depending on ▾ view:
 
-- **Ungrouped**: agents in no group. With Both on, it has the same Agents and
-  Resources sections as a real group. Resources lists the boards that are in
+- **Ungrouped**: agents in no group. It has the same Agents and Resources
+  sections as a real group. Resources lists the boards that are in
   no group, such as one made from the Collab panel's ＋ New. To move a board
   into a group, use its ⋯ → **Move to group**.
 - **Conversations**: sessions tclaude knows that are not agents yet.
@@ -457,19 +461,21 @@ for phases act on the whole team. See
 
 ## Agents and processes
 
-The view switch changes what each group shows, and each choice has its own
-address.
+Each group card shows its sections: **Subgroups**, **Agents**, **Processes**
+and **Resources**. A section with nothing in it is hidden, and a group with
+nothing running and nothing attached shows **Resources** as a single line.
 
-- **Both** (`/groups`, the default) shows **Agents** and **Resources** sections
-  together. Hover an agent to draw dashed lines to the steps it performs, and
-  hover a step to see its performers. A group with nothing running and nothing
-  attached shows **Resources** as a single line.
-- **Agents** (`/groups/agents`) shows the roster, with run counts on each group
-  and an optional **Process** column.
-- **Processes** (`/groups/processes`) shows each group's runs as live graph
-  cards. Open a run to inspect nodes, answer decisions, reassign performers, and
-  pause or resume. An open run has its own address,
-  `/groups/runs/<group>/<run-id>`, so Back closes it.
+- **Agents** is the roster, with run counts on each group header and an
+  optional **Process** column. Hover an agent to draw dashed lines to the
+  steps it performs, and hover a step to see its performers.
+- **Processes** shows the group's runs as live graph cards. Open a run to
+  inspect nodes, answer decisions, reassign performers, and pause or resume.
+  An open run has its own address, `/groups/runs/<group>/<run-id>`, so Back
+  closes it.
+
+Where processes are not available (a peer that does not share them), each
+group shows its roster only. The older `/groups/agents` and
+`/groups/processes` addresses open `/groups`.
 
 To start a run, open the **＋** menu on the group's Resources section and pick
 **Process for the group** or **Process for one agent**. Either opens the start
@@ -547,9 +553,8 @@ but not opened here. Its lock chips toggle only where that node grants you
 so. If the node refuses a toggle, a toast says why. See
 [Connect and share](federation-peers.md).
 
-Hover the view switch to choose which runs show:
-**Running**, **Planned** and **Done**. See
-[Processes](processes.md#in-the-dashboard).
+To choose which runs show (**Running**, **Planned** and **Done**), use
+**▾ view** › **Processes**. See [Processes](processes.md#in-the-dashboard).
 
 ## Moving and saving agents
 
