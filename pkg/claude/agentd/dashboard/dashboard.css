@@ -18589,34 +18589,39 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-pill.gr-pill-background { color: #3fb950; border-color: #238636; }
 .gr-pill.gr-pill-closed { color: var(--ui-muted-text); }
 .gr-row .gr-primary { min-width: 0; }
-/* A group's Resources are tables in the agents table's look (ResourceTable
-   in groups-resources.js), sized on their own: fixed column widths, so the
+/* A group's Resources are bounded auto-width tables (ui.css .ui-table-auto)
+   in the agents table's look (ResourceTable in groups-resources.js). The
    processes' table above the runs and the other resources' table below them
-   line up with each other. */
-.gr-rtable { table-layout: fixed; width: 100%; margin: 2px 0 6px; }
-.gr-rtable .gr-col-ctl { width: 128px; }
-.gr-rtable .gr-col-name { width: 30%; }
-.gr-rtable .gr-col-state { width: 112px; }
-.gr-rtable .gr-col-last { width: 72px; }
-.gr-rtable .gr-col-age { width: 72px; }
-.gr-rtable td.gr-timecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gr-rtable .gr-col-kind { width: 104px; }
-.gr-rtable .gr-col-lock { width: 150px; }
+   must line up with each other, so their columns are fixed tracks
+   (.ui-col-track), Name 24em (a longer name wraps); they pack to the left,
+   and Detail, the last, takes the spare width. */
+.gr-rtable { margin: 2px 0 6px; }
+.gr-rtable .gr-col-ctl { --ui-track: 128px; }
+.gr-rtable .gr-col-name { --ui-track: 24em; }
+.gr-rtable .gr-col-state { --ui-track: 112px; }
+.gr-rtable .gr-col-last { --ui-track: 72px; }
+.gr-rtable .gr-col-age { --ui-track: 72px; }
+/* A time wraps ("5m / ago"), as in the agents table, so it never widens its
+   72px track past the other Resources table's. */
+.gr-rtable td.gr-timecell { white-space: normal; }
+.gr-rtable .gr-col-kind { --ui-track: 104px; }
+.gr-rtable .gr-col-lock { --ui-track: 150px; }
 .gr-rtable td { vertical-align: middle; }
-.gr-rtable td.gr-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; justify-content: flex-start; }
-.gr-rtable td.gr-meta, .gr-rtable td.gr-kindcell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-rtable td.gr-namecell { white-space: normal; overflow-wrap: anywhere; }
+.gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; height: auto; white-space: normal; text-align: left; justify-content: flex-start; }
+.gr-rtable td.gr-kindcell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-rtable td.gr-meta { white-space: normal; overflow-wrap: anywhere; }
 .gr-rtable tr.gq-saved-chip.open td { background: rgba(31, 111, 235, 0.08); }
 .gr-rtable tr.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-rtable .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
 /* A drawing board's or page's name is click-to-rename, as an agent's is
    (.rowname-text gives it the agent name's hover frame); 👁 opens it. */
-.gr-rtable .gr-name-rename { display: inline-block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.gr-rtable .gr-name-rename { display: inline-block; max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere;
   vertical-align: middle; color: var(--ui-strong-text); font-weight: 600; font-size: 11.5px; line-height: 16px;
   margin-left: -5px; }
 .gr-rtable tr.gr-closed .gr-name-rename { color: var(--ui-muted-text); font-weight: 500; }
 .gr-rtable .gq-saved-name { font-size: 13px; font-weight: 600; color: var(--ui-strong-text); }
-.gr-rtable td.gq-saved-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gr-rtable td.gq-saved-namecell { white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
 .gr-rtable .gr-acts { gap: 6px; }
 .gr-rtable tr:focus-within .row-actions { opacity: 1; }
 /* A resource's light: the state pill's colour, as an agent's light is its
@@ -18684,11 +18689,11 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-count-needs-you { color: #e3b341; font-weight: 600; }
 .group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .tb-board { margin: 0 0 6px; }
-.tb-table { width: 100%; table-layout: auto; font-size: 12.5px; }
-/* Every column is as wide as its content (width: 1% shrinks it to that);
-   Name, with no width, takes the rest of the row. No column follows the
-   agents table's widths: the tables share an order and a look, not pixels. */
-.tb-col-ctl, .tb-col-state, .tb-col-last, .tb-col-age, .tb-col-who, .tb-col-ref, .tb-col-deps, .tb-col-files { width: 1%; }
+.tb-table { font-size: 12.5px; }
+/* A bounded auto-width table (ui.css .ui-table-auto): every column as wide
+   as its content, Name between 12em and 30em (a longer title wraps), Files,
+   the last, taking the spare width. */
+.tb-title-box { --ui-fit-min: 12em; --ui-fit-max: 30em; }
 /* A task row's own cells keep to one line; the full-width rows (the Ideas
    band, the history line, a row's form) wrap, so they never widen the table. */
 .tb-table tr.tb-row > td:not(.tb-title-cell) { white-space: nowrap; }

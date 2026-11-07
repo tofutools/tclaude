@@ -400,6 +400,24 @@ control, with `data-ui-exempt`. Older markup is held by a per-file baseline;
 after moving an area onto the standard classes, lower it with
 `UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs`.
 
+### Table columns
+
+Dashboard tables size their columns by one rule: every column is as wide as
+its content, between a minimum and a maximum, and text wraps past the
+maximum (no ellipsis on content a reader needs). The columns pack to the
+left, and the spare width of a wide screen goes to one trailing column or a
+filler, never to a content column such as Name. No table sizes its columns
+from another table's.
+
+`ui.css` carries the convention. Give the table `ui-table-auto`, each content
+column `<col class="ui-col-fit">`, and the trailing one `ui-col-rest`. Bound a
+cell that can grow, such as a name or a title, by wrapping its content in
+`.ui-fit`, and set `--ui-fit-min` / `--ui-fit-max` on it (the task list's
+Name: 12em to 30em). Use a fixed track, `<col class="ui-col-track">` with
+`--ui-track`, only where tables must line up with each other, such as one list
+drawn as two tables (Resources). Check a table at about 1280px and 2000px wide
+with short and long content.
+
 ### Layers
 
 Every `z-index` is a layer from `ui.css`. From bottom to top:

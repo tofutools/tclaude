@@ -294,3 +294,21 @@ test('Resources: Last and Age render from the snapshot and sort chronologically'
   const names = () => [...container.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('.gr-name').textContent.slice(1));
   assert.deepEqual(names(), ['Old', 'Mid', 'Young', 'Group shell'], 'sorted by Age, oldest first, by instant not text; no age sorts last');
 });
+
+test('both Resources tables are bounded auto-width tables on the same tracks, whatever class a caller adds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const { container } = await harness.mount(harness.html`<div>
+    <${mod.ResourceTable} attrs=${{ class: 'gr-rtable gq-saved-row', 'data-x': '1' }}><tr><td></td></tr><//>
+    <${mod.ResourceTable} head=${false}><tr><td></td></tr><//>
+  </div>`);
+  const tables = [...container.querySelectorAll('table')];
+  assert.equal(tables.length, 2);
+  for (const table of tables) {
+    assert.ok(table.classList.contains('ui-table-auto') && table.classList.contains('gr-rtable'), table.className);
+    const cols = [...table.querySelectorAll('colgroup col')];
+    assert.deepEqual(cols.filter((c) => !c.classList.contains('ui-col-track')).map((c) => c.className), ['ui-col-rest gr-col-detail'], 'Detail alone takes the rest');
+  }
+  assert.ok(tables[0].classList.contains('gq-saved-row'), 'the caller\'s class is kept');
+  assert.equal(tables[0].getAttribute('data-x'), '1');
+});

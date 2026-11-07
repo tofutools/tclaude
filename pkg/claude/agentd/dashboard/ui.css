@@ -276,6 +276,22 @@ body.slop {
    dashboard.css is the roomy default. */
 table.ui-compact :is(th, td) { padding: 4px 8px; }
 
+/* Bounded auto-width tables (CONTRIBUTING.md, "Table columns"): the columns
+   pack to the left. Each is as wide as its content, between a minimum and a
+   maximum, and text wraps past the maximum; the spare width goes to one
+   trailing column (or a filler), never to a content column.
+   - table.ui-table-auto: the layout.
+   - col.ui-col-fit: a content column, as wide as its content.
+   - col.ui-col-rest: the one trailing column that takes the spare width.
+   - col.ui-col-track: a fixed track (--ui-track), only for tables that must
+     line up with each other (one list drawn as two tables).
+   - .ui-fit: a cell's content, sized to it between --ui-fit-min and
+     --ui-fit-max; it wraps past the maximum. */
+table.ui-table-auto { table-layout: auto; width: 100%; }
+table.ui-table-auto > colgroup > col.ui-col-fit { width: 1%; }
+table.ui-table-auto > colgroup > col.ui-col-track { width: var(--ui-track); }
+.ui-fit { width: max-content; min-width: var(--ui-fit-min, 0); max-width: var(--ui-fit-max, 30em); white-space: normal; overflow-wrap: anywhere; }
+
 /* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
    tabs under the top nav (operator pick C: pills for section sub-nav, the
    joined bar for a mode inside a dialog, underline only for the top nav).

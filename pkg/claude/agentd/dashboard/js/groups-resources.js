@@ -107,8 +107,12 @@ export function sortResourceRows(rows) {
 // head shows the header row (only on the first of the two); its headers sort.
 export function ResourceTable({ head = true, attrs = {}, children }) {
   const active = tableSortState(RESOURCE_SORT, RESOURCE_COLS);
-  return html`<table class="gr-rtable" ...${attrs}>
-    <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`gr-col-${c.key}`} />`)}</colgroup>
+  // A caller's class adds to the table's own: without ui-table-auto its
+  // tracks would not apply, and the two tables would not line up.
+  const { class: extra = '', ...rest } = attrs;
+  const cls = ['gr-rtable', 'ui-table-auto', ...String(extra).split(/\s+/).filter((c) => c && c !== 'gr-rtable')].join(' ');
+  return html`<table class=${cls} ...${rest}>
+    <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`${c.key === 'detail' ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />`)}</colgroup>
     ${head && html`<thead><tr>${RESOURCE_COLS.map((c) => (c.col
     ? html`<${SortTh} key=${c.key} active=${active?.col === c.col} dir=${active?.dir} data-sort-table=${RESOURCE_SORT} data-sort-col=${c.col} sortLabel=${c.label}>${c.label}<//>`
     : html`<th key=${c.key}></th>`))}</tr></thead>`}
