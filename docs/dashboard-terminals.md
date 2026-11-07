@@ -75,7 +75,8 @@ this does anything on touch screens.
 
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
   Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,
-  Processes). By default everything but Closed is listed. The button shows a
+  Processes). Shells are every shell that is not an agent's own session: a
+  group's shell and the shells opened in an agent's directory. By default everything but Closed is listed. The button shows a
   count of the boxes changed from the default, and **Reset** puts them back.
   The browser remembers the filter. A search finds everything, whatever the
   filter is. It also counts the [background sessions](#background-sessions).

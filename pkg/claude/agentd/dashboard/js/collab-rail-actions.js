@@ -21,7 +21,7 @@ import { attachBackgroundTerminal, backgroundTerminals, rowView, visibleBackgrou
 import { openBoardOverlay, openBoardPane } from './board-overlay-state.js';
 import { expectPage, openPageOverlay, openPagePane } from './page-place.js';
 import { openProcessOverlay, openProcessTab } from './process-editor-place.js';
-import { openGroupWebTermPane, placeTerminalPane } from './terminals-tab.js';
+import { openShellResource, placeTerminalPane } from './terminals-tab.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { remoteSessionAgents } from './remote-session-status.js';
 import { dashPrefs } from './prefs.js';
@@ -107,7 +107,7 @@ export async function openRailItem(item, { actions, snapshot, fetchImpl = (...ar
       return null;
     case 'board': return openBoardPane(r.id, item.title);
     case 'process': return openProcessTab(r.id, item.title);
-    case 'shell': return openGroupWebTermPane(r.id, `${r.id} shell`);
+    case 'shell': return openShellResource(r, item.title);
     default: return null;
   }
 }

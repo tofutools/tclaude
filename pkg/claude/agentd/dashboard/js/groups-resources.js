@@ -24,7 +24,7 @@ import { effect } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { revealResourceOverlay } from './resource-places.js';
 import { ResourcePill, resourceView } from './resource-pill.js';
-import { openGroupWebTermPane } from './terminals-tab.js';
+import { openGroupWebTermPane, openShellResource } from './terminals-tab.js';
 import { killBackgroundTerminal } from './background-terminals.js';
 
 export { LockChip };
@@ -244,33 +244,38 @@ function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId,
 
 function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
   const view = resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state);
-  const label = `${group.name} shell`;
-  const open = focusOr(`shell:${group.name}`, () => openGroupWebTermPane(group.name, label));
+  // A group's own shell is named for its group; an agent's for its agent.
+  const agentShell = !!shell.agent;
+  const label = agentShell ? shell.title : `${group.name} shell`;
+  const open = focusOr(`shell:${shell.id}`, () => openShellResource(shell, label));
   const kill = async () => {
     const ok = await confirm({ title: `Kill ${label}?`, body: 'Whatever runs in the shell stops. Opening it again starts a fresh one.', okLabel: 'Kill' });
     if (!ok) return;
-    const error = await killBackgroundTerminal({ kind: 'group_shell', tmux_session: shell.session });
+    const error = await killBackgroundTerminal({ kind: agentShell ? 'shell' : 'group_shell', tmux_session: shell.session });
     notify(error ? `Could not kill ${label}: ${error}` : `Killed ${label}`, !!error);
   };
-  return html`<${ResourceRow} attrs=${{ 'data-resource-shell': group.name }} closed=${view === 'closed'} glyph="▭" label="Group shell"
+  return html`<${ResourceRow} attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
+    label=${agentShell ? shell.title : 'Group shell'}
     meta=${shell.detail ? `terminal · ${shell.detail}` : 'terminal'} view=${view}
     primary=${{ label: primaryLabel('shell', view), run: open }}
-    action=${view === 'background' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': group.name }, run: kill }}
+    action=${view === 'background' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': agentShell ? shell.id : group.name }, run: kill }}
     menu=${[]} lock=${null} />`;
 }
 
-// groupShellOf is the group's shell in the snapshot's group_resources.
-export function groupShellOf(snapshotValue, group) {
-  return (snapshotValue?.group_resources || []).find((r) => r.kind === 'shell' && r.group_id === group.id) || null;
+// groupShellsOf is the group's shells in the snapshot's group_resources: its
+// own, then its agents' (the snapshot's order).
+export function groupShellsOf(snapshotValue, group) {
+  const shells = (snapshotValue?.group_resources || []).filter((r) => r.kind === 'shell' && r.group_id === group.id);
+  return [...shells.filter((r) => !r.agent), ...shells.filter((r) => r.agent)];
 }
 
-// GroupResources lists a group's boards, pages and shell, each kind under its
+// GroupResources lists a group's boards, pages and shells, each kind under its
 // own heading and only when it has any.
 export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm,
   snapshot = dashboardState.snapshot }) {
   const snapshotValue = snapshot?.value;
-  const shell = groupShellOf(snapshotValue, group);
-  if (!boards.length && !pages.length && !shell) return null;
+  const shells = groupShellsOf(snapshotValue, group);
+  if (!boards.length && !pages.length && !shells.length) return null;
   // A row drags onto this node's group boxes (resource-dnd.js), which the
   // fused fleet view does not have.
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
@@ -283,9 +288,9 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
       <span class="ui-eyebrow gr-kind-label">Pages</span>
       ${pages.map((page) => html`<${PageRow} key=${page.id} page=${page} nameOf=${nameOf} ...${props} />`)}
     </div>`}
-    ${shell && html`<div class="gr-kind" data-resource-kind="shells">
-      <span class="ui-eyebrow gr-kind-label">Shell</span>
-      <${ShellRow} group=${group} shell=${shell} ...${props} />
+    ${shells.length > 0 && html`<div class="gr-kind" data-resource-kind="shells">
+      <span class="ui-eyebrow gr-kind-label">${shells.length > 1 ? 'Shells' : 'Shell'}</span>
+      ${shells.map((shell) => html`<${ShellRow} key=${shell.id} group=${group} shell=${shell} ...${props} />`)}
     </div>`}
   </div>`;
 }

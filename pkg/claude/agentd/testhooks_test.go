@@ -2386,6 +2386,12 @@ func SetProfileStoreDirForTest(dir string) func() {
 	return func() { profileStoreDir = prev }
 }
 
+// TermSessionNameForGroupForTest exposes termSessionNameForGroup: an agent's
+// shell opened from a group's roster.
+func TermSessionNameForGroupForTest(convID, which, group string) string {
+	return termSessionNameForGroup(convID, which, group)
+}
+
 // TermSessionNameForTest exposes the per-agent web shell's tmux session name.
 func TermSessionNameForTest(convID, which string) string {
 	return termSessionName(convID, which)

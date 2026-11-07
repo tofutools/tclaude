@@ -2,14 +2,15 @@
 // (tcl-lx7nb7, tcl-8nfzbb): every group's resources and its agents'
 // terminals, by group, each in one of four buckets. Active (open here, on the
 // dock, or running out of sight) is what shows by default; closed items show
-// under the Closed chip and in a search. A group shell that is not running is
-// not listed at all (the server lists it only while it runs); the Groups
-// tab's ＋ → Shell starts one.
+// under the Closed chip and in a search. A shell (a group's, or one in an
+// agent's directory) is a resource of its group, never an agent: one that is
+// not running is not listed at all (the server lists it only while it runs);
+// the Groups tab's ＋ → Shell starts a group's.
 // Pure: the panel (collab-rail.js) and the home (collab-home.js, for the agents
 // that need the operator) feed it the snapshot, this browser's places, its open panes, overlay tabs and
 // background sessions, and when each item was last used here.
 
-import { overlayResourceKey, resourceKey, resourceState, stripResourceKey } from './resource-model.js';
+import { overlayResourceKey, resourceKey, resourceState, shellPaneKey, stripResourceKey } from './resource-model.js';
 
 // The panel's filter (tcl-t1onur): which states and kinds it lists. Where an
 // item is (open here, in the background, closed) applies to everything; what
@@ -125,7 +126,7 @@ export const railGlyph = (kind) => KIND_GLYPH[kind] || '▭';
 
 // The strip pane key a resource opens under, for closing or popping it out.
 export function resourcePaneKey(resource) {
-  return resource.kind === 'shell' ? `groupterm:${resource.id}` : resourceKey(resource);
+  return resource.kind === 'shell' ? shellPaneKey(resource) : resourceKey(resource);
 }
 
 export const UNGROUPED = Object.freeze({ id: 'other', name: 'Not in a group' });
@@ -178,8 +179,9 @@ export function railItems({
     const bucket = bucketOf(view);
     // A group shell that is not running is not the rail's to list.
     if (r.kind === 'shell' && bucket === 'closed') continue;
-    // A group's shell is named for its group: "Group shell" twice says nothing.
-    const title = r.kind === 'shell' ? `${names.get(r.group_id)} shell` : r.title || r.id;
+    // A group's shell is named for its group: "Group shell" twice says
+    // nothing. An agent's shell carries its agent's name.
+    const title = r.kind === 'shell' && !r.agent ? `${names.get(r.group_id)} shell` : r.title || r.id;
     add(r.group_id, stamp({
       key: resourceKey(r), kind: r.kind, title, view, bucket, resource: r,
       group: names.get(r.group_id), paneKey: resourcePaneKey(r),
@@ -216,7 +218,7 @@ export function railItems({
     terminal({ key: `pane:${pane.key}`, title: pane.label || pane.key, view: 'open-tab', bucket: 'open', paneKey: pane.key, pane });
   }
   for (const tab of overlays) {
-    if (tab?.kind !== 'terminal' || String(tab.paneKey || '').startsWith('groupterm:')) continue;
+    if (tab?.kind !== 'terminal' || overlayResourceKey(tab)) continue;
     const view = tab.minimized ? 'minimized' : 'floating';
     terminal({ key: `overlay:${tab.id}`, title: tab.label || tab.id, view, bucket: bucketOf(view), overlay: tab });
   }
@@ -238,7 +240,7 @@ export function railItems({
       boardSessions.set(`board:${row.board}`, row);
       continue;
     }
-    if (row.kind === 'group_shell' && row.key && !row.node) {
+    if ((row.kind === 'group_shell' || row.kind === 'shell') && row.key && !row.node) {
       shellSessions.set(row.key, row);
       continue;
     }

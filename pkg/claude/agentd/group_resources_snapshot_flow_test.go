@@ -82,6 +82,48 @@ func TestSnapshotGroupShellListsOnlyWhileRunning(t *testing.T) {
 	assert.Equal(t, snapshotResource{Kind: "shell", ID: "live", GroupID: got[0].GroupID, Title: "Group shell", State: "running", Detail: e.f.TestCwd("live")}, got[0])
 }
 
+// Every running shell lists as a group resource, not just a group's own: a
+// shell in an agent's directory lists under the group it was opened from,
+// or else the agent's own group, and only while it runs.
+func TestSnapshotListsAgentShellsUnderTheirGroup(t *testing.T) {
+	e := newPageEnv(t)
+	worker := e.agent(t, "shell-worker", false)
+	e.f.HaveGroup("crew")
+	e.f.HaveGroup("side")
+	e.f.HaveMember("crew", worker.conv)
+	e.f.HaveMember("side", worker.conv)
+	loner := e.agent(t, "shell-loner", false)
+	e.f.World.Tmux.Register(agentd.TermSessionNameForTest(worker.conv, "start"), worker.cwd, docShellPane{})
+	e.f.World.Tmux.Register(agentd.TermSessionNameForGroupForTest(worker.conv, "current", "side"), worker.cwd, docShellPane{})
+	e.f.World.Tmux.Register(agentd.TermSessionNameForTest(loner.conv, "start"), loner.cwd, docShellPane{})
+
+	groupID := map[string]int64{}
+	for _, name := range []string{"crew", "side"} {
+		g, err := db.GetAgentGroupByName(name)
+		require.NoError(t, err)
+		groupID[name] = g.ID
+	}
+	var shells []snapshotResource
+	for _, r := range e.snapshotResources(t) {
+		if r.Kind == "shell" {
+			shells = append(shells, r)
+		}
+	}
+	require.Len(t, shells, 2, "an agent in no group has no group to list its shell in: %+v", shells)
+	byID := map[string]snapshotResource{}
+	for _, r := range shells {
+		byID[r.ID] = r
+	}
+	start, ok := byID["term:"+worker.id+":start:"]
+	require.True(t, ok, "%+v", shells)
+	assert.Equal(t, groupID["crew"], start.GroupID, "a shell opened outside a group lists under the agent's first group")
+	assert.Equal(t, "running", start.State)
+	assert.Equal(t, worker.cwd, start.Detail, "its detail is the directory it opened in")
+	side, ok := byID["term:"+worker.id+":current:side"]
+	require.True(t, ok, "%+v", shells)
+	assert.Equal(t, groupID["side"], side.GroupID, "a shell opened from a group lists under that group")
+}
+
 // tcl-yc5ueb: a board in no group (one made from the Collab panel's ＋ New),
 // or in an archived one, lists with group_id 0, for the Groups tab's
 // Ungrouped, until it is moved into a group.

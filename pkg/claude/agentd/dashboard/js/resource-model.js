@@ -1,5 +1,5 @@
 // resource-model.js -- one state for every group resource (tcl-1lth8e): a
-// page, board, process or group shell reads the same everywhere it is listed
+// page, board, process or shell (a group's or an agent's) reads the same everywhere it is listed
 // (the Groups tab, the Collab rail). The snapshot's group_resources says what
 // the server knows: running (a page's stage is live, a run is active, a
 // group's shell is up) or closed (it exists, nothing is live). This browser
@@ -29,16 +29,29 @@ export function overlayResourceKey(tab) {
   // A process editor's overlay tab names its template (process-editor-place.js).
   if (tab.kind === 'process' && (tab.template || tab.process)) return `process:${tab.template || tab.process}`;
   const pane = String(tab.paneKey || tab.key || '');
-  if (tab.kind === 'terminal' && pane.startsWith('groupterm:')) return `shell:${pane.slice('groupterm:'.length)}`;
+  if (tab.kind === 'terminal') return shellPaneResourceKey(pane);
   return '';
 }
+
+// shellPaneResourceKey is the shell resource a terminal pane key shows: a
+// group's shell (groupterm:<group>, resource id <group>) or an agent's shell
+// (term:<agent>:<which>:<group>, resource id the pane key itself); '' for
+// any other pane.
+export function shellPaneResourceKey(paneKey) {
+  const k = String(paneKey || '');
+  if (k.startsWith('groupterm:')) return `shell:${k.slice('groupterm:'.length)}`;
+  if (k.startsWith('term:')) return `shell:${k}`;
+  return '';
+}
+
+// shellPaneKey is the terminal pane key a shell resource opens under.
+export const shellPaneKey = (resource) => (String(resource.id).startsWith('term:') ? resource.id : `groupterm:${resource.id}`);
 
 // stripResourceKey is the resource a Collab strip pane key shows, '' when
 // none.
 export function stripResourceKey(key) {
   const k = String(key || '');
-  if (k.startsWith('groupterm:')) return `shell:${k.slice('groupterm:'.length)}`;
-  return /^(page|board|process):./.test(k) ? k : '';
+  return shellPaneResourceKey(k) || (/^(page|board|process):./.test(k) ? k : '');
 }
 
 // browserPlaces maps resource keys to where this browser shows them, from its
