@@ -14,7 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// `tclaude agent resources` — a group's resources (its boards, the process
+// `tclaude agent resources` — a group's resources (its drawing boards, the process
 // templates pinned to it, its live pages) and their locks. Listing needs
 // groups.resources.read in the group, which membership confers; locking and
 // unlocking need groups.resources.lock in every group the resource belongs
@@ -24,7 +24,7 @@ func resourcesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "resources",
 		Short: "List a group's resources and lock or unlock them",
-		Long: "A group's resources are its boards, the process templates pinned to it and its live pages. " +
+		Long: "A group's resources are its drawing boards, the process templates pinned to it and its live pages. " +
 			"Its members read and change them by default (groups.resources.read / groups.resources.write, conferred by membership).\n\n" +
 			"A locked resource stays readable, but no agent may change it, except one holding groups.resources.lock for it. " +
 			"`lock` and `unlock` need groups.resources.lock in every group the resource belongs to; the operator grants it, " +
@@ -43,7 +43,7 @@ type resourcesLsParams struct {
 func resourcesLsCmd() *cobra.Command {
 	return boa.CmdT[resourcesLsParams]{
 		Use:         "ls",
-		Short:       "List a group's processes, boards and pages, with their locks",
+		Short:       "List a group's processes, drawing boards and pages, with their locks",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resourcesLsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -65,11 +65,11 @@ type groupResourcesResp struct {
 		// group it is pinned to, which the group's own CanLock does not say.
 		CanLock bool `json:"canLock"`
 	} `json:"processes"`
-	Boards []struct {
+	DrawingBoards []struct {
 		ID           string `json:"id"`
 		Title        string `json:"title"`
 		AgentsLocked bool   `json:"agentsLocked"`
-	} `json:"boards"`
+	} `json:"drawingBoards"`
 	Pages []struct {
 		ID           string `json:"id"`
 		Name         string `json:"name"`
@@ -89,10 +89,10 @@ func runResourcesLs(p *resourcesLsParams, stdout, stderr io.Writer) int {
 	var resp groupResourcesResp
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/resources"
 	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	printGroupResources(stdout, resp)
 	return rcOK
@@ -111,8 +111,8 @@ func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 	for _, r := range resp.Processes {
 		fmt.Fprintf(tw, "process\t%s\t%s\t%s\n", r.TemplateID, r.Name, lock(r.AgentsLocked))
 	}
-	for _, r := range resp.Boards {
-		fmt.Fprintf(tw, "board\t%s\t%s\t%s\n", r.ID, r.Title, lock(r.AgentsLocked))
+	for _, r := range resp.DrawingBoards {
+		fmt.Fprintf(tw, "drawing board\t%s\t%s\t%s\n", r.ID, r.Title, lock(r.AgentsLocked))
 	}
 	for _, r := range resp.Pages {
 		name := r.Owner + "/" + r.Name
@@ -122,7 +122,7 @@ func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 		fmt.Fprintf(tw, "page\t%s\t%s\t%s\n", r.ID, name, lock(r.AgentsLocked))
 	}
 	_ = tw.Flush()
-	if len(resp.Processes)+len(resp.Boards)+len(resp.Pages) == 0 {
+	if len(resp.Processes)+len(resp.DrawingBoards)+len(resp.Pages) == 0 {
 		fmt.Fprintf(stdout, "Group %s has no resources.\n", resp.Group)
 	}
 	if resp.CanLock {
@@ -140,8 +140,8 @@ func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 }
 
 type resourcesLockParams struct {
-	Kind     string `pos:"true" help:"process, board or page"`
-	ID       string `pos:"true" help:"The template id, board id or page id (as resources ls lists it)"`
+	Kind     string `pos:"true" help:"process, drawing board or page"`
+	ID       string `pos:"true" help:"The template id, drawing board id or page id (as resources ls lists it)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -155,7 +155,7 @@ func resourcesLockCmd(lock bool) *cobra.Command {
 		Short:       short,
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resourcesLockParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.Kind).SetAlternatives([]string{"process", "board", "page"})
+			boa.GetParamT(ctx, &p.Kind).SetAlternatives([]string{"process", "drawing_board", "page"})
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
@@ -173,19 +173,19 @@ func runResourcesLock(p *resourcesLockParams, lock bool, stdout, stderr io.Write
 	}
 	kind := strings.TrimSpace(p.Kind)
 	switch kind {
-	case "process", "board", "page":
+	case "process", "drawing_board", "page":
 	default:
-		fmt.Fprintln(stderr, "Error: kind must be process, board or page")
+		fmt.Fprintln(stderr, "Error: kind must be process, drawing board or page")
 		return rcInvalidArg
 	}
 	body := map[string]any{"kind": kind, "id": strings.TrimSpace(p.ID), "locked": lock}
 	if err := DaemonRequest(http.MethodPost, "/v1/resource-locks", body, nil, DaemonOpts{AskHuman: ask}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if lock {
-		fmt.Fprintf(stdout, "Locked %s %s: agents can still read it, but only holders of groups.resources.lock may change it.\n", kind, p.ID)
+		fmt.Fprintf(stdout, "Locked %s %s: agents can still read it, but only holders of groups.resources.lock may change it.\n", strings.ReplaceAll(kind, "_", " "), p.ID)
 	} else {
-		fmt.Fprintf(stdout, "Unlocked %s %s.\n", kind, p.ID)
+		fmt.Fprintf(stdout, "Unlocked %s %s.\n", strings.ReplaceAll(kind, "_", " "), p.ID)
 	}
 	return rcOK
 }

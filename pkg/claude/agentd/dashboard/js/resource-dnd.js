@@ -1,12 +1,12 @@
-// resource-dnd.js -- dragging a board, page or saved-process row of a
+// resource-dnd.js -- dragging a drawing board, page or saved-process row of a
 // group's Resources
 // (groups-resources.js, [data-dnd-resource]) onto another group's box in the
-// Groups tab moves it there (tcl-eq8pq9); a board dropped on Ungrouped
-// leaves every group. With Ctrl/Cmd held, as for an agent's clone, a board
+// Groups tab moves it there (tcl-eq8pq9); a drawing board dropped on Ungrouped
+// leaves every group. With Ctrl/Cmd held, as for an agent's clone, a drawing board
 // or a process is copied there instead (resource-moves.js copyResource).
 // The move is the ⚙ → Move to group one
 // (resource-moves.js), so the drag offers only what that menu would. A row
-// with a 🗑 (a board, a page, a running shell) shows the shared #dnd-trash
+// with a 🗑 (a drawing board, a page, a running shell) shows the shared #dnd-trash
 // bin while it is dragged, and a drop there is that 🗑: the row registered
 // its remover (registerResourceRemover), which confirms first. It rides its
 // own MIME type, which the member drag (dnd.js) ignores.
@@ -112,7 +112,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   };
   const ours = (e) => !!e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes(RESOURCE_DRAG_MIME);
   // target is what a drop here would do: { box, to, copy }. Ctrl/Cmd held
-  // copies (a board or a process into a real group), as it clones an agent;
+  // copies (a drawing board or a process into a real group), as it clones an agent;
   // otherwise it moves.
   const target = (e, onDrop = false) => {
     if (!dragged || !ours(e)) return null;

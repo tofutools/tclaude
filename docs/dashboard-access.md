@@ -21,15 +21,15 @@ A granted permission that takes a scope has a ▸ that opens its scope drawer, o
 per dimension. A short list of values is a select. A long one, and the `resource`
 dimension of `resources.read` and `resources.write`, is a search box: type to filter,
 ↑↓ to move, Enter to add, and Tab to complete the highlighted name. The resource
-catalogue (every board and process template, with its groups) loads when the drawer
+catalogue (every drawing board and process template, with its groups) loads when the drawer
 opens. Results are grouped by kind and then group, and at most 8 show, with the total
-and a hint to refine. Type `board:` or `process_template:` to narrow by kind, or
+and a hint to refine. Type `drawing_board:` or `process_template:` to narrow by kind, or
 `group:<name>` by group. Opened with nothing typed, the box shows the groups with
 counts. A value the list doesn't have can be typed and added with Enter, and the daemon
 checks it on save. Past six values, the chips collapse into **+N more**, which opens a
 filterable, paged list of the rest.
 
-A permission at Default that an umbrella covers says so: `boards.read` under a granted
+A permission at Default that an umbrella covers says so: `drawing-boards.read` under a granted
 `resources.read` reads "covered by resources.read, scoped to 2 groups and 41 resources".
 The reach is given in counts. A Deny on the row, or on a step of the chain, removes the
 hint, because the deny wins.

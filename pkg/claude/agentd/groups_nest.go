@@ -16,7 +16,7 @@ import (
 // parent so it returns to the top level.
 //
 // Body: {"parent": "<group-name>"}. An empty/absent parent ("" or {} or no
-// body) clears the nesting. This is board-organisation only: it shapes the
+// body) clears the nesting. This is drawing-board-organisation only: it shapes the
 // dashboard's group tree and does NOT change messaging, permissions, cron
 // multicast or spawn-target — those never traverse the parent edge in v1.
 //

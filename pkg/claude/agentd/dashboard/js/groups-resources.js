@@ -1,8 +1,8 @@
 // groups-resources.js -- a group's Resources section in Both (tcl-dwzsq0,
 // option A): everything attached to the group, grouped by kind. Processes
-// come first (groups-saved-processes.js, with the runs), then the boards
+// come first (groups-saved-processes.js, with the runs), then the drawing boards
 // linked to the group and the live pages shown into it (context
-// groups[].boards / .pages, the operator's only). A kind with nothing in it
+// groups[].drawing boards / .pages, the operator's only). A kind with nothing in it
 // is hidden. Every resource wears the operator's agent lock as a chip:
 // '🔒 agents: read-only' or '✎ agents can edit'; clicking it toggles the lock
 // (POST /api/resource-locks). Only the operator's dashboard can.
@@ -11,8 +11,8 @@ import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
-import { openBoardPane } from './board-overlay-state.js';
-import { freeBoardId } from './board-manage.js';
+import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
+import { freeDrawingBoardId } from './drawing-board-manage.js';
 import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem, MenuSep, SortTh } from './ui-components.js';
@@ -42,9 +42,9 @@ function pageDetail(page, nameOf) {
   return `${page.kind === 'static' ? 'static' : 'live'} · ${nameOf(page.owner) || page.owner}`;
 }
 
-// KIND_WORD is a resource's Kind cell. A board is a drawing board: the group
-// task board is another thing.
-export const KIND_WORD = Object.freeze({ board: 'drawing board', page: 'page', shell: 'shell', process: 'process' });
+// KIND_WORD is a resource's Kind cell, in words: drawing_board reads as
+// "drawing board" (the group task board is another thing).
+export const KIND_WORD = Object.freeze({ drawing_board: 'drawing board', page: 'page', shell: 'shell', process: 'process' });
 
 // RESOURCE_COLS are ResourceTable's columns, in the agents table's order
 // where they share one: the controls, Name, State, then what only a
@@ -219,7 +219,7 @@ function renameAndMove({ startRename, groups, move, attrs }) {
   return items;
 }
 
-// resourceRemover deletes a board or a page behind a confirm: its row's 🗑,
+// resourceRemover deletes a drawing board or a page behind a confirm: its row's 🗑,
 // a drop on the trash bin, and the menus' Delete….
 export function resourceRemover(resource, { api, source, notify, confirm }) {
   const { kind, id, label } = resource;
@@ -233,10 +233,10 @@ export function resourceRemover(resource, { api, source, notify, confirm }) {
           : 'The page closes for everyone viewing it and is removed from the group; it cannot be reopened.',
         okLabel: 'Delete',
       }
-      : { title: `Delete board ${label}?`, body: 'The board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
+      : { title: `Delete drawing board ${label}?`, body: 'The drawing board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
     if (!ok) return;
     try {
-      await (page ? api.deleteGroupPage(id) : api.deleteBoard(id));
+      await (page ? api.deleteGroupPage(id) : api.deleteDrawingBoard(id));
       notify(`Deleted ${label}`);
       void source?.refresh?.();
     } catch (cause) {
@@ -245,7 +245,7 @@ export function resourceRemover(resource, { api, source, notify, confirm }) {
   };
 }
 
-// resourceMenu is a board's or page's edit items, the ⋯ of its Groups row
+// resourceMenu is a drawing board's or page's edit items, the ⋯ of its Groups row
 // and the ⚙ of its Collab panel row (tcl-usrm7h): Rename…, Move to group ›
 // (resource-moves.js' targets) and Delete…. resource is { kind, id, label,
 // closed, owner } with owner the page's agent ('' for a group's own page);
@@ -255,7 +255,7 @@ export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source
   const { kind, id, label } = resource;
   const act = rowAction(label, source, notify);
   const page = kind === 'page';
-  const move = act('move', (name) => (page ? api.moveGroupPage(id, name) : api.moveBoard(id, name)), (name) => `Moved ${label} to ${name}`);
+  const move = act('move', (name) => (page ? api.moveGroupPage(id, name) : api.moveDrawingBoard(id, name)), (name) => `Moved ${label} to ${name}`);
   // An agent's page moves to a group its agent is in; a group's own blank
   // page only while closed.
   const groups = !page ? moveTargets(snapshotValue, groupId)
@@ -263,12 +263,12 @@ export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source
       : moveTargets(snapshotValue, groupId, resource.owner);
   const remove = resourceRemover(resource, { api, source, notify, confirm });
   return [...renameAndMove({ startRename, groups, move, attrs: id }),
-    { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-board-delete']: id }, run: remove }];
+    { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-drawing-board-delete']: id }, run: remove }];
 }
 
-// renameResource sets a board's or page's title, as its Rename… field saves it.
+// renameResource sets a drawing board's or page's title, as its Rename… field saves it.
 export function renameResource(resource, { api, source, notify }) {
-  const call = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameBoard(resource.id, title);
+  const call = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameDrawingBoard(resource.id, title);
   return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
@@ -344,20 +344,20 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
-function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId, groupName, draggable = true }) {
-  const label = board.title || board.id;
+function DrawingBoardRow({ drawingBoard, api, source, notify, confirm, snapshotValue, groupId, groupName, draggable = true }) {
+  const label = drawingBoard.title || drawingBoard.id;
   const [renaming, setRenaming] = useState(false);
-  const view = resourceView(snapshotValue, groupId, 'board', board.id);
-  const resource = { kind: 'board', id: board.id, label };
+  const view = resourceView(snapshotValue, groupId, 'drawing_board', drawingBoard.id);
+  const resource = { kind: 'drawing_board', id: drawingBoard.id, label };
   const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
-  return html`<${ResourceRow} kind="board" attrs=${{ 'data-resource-board': board.id }} glyph="▦" label=${label}
-    drag=${draggable && { id: board.id, group: groupName }}
-    meta=${board.editing > 0 ? `${board.editing} editing` : ''} view=${view}
-    primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
-    remove=${{ title: `Delete board ${label}`, attrs: { 'data-board-trash': board.id }, run: resourceRemover(resource, ctx) }}
+  return html`<${ResourceRow} kind="drawing_board" attrs=${{ 'data-resource-drawing-board': drawingBoard.id }} glyph="▦" label=${label}
+    drag=${draggable && { id: drawingBoard.id, group: groupName }}
+    meta=${drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : ''} view=${view}
+    primary=${{ label: primaryLabel('drawing_board', view), run: focusOr(`drawing_board:${drawingBoard.id}`, () => openDrawingBoardPane(drawingBoard.id, label)) }}
+    remove=${{ title: `Delete drawing board ${label}`, attrs: { 'data-drawing-board-trash': drawingBoard.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
     menu=${resourceMenu(resource, ctx)}
-    lock=${html`<${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
+    lock=${html`<${LockChip} kind="drawing_board" id=${drawingBoard.id} name=${label} locked=${!!drawingBoard.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
 function ShellRow({ group, shell, notify, confirm, snapshotValue, draggable = true }) {
@@ -391,20 +391,20 @@ export function groupShellsOf(snapshotValue, group) {
 // GroupResources lists a group's drawing boards, pages and shells in one
 // table (ResourceTable). head is false when the group's saved processes'
 // table above already shows the header row.
-export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm,
+export function GroupResources({ group, drawingBoards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm,
   snapshot = dashboardState.snapshot, head = true }) {
   const snapshotValue = snapshot?.value;
   const shells = groupShellsOf(snapshotValue, group);
-  if (!boards.length && !pages.length && !shells.length) return null;
+  if (!drawingBoards.length && !pages.length && !shells.length) return null;
   // A row drags onto this node's group boxes (resource-dnd.js), which the
   // fused fleet view does not have.
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
   // One list across kinds, so a header sorts the whole table; unsorted it
   // keeps drawing boards, then pages, then shells.
   const rows = sortResourceRows([
-    ...boards.map((board) => ({ key: `board:${board.id}`, name: board.title || board.id, state: resourceView(snapshotValue, group.id, 'board', board.id), kind: KIND_WORD.board,
-      lock: !!board.agentsLocked, detail: board.editing > 0 ? `${board.editing} editing` : '',
-      render: () => html`<${BoardRow} key=${`board:${board.id}`} board=${board} ...${props} />` })),
+    ...drawingBoards.map((drawingBoard) => ({ key: `drawing_board:${drawingBoard.id}`, name: drawingBoard.title || drawingBoard.id, state: resourceView(snapshotValue, group.id, 'drawing_board', drawingBoard.id), kind: KIND_WORD.drawing_board,
+      lock: !!drawingBoard.agentsLocked, detail: drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : '',
+      render: () => html`<${DrawingBoardRow} key=${`drawing_board:${drawingBoard.id}`} drawingBoard=${drawingBoard} ...${props} />` })),
     ...pages.map((page) => ({ key: `page:${page.id}`, name: page.title || page.name, state: resourceView(snapshotValue, group.id, 'page', page.id, page.state === 'closed' ? 'closed' : 'running'),
       kind: KIND_WORD.page, lock: !!page.agentsLocked, detail: pageDetail(page, nameOf),
       render: () => html`<${PageRow} key=${`page:${page.id}`} page=${page} nameOf=${nameOf} ...${props} />` })),
@@ -424,20 +424,20 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
-// addGroupBoard creates a board linked to group, named for it, and opens it
+// addGroupDrawingBoard creates a drawing board linked to group, named for it, and opens it
 // as a tab. The Groups tab's ＋ and the Collab panel's ＋ New both make one.
-export async function addGroupBoard(group, { api, notify = defaultNotify, source } = {}) {
-  const title = `${group.name} board`;
+export async function addGroupDrawingBoard(group, { api, notify = defaultNotify, source } = {}) {
+  const title = `${group.name} drawing board`;
   try {
-    // Board ids are node-wide, so the free one is chosen among them all.
-    const taken = await api.boardIds();
-    const board = await api.createGroupBoard(group.name, title, freeBoardId(title, taken));
-    notify(`Created ${board.title || title} in ${group.name}`);
+    // Drawing board ids are node-wide, so the free one is chosen among them all.
+    const taken = await api.drawingBoardIds();
+    const drawingBoard = await api.createGroupDrawingBoard(group.name, title, freeDrawingBoardId(title, taken));
+    notify(`Created ${drawingBoard.title || title} in ${group.name}`);
     void source?.refresh?.();
-    openBoardPane(board.id, board.title || title);
-    return board;
+    openDrawingBoardPane(drawingBoard.id, drawingBoard.title || title);
+    return drawingBoard;
   } catch (cause) {
-    notify(`Could not create the board: ${cause.message}`, true);
+    notify(`Could not create the drawing board: ${cause.message}`, true);
     return null;
   }
 }
@@ -464,9 +464,9 @@ export function addGroupShell(group) {
 
 // AddResource is the section's one ＋ button (icon-only): a process for the whole
 // group or for one agent (the start form, which also builds a new one), a
-// board linked to the group, a blank live page, or the group's shell, each
+// drawing board linked to the group, a blank live page, or the group's shell, each
 // with what it is in one line. `processesOnly` keeps just the two process
-// scopes, for the Processes perspective, which lists no boards, pages or
+// scopes, for the Processes perspective, which lists no drawing boards, pages or
 // shells. `open`/`onOpen` let the caller hold the menu's state, so it stays
 // open when a click on a folded section line moves the button to the open
 // section's title row (a new instance).
@@ -487,7 +487,7 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   // The shared popover rule: a press outside, or Escape, closes the menu (a
   // click menu, so moving the pointer away does not).
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
-  const addBoard = () => { setOpen(false); void addGroupBoard(group, { api, notify, source }); };
+  const addDrawingBoard = () => { setOpen(false); void addGroupDrawingBoard(group, { api, notify, source }); };
   const addPage = () => { setOpen(false); void addGroupPage(group, pages, { api, notify, source }); };
   const cwd = (group.default_cwd || '').trim();
   const addShell = () => { setOpen(false); addGroupShell(group); };
@@ -498,7 +498,7 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   // name lives in the title and aria-label.
   const addTitle = processesOnly
     ? `Start a process in ${group.name}: for the group or for one agent`
-    : `Add a resource to ${group.name}: a process, board, live page or shell`;
+    : `Add a resource to ${group.name}: a process, drawing board, live page or shell`;
   return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" domRef=${trigger} data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${addTitle} aria-label=${addTitle} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>
@@ -506,7 +506,7 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
       ${item('data-resource-add-process', process('group'), wizard ? 'Rite for the party' : 'Process for the group', wizard ? 'Begin a written rite, or shape a new one' : 'Run a saved process, or build a new one')}
       ${item('data-resource-add-process-agent', process('agent'), wizard ? 'Rite for one hero' : 'Process for one agent', wizard ? 'Pick a hero; its steps are that hero\'s labour' : 'Pick a member; its steps run as that agent')}
       ${!processesOnly && html`<${MenuSep} />
-      ${item('data-resource-add-board', addBoard, 'Board', "A drawing board shared with the group's agents")}
+      ${item('data-resource-add-drawing-board', addDrawingBoard, 'Drawing board', "A drawing board shared with the group's agents")}
       ${item('data-resource-add-page', addPage, 'Live page', 'A blank page you draw on; a member takes it over with its own source')}
       ${item('data-resource-add-shell', addShell, 'Shell', cwd ? `A terminal in ${cwd}` : 'Set the group\'s directory first', !cwd)}`}
     <//>`}
@@ -523,7 +523,7 @@ export function peerGroupName(group) {
 }
 
 // loadPeerResources reads a peer's group resources through the peer view
-// (GET /api/groups/{name}/resources): its processes, boards and pages with
+// (GET /api/groups/{name}/resources): its processes, drawing boards and pages with
 // their locks, and whether that node lets this one change them (canLock).
 export async function loadPeerResources(name, fetchImpl) {
   const response = await fetchImpl(`/api/groups/${encodeURIComponent(name)}/resources`, { credentials: 'same-origin' });
@@ -544,13 +544,13 @@ export function peerRows(resources) {
   return [
     ['processes', 'Processes', '⚙', 'process', (resources.processes || []).map((p) => ({ id: p.templateId, name: p.name || p.templateId, locked: !!p.agentsLocked,
       allowed: typeof p.canLock === 'boolean' ? p.canLock : groupAllows }))],
-    ['boards', 'Boards', '▦', 'board', (resources.boards || []).map((b) => ({ id: b.id, name: b.title || b.id, locked: !!b.agentsLocked }))],
+    ['drawing-boards', 'Drawing boards', '▦', 'drawing_board', (resources.drawingBoards || []).map((b) => ({ id: b.id, name: b.title || b.id, locked: !!b.agentsLocked }))],
     ['pages', 'Pages', '◧', 'page', (resources.pages || []).map((p) => ({ id: p.id, name: p.title || p.name, locked: !!p.agentsLocked }))],
   ].filter(([, , , , rows]) => rows.length > 0);
 }
 
 // peerResourcesPollMs is how often, at most, a peer's group card reads its
-// resources again, so a lock changed on that node (or a new board) shows
+// resources again, so a lock changed on that node (or a new drawing board) shows
 // here too. It rides the dashboard's one snapshot poll (snapshot-poll.js):
 // each accepted snapshot (dashboardState.lastRefreshAt) is a tick, and a
 // card reads again on the first tick after it is due.
@@ -573,7 +573,7 @@ export function queuePeerRead(node, read) {
 const tabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 // PeerGroupResources is a peer's group's Resources, read from that node. Its
-// boards and pages are that node's own, so they are named rather than opened;
+// drawing boards and pages are that node's own, so they are named rather than opened;
 // each wears its lock chip, which toggles only where the node grants this one
 // groups.resources.lock, and otherwise says so. A refusal is a toast. A node
 // that does not grant this one groups.resources.read (403), or has no such

@@ -54,7 +54,7 @@ export async function createProcessTemplate(name, { fetchImpl = globalThis.fetch
 }
 
 // ProcessMenuList offers every template, and a new one; one box does both, as
-// the boards half does.
+// the drawing boards half does.
 export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
   const [templates, setTemplates] = useState(null);
   const [text, setText] = useState('');
@@ -95,26 +95,26 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
     }
   }
   const sections = groupProcessTemplates(templates || [], clean);
-  return html`<div class="board-list compact process-menu-list">
-    <form class="board-new" onSubmit=${submit}>
+  return html`<div class="drawing-board-list compact process-menu-list">
+    <form class="drawing-board-new" onSubmit=${submit}>
       <${Input} size="sm" placeholder=${`Search, or name a new ${noun}`} aria-label=${`Search ${noun}es, or name a new one`} maxLength="120"
         value=${text} onInput=${(event) => setText(event.currentTarget.value)} />
       <${Button} size="sm" variant="primary" type="submit" disabled=${!clean || creating}>${same ? 'Open' : creating ? 'Creating…' : `＋ New ${noun}`}<//>
     </form>
-    ${error && html`<p class="board-error ui-error" role="alert">Processes are unavailable: ${error}</p>`}
-    ${templates === null && !error && html`<p class="board-muted">Loading ${noun}es…</p>`}
-    ${templates && !templates.length && html`<p class="board-muted">No ${noun}es yet. A process is a reusable graph of steps that agents and people work through.</p>`}
-    ${templates?.length > 0 && !sections.length && html`<p class="board-muted">No ${noun} matches. ＋ New ${noun} makes one with this name.</p>`}
-    <div class="board-groups">
-      ${sections.map(({ name, templates: rows }) => html`<div key=${name} class="board-section" role="group" aria-label=${name ? `Pinned to ${name}` : 'Not pinned to a group'}>
-        ${(name || sections.length > 1) && html`<h3 class="board-section-name"><span>${name || 'Not pinned'}</span><span class="board-section-count">${rows.length}</span></h3>`}
-        <ul class="board-rows">
+    ${error && html`<p class="drawing-board-error ui-error" role="alert">Processes are unavailable: ${error}</p>`}
+    ${templates === null && !error && html`<p class="drawing-board-muted">Loading ${noun}es…</p>`}
+    ${templates && !templates.length && html`<p class="drawing-board-muted">No ${noun}es yet. A process is a reusable graph of steps that agents and people work through.</p>`}
+    ${templates?.length > 0 && !sections.length && html`<p class="drawing-board-muted">No ${noun} matches. ＋ New ${noun} makes one with this name.</p>`}
+    <div class="drawing-board-groups">
+      ${sections.map(({ name, templates: rows }) => html`<div key=${name} class="drawing-board-section" role="group" aria-label=${name ? `Pinned to ${name}` : 'Not pinned to a group'}>
+        ${(name || sections.length > 1) && html`<h3 class="drawing-board-section-name"><span>${name || 'Not pinned'}</span><span class="drawing-board-section-count">${rows.length}</span></h3>`}
+        <ul class="drawing-board-rows">
           ${rows.map((template) => {
             const label = template.name || template.id;
-            return html`<li key=${template.id} class="board-row" data-process-menu-row=${template.id}>
-              <button data-ui-exempt type="button" class="board-row-open" title=${template.description || template.id} onClick=${() => onOpen(template.id, label)}>
-                <span class="board-row-title">${label}</span>
-                <span class="board-row-age">v${template.versionCount || 0}</span>
+            return html`<li key=${template.id} class="drawing-board-row" data-process-menu-row=${template.id}>
+              <button data-ui-exempt type="button" class="drawing-board-row-open" title=${template.description || template.id} onClick=${() => onOpen(template.id, label)}>
+                <span class="drawing-board-row-title">${label}</span>
+                <span class="drawing-board-row-age">v${template.versionCount || 0}</span>
               </button>
             </li>`;
           })}

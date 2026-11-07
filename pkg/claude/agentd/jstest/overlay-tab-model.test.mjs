@@ -16,7 +16,7 @@ const anyTab = () => true;
 const OLD_SAVED = [
   { minimized: false, id: 'chat:agt_0123456789abcdef', kind: 'chat', agent: 'agt_0123456789abcdef', label: 'Worker' },
   { minimized: true, id: 'terminal:/api/term-ws/abc', kind: 'terminal', paneKey: '/api/term-ws/abc', ws: '/api/term-ws/abc', agent: '', label: 'repo shell' },
-  { minimized: false, id: 'board:plan', kind: 'board', board: 'plan', label: 'Release plan', focusAsked: 2 },
+  { minimized: false, id: 'drawing_board:plan', kind: 'drawing_board', drawingBoard: 'plan', label: 'Release plan', focusAsked: 2 },
 ];
 
 test('every window saved before tabs comes back as a window of one tab, with its id', async (t) => {
@@ -25,7 +25,7 @@ test('every window saved before tabs comes back as a window of one tab, with its
   assert.deepEqual(windows, [
     { id: 'chat:agt_0123456789abcdef', tabs: [{ id: 'chat:agt_0123456789abcdef', kind: 'chat', agent: 'agt_0123456789abcdef', label: 'Worker' }], active: 'chat:agt_0123456789abcdef', minimized: false, place: 'tclaude.dash.chat-window.placement.agt_0123456789abcdef' },
     { id: 'terminal:/api/term-ws/abc', tabs: [{ id: 'terminal:/api/term-ws/abc', kind: 'terminal', paneKey: '/api/term-ws/abc', ws: '/api/term-ws/abc', agent: '', label: 'repo shell' }], active: 'terminal:/api/term-ws/abc', minimized: true, place: 'tclaude.dash.terminal-window.placement./api/term-ws/abc' },
-    { id: 'board:plan', tabs: [{ id: 'board:plan', kind: 'board', board: 'plan', label: 'Release plan' }], active: 'board:plan', minimized: false, place: 'tclaude.dash.board-overlay.placement.plan', focusAsked: 2 },
+    { id: 'drawing_board:plan', tabs: [{ id: 'drawing_board:plan', kind: 'drawing_board', drawingBoard: 'plan', label: 'Release plan' }], active: 'drawing_board:plan', minimized: false, place: 'tclaude.dash.drawing-board-overlay.placement.plan', focusAsked: 2 },
   ]);
   assert.deepEqual(minimizedTabs, []);
 });
@@ -33,7 +33,7 @@ test('every window saved before tabs comes back as a window of one tab, with its
 test('a saved set reads back the same in the new shape', async (t) => {
   const { parseSavedOverlays, savedOverlays } = await model(t);
   const first = parseSavedOverlays(JSON.stringify(OLD_SAVED), anyTab);
-  const minimizedTabs = [{ tab: { id: 'board:map', kind: 'board', board: 'map', label: 'Map' }, home: 'board:plan', place: 'tclaude.dash.board-overlay.placement.plan' }];
+  const minimizedTabs = [{ tab: { id: 'drawing_board:map', kind: 'drawing_board', drawingBoard: 'map', label: 'Map' }, home: 'drawing_board:plan', place: 'tclaude.dash.drawing-board-overlay.placement.plan' }];
   assert.deepEqual(parseSavedOverlays(savedOverlays(first.windows, minimizedTabs), anyTab), { windows: first.windows, minimizedTabs });
 });
 
@@ -60,7 +60,7 @@ test('a tab saved twice opens in one place', async (t) => {
 
 test('a window keeps its place whatever its tabs do, and a bad one is not trusted', async (t) => {
   const { parseSavedOverlays, placementKeyOf } = await model(t);
-  const tab = { id: 'board:map', kind: 'board', board: 'map' };
+  const tab = { id: 'drawing_board:map', kind: 'drawing_board', drawingBoard: 'map' };
   const place = 'tclaude.dash.chat-window.placement.agt_1';
   const read = (saved) => parseSavedOverlays(JSON.stringify({ windows: [{ id: 'w', tabs: [tab], active: tab.id, place: saved }] }), anyTab).windows[0].place;
   assert.equal(read(place), place, 'the chat it was made around has since left it');
@@ -89,7 +89,7 @@ test('a drop point is not saved, and every tab reads what it takes from its wind
   assert.equal(windowHolding([window], 'b'), null);
 });
 
-const tab = (id, kind = 'board') => ({ id, kind, board: id, label: id });
+const tab = (id, kind = 'drawing_board') => ({ id, kind, drawingBoard: id, label: id });
 const twoTabs = (model) => ({ ...model.windowOfTab(tab('a')), tabs: [tab('a'), tab('b')] });
 const ids = (window) => window.tabs.map((one) => one.id);
 
@@ -116,8 +116,8 @@ test('a joined window comes out minimized no more', async (t) => {
 test('a tab torn out does not take the id or the placement of the window named after it', async (t) => {
   const model = await model_(t);
   const [left, torn] = model.tornOutTab([twoTabs(model)], 'a', { x: 1, y: 2 });
-  assert.deepEqual([left.id, left.place, ids(left)], ['a', 'tclaude.dash.board-overlay.placement.a', ['b']]);
-  assert.deepEqual([torn.id, torn.place, ids(torn), torn.at], ['a#2', 'tclaude.dash.board-overlay.placement.a#2', ['a'], { x: 1, y: 2 }]);
+  assert.deepEqual([left.id, left.place, ids(left)], ['a', 'tclaude.dash.drawing-board-overlay.placement.a', ['b']]);
+  assert.deepEqual([torn.id, torn.place, ids(torn), torn.at], ['a#2', 'tclaude.dash.drawing-board-overlay.placement.a#2', ['a'], { x: 1, y: 2 }]);
   const third = model.windowAround([left, torn], tab('a'));
   assert.equal(third.id, 'a#3', 'and the next one neither');
   const lone = [model.windowOfTab(tab('c'))];
@@ -133,7 +133,7 @@ test('a tab minimized on its own comes back to its window, or to a new one in it
   const back = model.restoredTab(out, 'b');
   assert.deepEqual([ids(back.windows[0]), back.windows[0].active, back.minimizedTabs], [['a', 'b'], 'b', []]);
 
-  const custom = { ...model.windowOfTab(tab('c')), place: 'tclaude.dash.board-overlay.placement.c#2' };
+  const custom = { ...model.windowOfTab(tab('c')), place: 'tclaude.dash.drawing-board-overlay.placement.c#2' };
   const gone = model.minimizedTab({ windows: [custom], minimizedTabs: [] }, 'c');
   assert.deepEqual(gone.windows, [], 'its last tab takes the window');
   const reopened = model.restoredTab(gone, 'c');
@@ -181,7 +181,7 @@ test('a saved tab on the dock keeps its window and its place', async (t) => {
 const groupWindow = () => ({
   id: 'w', place: 'tclaude.dash.x', minimized: false, active: 'a',
   groups: [{ id: 'g', name: 'Work', color: 'blue', collapsed: false }],
-  tabs: [{ id: 'a', kind: 'board', board: 'a', groupId: 'g' }, { id: 'b', kind: 'board', board: 'b', groupId: 'g' }, { id: 'c', kind: 'board', board: 'c' }],
+  tabs: [{ id: 'a', kind: 'drawing_board', drawingBoard: 'a', groupId: 'g' }, { id: 'b', kind: 'drawing_board', drawingBoard: 'b', groupId: 'g' }, { id: 'c', kind: 'drawing_board', drawingBoard: 'c' }],
 });
 
 test('a group goes with its last member, and a tab dropped outside it leaves it', async (t) => {
@@ -242,7 +242,7 @@ test('a whole group moves along its strip, to another window, and out to its own
   const model = await model_(t);
   const [along] = model.movedGroup([groupWindow()], 'w', 'g', 'w', 1);
   assert.deepEqual(ids(along), ['c', 'a', 'b']);
-  const other = { id: 'x', place: 'tclaude.dash.y', minimized: false, active: 'd', groups: [{ id: 'g', name: 'Taken', color: 'red', collapsed: false }], tabs: [{ id: 'd', kind: 'board', board: 'd', groupId: 'g' }] };
+  const other = { id: 'x', place: 'tclaude.dash.y', minimized: false, active: 'd', groups: [{ id: 'g', name: 'Taken', color: 'red', collapsed: false }], tabs: [{ id: 'd', kind: 'drawing_board', drawingBoard: 'd', groupId: 'g' }] };
   const [left, target] = model.movedGroup([groupWindow(), other], 'w', 'g', 'x', 1);
   assert.deepEqual(ids(left), ['c']);
   assert.equal(left.active, 'c');
@@ -285,10 +285,10 @@ test('saved groups come back checked, and a window saved before groups has none'
   const saved = model.savedOverlays([groupWindow()], []);
   const { windows } = model.parseSavedOverlays(saved, () => true);
   assert.deepEqual(windows[0].groups, groupWindow().groups);
-  const raw = JSON.stringify({ windows: [{ ...groupWindow(), groups: [{ id: 'g', name: 'a\u202eb', color: 'nope', collapsed: 1 }, 7, { id: 'h', name: 'empty' }], tabs: [...groupWindow().tabs, { id: 'e', kind: 'board', board: 'e', groupId: 'lost' }] }] });
+  const raw = JSON.stringify({ windows: [{ ...groupWindow(), groups: [{ id: 'g', name: 'a\u202eb', color: 'nope', collapsed: 1 }, 7, { id: 'h', name: 'empty' }], tabs: [...groupWindow().tabs, { id: 'e', kind: 'drawing_board', drawingBoard: 'e', groupId: 'lost' }] }] });
   const [window] = model.parseSavedOverlays(raw, () => true).windows;
   assert.deepEqual(window.groups, [{ id: 'g', name: 'a b', color: 'blue', collapsed: true }]);
   assert.equal(window.tabs.find((tab) => tab.id === 'e').groupId, undefined);
-  const [flat] = model.parseSavedOverlays(JSON.stringify([{ id: 'board:a', kind: 'board', board: 'a', label: 'A' }]), () => true).windows;
+  const [flat] = model.parseSavedOverlays(JSON.stringify([{ id: 'drawing_board:a', kind: 'drawing_board', drawingBoard: 'a', label: 'A' }]), () => true).windows;
   assert.equal(flat.groups, undefined);
 });

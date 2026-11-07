@@ -65,20 +65,20 @@ func TestPeerView_BackgroundTerminalsFollowGrants(t *testing.T) {
 	require.Equal(t, 403, rec.Code)
 }
 
-// Boards stay with their own node: even an unrestricted peer, which lists every
-// terminal, gets no board row.
-func TestPeerView_BackgroundTerminalsLeaveBoardsOut(t *testing.T) {
+// Drawing boards stay with their own node: even an unrestricted peer, which lists every
+// terminal, gets no drawing board row.
+func TestPeerView_BackgroundTerminalsLeaveDrawingBoardsOut(t *testing.T) {
 	fh := newFedHarness(t)
 	f := fh.f
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	f.World.Tmux.MarkAlive("someone-elses-session")
-	const conv = "pbg-board-conv"
+	const conv = "pbg-drawing-board-conv"
 	f.HaveConvWithTitle(conv, "drawer")
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
-	_, err = db.CreateCollabBoard("plan", "Plan", "operator", 10)
+	_, err = db.CreateCollabDrawingBoard("plan", "Plan", "operator", 10)
 	require.NoError(t, err)
-	_, err = db.OpenCollabBoardSession("plan", agentID)
+	_, err = db.OpenCollabDrawingBoardSession("plan", agentID)
 	require.NoError(t, err)
 
 	rec := testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, "GET", "/api/background-terminals", nil))

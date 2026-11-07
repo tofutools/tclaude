@@ -36,7 +36,7 @@ func (e *pageEnv) snapshotResources(t *testing.T) []snapshotResource {
 
 // tcl-1lth8e: the snapshot lists every group's resources in one shape, with
 // what the server knows of each: a page's stage live (running) or not
-// (closed), a board that exists (closed: nothing of it runs).
+// (closed), a drawing board that exists (closed: nothing of it runs).
 func TestSnapshotGroupResourcesOneModel(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}}}))
@@ -46,14 +46,14 @@ func TestSnapshotGroupResourcesOneModel(t *testing.T) {
 
 	p, rec := e.show(t, shower, ":"+strconv.Itoa(devServer(t, "res")), "app", "App")
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	rec = e.dashJSON(t, http.MethodPost, "/api/boards", map[string]any{"id": "plan", "title": "Plan"})
+	rec = e.dashJSON(t, http.MethodPost, "/api/drawing-boards", map[string]any{"id": "plan", "title": "Plan"})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	rec = e.dashJSON(t, http.MethodPost, "/api/boards/plan/group", map[string]any{"group": "crew"})
+	rec = e.dashJSON(t, http.MethodPost, "/api/drawing-boards/plan/group", map[string]any{"group": "crew"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	got := e.snapshotResources(t)
 	require.Len(t, got, 2, "%+v", got)
-	assert.Equal(t, snapshotResource{Kind: "board", ID: "plan", GroupID: got[0].GroupID, Title: "Plan", State: "closed"}, got[0])
+	assert.Equal(t, snapshotResource{Kind: "drawing_board", ID: "plan", GroupID: got[0].GroupID, Title: "Plan", State: "closed"}, got[0])
 	assert.Equal(t, snapshotResource{Kind: "page", ID: p.ID, GroupID: got[0].GroupID, Title: "App", State: "running", Owner: shower.id}, got[1])
 
 	// Closed, the page stays, with why.
@@ -124,18 +124,18 @@ func TestSnapshotListsAgentShellsUnderTheirGroup(t *testing.T) {
 	assert.Equal(t, groupID["side"], side.GroupID, "a shell opened from a group lists under that group")
 }
 
-// tcl-yc5ueb: a board in no group (one made from the Collab panel's ＋ New),
+// tcl-yc5ueb: a drawing board in no group (one made from the Collab panel's ＋ New),
 // or in an archived one, lists with group_id 0, for the Groups tab's
 // Ungrouped, until it is moved into a group.
-func TestSnapshotListsBoardsInNoGroupUnderZero(t *testing.T) {
+func TestSnapshotListsDrawingBoardsInNoGroupUnderZero(t *testing.T) {
 	e := newPageEnv(t)
 	e.f.HaveGroup("crew")
 	e.f.HaveGroup("old")
 	for _, b := range []struct{ id, group string }{{"loose", ""}, {"kept", "crew"}, {"orphan", "old"}} {
-		rec := e.dashJSON(t, http.MethodPost, "/api/boards", map[string]any{"id": b.id, "title": b.id})
+		rec := e.dashJSON(t, http.MethodPost, "/api/drawing-boards", map[string]any{"id": b.id, "title": b.id})
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 		if b.group != "" {
-			rec = e.dashJSON(t, http.MethodPost, "/api/boards/"+b.id+"/group", map[string]any{"group": b.group})
+			rec = e.dashJSON(t, http.MethodPost, "/api/drawing-boards/"+b.id+"/group", map[string]any{"group": b.group})
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}
 	}
@@ -144,7 +144,7 @@ func TestSnapshotListsBoardsInNoGroupUnderZero(t *testing.T) {
 	groupOf := func() map[string]int64 {
 		out := map[string]int64{}
 		for _, r := range e.snapshotResources(t) {
-			if r.Kind == "board" {
+			if r.Kind == "drawing_board" {
 				out[r.ID] = r.GroupID
 			}
 		}
@@ -152,12 +152,12 @@ func TestSnapshotListsBoardsInNoGroupUnderZero(t *testing.T) {
 	}
 	got := groupOf()
 	require.Len(t, got, 3, "%+v", got)
-	assert.Zero(t, got["loose"], "a board in no group lists under 0")
-	assert.Zero(t, got["orphan"], "a board whose group is archived lists under 0")
+	assert.Zero(t, got["loose"], "a drawing board in no group lists under 0")
+	assert.Zero(t, got["orphan"], "a drawing board whose group is archived lists under 0")
 	crew := got["kept"]
 	assert.NotZero(t, crew)
 
-	rec := e.dashJSON(t, http.MethodPost, "/api/boards/loose/group", map[string]any{"group": "crew"})
+	rec := e.dashJSON(t, http.MethodPost, "/api/drawing-boards/loose/group", map[string]any{"group": "crew"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, crew, groupOf()["loose"], "moved into a group, it lists there")
 }

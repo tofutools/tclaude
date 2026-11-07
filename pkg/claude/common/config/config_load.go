@@ -195,6 +195,11 @@ var groupPermissionRenames = map[string]string{
 	"groups.link.rm":             "groups.link.remove",
 }
 
+var drawingBoardPermissionRenames = map[string]string{
+	"boards.read":  "drawing-boards.read",
+	"boards.write": "drawing-boards.write",
+}
+
 // canonicalizePermissionNames upgrades every config field that holds
 // permission slugs. It also runs from Normalize so a read-only managed process
 // gets the correct effective policy even when it cannot rewrite operator state.
@@ -204,22 +209,22 @@ func canonicalizePermissionNames(c *Config) bool {
 	}
 	changed := false
 	if c.Steward != nil {
-		changed = renamePermissionList(&c.Steward.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames)
+		changed = renamePermissionList(&c.Steward.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames, drawingBoardPermissionRenames)
 	}
 	if c.Agent == nil {
 		return changed
 	}
-	if renamePermissionList(&c.Agent.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames) {
+	if renamePermissionList(&c.Agent.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames, drawingBoardPermissionRenames) {
 		changed = true
 	}
 	if c.Agent.Sudo == nil {
 		return changed
 	}
-	if renamePermissionList(c.Agent.Sudo.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames) {
+	if renamePermissionList(c.Agent.Sudo.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames, drawingBoardPermissionRenames) {
 		changed = true
 	}
 	for _, override := range c.Agent.Sudo.Overrides {
-		if override != nil && renamePermissionList(override.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames) {
+		if override != nil && renamePermissionList(override.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames, drawingBoardPermissionRenames) {
 			changed = true
 		}
 	}

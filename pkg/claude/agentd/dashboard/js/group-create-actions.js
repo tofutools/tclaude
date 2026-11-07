@@ -97,7 +97,7 @@ export function createGroupCreateActions({
         const response = result.response || {};
         name = response.group || name;
         cloned = !!response.group;
-        // The board order is the page's own groups'.
+        // The drawing board order is the page's own groups'.
         if (response.group && result.placement?.anchor && isPageNode(node)) {
           const snapshotGroups = getSnapshot()?.groups || [];
           const names = sortGroupsByPref(snapshotGroups.slice()).map((group) => group.name);

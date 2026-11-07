@@ -1,6 +1,6 @@
 // overlay-instances.js -- which overlay windows are open (tcl-ppvf8g). A window
 // holds tabs (overlay-tab-model.js), and has its own saved placement, place in
-// the stack and place in a split, so a chat or a board is just one kind of tab,
+// the stack and place in a split, so a chat or a drawing board is just one kind of tab,
 // and there can be any number of either. Everything that opens or finds a window
 // names it by its tab, because a tab can move between windows.
 
@@ -59,7 +59,7 @@ function commit({ windows, minimizedTabs = minimizedOverlayTabs.peek() }) {
 const dockState = () => ({ windows: overlayWindows.peek(), minimizedTabs: minimizedOverlayTabs.peek() });
 
 // openOverlayWindow shows a tab: in the window holding it, back from the dock, or
-// in a new window. A chat or a board opens in one place at a time.
+// in a new window. A chat or a drawing board opens in one place at a time.
 export function openOverlayWindow(instance) {
   const window = holding(instance.id);
   if (window) patchWindow(window.id, { minimized: false, active: instance.id });

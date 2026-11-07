@@ -75,7 +75,7 @@ func Cmd() *cobra.Command {
 			fleetCmd(),
 			knowledgeCmd(),
 			stewardCmd(),
-			boardCmd(),
+			drawingBoardCmd(),
 			taskboardCmd(),
 			resourcesCmd(),
 			showCmd(),

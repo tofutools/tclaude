@@ -600,7 +600,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   });
   doc.addEventListener('dragend', dragOver);
   // A motion is only measured from a rest the page saw: no pointermove comes
-  // while the pointer is over a frame (a page or a board), so the gap after
+  // while the pointer is over a frame (a page or a drawing board), so the gap after
   // one is no rest, and the next move starts a new motion where it is.
   const isFrame = (el) => /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(el?.tagName || '');
   doc.addEventListener('pointerout', (event) => {
@@ -625,7 +625,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     } else if (isSidePanelPeeking() && !retract) armRetract();
   }, true);
   doc.addEventListener('drop', dragOver, true);
-  // The pointer can leave the panel straight into a frame (a page or a board),
+  // The pointer can leave the panel straight into a frame (a page or a drawing board),
   // after which the page sees no pointermove: the panel's own leave says so.
   const panel = dock();
   panel?.addEventListener('pointerleave', () => {

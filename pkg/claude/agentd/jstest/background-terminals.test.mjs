@@ -128,55 +128,55 @@ test('background terminal helpers', async (t) => {
   assert.equal(backgroundTerminals.value.length, 1);
 });
 
-const BOARD_ROW = {
-  kind: 'board', tmux_session: '', key: 'board:plan', board: 'plan', label: 'Release plan', killable: true, last_activity: 1000,
+const DRAWING_BOARD_ROW = {
+  kind: 'drawing_board', tmux_session: '', key: 'drawing_board:plan', drawingBoard: 'plan', label: 'Release plan', killable: true, last_activity: 1000,
   agents: [{ agent_id: 'agt_bg', title: 'old-name' }, { agent_id: 'agt_gone', title: 'stored-name' }],
 };
 
-test('a board with a session no group lists shows on the panel, opens as a board tab and stays while its tab closes', async (t) => {
+test('a drawing board with a session no group lists shows on the panel, opens as a drawing board tab and stays while its tab closes', async (t) => {
   const s = await mountTabs(t);
-  await s.harness.act(() => { s.background.backgroundTerminals.value = [BOARD_ROW]; });
-  const row = () => railItem(s.host, 'board:plan');
+  await s.harness.act(() => { s.background.backgroundTerminals.value = [DRAWING_BOARD_ROW]; });
+  const row = () => railItem(s.host, 'drawing_board:plan');
   assert.ok(row(), 'listed, under Not in a group');
   assert.equal(row().querySelector('.cr-title').textContent, 'Release plan · renamed-worker, stored-name',
     'the title and who is on it, by live roster title where there is one');
   await s.harness.act(() => row().querySelector('.cr-more').click());
   assert.deepEqual([...row().querySelectorAll('[data-rail-action]')].map((node) => node.dataset.railAction),
-    ['open', 'download', 'end-sessions', 'delete-board']);
+    ['open', 'download', 'end-sessions', 'delete-drawing-board']);
   assert.equal(row().querySelector('[data-rail-action="open"]').textContent, 'Open');
   await s.harness.act(async () => {
     row().querySelector('[data-rail-action="open"]').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  const pane = s.state.panes.value.find((candidate) => candidate.key === 'board:plan');
-  assert.ok(pane, 'the row opens under the board\'s pane key');
-  assert.equal(pane.seed.board, 'plan');
-  assert.equal(pane.seed.label, 'Release plan', 'the tab is named after the board alone');
+  const pane = s.state.panes.value.find((candidate) => candidate.key === 'drawing_board:plan');
+  assert.ok(pane, 'the row opens under the drawing board\'s pane key');
+  assert.equal(pane.seed.drawingBoard, 'plan');
+  assert.equal(pane.seed.label, 'Release plan', 'the tab is named after the drawing board alone');
   assert.equal(bgCount(s.host), '', 'the row leaves the count while the pane is open here');
   await s.harness.act(async () => { await s.actions.closeAllPanes(); });
   assert.equal(bgCount(s.host), '1', 'closing the tab does not end the session');
 });
 
-test('a board row hides while its board floats, and is left out of a peer\'s page', async (t) => {
+test('a drawing board row hides while its drawing board floats, and is left out of a peer\'s page', async (t) => {
   const harness = await createPreactHarness(t);
   const { visibleBackgroundTerminals, localBackgroundRows } = await harness.importDashboardModule('js/background-terminals.js');
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], []).length, 1);
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], [{ board: 'other' }]).length, 1);
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], [{ board: 'plan' }]).length, 0);
-  assert.deepEqual(localBackgroundRows([ROWS[0], BOARD_ROW], ''), [ROWS[0], BOARD_ROW]);
-  assert.deepEqual(localBackgroundRows([ROWS[0], BOARD_ROW], 'peer-1'), [ROWS[0]],
-    'this node\'s board routes are out of reach from a peer\'s page');
+  assert.equal(visibleBackgroundTerminals([DRAWING_BOARD_ROW], [], []).length, 1);
+  assert.equal(visibleBackgroundTerminals([DRAWING_BOARD_ROW], [], [{ drawingBoard: 'other' }]).length, 1);
+  assert.equal(visibleBackgroundTerminals([DRAWING_BOARD_ROW], [], [{ drawingBoard: 'plan' }]).length, 0);
+  assert.deepEqual(localBackgroundRows([ROWS[0], DRAWING_BOARD_ROW], ''), [ROWS[0], DRAWING_BOARD_ROW]);
+  assert.deepEqual(localBackgroundRows([ROWS[0], DRAWING_BOARD_ROW], 'peer-1'), [ROWS[0]],
+    'this node\'s drawing board routes are out of reach from a peer\'s page');
 });
 
-test('ending a board row asks for the board\'s sessions and nothing else', async (t) => {
+test('ending a drawing board row asks for the drawing board\'s sessions and nothing else', async (t) => {
   const harness = await createPreactHarness(t);
   const { killBackgroundTerminal } = await harness.importDashboardModule('js/background-terminals.js');
   const calls = [];
   const fetchImpl = async (path, options) => { calls.push(`${options.method} ${path}`); return { ok: true }; };
-  assert.equal(await killBackgroundTerminal(BOARD_ROW, { fetchImpl }), '');
-  assert.deepEqual(calls, ['DELETE /api/boards/plan/sessions']);
-  const refused = async () => ({ ok: false, status: 404, json: async () => ({ error: 'board not found' }) });
-  assert.equal(await killBackgroundTerminal(BOARD_ROW, { fetchImpl: refused }), 'board not found');
+  assert.equal(await killBackgroundTerminal(DRAWING_BOARD_ROW, { fetchImpl }), '');
+  assert.deepEqual(calls, ['DELETE /api/drawing-boards/plan/sessions']);
+  const refused = async () => ({ ok: false, status: 404, json: async () => ({ error: 'drawing board not found' }) });
+  assert.equal(await killBackgroundTerminal(DRAWING_BOARD_ROW, { fetchImpl: refused }), 'drawing board not found');
 });
 
 test('attach all opens one terminal at a time, each taking focus as it opens', async (t) => {

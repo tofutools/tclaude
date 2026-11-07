@@ -163,15 +163,15 @@ func TestExternalStewardMCP_RevokedCredentialFailsEveryTool(t *testing.T) {
 	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
 	require.Equal(t, http.StatusOK, code, body)
 	args := map[string]map[string]any{
-		stewardtools.ReadMessage: {"id": 1},
-		stewardtools.SendMessage: {"to": "worker", "body": "y"},
-		stewardtools.Reply:       {"id": 1, "body": "y"},
-		stewardtools.NotifyHuman: {"body": "y"},
-		stewardtools.ReadBoard:   {"id": "plan"},
-		stewardtools.CreateBoard: {"title": "plan"},
-		stewardtools.UpdateBoard: {"id": "plan", "elements": []map[string]any{}},
-		stewardtools.SetTaskLink: {"agent": "worker"},
-		stewardtools.SpawnAgent:  {"group": "crew"},
+		stewardtools.ReadMessage:        {"id": 1},
+		stewardtools.SendMessage:        {"to": "worker", "body": "y"},
+		stewardtools.Reply:              {"id": 1, "body": "y"},
+		stewardtools.NotifyHuman:        {"body": "y"},
+		stewardtools.ReadDrawingBoard:   {"id": "plan"},
+		stewardtools.CreateDrawingBoard: {"title": "plan"},
+		stewardtools.UpdateDrawingBoard: {"id": "plan", "elements": []map[string]any{}},
+		stewardtools.SetTaskLink:        {"agent": "worker"},
+		stewardtools.SpawnAgent:         {"group": "crew"},
 	}
 	for _, tool := range stewardtools.List() {
 		text, isError := mcpCall(t, session, tool.Name, args[tool.Name])
@@ -208,20 +208,20 @@ func TestExternalStewardMCP_ListedPermissionsCanBeHeld(t *testing.T) {
 	}
 }
 
-func TestExternalStewardMCP_Boards(t *testing.T) {
+func TestExternalStewardMCP_DrawingBoards(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	session := s.mcpSession(s.create("assistant").Credential)
 
-	var board struct {
+	var drawingBoard struct {
 		ID string `json:"id"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.CreateBoard, map[string]any{"title": "Plan"})), &board))
-	require.NotEmpty(t, board.ID)
-	assert.Contains(t, mcpOK(t, session, stewardtools.UpdateBoard, map[string]any{"id": board.ID, "elements": []map[string]any{
+	require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.CreateDrawingBoard, map[string]any{"title": "Plan"})), &drawingBoard))
+	require.NotEmpty(t, drawingBoard.ID)
+	assert.Contains(t, mcpOK(t, session, stewardtools.UpdateDrawingBoard, map[string]any{"id": drawingBoard.ID, "elements": []map[string]any{
 		{"id": "note", "type": "text", "x": 1, "y": 2, "width": 50, "height": 20, "text": "ship it", "version": 1},
 	}}), `"accepted":1`)
-	assert.Contains(t, mcpOK(t, session, stewardtools.ReadBoard, map[string]any{"id": board.ID}), "ship it")
-	assert.Contains(t, mcpOK(t, session, stewardtools.ListBoards, nil), board.ID)
+	assert.Contains(t, mcpOK(t, session, stewardtools.ReadDrawingBoard, map[string]any{"id": drawingBoard.ID}), "ship it")
+	assert.Contains(t, mcpOK(t, session, stewardtools.ListDrawingBoards, nil), drawingBoard.ID)
 }
 
 // With no page open each dashboard tool says so, rather than pretend.

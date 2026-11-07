@@ -60,7 +60,7 @@ when they are members of every group it is pinned to: a save changes it for
 all of them. Creating a template, deleting one, its library listing and its
 pins stay `process.templates.manage`'s, and a lock on the template refuses a
 member's save as it does any agent's. See
-[Boards › Group boards are their members'](boards.md#group-boards-are-their-members)
+[Drawing boards › Group drawing boards are their members'](drawing-boards.md#group-drawing-boards-are-their-members)
 for how the membership source works.
 
 Pins say who edits a template, not who runs it: a run in any group may start
@@ -437,7 +437,7 @@ things there are specific to processes:
 - **In an overlay window or a window of its own.** *Open in overlay*
   and *Open in separate window*, beside *← templates*, move
   the editor over the dashboard or into a browser window of its own, so you
-  can edit beside a chat or a board. It moves as it is: unsaved edits, undo
+  can edit beside a chat or a drawing board. It moves as it is: unsaved edits, undo
   and redo, and the version a save is checked against go with it, and
   nothing is saved on the way. An overlay tab reorders, groups and joins
   other windows like any overlay tab, and its title bar and right-click menu
@@ -458,7 +458,7 @@ things there are specific to processes:
   type a new name and *＋ New process* stores a blank template and opens it.
   `/collab/processes/<id>` opens that template's tab, and
   `/collab/processes` opens the list. A process tab reorders, joins tab
-  groups and drags off the strip like a board tab, and its bar and right-click
+  groups and drags off the strip like a drawing board tab, and its bar and right-click
   menu have *Open in overlay*, *Open in the Processes tab* and *Open in
   separate window*; an overlay tab has *Open in the Collab tab*. The editor
   moves as it does between the other places, draft and all, and an editor open

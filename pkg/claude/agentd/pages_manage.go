@@ -14,8 +14,8 @@ import (
 )
 
 // Renaming and moving a group's resources from its Resources rows
-// (tcl-kostyh): the operator renames a page or a board, and moves a page to
-// another group. A board moves through POST /api/boards/{id}/group.
+// (tcl-kostyh): the operator renames a page or a drawing board, and moves a page to
+// another group. A drawing board moves through POST /api/drawing-boards/{id}/group.
 //
 // A title the operator gives a page stays through the agent's shows without
 // a title; an agent showing it with --title replaces it, and the show's
@@ -113,7 +113,7 @@ func handleDashboardPageGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", `body must be {"group": "..."}`)
 		return
 	}
-	groupID, ok := resolveBoardGroup(w, req.Group, "")
+	groupID, ok := resolveDrawingBoardGroup(w, req.Group, "")
 	if !ok {
 		return
 	}
@@ -223,12 +223,12 @@ func pageMoveFailure(id, owner, name string, groupID int64, group string) *spawn
 	return nil
 }
 
-// POST /api/boards/{id}/title {title} — the operator renames a board.
-func handleDashboardBoardTitle(w http.ResponseWriter, r *http.Request) {
+// POST /api/drawing-boards/{id}/title {title} — the operator renames a drawing board.
+func handleDashboardDrawingBoardTitle(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	id, ok := boardPathID(w, r)
+	id, ok := drawingBoardPathID(w, r)
 	if !ok {
 		return
 	}
@@ -241,15 +241,15 @@ func handleDashboardBoardTitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
-	if title == "" || len(title) > boardMaxTitleBytes || !boardPrintable(title, false) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("title must be printable text of at most %d bytes", boardMaxTitleBytes))
+	if title == "" || len(title) > drawingBoardMaxTitleBytes || !drawingBoardPrintable(title, false) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("title must be printable text of at most %d bytes", drawingBoardMaxTitleBytes))
 		return
 	}
-	if err := db.SetCollabBoardTitle(id, title); err != nil {
-		writeBoardStoreError(w, err)
+	if err := db.SetCollabDrawingBoardTitle(id, title); err != nil {
+		writeDrawingBoardStoreError(w, err)
 		return
 	}
-	boardLive.publish(id, "")
-	setAuditTargetLabel(r, "board "+id)
+	drawingBoardLive.publish(id, "")
+	setAuditTargetLabel(r, "drawing board "+id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "title": title})
 }

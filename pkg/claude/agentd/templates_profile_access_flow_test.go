@@ -337,7 +337,7 @@ func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
 		createProfile(t, f, map[string]any{"name": "boss-kit", "is_owner": true}).Code, "create owner profile")
 
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
-		"name": "board",
+		"name": "drawing_board",
 		"agents": []map[string]any{
 			{"name": "chair", "spawn_profile": "boss-kit"},
 			{"name": "guest"},
@@ -350,7 +350,7 @@ func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
 		},
 	}).Code, "create template")
 
-	rec := humanReq(t, f, http.MethodGet, "/v1/templates/board", nil)
+	rec := humanReq(t, f, http.MethodGet, "/v1/templates/drawing-board", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var got struct {
 		Agents []struct {

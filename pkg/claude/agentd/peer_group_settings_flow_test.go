@@ -73,9 +73,9 @@ func TestPeerGroupSettingsThroughDashboardHandlers(t *testing.T) {
 		require.Equal(t, 403, code, body)
 	}
 	require.Equal(t, "from bob", group("visible").Descr)
-	code, body = call("POST", "/api/groups/visible/attachment", map[string]any{"url": "https://example.com/board"})
+	code, body = call("POST", "/api/groups/visible/attachment", map[string]any{"url": "https://example.com/drawing-board"})
 	require.Equal(t, 200, code, body)
-	require.Equal(t, "https://example.com/board", group("visible").AttachmentURL)
+	require.Equal(t, "https://example.com/drawing-board", group("visible").AttachmentURL)
 	code, body = call("GET", "/api/groups/visible/attachment", nil)
 	require.Equal(t, 200, code, body)
 	// A group's sandbox profile also needs the spawn sandbox grant.
@@ -102,7 +102,7 @@ func TestPeerGroupSettingsThroughDashboardHandlers(t *testing.T) {
 	require.Len(t, rows.Groups, 1)
 	require.Equal(t, dir, rows.Groups[0]["default_cwd"])
 	require.Equal(t, float64(4), rows.Groups[0]["max_members"])
-	require.Equal(t, "https://example.com/board", rows.Groups[0]["attachment_url"])
+	require.Equal(t, "https://example.com/drawing-board", rows.Groups[0]["attachment_url"])
 	require.Equal(t, true, rows.Groups[0]["notify_enabled"])
 	require.Nil(t, rows.Groups[0]["environment"])
 

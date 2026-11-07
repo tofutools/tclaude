@@ -28,8 +28,8 @@ import { groupContextEntry, processContext, processRunApi } from './process-cont
 import { processesAvailable } from './feature-availability.js';
 import { onPeerPage } from './node-api.js';
 import { RailGear } from './collab-rail-gear.js';
-import { PeerBoardBadge, PeerNewBoard } from './peer-boards-ui.js';
-import { peerBoardAccess } from './peer-boards.js';
+import { PeerDrawingBoardBadge, PeerNewDrawingBoard } from './peer-drawing-boards-ui.js';
+import { peerDrawingBoardAccess } from './peer-drawing-boards.js';
 import { RenameField, renameResource } from './groups-resources.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { railResource } from './collab-rail-actions.js';
@@ -142,12 +142,12 @@ function hoverActions(item, actions, floatsOf) {
 const statusClass = (item) => (isAgentItem(item) ? `cr-agent cr-status-${item.status.className || 'unknown'}${needsYou(item) ? ' cr-needs-you' : ''}` : '');
 
 // The resource kinds that carry a lock against agents (group_resource_locks.go).
-const LOCKABLE = new Set(['board', 'process', 'page']);
+const LOCKABLE = new Set(['drawing_board', 'process', 'page']);
 
 function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, editable = false }) {
   const tools = hoverActions(item, actions, floatsOf);
   const menu = useRowMenu();
-  // ⚙ → Rename… names a board or page in place, as its Groups row does.
+  // ⚙ → Rename… names a drawing board or page in place, as its Groups row does.
   const [renaming, setRenaming] = useState(false);
   // A background session says how long it has been idle, as the strip's old
   // counter did; one that cannot be attached says how to reach it by hand.
@@ -173,7 +173,7 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, edita
       ${editable && html`<${RailGear} item=${item} snapshot=${snapshot} notify=${notify} onRename=${() => setRenaming(true)} />`}
       <${RailRowMenu} item=${item} open=${menu.open} onOpen=${menu.setOpen} ctx=${ctx} /></span>
     ${state && html`<span class="cr-state">${state}</span>`}
-    ${item.resource?.peer ? html`<${PeerBoardBadge} access=${peerBoardAccess(item.group, snapshot?.value)} />`
+    ${item.resource?.peer ? html`<${PeerDrawingBoardBadge} access=${peerDrawingBoardAccess(item.group, snapshot?.value)} />`
       : LOCKABLE.has(item.kind) && html`<${RailLock} kind=${item.kind} id=${item.resource?.id || item.key.slice(item.kind.length + 1)}
       name=${item.title} snapshot=${snapshot} notify=${notify} />`}
   </div>`;
@@ -197,8 +197,8 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
     open=${adding === (group ? group.id : '*')} onOpen=${(on) => setAdding(on ? (group ? group.id : '*') : '')}
     label=${group ? '＋' : '＋ New ▾'} buttonClass=${group ? 'cr-tool cr-section-add' : 'cr-new'}
     request=${group ? null : request} ctx=${newContext} />`;
-  // A request for the board or process list (the strip's state, which a bare
-  // /boards or /processes URL writes) unfolds the panel to show it.
+  // A request for the drawing board or process list (the strip's state, which a bare
+  // /drawing-boards or /processes URL writes) unfolds the panel to show it.
   const n = menuRequest?.value || 0;
   const request = n ? { n, view: menuSection?.peek() || '' } : null;
   useEffect(() => { if (n) setSidePanelOpen(true, 'collab'); }, [n]);
@@ -224,7 +224,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
               <span class="ui-eyebrow cr-section-name">${section.name}</span>
               <span class="cr-count">${section.items.length}</span>
             </button>
-            ${group ? newMenu(group) : onPeerPage() ? html`<${PeerNewBoard} group=${section.name} />` : null}
+            ${group ? newMenu(group) : onPeerPage() ? html`<${PeerNewDrawingBoard} group=${section.name} />` : null}
           </div>
           ${!shut && section.items.map(item)}
         </div>`;

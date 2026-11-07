@@ -9,7 +9,7 @@ function build(wizard, processes = true) {
   const made = [];
   const touched = [];
   const make = {
-    board: (g) => made.push(['board', g.name]),
+    drawingBoard: (g) => made.push(['drawing_board', g.name]),
     page: (g) => made.push(['page', g.name]),
     process: (g) => made.push(['process', g.name]),
   };
@@ -22,11 +22,11 @@ function build(wizard, processes = true) {
 test('a phrased query makes the named resource in the named group, in either theme', () => {
   for (const wizard of [false, true]) {
     const cases = [
-      ['open drawing board in tclaude', ['board', 'tclaude']],
-      ['drawing board tclaude', ['board', 'tclaude']],
-      ['whiteboard awb', ['board', 'awb']],
-      ['open a whiteboard in tclaude', ['board', 'tclaude']],
-      ['slate tclaude', ['board', 'tclaude']],
+      ['open drawing board in tclaude', ['drawing_board', 'tclaude']],
+      ['drawing board tclaude', ['drawing_board', 'tclaude']],
+      ['whiteboard awb', ['drawing_board', 'awb']],
+      ['open a whiteboard in tclaude', ['drawing_board', 'tclaude']],
+      ['slate tclaude', ['drawing_board', 'tclaude']],
       ['new page awb', ['page', 'awb']],
       ['looking glass tclaude', ['page', 'tclaude']],
       ['start process in awb', ['process', 'awb']],

@@ -34,11 +34,11 @@ import {
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
-import { BoardEditor, BoardPaneGate, BoardsGate } from './board-island.js';
-import { peerBoardsShared } from './peer-boards.js';
-import { BoardDeleteHost, askDeleteBoard, onBoardDeleted } from './board-manage.js';
+import { DrawingBoardEditor, DrawingBoardPaneGate, DrawingBoardsGate } from './drawing-board-island.js';
+import { peerDrawingBoardsShared } from './peer-drawing-boards.js';
+import { DrawingBoardDeleteHost, askDeleteDrawingBoard, onDrawingBoardDeleted } from './drawing-board-manage.js';
 import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
-import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
+import { drawingBoardOverlays, openDrawingBoardPane, openLinkedDrawingBoard, revealDrawingBoardWindow } from './drawing-board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
 import { droppedAt, viewportOf } from './overlay-window-model.js';
@@ -103,7 +103,7 @@ export function tabDragStartedOnClose(target) {
 // floats through the companion, which a page without one cannot do.
 function paneFloats(pane, snapshot) {
   if (onPeerPage()) return false;
-  return !!pane.seed.board || !!pane.seed.process || !!pane.seed.page || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+  return !!pane.seed.drawingBoard || !!pane.seed.process || !!pane.seed.page || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
 }
 
 // soloFloats reports whether a separate window offers Open in overlay: the page
@@ -581,39 +581,39 @@ function StewardDownNotice({ pane, actions }) {
   </div>`;
 }
 
-// BoardPane is a pane with a board in it rather than a terminal: no widget, and
+// DrawingBoardPane is a pane with a drawing board in it rather than a terminal: no widget, and
 // none of the agent chrome. The editor mounts the first time the tab is looked
 // at, so a tab opened in the background costs nothing until then, and then stays
 // mounted like a background terminal. A pop-out's page has no collab gate of
 // its own: the daemon answers there.
-function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope = null }) {
+function DrawingBoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope = null }) {
   const seen = useRef(false);
   if (active) seen.current = true;
   useEffect(() => {
-    if (active && manageTitle) document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude board`;
+    if (active && manageTitle) document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude drawing board`;
   }, [active, manageTitle, pane.label]);
-  // A pop-out's page is this one board: it stays, and the editor says so.
-  useEffect(() => onBoardDeleted((id) => {
-    if (id === pane.seed.board && !solo) void actions.closePane(pane.key);
-  }), [pane.key, pane.seed.board, solo]);
-  const editor = seen.current && snapshot ? html`<${BoardEditor}
-    boardId=${pane.seed.board} onScreen=${active} snapshot=${snapshot} win=${window}
+  // A pop-out's page is this one drawing board: it stays, and the editor says so.
+  useEffect(() => onDrawingBoardDeleted((id) => {
+    if (id === pane.seed.drawingBoard && !solo) void actions.closePane(pane.key);
+  }), [pane.key, pane.seed.drawingBoard, solo]);
+  const editor = seen.current && snapshot ? html`<${DrawingBoardEditor}
+    drawingBoardId=${pane.seed.drawingBoard} onScreen=${active} snapshot=${snapshot} win=${window}
     visible=${() => solo || !!document.getElementById('tab-terminals')?.classList.contains('active')}
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
-      ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
-        ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
-      // A peer's board stays a tab: the overlay windows and a pop-out's
-      // page are this node's own, and would open its board of the same id.
+      ? html`<${Button} size="sm" class="mux-btn" title="Move this drawing board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
+        ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this drawing board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
+      // A peer's drawing board stays a tab: the overlay windows and a pop-out's
+      // page are this node's own, and would open its drawing board of the same id.
       : onPeerPage() ? null : html`
-        <${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
-        <${Button} size="sm" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
+        <${Button} size="sm" class="mux-btn" title="Float this drawing board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
+        <${Button} size="sm" class="mux-btn" title="Move this drawing board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
   return html`<div
-    class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
+    class=${`mux-pane mux-pane-drawing-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
     role=${solo ? null : 'tabpanel'}
-  >${solo ? editor : html`<${BoardPaneGate}>${editor}<//>`}</div>`;
+  >${solo ? editor : html`<${DrawingBoardPaneGate}>${editor}<//>`}</div>`;
 }
 
 // PaneProcessOverlay reads the snapshot signal itself so only this small
@@ -839,10 +839,10 @@ function NodePill({ node, compact = false }) {
   return html`<span class=${cls} style=${`--nc:${node.color}`} title=${`On ${node.name}`}>${compact ? [...node.name][0]?.toUpperCase() : node.name}</span>`;
 }
 
-// A board has no agent behind it, so its tab says what it is instead.
-function boardTabStatus(pane) {
-  const label = `Board ${paneTitle(pane)}`;
-  return { key: 'board', className: 'board', symbol: '✎', title: label, ariaLabel: label, agent: null };
+// A drawing board has no agent behind it, so its tab says what it is instead.
+function drawingBoardTabStatus(pane) {
+  const label = `Drawing board ${paneTitle(pane)}`;
+  return { key: 'drawing_board', className: 'drawing_board', symbol: '✎', title: label, ariaLabel: label, agent: null };
 }
 
 // Nor has a process template's editor.
@@ -869,10 +869,10 @@ function PaneTab({
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
   peerNotifications = {},
 }) {
-  const board = !!pane.seed.board;
+  const drawingBoard = !!pane.seed.drawingBoard;
   const process = !!pane.seed.process;
   const page = !!pane.seed.page;
-  const agentStatus = board ? boardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
+  const agentStatus = drawingBoard ? drawingBoardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
@@ -903,8 +903,8 @@ function PaneTab({
     openMenu({
       kind: 'pane',
       key: pane.key,
-      board,
-      boardId: pane.seed.board,
+      drawingBoard,
+      drawingBoardId: pane.seed.drawingBoard,
       process: pane.seed.process || '',
       floats: paneFloats(pane, snapshot?.value),
       groupId,
@@ -964,8 +964,8 @@ function PaneTab({
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${paneTitle(pane)}</span>
-      ${(board || process || page) && html`<${LockBadge} kind=${board ? 'board' : process ? 'process' : 'page'}
-        locked=${resourceLocked(snapshot?.value, board ? 'board' : process ? 'process' : 'page', pane.seed.board || pane.seed.process || pane.seed.page)} />`}
+      ${(drawingBoard || process || page) && html`<${LockBadge} kind=${drawingBoard ? 'drawing_board' : process ? 'process' : 'page'}
+        locked=${resourceLocked(snapshot?.value, drawingBoard ? 'drawing_board' : process ? 'process' : 'page', pane.seed.drawingBoard || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${processesAvailable(snapshot?.value)} />` : null}
@@ -973,7 +973,7 @@ function PaneTab({
         type="button"
         class="mux-tab-close"
         draggable="false"
-        title=${board ? 'Close this board' : process ? 'Close this editor (asks first if it has unsaved edits)' : page ? 'Close this page (the agent that showed it is told)' : 'Close this terminal'}
+        title=${drawingBoard ? 'Close this drawing board' : process ? 'Close this editor (asks first if it has unsaved edits)' : page ? 'Close this page (the agent that showed it is told)' : 'Close this terminal'}
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
       >×</button>
@@ -1170,16 +1170,16 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        // A peer's board (tcl-ug8bb8) is locked and deleted on its own node.
-        ...(menu.board && !onPeerPage() && resourceLockState(snapshot?.value, 'board', menu.boardId) !== undefined ? [(() => {
-          const locked = resourceLockState(snapshot?.value, 'board', menu.boardId);
+        // A peer's drawing board (tcl-ug8bb8) is locked and deleted on its own node.
+        ...(menu.drawingBoard && !onPeerPage() && resourceLockState(snapshot?.value, 'drawing_board', menu.drawingBoardId) !== undefined ? [(() => {
+          const locked = resourceLockState(snapshot?.value, 'drawing_board', menu.drawingBoardId);
           return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
-            setResourceLock('board', menu.boardId, !locked).then(
+            setResourceLock('drawing_board', menu.drawingBoardId, !locked).then(
               () => shellToast(locked ? `Agents can edit ${menu.label} again` : `${menu.label} is read-only for agents`),
               (cause) => shellToast(`Could not change the lock on ${menu.label}: ${cause.message}`, true));
           });
         })()] : []),
-        ...(menu.board && !onPeerPage() ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
+        ...(menu.drawingBoard && !onPeerPage() ? [item('Delete drawing board…', () => askDeleteDrawingBoard({ id: menu.drawingBoardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
         item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
@@ -1728,8 +1728,8 @@ function TerminalTabs({
     widget.focus();
   }, [current.revealRequest, solo]);
 
-  // A board pop-out goes away by script after its move back to the dashboard, which must not prompt.
-  const confirmsReload = solo ? current.panes.some((pane) => !pane.seed.board) : hasPanes;
+  // A drawing board pop-out goes away by script after its move back to the dashboard, which must not prompt.
+  const confirmsReload = solo ? current.panes.some((pane) => !pane.seed.drawingBoard) : hasPanes;
   useEffect(() => {
     if (!confirmsReload) return undefined;
     let armed = true;
@@ -1764,8 +1764,8 @@ function TerminalTabs({
     hadPanesRef.current = hasPanes;
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
-      // A board, a shell or an agent that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 || terminalWindowsShowing() || chatWindowShowing() || actions.floatingAgent() });
+      // A drawing board, a shell or an agent that moved to the overlay leaves the operator working here.
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: drawingBoardOverlays.peek().length > 0 || terminalWindowsShowing() || chatWindowShowing() || actions.floatingAgent() });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);
@@ -1806,14 +1806,14 @@ function TerminalTabs({
 
   // The Collab panel lists what is live in the shared right side panel, on
   // the dashboard's own Collab view (collab-rail.js), and on a peer's that
-  // shares its boards (tcl-ug8bb8), where it lists them.
-  const rail = !solo && !!snapshot && (!onPeerPage() || peerBoardsShared(snapshot.value));
+  // shares its drawing boards (tcl-ug8bb8), where it lists them.
+  const rail = !solo && !!snapshot && (!onPeerPage() || peerDrawingBoardsShared(snapshot.value));
   const floatsOf = (key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value);
   const rootClass = 'terminal-shell-root';
   return html`
     <div ref=${shellRef} class=${rootClass}>
       ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}
-        floatsOf=${floatsOf} menuRequest=${state.boardMenuRequest} menuSection=${state.boardMenuSection} />` : null}
+        floatsOf=${floatsOf} menuRequest=${state.drawingBoardMenuRequest} menuSection=${state.drawingBoardMenuSection} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
@@ -1917,7 +1917,7 @@ function TerminalTabs({
         </div>
         ${detachArmed && !joining ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
-      ${snapshot ? html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
+      ${snapshot ? html`<${DrawingBoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups} snapshot=${snapshot}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
@@ -1928,7 +1928,7 @@ function TerminalTabs({
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. The panel's Filter counts them; tick Background to list and attach them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate}><div>Or open a board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the panel's ＋ New.</div><//>` : null}
+          ${snapshot ? html`<${DrawingBoardsGate}><div>Or open a drawing board${processesAvailable(snapshot.value) ? ' or a process' : ''} from the panel's ＋ New.</div><//>` : null}
         </div><//>
       ` : null}
       ${hasPanes || !empty ? html`
@@ -1955,8 +1955,8 @@ function TerminalTabs({
               fetchImpl=${fetchFromPage}
               scope=${scopeOf(pane)}
             />
-          ` : pane.seed.board ? html`
-            <${BoardPane}
+          ` : pane.seed.drawingBoard ? html`
+            <${DrawingBoardPane}
               key=${pane.key}
               pane=${pane}
               active=${current.activeKey === pane.key}
@@ -2015,13 +2015,13 @@ export async function receiveSeparateWindow(seed, { actions, snapshot = null, ru
   const overlay = !!seed.overlay && paneFloats({ seed }, snapshot?.value);
   if (!overlay && agentSessionSeed(seed) && reclaimInCompanion(seed.agent)) return true;
   // It went somewhere else while this window was open, and it stays there.
-  if (!overlay && (seed.board ? revealBoardWindow(seed.board) : seed.page ? revealPageWindow(seed.page) : revealHeldSeed(seed))) return true;
-  if (runtimeLoader && !seed.board && !seed.page && !seed.process) await runtimeLoader();
+  if (!overlay && (seed.drawingBoard ? revealDrawingBoardWindow(seed.drawingBoard) : seed.page ? revealPageWindow(seed.page) : revealHeldSeed(seed))) return true;
+  if (runtimeLoader && !seed.drawingBoard && !seed.page && !seed.process) await runtimeLoader();
   return actions.receiveHandoffPane(seed, { overlay });
 }
 
 function TerminalBadge({ state }) {
-  const count = state.view.value.panes.filter((pane) => !pane.seed.board && !pane.seed.process && !pane.seed.page).length;
+  const count = state.view.value.panes.filter((pane) => !pane.seed.drawingBoard && !pane.seed.process && !pane.seed.page).length;
   const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
@@ -2061,7 +2061,7 @@ export function mountTerminalShellIsland({
     state,
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
-    openBoardPane: (id) => openLinkedBoard(id),
+    openDrawingBoardPane: (id) => openLinkedDrawingBoard(id),
     openProcessPane: (id) => openProcessTab(id),
   });
   // Process editors open as tabs here (process-editor-place.js), and the place

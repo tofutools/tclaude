@@ -23,7 +23,7 @@ import { shellToast } from './shell-state.js';
 // Jobs (cron, standing orders, triggers) and Access (this node's pending
 // approvals) have no peer grant of their own: unrestricted trust reaches them
 // as the local operator does (local_dashboard).
-const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', diagnostics: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local', boards: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', diagnostics: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local', 'drawing-boards': 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
@@ -53,7 +53,7 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'set-group-sandbox-profile': ['groups.settings', 'groups.members.spawn.sandbox', 'feature:spawn.catalog'],
   'group-attachment': ['groups.settings'],
   'rename-group': ['groups.settings'],
-  // The ⚙ menu's group settings (nesting is board layout only).
+  // The ⚙ menu's group settings (nesting is drawing board layout only).
   'group-settings': ['groups.settings'],
   'set-group-context': ['groups.settings'],
   'toggle-group-notify': ['groups.settings'],

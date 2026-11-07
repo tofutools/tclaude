@@ -108,7 +108,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	// A popped-out board polls too but has no presence loop, so it is no sign of
+	// A popped-out drawing board polls too but has no presence loop, so it is no sign of
 	// a dashboard that capture could reach.
 	if !isPeerSnapshot(r) && r.URL.Query().Get("standalone") == "" {
 		noteDashboardPoll()

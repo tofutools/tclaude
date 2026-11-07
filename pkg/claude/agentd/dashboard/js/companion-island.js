@@ -42,7 +42,7 @@ import { chatHasDraft } from './chat-window.js';
 import { OverlayTabWindow, tabViewOf } from './overlay-tab-window.js';
 import { SnapAssist } from './overlay-snap-assist.js';
 import { activeTabOf, windowHolding } from './overlay-tab-model.js';
-import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
+import { DRAWING_BOARD_WINDOW_KIND } from './drawing-board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { PAGE_WINDOW_KIND } from './page-pane-model.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -1264,7 +1264,7 @@ export function CompanionApp({
   const tabKinds = {
     [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onSeparateWindow: detachWindow ? detachToWindow : null, onFloat: floatTab, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
-    [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
+    [DRAWING_BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [PAGE_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },

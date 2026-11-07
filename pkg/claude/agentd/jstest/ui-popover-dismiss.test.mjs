@@ -17,7 +17,7 @@ const JS = new URL('../dashboard/js/', import.meta.url);
 
 const ALLOWED = {
   'popover-watch.js': 'the shared rule itself',
-  'board-island.js': 'a press elsewhere ends the board\'s claim on page keys',
+  'drawing-board-island.js': 'a press elsewhere ends the drawing board\'s claim on page keys',
   'process-editor-place.js': 'tracks which process editor the operator touched last',
   'overlay-snap-assist.js': 'window snapping (overlay-window area): the press picks or ends a snap',
   'row-actions.js': 'a new gesture makes a context-menu activation stale',

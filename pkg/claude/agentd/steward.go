@@ -30,7 +30,7 @@ const (
 // stewardBaseSlugs are what talking to the operator takes, at every level:
 // seeing what they see, pointing at it, drawing with them and asking them.
 var stewardBaseSlugs = []string{
-	PermFleetRead, PermDashboardViewRead, PermDashboardCapture, PermDashboardGuide, PermDashboardMark, PermBoardsRead, PermBoardsWrite, PermHumanNotify, PermKnowledgeRead,
+	PermFleetRead, PermDashboardViewRead, PermDashboardCapture, PermDashboardGuide, PermDashboardMark, PermDrawingBoardsRead, PermDrawingBoardsWrite, PermHumanNotify, PermKnowledgeRead,
 }
 
 // stewardOperatorReadSlugs bring a Steward to what the operator reads, on top
@@ -99,16 +99,16 @@ func captureDenied(stored map[string]db.PermissionOverride) bool {
 
 // stewardAccessNote tells a Steward what it was born with, for its brief.
 func stewardAccessNote(cfg *config.Config, stored map[string]db.PermissionOverride) string {
-	reads := "every agent and group, boards and the dashboard view"
+	reads := "every agent and group, drawing boards and the dashboard view"
 	if cfg.StewardReads() == config.StewardReadsOperator {
 		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them"
 	}
-	writes := "drawing on boards and the operator's view, and notifying the operator"
+	writes := "drawing on drawing boards and the operator's view, and notifying the operator"
 	switch cfg.StewardWrites() {
 	case config.StewardWritesMessaging:
-		writes = "messaging any agent, drawing on boards and the operator's view, and notifying the operator"
+		writes = "messaging any agent, drawing on drawing boards and the operator's view, and notifying the operator"
 	case config.StewardWritesWorkers:
-		writes = "messaging any agent, starting workers, drawing on boards and the operator's view, and notifying the operator"
+		writes = "messaging any agent, starting workers, drawing on drawing boards and the operator's view, and notifying the operator"
 	}
 	note := "Your access, set by the operator: you can read " + reads + ". You can write: " + writes + "."
 	if extra := stewardExtraSlugs(cfg, stored); len(extra) > 0 {

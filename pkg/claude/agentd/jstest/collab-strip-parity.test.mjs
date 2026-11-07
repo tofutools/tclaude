@@ -2,19 +2,19 @@
 // panel (tcl-ievs1w). Every action they offered keeps a home there, and
 // each is pinned here from that home:
 //
-//   strip ＋ → Boards: open, create, import, export, delete    → ＋ New › Board… (the same board list), Import board…, a board row's menu
+//   strip ＋ → Drawing boards: open, create, import, export, delete    → ＋ New › Drawing board… (the same drawing board list), Import drawing board…, a drawing board row's menu
 //   strip ＋ → Processes: open, create                          → ＋ New › Process… (the same process list)
 //   counter: count                                              → the Filter button's badge, Background (N), the folded panel's handle
 //   counter: attach / open a row (title or button)              → a click on the row, or its menu's Attach / Open
 //   counter: attach-locked row shown disabled with the reason   → its menu's Attach (locked), titled with the reason
 //   counter: unattachable row with its tmux hint                → Other sessions, the hint in the row's title
 //   counter: kill a session                                     → the row menu's Kill session… (asks first)
-//   counter: end a board's sessions                             → the board row menu's End agents' sessions… (asks first)
+//   counter: end a drawing board's sessions                             → the drawing board row menu's End agents' sessions… (asks first)
 //   counter: attach all                                         → Filter › Attach all background (N)
 //
-// Moving the background rows themselves (attach, peers, a board row) is pinned
-// in background-terminals.test.mjs; the bare /boards and /processes routes in
-// board-tabs.test.mjs and process-tabs.test.mjs.
+// Moving the background rows themselves (attach, peers, a drawing board row) is pinned
+// in background-terminals.test.mjs; the bare /drawing-boards and /processes routes in
+// drawing-board-tabs.test.mjs and process-tabs.test.mjs.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +24,7 @@ const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const GROUPS = [{ id: 1, name: 'tclaude', default_cwd: '/src/tclaude' }, { id: 2, name: 'notes' }];
 const RESOURCES = [
-  { kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
+  { kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
   { kind: 'shell', id: 'tclaude', group_id: 1, title: 'Group shell', state: 'running', session: 's' },
 ];
 
@@ -34,26 +34,26 @@ function fakeContext() {
   const record = (name) => (...args) => { calls.push([name, ...args]); return Promise.resolve(''); };
   return {
     calls,
-    open: record('open'), kill: record('kill'), exportBoard: record('exportBoard'), askDeleteBoard: record('askDeleteBoard'),
+    open: record('open'), kill: record('kill'), exportDrawingBoard: record('exportDrawingBoard'), askDeleteDrawingBoard: record('askDeleteDrawingBoard'),
     notify: record('notify'), fetchImpl: record('fetch'),
     // As shellConfirm: it resolves to what the action returns.
     confirm: async (options) => { calls.push(['confirm', options.title]); return options.action(); },
-    spawn: record('spawn'), shell: record('shell'), board: record('board'), page: record('page'),
-    openBoard: record('openBoard'), openProcess: record('openProcess'), boardIds: async () => [],
+    spawn: record('spawn'), shell: record('shell'), drawingBoard: record('drawing_board'), page: record('page'),
+    openDrawingBoard: record('openDrawingBoard'), openProcess: record('openProcess'), drawingBoardIds: async () => [],
   };
 }
 
 const ids = ({ open, end }) => [...open, ...end].map((action) => action.id);
 
-test('a row menu offers what the counter did: attach, attach (locked), kill, and end a board\'s sessions', async (t) => {
+test('a row menu offers what the counter did: attach, attach (locked), kill, and end a drawing board\'s sessions', async (t) => {
   const harness = await createPreactHarness(t);
   const { railItems, filterRail } = await harness.importDashboardModule('js/collab-rail-model.js');
   const { railRowActions, hasRowActions } = await harness.importDashboardModule('js/collab-rail-menu.js');
   const agent = { kind: 'agent', key: 'window:agt_a', tmux_session: 'tc-a', label: 'worker', killable: true };
   const locked = { kind: 'shell', tmux_session: 'tc-l', label: 'old shell', killable: true, attachLock: 'This shell predates group shells' };
-  const boardRow = { kind: 'board', key: 'board:plan', board: 'plan', label: 'Plan', killable: true };
+  const drawingBoardRow = { kind: 'drawing_board', key: 'drawing_board:plan', drawingBoard: 'plan', label: 'Plan', killable: true };
   const shellRow = { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'tclaude-group-tclaude', group: 'tclaude', killable: true };
-  const { sections } = railItems({ resources: RESOURCES, groups: GROUPS, background: [agent, locked, boardRow, shellRow], titleOf: (row) => row.label || row.group });
+  const { sections } = railItems({ resources: RESOURCES, groups: GROUPS, background: [agent, locked, drawingBoardRow, shellRow], titleOf: (row) => row.label || row.group });
   const items = new Map(sections.flatMap((section) => section.items).map((item) => [item.key, item]));
 
   const ctx = fakeContext();
@@ -71,19 +71,19 @@ test('a row menu offers what the counter did: attach, attach (locked), kill, and
   const [lockedAttach] = railRowActions(lockedItem).open;
   assert.deepEqual([lockedAttach.label, lockedAttach.disabled, lockedAttach.title], ['Attach (locked)', true, 'This shell predates group shells']);
 
-  const board = items.get('board:plan');
-  assert.equal(board.sessions, boardRow, "a board's sessions ride on the board's own item");
-  assert.equal(board.bucket, 'background', 'the snapshot calls the board closed, but its sessions put it in the background');
+  const drawingBoard = items.get('drawing_board:plan');
+  assert.equal(drawingBoard.sessions, drawingBoardRow, "a drawing board's sessions ride on the drawing board's own item");
+  assert.equal(drawingBoard.bucket, 'background', 'the snapshot calls the drawing board closed, but its sessions put it in the background');
   const listed = filterRail({ sections }).sections.flatMap((section) => section.items.map((item) => item.key));
-  assert.ok(listed.includes('board:plan'), 'so the default filter lists it, and its End is reachable');
-  assert.deepEqual(ids(railRowActions(board)), ['open', 'download', 'end-sessions', 'delete-board']);
-  for (const action of [...railRowActions(board).open, ...railRowActions(board).end]) await action.run(ctx);
+  assert.ok(listed.includes('drawing_board:plan'), 'so the default filter lists it, and its End is reachable');
+  assert.deepEqual(ids(railRowActions(drawingBoard)), ['open', 'download', 'end-sessions', 'delete-drawing-board']);
+  for (const action of [...railRowActions(drawingBoard).open, ...railRowActions(drawingBoard).end]) await action.run(ctx);
   assert.deepEqual(ctx.calls.splice(0), [
-    ['open', board],
-    ['exportBoard', 'plan', ctx.fetchImpl],
-    ['confirm', 'End the agents’ sessions on this board?'], ['kill', boardRow], ['notify', 'Ended the sessions on Plan'],
-    ['askDeleteBoard', { id: 'plan', title: 'Plan' }],
-  ], 'download, end the sessions (asking first) and delete, the board list\'s ⤓ and 🗑 and the counter\'s End');
+    ['open', drawingBoard],
+    ['exportDrawingBoard', 'plan', ctx.fetchImpl],
+    ['confirm', 'End the agents’ sessions on this drawing board?'], ['kill', drawingBoardRow], ['notify', 'Ended the sessions on Plan'],
+    ['askDeleteDrawingBoard', { id: 'plan', title: 'Plan' }],
+  ], 'download, end the sessions (asking first) and delete, the drawing board list\'s ⤓ and 🗑 and the counter\'s End');
 
   const shell = items.get('shell:tclaude');
   assert.equal(shell.shellSession, shellRow, "a group shell's session rides on its group's shell item");
@@ -105,11 +105,11 @@ test('＋ New lists every kind there is a create path for, and a group\'s ＋ ma
   const { newMenuEntries } = await harness.importDashboardModule('js/collab-new-menu.js');
   const header = newMenuEntries({ groups: GROUPS, processes: true });
   assert.deepEqual(header.map((e) => [e.id, e.label, e.view || '', !!e.disabled]), [
-    ['agent', 'Agent…', '', false], ['shell', 'Shell…', 'shell', false], ['board', 'Board…', 'boards', false],
-    ['process', 'Process…', 'processes', false], ['page', 'Page…', 'page', false], ['import', 'Import board…', '', false],
+    ['agent', 'Agent…', '', false], ['shell', 'Shell…', 'shell', false], ['drawing_board', 'Drawing board…', 'drawing-boards', false],
+    ['process', 'Process…', 'processes', false], ['page', 'Page…', 'page', false], ['import', 'Import drawing board…', '', false],
   ]);
   assert.deepEqual(newMenuEntries({ groups: [GROUPS[1]] }).map((e) => [e.id, !!e.disabled]),
-    [['agent', false], ['shell', true], ['board', false], ['page', false], ['import', false]],
+    [['agent', false], ['shell', true], ['drawing_board', false], ['page', false], ['import', false]],
     'without Processes there is no Process…; with no group directory there is no shell to open');
   assert.equal(newMenuEntries({ processes: true, wizard: true }).find((e) => e.id === 'process').label, 'Rite…');
 
@@ -117,10 +117,10 @@ test('＋ New lists every kind there is a create path for, and a group\'s ＋ ma
   const ctx = fakeContext();
   const preset = newMenuEntries({ group, groups: GROUPS, processes: true });
   assert.deepEqual(preset.map((e) => [e.id, e.label, e.view || '']), [
-    ['agent', 'Agent…', ''], ['shell', 'Shell', ''], ['board', 'Board', ''], ['process', 'Process…', 'processes'], ['page', 'Page…', ''], ['import', 'Import board…', ''],
+    ['agent', 'Agent…', ''], ['shell', 'Shell', ''], ['drawing_board', 'Drawing board', ''], ['process', 'Process…', 'processes'], ['page', 'Page…', ''], ['import', 'Import drawing board…', ''],
   ]);
   for (const entry of preset.filter((e) => e.run)) await entry.run({ ...ctx, pickImport: () => ctx.calls.push(['pickImport']) });
-  assert.deepEqual(ctx.calls, [['spawn', { groupName: 'tclaude' }], ['shell', group], ['board', group], ['page', group], ['pickImport']]);
+  assert.deepEqual(ctx.calls, [['spawn', { groupName: 'tclaude' }], ['shell', group], ['drawing_board', group], ['page', group], ['pickImport']]);
   assert.equal(newMenuEntries({ group: GROUPS[1] }).find((e) => e.id === 'shell').disabled, true);
 });
 
@@ -173,8 +173,8 @@ test('a group header\'s ＋ opens the same menu, made for that group', async (t)
   assert.ok(add, 'the group header carries a ＋');
   await harness.act(() => add.click());
   assert.equal(host.querySelector('.cr-new-menu').getAttribute('aria-label'), 'New in tclaude');
-  await harness.act(() => harness.fireEvent(host.querySelector('[data-new-kind="board"]'), 'click'));
-  assert.deepEqual(newContext.calls.splice(0), [['board', GROUPS[0]]]);
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-new-kind="drawing_board"]'), 'click'));
+  assert.deepEqual(newContext.calls.splice(0), [['drawing_board', GROUPS[0]]]);
   await harness.act(() => add.click());
   await harness.act(() => harness.fireEvent(host.querySelector('[data-new-kind="agent"]'), 'click'));
   assert.deepEqual(newContext.calls.splice(0), [['spawn', { groupName: 'tclaude' }]]);

@@ -13,12 +13,12 @@ const SNAPSHOT = {
     { agent_id: 'agt_z', conv_id: 'cz', title: 'loner', groups: [], online: true },
   ],
   group_resources: [
-    { kind: 'board', id: 'launch', group_id: 1, title: 'Launch-resolution map', state: 'closed' },
+    { kind: 'drawing_board', id: 'launch', group_id: 1, title: 'Launch-resolution map', state: 'closed' },
     { kind: 'page', id: 'pg_dash', group_id: 1, title: 'Dashboard preview', state: 'running' },
     { kind: 'process', id: 'pr-review', group_id: 1, title: 'pr-review', state: 'running', locked: true },
     { kind: 'shell', id: 'tclaude', group_id: 1, title: 'Group shell', state: 'running', session: 's' },
-    { kind: 'board', id: 'release', group_id: 1, title: 'Release planning', state: 'closed' },
-    { kind: 'board', id: 'net', group_id: 2, title: 'Network diagram', state: 'closed' },
+    { kind: 'drawing_board', id: 'release', group_id: 1, title: 'Release planning', state: 'closed' },
+    { kind: 'drawing_board', id: 'net', group_id: 2, title: 'Network diagram', state: 'closed' },
     { kind: 'page', id: 'pg_status', group_id: 2, title: 'Status page', state: 'closed' },
     { kind: 'shell', id: 'home-lab', group_id: 2, title: 'Group shell', state: 'closed' },
     { kind: 'shell', id: 'quiet', group_id: 3, title: 'Group shell', state: 'closed' },
@@ -36,12 +36,12 @@ test('rail model: agents under their group first, live before closed, never-star
   const m = await harness.importDashboardModule('js/collab-rail-model.js');
   const model = await harness.importDashboardModule('js/resource-model.js');
   const places = model.browserPlaces({
-    strip: ['board:launch', 'agent:x'],
-    overlays: [{ kind: 'page', page: 'pg_dash', minimized: true }, { kind: 'board', board: 'net', minimized: true }],
+    strip: ['drawing_board:launch', 'agent:x'],
+    overlays: [{ kind: 'page', page: 'pg_dash', minimized: true }, { kind: 'drawing_board', drawingBoard: 'net', minimized: true }],
   });
   const all = m.railItems({
     resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups, places, statusOf,
-    panes: [{ key: 'board:launch', seed: { board: 'launch' }, label: 'Launch' }, { key: 'agent:x', seed: { agent: 'x' }, label: 'launch-uniform' }],
+    panes: [{ key: 'drawing_board:launch', seed: { drawingBoard: 'launch' }, label: 'Launch' }, { key: 'agent:x', seed: { agent: 'x' }, label: 'launch-uniform' }],
     overlays: [{ id: 'term:y', kind: 'terminal', paneKey: 'agent:y', agent: 'agt_y', label: 'relaunch-table', minimized: false }],
     background: [{ kind: 'agent', key: 'agent:z', tmux_session: 'tc-z', label: 'loner' }, { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'g' },
       { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
@@ -54,7 +54,7 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.ok(tclaude.includes('shell:tclaude'), 'a running group shell is listed');
   const flat = all.sections.flatMap((s) => s.items);
   assert.ok(!flat.some((i) => i.key === 'shell:home-lab' || i.key === 'shell:quiet'), 'a group shell nobody started is not');
-  assert.equal(tclaude.at(-1), 'board:release', 'closed items come last');
+  assert.equal(tclaude.at(-1), 'drawing_board:release', 'closed items come last');
   assert.equal(all.sections[1].items[0].key, 'overlay:term:y', 'an agent with no spawn group goes under its first group');
   assert.deepEqual(all.sections[2].items.map((i) => [i.key, i.bucket]), [['bg::tc-z', 'background']], 'an agent in no group is under Not in a group');
   assert.ok(!flat.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
@@ -65,7 +65,7 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.equal(active.hidden, 2, 'the default leaves the two closed items out');
   assert.ok(!active.sections.flatMap((s) => s.items).some((i) => i.bucket === 'closed'), 'the default shows nothing closed');
   const closed = m.filterRail(all, { filter: { states: ['closed'], kinds: m.DEFAULT_FILTER.kinds } });
-  assert.deepEqual(closed.sections.flatMap((s) => s.items).map((i) => i.key), ['board:release', 'page:pg_status']);
+  assert.deepEqual(closed.sections.flatMap((s) => s.items).map((i) => i.key), ['drawing_board:release', 'page:pg_status']);
   const found = m.filterRail(all, { query: 'status' });
   assert.deepEqual(found.sections.flatMap((s) => s.items).map((i) => i.key), ['page:pg_status'], 'a search finds a closed item whatever the chip');
   assert.deepEqual(m.filterRail(all, { query: 'lab' }).sections.map((s) => s.name), ['home-lab'], 'search matches the group name too');
@@ -129,7 +129,7 @@ test('filter: place and kind for every item, what it is doing for an agent; a co
   assert.ok(!m.matchesFilter(agent('idle', 'background'), { ...all, states: all.states.filter((k) => k !== 'background') }),
     'unticking Background hides what runs out of sight');
   assert.ok(m.matchesFilter(agent('awaiting_input', 'minimized'), { ...all, states: ['needs_you', 'open'] }), 'a docked window counts as open');
-  assert.ok(!m.matchesFilter({ kind: 'board', bucket: 'closed' }), 'the default leaves closed items out');
+  assert.ok(!m.matchesFilter({ kind: 'drawing_board', bucket: 'closed' }), 'the default leaves closed items out');
   assert.ok(!m.matchesFilter({ kind: 'shell', bucket: 'background' }, { ...all, kinds: ['agents'] }));
   assert.ok(m.matchesFilter({ kind: 'terminal', bucket: 'open' }, { ...all, kinds: ['shells'] }), 'a terminal with no agent is a shell');
   assert.equal(m.filterChanges(m.DEFAULT_FILTER), 0);
@@ -196,29 +196,29 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
     harness.importDashboardModule('js/collab-rail.js'),
     harness.importDashboardModule('js/resource-places.js'),
   ]);
-  await harness.act(() => { places.stripPaneKeys.value = ['board:launch']; });
+  await harness.act(() => { places.stripPaneKeys.value = ['drawing_board:launch']; });
   const activated = [];
   const actions = { activatePane: (key) => activated.push(key), closePane: () => {}, popOutPane: () => {} };
   const { container } = await harness.mount(harness.html`<${rail.CollabRail}
-    panes=${[{ key: 'board:launch', seed: { board: 'launch' }, label: 'Launch' }]} actions=${actions} snapshot=${{ value: SNAPSHOT }} />`);
+    panes=${[{ key: 'drawing_board:launch', seed: { drawingBoard: 'launch' }, label: 'Launch' }]} actions=${actions} snapshot=${{ value: SNAPSHOT }} />`);
   const root = container.querySelector('[data-collab-rail]');
   const items = () => [...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem);
   assert.deepEqual([...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup), ['tclaude']);
-  assert.deepEqual(items(), ['board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.deepEqual(items(), ['drawing_board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'the default filter shows no count');
   assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
-  assert.equal(root.querySelector('[data-rail-item="board:launch"] .cr-state'), null, 'an item open here needs no words');
+  assert.equal(root.querySelector('[data-rail-item="drawing_board:launch"] .cr-state'), null, 'an item open here needs no words');
   assert.ok(root.querySelector('[data-rail-item="process:pr-review"] [data-rail-lock="process:pr-review"].is-locked'), 'a locked process wears the lock icon');
-  assert.ok(!root.querySelector('[data-rail-item="board:launch"] [data-rail-lock]').classList.contains('is-locked'), 'an unlocked one wears an open lock');
+  assert.ok(!root.querySelector('[data-rail-item="drawing_board:launch"] [data-rail-lock]').classList.contains('is-locked'), 'an unlocked one wears an open lock');
   assert.equal(root.querySelector('[data-lock-badge]'), null, 'the panel has the toggle, not the passive badge');
 
   // A strip tab comes forward on click, and offers pop out and close.
-  const launch = root.querySelector('[data-rail-item="board:launch"]');
+  const launch = root.querySelector('[data-rail-item="drawing_board:launch"]');
   assert.equal(launch.querySelectorAll('.cr-tool:not(.cr-more):not(.cr-gear-btn)').length, 2);
   assert.ok(launch.querySelector('.cr-more'), 'and a ⋯ for the rest');
   assert.ok(launch.querySelector('.cr-gear-btn'), 'and a ⚙ to edit it');
   await harness.act(async () => { harness.fireEvent(launch.querySelector('.cr-name'), 'click'); await wait(); });
-  assert.deepEqual(activated, ['board:launch']);
+  assert.deepEqual(activated, ['drawing_board:launch']);
 
   await harness.act(() => harness.fireEvent(root.querySelector('#collab-filter-btn'), 'click'));
   assert.ok(root.querySelector('#collab-filter-menu').classList.contains('open'));
@@ -230,7 +230,7 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
   await tick('closed', true);
   for (const key of ['open', 'background']) await tick(key, false);
   assert.equal(root.querySelector('#collab-filter-badge').textContent, '3', 'three boxes differ from the default');
-  assert.deepEqual(items(), ['board:release', 'board:net', 'page:pg_status']);
+  assert.deepEqual(items(), ['drawing_board:release', 'drawing_board:net', 'page:pg_status']);
   const search = root.querySelector('.cr-search');
   await harness.act(() => { search.value = 'preview'; harness.fireEvent(search, 'input'); });
   assert.deepEqual(items(), ['page:pg_dash'], 'a search finds a live item while Closed is picked');
@@ -238,7 +238,7 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
 
   await harness.act(() => harness.fireEvent(root.querySelector('[data-collab-filter-reset]'), 'click'));
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'Reset goes back to the default');
-  assert.deepEqual(items(), ['board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.deepEqual(items(), ['drawing_board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
   await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-group="tclaude"] .cr-section-head'), 'click'));
   assert.deepEqual(items(), [], 'a folded group shows only its header');
   assert.equal(root.querySelector('[data-rail-group="tclaude"] .cr-count').textContent, '4');
@@ -403,7 +403,7 @@ test('rail lock: a toggle wins over the stale snapshot until a snapshot row agre
   assert.equal(lock.resourceLocked(snapshot.value, 'process', 'pr-review'), false, 'pending: the toggle wins over the older snapshot row');
   assert.ok(!button().classList.contains('is-locked'), 'a re-read that published nothing does not flip the icon back');
   lock.rememberLock('process', 'pr-review', true);
-  assert.equal(lock.knownLock('process', 'pr-review'), false, 'an older read (a board load) does not undo the pending toggle');
+  assert.equal(lock.knownLock('process', 'pr-review'), false, 'an older read (a drawing board load) does not undo the pending toggle');
   const agreeing = { group_resources: [{ kind: 'process', id: 'pr-review', locked: false }] };
   assert.equal(lock.resourceLocked(agreeing, 'process', 'pr-review'), false, 'the snapshot caught up');
   const flipped = { group_resources: [{ kind: 'process', id: 'pr-review', locked: true }] };
@@ -414,11 +414,11 @@ test('rail lock: a pending toggle no snapshot confirms gives way after PENDING_M
   const harness = await createPreactHarness(t);
   const lock = await harness.importDashboardModule('js/resource-lock.js');
   lock.lockRefresh.run = async () => {};
-  const value = { group_resources: [{ kind: 'board', id: 'old', locked: false }] };
-  await lock.lockChanged('board', 'old', true, { now: Date.now() - lock.PENDING_MS - 1 });
-  assert.equal(lock.resourceLocked(value, 'board', 'old'), false, 'an expired toggle no longer overrides the snapshot');
-  await lock.lockChanged('board', 'old', true);
-  assert.equal(lock.resourceLocked(value, 'board', 'old'), true);
+  const value = { group_resources: [{ kind: 'drawing_board', id: 'old', locked: false }] };
+  await lock.lockChanged('drawing_board', 'old', true, { now: Date.now() - lock.PENDING_MS - 1 });
+  assert.equal(lock.resourceLocked(value, 'drawing_board', 'old'), false, 'an expired toggle no longer overrides the snapshot');
+  await lock.lockChanged('drawing_board', 'old', true);
+  assert.equal(lock.resourceLocked(value, 'drawing_board', 'old'), true);
 });
 
 test('rail lock: where this node cannot change the lock it shows the state and says the slug is needed', async (t) => {
@@ -429,9 +429,9 @@ test('rail lock: where this node cannot change the lock it shows the state and s
   t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
   const posts = [];
   const fetchImpl = async (url, init) => { posts.push(init.body); return { ok: true, json: async () => ({}) }; };
-  const value = { group_resources: [{ kind: 'board', id: 'b1', locked: true }] };
-  const { container } = await harness.mount(harness.html`<${lock.RailLock} kind="board" id="b1" name="Plan" snapshot=${{ value }} fetchImpl=${fetchImpl} />`);
-  const button = container.querySelector('[data-rail-lock="board:b1"]');
+  const value = { group_resources: [{ kind: 'drawing_board', id: 'b1', locked: true }] };
+  const { container } = await harness.mount(harness.html`<${lock.RailLock} kind="drawing_board" id="b1" name="Plan" snapshot=${{ value }} fetchImpl=${fetchImpl} />`);
+  const button = container.querySelector('[data-rail-lock="drawing_board:b1"]');
   assert.ok(button.classList.contains('is-locked'), 'the state still shows');
   assert.equal(button.getAttribute('aria-disabled'), 'true');
   assert.match(button.title, /^Locked\. Group members can read but not edit\. Changing it needs groups\.resources\.lock/);

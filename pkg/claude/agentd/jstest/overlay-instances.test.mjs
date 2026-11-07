@@ -524,7 +524,7 @@ async function floating(t) {
   ]);
   const prefs = memoryPrefs();
   for (const id of ['a', 'b', 'c']) prefs.setItem(`p.${id}`, JSON.stringify({ x: 300, y: 200, w: 400, h: 300, snap: '' }));
-  instances.overlayWindows.value = ['a', 'b', 'c'].map((id) => ({ id, place: `p.${id}`, active: id, tabs: [{ id, kind: 'board', label: `Board ${id}` }] }));
+  instances.overlayWindows.value = ['a', 'b', 'c'].map((id) => ({ id, place: `p.${id}`, active: id, tabs: [{ id, kind: 'drawing_board', label: `Drawing board ${id}` }] }));
   overlay.setSnapAssistEnabled(true);
   overlay.endSnapAssist();
   function Win({ id }) {
@@ -570,7 +570,7 @@ test('snapping a window offers the others for the space it left, and a pick fill
   const s = await floating(t);
   await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
   assert.ok(s.snapped('a'), 'a snapped to the left');
-  assert.deepEqual(s.cards(), ['Board b', 'Board c'], 'the right half offers the rest');
+  assert.deepEqual(s.cards(), ['Drawing board b', 'Drawing board c'], 'the right half offers the rest');
   assert.ok(!s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF), 'nothing is saved before a pick');
   await s.harness.act(() => s.mounted.container.querySelector('.snap-assist-card').click());
   assert.ok(s.snapped('b'), 'b took the space');
@@ -584,7 +584,7 @@ test('a corner snap asks for each space left, the largest first, until a press e
   assert.ok(s.snapped('a'));
   assert.equal(s.cards().length, 2);
   await s.harness.act(() => s.mounted.container.querySelector('.snap-assist-card').click());
-  assert.deepEqual(s.cards(), ['Board c'], 'the next space asks');
+  assert.deepEqual(s.cards(), ['Drawing board c'], 'the next space asks');
   await s.harness.act(() => s.harness.document.body.dispatchEvent(new s.harness.window.Event('pointerdown', { bubbles: true })));
   assert.deepEqual(s.cards(), [], 'a press elsewhere ends it');
   assert.ok(!s.snapped('c'));

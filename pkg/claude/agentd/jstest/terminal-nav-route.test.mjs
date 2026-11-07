@@ -375,11 +375,11 @@ test('unbinding stops both announcing and restoring', async (t) => {
 test('a pane without an agent taking over stops the URL naming the tab it replaced', async (t) => {
   const { state, announced, settle } = await setup(t);
   state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
-  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan' });
+  state.openPane({ drawingBoard: 'plan', key: 'drawing_board:plan', label: 'Plan' });
   await settle();
   announced.length = 0;
 
-  state.removePane('board:plan');
+  state.removePane('drawing_board:plan');
   await settle();
 
   assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
@@ -388,7 +388,7 @@ test('a pane without an agent taking over stops the URL naming the tab it replac
 test('switching to a pane without an agent is a navigation to the bare tab', async (t) => {
   const { state, announced, settle } = await setup(t);
   state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
-  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan' });
+  state.openPane({ drawingBoard: 'plan', key: 'drawing_board:plan', label: 'Plan' });
   await settle();
   announced.length = 0;
 

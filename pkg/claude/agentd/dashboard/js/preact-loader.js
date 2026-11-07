@@ -395,26 +395,26 @@ export function mountCompanionFeature(dependencies = {}) {
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
 
-// A board in its own floating window (tcl-h4y60w). The boards themselves are
+// A drawing board in its own floating window (tcl-h4y60w). The drawing boards themselves are
 // tabs of the terminal shell.
-const boardOverlayDescriptor = createIslandDescriptor({
-  name: 'board-overlay',
-  label: 'Board overlay',
-  hosts: { host: '#board-overlay-root' },
-  failureClass: 'board-overlay-error',
+const drawingBoardOverlayDescriptor = createIslandDescriptor({
+  name: 'drawing-board-overlay',
+  label: 'Drawing board overlay',
+  hosts: { host: '#drawing-board-overlay-root' },
+  failureClass: 'drawing-board-overlay-error',
   load: async ({ hosts: { host } }) => {
-    const islandModule = import('./board-overlay.js');
+    const islandModule = import('./drawing-board-overlay.js');
     const snapshotStoreModule = import('./snapshot-store.js');
-    const [{ mountBoardOverlayIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    const [{ mountDrawingBoardOverlayIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
     return {
-      mount: (registerCleanup) => mountBoardOverlayIsland({ host, registerCleanup, snapshot: dashboardState.snapshot }),
+      mount: (registerCleanup) => mountDrawingBoardOverlayIsland({ host, registerCleanup, snapshot: dashboardState.snapshot }),
     };
   },
 });
 
-export function mountBoardOverlayFeature(dependencies = {}) {
+export function mountDrawingBoardOverlayFeature(dependencies = {}) {
   if (processSoloWindow()) return Promise.resolve(null);
-  return mountIslandDescriptor(boardOverlayDescriptor, dependencies);
+  return mountIslandDescriptor(drawingBoardOverlayDescriptor, dependencies);
 }
 
 // Terminal chrome and open state are one ownership unit across the nav badge,

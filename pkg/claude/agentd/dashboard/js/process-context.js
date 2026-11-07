@@ -327,7 +327,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // setResourceLock locks or unlocks a group resource against agent
     // changes (POST /api/resource-locks, the operator's route): kind is
-    // process (a template id), board (a board id) or page (a page id).
+    // process (a template id), drawing board (a drawing board id) or page (a page id).
     async setResourceLock(kind, id, locked) {
       const body = await processRequest('/api/resource-locks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
@@ -349,9 +349,9 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async reloadGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/reload`, { method: 'POST' }, fetchImpl);
     },
-    // deleteBoard deletes a board and what is drawn on it.
-    async deleteBoard(id) {
-      return processRequest(`/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
+    // deleteDrawingBoard deletes a drawing board and what is drawn on it.
+    async deleteDrawingBoard(id) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
     },
     // renameGroupPage sets a page's title, open or saved closed.
     async renameGroupPage(id, title) {
@@ -365,21 +365,21 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
       }, fetchImpl);
     },
-    // renameBoard sets a board's title.
-    async renameBoard(id, title) {
-      return processRequest(`/api/boards/${encodeURIComponent(id)}/title`, {
+    // renameDrawingBoard sets a drawing board's title.
+    async renameDrawingBoard(id, title) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/title`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
       }, fetchImpl);
     },
-    // moveBoard links a board to another group.
-    async moveBoard(id, group) {
-      return processRequest(`/api/boards/${encodeURIComponent(id)}/group`, {
+    // moveDrawingBoard links a drawing board to another group.
+    async moveDrawingBoard(id, group) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/group`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
       }, fetchImpl);
     },
-    // copyBoard copies a board into group as a new board (id, title).
-    async copyBoard(id, group, title, newId) {
-      return processRequest(`/api/boards/${encodeURIComponent(id)}/copy`, {
+    // copyDrawingBoard copies a drawing board into group as a new drawing board (id, title).
+    async copyDrawingBoard(id, group, title, newId) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/copy`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, title, id: newId }),
       }, fetchImpl);
     },
@@ -387,24 +387,24 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async deleteGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);
     },
-    // boardIds lists every board's id: board ids are node-wide.
-    async boardIds() {
-      const body = await processRequest('/api/boards', {}, fetchImpl);
-      return (Array.isArray(body.boards) ? body.boards : []).map((board) => String(board?.id || '')).filter(Boolean);
+    // drawingBoardIds lists every drawing board's id: drawing board ids are node-wide.
+    async drawingBoardIds() {
+      const body = await processRequest('/api/drawing-boards', {}, fetchImpl);
+      return (Array.isArray(body.drawingBoards) ? body.drawingBoards : []).map((drawingBoard) => String(drawingBoard?.id || '')).filter(Boolean);
     },
-    // createGroupBoard creates a board and links it to a group. A board the
+    // createGroupDrawingBoard creates a drawing board and links it to a group. A drawing board the
     // link fails for is deleted again rather than left behind unlinked.
-    async createGroupBoard(group, title, id) {
+    async createGroupDrawingBoard(group, title, id) {
       const json = { 'Content-Type': 'application/json' };
-      const board = await processRequest('/api/boards', { method: 'POST', headers: json, body: JSON.stringify({ title, id: id || undefined }) }, fetchImpl);
-      const path = `/api/boards/${encodeURIComponent(board.id)}`;
+      const drawingBoard = await processRequest('/api/drawing-boards', { method: 'POST', headers: json, body: JSON.stringify({ title, id: id || undefined }) }, fetchImpl);
+      const path = `/api/drawing-boards/${encodeURIComponent(drawingBoard.id)}`;
       try {
         await processRequest(`${path}/group`, { method: 'POST', headers: json, body: JSON.stringify({ group }) }, fetchImpl);
       } catch (cause) {
         await processRequest(path, { method: 'DELETE' }, fetchImpl).catch(() => {});
         throw cause;
       }
-      return board;
+      return drawingBoard;
     },
     // deleteTemplate removes a template with its history, pins and listing.
     async deleteTemplate(templateId) {

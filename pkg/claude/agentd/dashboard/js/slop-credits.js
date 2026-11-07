@@ -14,7 +14,7 @@
 // thing the dashboard has to productivity — so it pays the most and,
 // like 'win-pull' (a hand-pulled 7-7-7), is attributed to the owning
 // agent for the leaderboard. 'win-spawn' / 'win-mega' aren't tied to a
-// single row, so they add to the global credits pot but not the board.
+// single row, so they add to the global credits pot but not the drawing board.
 //
 // Everything here is session-only and purely cosmetic: nothing is
 // persisted, nothing leaves the page, and the numbers reset on reload.

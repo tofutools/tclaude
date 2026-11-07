@@ -1,5 +1,5 @@
 // resource-model.js -- one state for every group resource (tcl-1lth8e): a
-// page, board, process or shell (a group's or an agent's) reads the same everywhere it is listed
+// page, drawing board, process or shell (a group's or an agent's) reads the same everywhere it is listed
 // (the Groups tab, the Collab rail). The snapshot's group_resources says what
 // the server knows: running (a page's stage is live, a run is active, a
 // group's shell is up) or closed (it exists, nothing is live). This browser
@@ -25,7 +25,7 @@ export const resourceKey = (resource) => `${resource.kind}:${resource.id}`;
 export function overlayResourceKey(tab) {
   if (!tab) return '';
   if (tab.kind === 'page' && tab.page) return `page:${tab.page}`;
-  if (tab.kind === 'board' && tab.board) return `board:${tab.board}`;
+  if (tab.kind === 'drawing_board' && tab.drawingBoard) return `drawing_board:${tab.drawingBoard}`;
   // A process editor's overlay tab names its template (process-editor-place.js).
   if (tab.kind === 'process' && (tab.template || tab.process)) return `process:${tab.template || tab.process}`;
   const pane = String(tab.paneKey || tab.key || '');
@@ -51,7 +51,7 @@ export const shellPaneKey = (resource) => (String(resource.id).startsWith('term:
 // none.
 export function stripResourceKey(key) {
   const k = String(key || '');
-  return shellPaneResourceKey(k) || (/^(page|board|process):./.test(k) ? k : '');
+  return shellPaneResourceKey(k) || (/^(page|drawing_board|process):./.test(k) ? k : '');
 }
 
 // browserPlaces maps resource keys to where this browser shows them, from its

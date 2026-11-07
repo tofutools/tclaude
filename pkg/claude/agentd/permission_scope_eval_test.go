@@ -25,7 +25,7 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		Remote:          "github.com/acme/repo",
 		LinearTeam:      "TCL",
 		AWBWorkspace:    "awb",
-		Resource:        "board:b",
+		Resource:        "drawing_board:b",
 		RemotePeer:      "inst_x",
 	}
 	for dim := range permissionScopeDimensions {
@@ -367,7 +367,7 @@ func init() {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
-	PermResourcesRead:                     "requireGroupResourceAccess / requireGroupsResourceAccess evaluate Group and Resource per resource (agentReachesThroughScopedUmbrella); the board and template lists filter per item",
+	PermResourcesRead:                     "requireGroupResourceAccess / requireGroupsResourceAccess evaluate Group and Resource per resource (agentReachesThroughScopedUmbrella); the drawing board and template lists filter per item",
 	PermResourcesWrite:                    "requireGroupResourceAccess / requireGroupsResourceAccess evaluate Group (every group for a write) and Resource (agentReachesThroughScopedUmbrella)",
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
@@ -447,8 +447,8 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsPagesRead:                   "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
 	PermGroupsResourcesRead:               "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
 	PermGroupsResourcesWrite:              "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
-	PermTaskboardRead:                     "requireTaskboard / agentReadsTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the board's group}",
-	PermTaskboardWrite:                    "requireTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the board's group}",
+	PermTaskboardRead:                     "requireTaskboard / agentReadsTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
+	PermTaskboardWrite:                    "requireTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
 	PermTaskboardManage:                   "handleTaskboardWritersSet (taskboard_assign.go) — requireGroupPermission with ActionContext{Group}",
 	PermTaskboardAssign:                   "handleTaskboardAssign / requireTaskboardAssigneeAction (taskboard_assign.go) — requireGroupPermission with ActionContext{Group, TargetAgent}",
 	PermGroupsResourcesLock:               "handleAgentResourceLock / agentHoldsResourceLock (group_resource_access.go) — ActionContext{Group} for each group the resource belongs to",

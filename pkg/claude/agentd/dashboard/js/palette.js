@@ -370,7 +370,7 @@ export function buildCommands(snapshot) {
     peerView: 'operator', what: 'its snapshot library', icon: '📸', label: wiz('Snapshots…', 'Captured heroes…'),
     hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
       'the library of captured heroes: capture, summon from, share or publish them'),
-    keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',
+    keywords: 'snapshot snapshots library paf fork spawn share drawing board publish resilience capture',
     run: () => openSnapshots(),
   });
   cmds.push({
@@ -1057,14 +1057,14 @@ export function buildCommands(snapshot) {
   // A drawing board, a live page or a process made in a named group, as the
   // group's ＋ makes them ("open drawing board in tclaude"). The group's
   // shell is §1's "Open terminal in group". Last, so a plain word they
-  // share with an older command (process, board, start) keeps its old first hit.
+  // share with an older command (process, drawing board, start) keeps its old first hit.
   const make = defaultNewContext();
   cmds.push(...buildResourceCreateCommands(groups, {
     wiz,
     processes: processesAvailable(snap),
     touch: recordGroupInteraction,
     make: {
-      board: make.board,
+      drawingBoard: make.drawingBoard,
       page: (g) => make.page(g, []),
       process: (g) => requestProcessStart({ group: g.name }, {
         prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],

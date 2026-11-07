@@ -259,10 +259,10 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 	body := map[string]any{"target": pageTargetForDaemon(target), "title": p.Title, "name": p.Name, "group": p.Group, "private": p.Private, "adopt": p.Adopt}
 	var resp pageWire
 	if err := DaemonRequest(http.MethodPost, "/v1/pages", body, &resp, DaemonOpts{Timeout: 30 * time.Second}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	verb := "Updated"
 	switch {
@@ -319,10 +319,10 @@ func runPageLs(p *pageLsParams, stdout, stderr io.Writer) int {
 		Shared []pageWire `json:"shared"`
 	}
 	if err := DaemonRequest(http.MethodGet, "/v1/pages", nil, &resp, DaemonOpts{}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	if len(resp.Pages) == 0 && len(resp.Shared) == 0 {
 		fmt.Fprintln(stdout, "No live pages.")
@@ -347,7 +347,7 @@ func runPageLs(p *pageLsParams, stdout, stderr io.Writer) int {
 
 func runPageClose(name string, stdout, stderr io.Writer) int {
 	if err := DaemonRequest(http.MethodDelete, pageAPIPath(name, "", nil), nil, nil, DaemonOpts{}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Closed page %q.\n", name)
 	return rcOK
@@ -424,10 +424,10 @@ func runPageMarks(p *pageMarksParams, name string, stdout, stderr io.Writer) int
 	}
 	path := pageAPIPath(name, "/marks", q)
 	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	if len(resp.Batches) == 0 {
 		fmt.Fprintf(stdout, "No marks on page %q", name)
@@ -496,7 +496,7 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Write
 	}
 	body := map[string]any{"seq": p.Seq, "no_marks": p.NoMarks}
 	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/snapshot", nil), body, &resp, DaemonOpts{Timeout: 60 * time.Second}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	png, err := base64.StdEncoding.DecodeString(resp.PNG)
 	if err != nil {
@@ -509,7 +509,7 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Write
 	}
 	resp.PNG = ""
 	if p.JSON {
-		return writeBoardJSON(stdout, map[string]any{"file": p.Out, "width": resp.Width, "height": resp.Height,
+		return writeDrawingBoardJSON(stdout, map[string]any{"file": p.Out, "width": resp.Width, "height": resp.Height,
 			"scroll_x": resp.ScrollX, "scroll_y": resp.ScrollY, "path": resp.Path, "marks_seq": resp.MarksSeq})
 	}
 	marks := "no marks"
@@ -577,10 +577,10 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 	}
 	body := map[string]any{"selector": selector, "mode": mode}
 	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/dom", nil), body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	if resp.Error != "" {
 		fmt.Fprintf(stderr, "error: the page: %s\n", resp.Error)
@@ -623,10 +623,10 @@ func runPagePatch(p *pagePatchParams, name string, body map[string]any, stdout, 
 		Withheld bool                  `json:"withheld,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/patches", nil), body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	fmt.Fprintf(stdout, "Live patch #%d on %s: %s.\n", resp.Patch, resp.Page, pagePatchWhere(resp.Views, resp.Results, resp.Withheld))
 	fmt.Fprintln(stdout, "It is not in your source: port what the operator approves, then `tclaude agent page patches "+resp.Page+" --reset`.")
@@ -683,10 +683,10 @@ func runPageEval(p *pagePatchParams, name, js string, stdin io.Reader, stdout, s
 		Error string          `json:"error,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/eval", nil), map[string]any{"js": js}, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		if rc := writeBoardJSON(stdout, resp); rc != rcOK || resp.Error == "" {
+		if rc := writeDrawingBoardJSON(stdout, resp); rc != rcOK || resp.Error == "" {
 			return rc
 		}
 		return rcIOFailure
@@ -735,10 +735,10 @@ func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Write
 			Left    int     `json:"left"`
 		}
 		if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
-			return boardErr(stderr, err)
+			return drawingBoardErr(stderr, err)
 		}
 		if p.JSON {
-			return writeBoardJSON(stdout, resp)
+			return writeDrawingBoardJSON(stdout, resp)
 		}
 		if len(resp.Dropped) == 0 {
 			fmt.Fprintf(stdout, "%s has no live patches.\n", resp.Page)
@@ -754,10 +754,10 @@ func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Write
 		Patches []pagePatchWire `json:"patches"`
 	}
 	if err := DaemonRequest(http.MethodGet, pageAPIPath(name, "/patches", nil), nil, &resp, DaemonOpts{}); err != nil {
-		return boardErr(stderr, err)
+		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		return writeDrawingBoardJSON(stdout, resp)
 	}
 	if len(resp.Patches) == 0 {
 		fmt.Fprintf(stdout, "%s has no live patches: it shows its source.\n", resp.Page)

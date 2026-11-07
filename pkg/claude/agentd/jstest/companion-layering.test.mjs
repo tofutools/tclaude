@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const sheets = ['dashboard.css', 'companion.css', 'board.css', 'mux.css', 'terminals.css', 'process-kit.css', 'process-terminal-overlay.css'];
+const sheets = ['dashboard.css', 'companion.css', 'drawing-board.css', 'mux.css', 'terminals.css', 'process-kit.css', 'process-terminal-overlay.css'];
 const LAYERS = ['content', 'window', 'chrome', 'panel', 'dialog', 'popover', 'confirm', 'toast', 'system'];
 
 // Popovers that sit inside something else's stacking context, so their own
@@ -54,7 +54,7 @@ test('the docs offer stays above every window, a dialog above it', async () => {
   const rules = await zRules();
   const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
   const windowTop = LAYERS.indexOf('chrome') * 1000 - 1;
-  assert.ok(zOf('.knowledge-source-card') > windowTop, 'a window or board never hides its question');
+  assert.ok(zOf('.knowledge-source-card') > windowTop, 'a window or drawing board never hides its question');
   assert.ok(zOf('.modal-overlay') > zOf('.knowledge-source-card'), 'a dialog covers it');
   const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
   assert.match(css, /@media \(max-width: 660px\) \{\s*body\.dock-open \.knowledge-source-card \{ z-index: var\(--z-panel\); \}/, 'a narrow window keeps it off the dock\'s underside');

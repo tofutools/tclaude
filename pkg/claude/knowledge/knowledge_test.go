@@ -28,8 +28,8 @@ const testCommit = "6e63f4ec14c977c7b4f464b47a6a31b32196bcb2"
 var testDocs = fstest.MapFS{
 	"index.md": {Data: []byte("# Home\n\nSee [the companion](companion.md#the-steward) and [the web](https://example.com/x.md).\n")},
 	"companion.md": {Data: []byte("# Companion\n\nIntro to [home](index.md).\n\n## The Steward\n\nIt helps.\n\n" +
-		"```bash\n# not a heading\n[not a link](index.md)\n```\n\n### Capture: seeing\n\nDeep, see [boards](learn/boards.md).\n\n## Next\n\nOther.\n")},
-	"learn/boards.md": {Data: []byte("# Boards\n\nBack to [the companion](../companion.md).\n")},
+		"```bash\n# not a heading\n[not a link](index.md)\n```\n\n### Capture: seeing\n\nDeep, see [drawing boards](learn/drawing-boards.md).\n\n## Next\n\nOther.\n")},
+	"learn/drawing-boards.md": {Data: []byte("# Drawing boards\n\nBack to [the companion](../companion.md).\n")},
 }
 
 func TestIdentify(t *testing.T) {
@@ -100,8 +100,8 @@ func TestReadWalksTheGraph(t *testing.T) {
 	assert.Contains(t, section.Content, "### Capture: seeing", "a section holds its subsections")
 	assert.NotContains(t, section.Content, "Other.", "and stops at the next one at its level")
 	require.Len(t, section.Links, 1, "a link in a code block is no edge")
-	assert.Equal(t, "docs/learn/boards.md", section.Links[0].Path)
-	assert.ElementsMatch(t, []Link{{Path: "docs/index.md"}, {Path: "docs/learn/boards.md"}}, section.LinkedFrom)
+	assert.Equal(t, "docs/learn/drawing-boards.md", section.Links[0].Path)
+	assert.ElementsMatch(t, []Link{{Path: "docs/index.md"}, {Path: "docs/learn/drawing-boards.md"}}, section.LinkedFrom)
 
 	nested, err := base.Read(ReadRequest{Path: "docs/companion.md#capture-seeing"})
 	require.NoError(t, err)
