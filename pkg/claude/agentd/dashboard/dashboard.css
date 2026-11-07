@@ -9356,6 +9356,11 @@ label.cfg-label { cursor: pointer; }
 }
 .cfg-row-ctl:empty { display: none; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
+/* steward.dir: a path field that takes the row's width, with Browse… beside it. */
+.cfg-dir-picker { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 640px; }
+.cfg-dir-picker-row { display: flex; gap: 8px; align-items: stretch; }
+.cfg-dir-picker-row input[type=text] { flex: 1 1 auto; min-width: 0 }
+.cfg-dir-picker-row .dir-browse-btn { flex: 0 0 auto; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
 /* .ui-compact sets the cell padding and the row lines. */

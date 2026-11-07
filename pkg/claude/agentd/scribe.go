@@ -448,6 +448,17 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	if !ok {
 		return nil, false, &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory for scribe workdir"}
 	}
+	// A Steward starts in the operator's steward.dir when one is set. It is
+	// the operator's own directory, so it must already exist: the daemon
+	// creates only its own scribe workdir.
+	stewardDir := ""
+	if g.Name == stewardGroupName {
+		if dir, fail := configuredStewardDir(); fail != nil {
+			return nil, false, fail
+		} else if dir != "" {
+			stewardDir, cwd = dir, dir
+		}
+	}
 
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
@@ -483,12 +494,14 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	}
 	if denial := fixedWorkdirDenial(p.EffectiveSandbox, cwd); denial != "" {
 		return nil, false, &spawnFailure{http.StatusUnprocessableEntity, "sandbox_denies_workdir", fmt.Sprintf(
-			"cannot summon into group %q: %s, and a scribe always works in %s. "+
+			"cannot summon into group %q: %s, and this scribe works in %s. "+
 				"Remove the deny, or change the sandbox profile assigned to the group or the workspace",
 			g.Name, denial, cwd)}
 	}
-	if _, fail := ensureScribeWorkdir(); fail != nil {
-		return nil, false, fail
+	if stewardDir == "" {
+		if _, fail := ensureScribeWorkdir(); fail != nil {
+			return nil, false, fail
+		}
 	}
 	// Pre-trust the workdir for the harness this scribe launches on, so its
 	// detached pane comes up without a folder-trust prompt (JOH-369). The
@@ -620,6 +633,26 @@ func scribeWorkdir() (string, bool) {
 	return filepath.Join(dir, "scribe"), true
 }
 
+// configuredStewardDir is the operator's steward.dir, or "" when unset. A set
+// directory that is missing or not a directory refuses the summon, rather than
+// quietly starting the Steward somewhere else.
+func configuredStewardDir() (string, *spawnFailure) {
+	cfg, err := config.LoadShared()
+	if err != nil {
+		return "", &spawnFailure{http.StatusInternalServerError, "config", err.Error()}
+	}
+	dir := cfg.StewardDir()
+	if dir == "" {
+		return "", nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return "", &spawnFailure{http.StatusUnprocessableEntity, "steward_dir",
+			fmt.Sprintf("the Steward's start directory %s is not a directory on this machine: change it in Config > Steward", dir)}
+	}
+	return dir, nil
+}
+
 // ensureScribeWorkdir resolves and creates the shared scribe workdir. 0700:
 // it's a private per-user scratch dir agents operate in — no need for group /
 // other access.
@@ -681,7 +714,9 @@ func stampScribeProfileFromConfig(g *db.AgentGroup) {
 // Best-effort by design: a failure logs and the summon proceeds — the worst
 // case is a single one-time trust dialog the human clears via the pane's focus
 // button, never a failed summon. Human-consented by construction: it only ever
-// pre-trusts the daemon-created scribe dir, never a caller-supplied path.
+// pre-trusts the daemon-created scribe dir or the Steward's steward.dir, which
+// only the operator sets (Config is a dashboard-only surface), never a
+// caller-supplied path.
 func seedScribeDirTrust(harnessName, dir string) {
 	switch harnessName {
 	case harness.CodexName:

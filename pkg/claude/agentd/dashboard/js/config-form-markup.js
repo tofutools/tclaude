@@ -3,6 +3,7 @@ import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { pickDirectory } from './helpers.js';
 import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
@@ -40,6 +41,43 @@ function ConfigInput(props) { return routedControl('input', props); }
 function ConfigSelect(props) { return routedControl('select', props); }
 function ConfigTextarea(props) { return routedControl('textarea', props); }
 function ConfigButton(props) { return routedControl('button', props); }
+
+// StewardDirInput is steward.dir: a typed path plus the shared directory
+// picker. A pick writes the input and fires an input event on it, so the form
+// marks itself dirty exactly as typing would.
+function StewardDirInput() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const browse = async () => {
+    if (busy) return;
+    const input = document.getElementById('cfg-steward-dir');
+    setError('');
+    setBusy(true);
+    try {
+      const result = await pickDirectory({
+        startDir: (input?.value || '').trim(),
+        title: 'Select the directory a new Steward starts in',
+      });
+      if (result.error) setError(result.error);
+      else if (result.path && input) {
+        input.value = result.path;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="cfg-dir-picker">
+    <div class="cfg-dir-picker-row">
+      <${ConfigInput} type="text" id="cfg-steward-dir" spellcheck="false" autocomplete="off"
+        aria-label="Steward start directory" placeholder="~/.tclaude/scribe" />
+      <${Button} id="cfg-steward-dir-browse" class="dir-browse-btn" disabled=${busy}
+        title="Browse for a directory" onClick=${() => { void browse(); }}>${busy ? 'Opening…' : 'Browse…'}<//>
+    </div>
+    ${error && html`<div class="cfg-hint ui-hint ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
 
 // KnowledgeSourceSetting shows what is stored and offers to fetch or remove it.
 function KnowledgeSourceSetting() {
@@ -1166,6 +1204,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <${Setting} title="Spawn profile" forId="cfg-steward-profile" k="steward.profile"
           summary="The spawn profile a new Steward launches with. Unset, it uses the global default profile.">
           <${ConfigSelect} id="cfg-steward-profile" aria-label="Steward spawn profile" style="min-width:160px"></${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Start directory" forId="cfg-steward-dir" wide k="steward.dir"
+          summary="The directory a new Steward starts in. Unset, it starts in the shared scribe directory, ~/.tclaude/scribe. A running Steward stays where it started."
+          more="An absolute path or one under ~/, and it must exist when the Steward is summoned. Point it at a repository and the Steward's harness reads that repository's project instructions and memory, and the folder is pre-trusted for the Steward's harness. A sandbox profile that denies the directory refuses the summon.">
+          <${StewardDirInput} />
         </${Setting}>
       </${Group}>
       <${Group} title="Knowledge base">

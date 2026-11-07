@@ -212,6 +212,7 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 | Access | Writes | `steward.writes` | `messaging` |
 | Access | Default permissions | stored permissions, saved from their own editor | Reads and Writes only |
 | Launch | Spawn profile | `steward.profile` | global default profile |
+| Launch | Start directory | `steward.dir` (Browse… opens the directory picker) | `~/.tclaude/scribe`; a set directory must exist when the Steward is summoned |
 | Knowledge base | Source download | `steward.source_download` | `ask` |
 | Name and startup | Name | `steward.name` | Steward |
 | Name and startup | Startup prompt | `steward.startup_prompt` | empty |

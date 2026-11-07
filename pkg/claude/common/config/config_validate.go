@@ -571,6 +571,13 @@ func validateSteward(c *Config) []string {
 	if name := c.stewardNameSetting(); name != "" && !validStewardName(name) {
 		errs = append(errs, fmt.Sprintf("steward.name: must be at most %d characters: letters and digits, with single spaces, - or _ between them", MaxStewardNameLen))
 	}
+	if c.Steward != nil {
+		if _, ok := expandStewardDir(c.Steward.Dir); !ok {
+			errs = append(errs, fmt.Sprintf("steward.dir %q: must be an absolute path or start with ~/", c.Steward.Dir))
+		} else if strings.ContainsFunc(c.Steward.Dir, unicode.IsControl) {
+			errs = append(errs, "steward.dir: must not contain control characters")
+		}
+	}
 	if prompt := c.StewardStartupPrompt(); len(prompt) > MaxStewardStartupPromptLen {
 		errs = append(errs, fmt.Sprintf("steward.startup_prompt: must be at most %d bytes", MaxStewardStartupPromptLen))
 	} else if strings.ContainsFunc(prompt, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
