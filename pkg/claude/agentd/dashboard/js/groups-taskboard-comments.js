@@ -24,8 +24,17 @@ const html = htm.bind(h);
 // the composer and a comment being edited.
 export const COMMENT_AREA = '.tb-comment-composer, .tb-comment-editor';
 
-// COMMENT_MAX is a comment's size limit, as the server holds it.
+// COMMENT_MAX is a comment's size limit in UTF-8 bytes, as the server holds
+// it; maxLength on the box counts characters, so the bytes are checked too.
 export const COMMENT_MAX = 16 << 10;
+
+// commentBytes is a comment's size as the server counts it.
+export function commentBytes(text) {
+  return new TextEncoder().encode(String(text || '').trim()).length;
+}
+
+const tooLong = (text) => commentBytes(text) > COMMENT_MAX;
+const TOO_LONG = `over ${COMMENT_MAX >> 10} KiB: shorten it`;
 
 // REASON_LABEL names a typed comment: a reason the task carries.
 const REASON_LABEL = { block_reason: 'blocked', done_reason: 'done', drop_reason: 'dropped', report_note: 'report' };
@@ -98,6 +107,7 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
   const save = () => {
     const body = (editing || '').trim();
     if (!body || body === comment.body) { setEditing(null); return; }
+    if (tooLong(body)) return;
     void run('Edit', () => api.editComment(taskId, comment.id, body));
   };
   const remove = async () => {
@@ -127,7 +137,8 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
                 if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditing(null); }
               }} />
             <span class="tb-comment-editor-acts">
-              <${Button} size="sm" variant="primary" busy=${busy} disabled=${busy || !editing.trim()} onClick=${save}>Save comment<//>
+              <${Button} size="sm" variant="primary" busy=${busy} disabled=${busy || !editing.trim() || tooLong(editing)} onClick=${save}>Save comment<//>
+              ${tooLong(editing) && html`<span class="ui-hint tb-comment-too-long">${TOO_LONG}</span>`}
               <${Button} size="sm" variant="ghost" disabled=${busy} onClick=${() => setEditing(null)}>Cancel<//>
             </span>
           </div>`
@@ -166,7 +177,7 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     if (typeof api?.activity !== 'function') { setStream({ state: 'failed', entries: [] }); return undefined; }
     let live = true;
     api.activity(task.id).then((out) => {
-      if (live) setStream({ state: 'ready', entries: Array.isArray(out?.entries) ? out.entries : [] });
+      if (live) setStream({ state: 'ready', entries: Array.isArray(out?.entries) ? out.entries : [], error: '' });
     }).catch((cause) => { if (live) setStream((before) => ({ ...before, state: before.entries.length ? 'ready' : 'failed', error: cause?.message || String(cause) })); });
     return () => { live = false; };
   }, [task.id, reads, task.comment_count, task.updated_at]);
@@ -194,6 +205,7 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
       if (files.length) shellToast('A comment needs text: say what the files are', true);
       return;
     }
+    if (tooLong(body)) return;
     sendingRef.current = true;
     setSending(true);
     try {
@@ -217,6 +229,7 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
   return html`<div class="tb-activity" data-task-activity=${task.id}>
     ${stream.state === 'loading' && html`<div class="ui-hint">reading the activity…</div>`}
     ${stream.state === 'failed' && html`<div class="ui-hint">the activity could not be read${stream.error ? `: ${stream.error}` : ''}</div>`}
+    ${stream.state === 'ready' && stream.error && html`<div class="ui-hint tb-activity-stale">the activity could not be read again (${stream.error}): it may miss the latest</div>`}
     ${entries.length > 0 && html`<ol class="tb-activity-list" ref=${list}>
       ${entries.map((entry, i) => (entry.comment
         ? html`<${CommentEntry} key=${`c-${entry.comment.id}`} api=${api} taskId=${task.id} entry=${entry} me=${me} nameOf=${nameOf}
@@ -227,13 +240,21 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     <div class=${`tb-comment-composer${intake.dragOver ? ' files-drag-over' : ''}`} ...${intake.handlers}>
       <${Textarea} class="tb-comment-new" rows=${3} value=${draft} maxLength=${COMMENT_MAX} disabled=${sending}
         placeholder="Write a comment (Markdown) · Ctrl+Enter sends"
-        onInput=${(event) => { setDraft(event.currentTarget.value); key.current = newCommentKey(); }}
+        onInput=${(event) => {
+          const next = event.currentTarget.value;
+          // The key names the comment as sent (trimmed): an edit that sends
+          // the same text keeps it, so a retry after a lost answer is not a
+          // second comment.
+          if (next.trim() !== draft.trim()) key.current = newCommentKey();
+          setDraft(next);
+        }}
         onKeyDown=${(event) => {
           if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); void send(); }
         }} />
+      ${tooLong(draft) && html`<span class="ui-hint tb-comment-too-long">${TOO_LONG}</span>`}
       <span class="tb-comment-send-row">
         <${FilesField} intake=${intake} attachments=${files} busy=${sending} hint="files go with the comment: 📎, or paste into it" />
-        <${Button} size="sm" variant="primary" id="taskboard-comment-send" busy=${sending} disabled=${sending || (!draft.trim() && !files.length)}
+        <${Button} size="sm" variant="primary" id="taskboard-comment-send" busy=${sending} disabled=${sending || (!draft.trim() && !files.length) || tooLong(draft)}
           onClick=${() => void send()}>${sending ? 'Sending…' : 'Comment'}<//>
       </span>
     </div>

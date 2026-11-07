@@ -160,3 +160,57 @@ test('a row shows its 💬 count, which opens the edit form at the comments', as
   await harness.act(() => harness.fireEvent(counts[0], 'click'));
   assert.equal(opened, 1);
 });
+
+test('a comment over 16 KiB of UTF-8 is held back before it is sent, though it fits maxLength in characters', async (t) => {
+  const api = fakeApi();
+  const { harness, container, settle } = await mountActivity(t, { api });
+  const box = container.querySelector('.tb-comment-new');
+  await harness.input(box, '漢'.repeat(6000)); // 6,000 characters, 18,000 bytes
+  assert.equal(container.querySelector('#taskboard-comment-send').disabled, true);
+  assert.match(container.querySelector('.tb-comment-too-long').textContent, /over 16 KiB/);
+  await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter', ctrlKey: true }));
+  await settle();
+  assert.equal(api.calls.filter((c) => c[0] === 'comment').length, 0, 'nothing is sent the server would refuse');
+});
+
+test('a failed re-read keeps the stream and says it may be stale', async (t) => {
+  const api = fakeApi();
+  let fail = false;
+  const read = api.activity;
+  api.activity = async (id) => { if (fail) throw new Error('node offline'); return read(id); };
+  const { harness, container, settle } = await mountActivity(t, { api });
+  fail = true;
+  await harness.input(container.querySelector('.tb-comment-new'), 'one more');
+  await harness.act(() => harness.fireEvent(container.querySelector('#taskboard-comment-send'), 'click'));
+  await settle();
+  assert.ok(container.querySelector('[data-comment="3"]'), 'the stream stays');
+  assert.match(container.querySelector('.tb-activity-stale').textContent, /could not be read again \(node offline\)/);
+});
+
+test('an edit that sends the same text keeps the key: trailing spaces after a lost answer are no second comment', async (t) => {
+  const api = fakeApi({ failComment: 1 });
+  const { harness, container, settle } = await mountActivity(t, { api });
+  const box = container.querySelector('.tb-comment-new');
+  await harness.input(box, 'Ship it');
+  await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter', ctrlKey: true }));
+  await settle();
+  await harness.input(box, 'Ship it  ');
+  await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter', ctrlKey: true }));
+  await settle();
+  const keys = api.calls.filter((c) => c[0] === 'comment').map((c) => c[3]);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[1], keys[0], 'the same comment, the same key');
+});
+
+test('the viewer\'s author follows this node\'s id arriving after the first paint', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { myAuthor } = await harness.importDashboardModule('js/groups-taskboard-comments.js');
+  const { setSelfNode } = await harness.importDashboardModule('js/node-api.js');
+  setSelfNode('');
+  t.after(() => setSelfNode(''));
+  function Who() { return harness.html`<span class="who">${myAuthor('inst_other1', { peerPage: false })}</span>`; }
+  const { container } = await harness.mount(harness.html`<${Who} />`);
+  assert.equal(container.querySelector('.who').textContent, '', 'unknown at first: no Edit offered');
+  await harness.act(() => setSelfNode('inst_mine1'));
+  assert.equal(container.querySelector('.who').textContent, 'peer:inst_mine1', 'and the render follows once it is known');
+});

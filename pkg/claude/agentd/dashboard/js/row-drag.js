@@ -20,8 +20,9 @@
 // gestures. That is safe: the drag-vs-click decision is made during the move
 // BEFORE pointerup. Only the row this guard turned off is turned back on.
 
-// ROW_DRAG_CONTROLS are the elements a press on is a click, not a drag.
-export const ROW_DRAG_CONTROLS = 'button, a, input, select, textarea, label, [data-act], [contenteditable], [role="button"]';
+// ROW_DRAG_CONTROLS are the elements a press on is a click, not a drag: a
+// control, or anywhere in a hover card a row holds (a PR's, a task's).
+export const ROW_DRAG_CONTROLS = 'button, a, input, select, textarea, label, [data-act], [contenteditable], [role="button"], .ui-popover';
 
 // bindRowDragGuard guards the rows matching rowSelector on doc. It returns
 // { unbind, restore }: restore turns a row it suppressed back on (a drag's
@@ -54,8 +55,9 @@ export function bindRowDragGuard(doc, rowSelector) {
 }
 
 // bindTaskRowDrag guards the task board List's rows (groups-taskboard.js
-// marks a draggable one data-dnd-task); dashboard.js binds it with the agent
-// and resource rows' drags. It returns the unbind.
+// marks a draggable one data-dnd-task) and its Lanes cards (data-dnd-card),
+// whose titles are buttons that open the task; dashboard.js binds it with the
+// agent and resource rows' drags. It returns the unbind.
 export function bindTaskRowDrag(doc = globalThis.document) {
-  return bindRowDragGuard(doc, 'tr[data-dnd-task]').unbind;
+  return bindRowDragGuard(doc, 'tr[data-dnd-task], .tb-card[data-dnd-card]').unbind;
 }

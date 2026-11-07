@@ -8,18 +8,22 @@
 // (from a peer's page), and the peer proxy for any other peer. The peer
 // decides what it allows (its peer-view grants); this only addresses it.
 
+import { signal } from '@preact/signals';
+
 const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 
 // selfNode is this node's instance ID, which fleet-state.js reports once the
 // federation status names it.
-let selfNode = '';
+// It is a signal, so a render that reads it (a comment's author check)
+// follows the federation status arriving after the first paint.
+const selfNode = signal('');
 
 export function setSelfNode(id) {
-  selfNode = NODE_ID.test(id || '') ? id : '';
+  selfNode.value = NODE_ID.test(id || '') ? id : '';
 }
 
 export function selfNodeID() {
-  return selfNode;
+  return selfNode.value;
 }
 
 // peerPath addresses an /api/ path (or the /v1/process/ API, or a group's
@@ -47,7 +51,7 @@ export function onPeerPage(remote = globalThis.__tclaudeRemoteNode) {
 
 // isPageNode reports whether node is the page's own node (blank included):
 // its requests are the page's plain fetch, and its data the page snapshot.
-export function isPageNode(node, { self = selfNode, remote = globalThis.__tclaudeRemoteNode } = {}) {
+export function isPageNode(node, { self = selfNode.value, remote = globalThis.__tclaudeRemoteNode } = {}) {
   return !node || node === (remote?.id || self);
 }
 
@@ -55,7 +59,7 @@ export function isPageNode(node, { self = selfNode, remote = globalThis.__tclaud
 // node's instance ID (needed only to reach it from a peer's page); a blank
 // node, or the page's own node, is the page's fetch.
 export function nodeFetch(node, {
-  self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+  self = selfNode.value, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
   if (isPageNode(node, { self, remote })) return fetchImpl;
   if (node === self && remote?.localFetch) return remote.localFetch;
@@ -72,7 +76,7 @@ export function nodeFetch(node, {
 // /api/peer-download/{node}, which reads it from that node in chunks; on a
 // peer's page that is the page's own node too. It is a path on this node's
 // daemon, which a peer's page reaches through localFetch (or an anchor).
-export function nodeDownloadPath(node, path, { self = selfNode, remote = globalThis.__tclaudeRemoteNode } = {}) {
+export function nodeDownloadPath(node, path, { self = selfNode.value, remote = globalThis.__tclaudeRemoteNode } = {}) {
   const target = node || remote?.id || '';
   if (!target || target === self) return path;
   if (!NODE_ID.test(target)) throw new Error(`invalid node: ${target}`);
@@ -81,7 +85,7 @@ export function nodeDownloadPath(node, path, { self = selfNode, remote = globalT
 
 // nodeDownload fetches one of node's file downloads (see nodeDownloadPath).
 export function nodeDownload(node, path, {
-  self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+  self = selfNode.value, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
   return (remote?.localFetch || fetchImpl)(nodeDownloadPath(node, path, { self, remote }), { credentials: 'same-origin' });
 }
@@ -93,7 +97,7 @@ export function nodeDownload(node, path, {
 // of fetch: a progress-tracked upload (transfers.js), which like localFetch
 // never goes through a peer page's rerouting fetch.
 export function nodeUpload(node, path, init = {}, {
-  self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+  self = selfNode.value, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
   upload = null,
 } = {}) {
   const target = node || remote?.id || '';

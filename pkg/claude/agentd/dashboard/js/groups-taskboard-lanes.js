@@ -28,9 +28,10 @@ import {
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
-import { DepChips, RefChip, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
+import { DepChips, RefChip, actorLabel, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
+import { TaskTitle } from './groups-taskboard-card.js';
 
 const html = htm.bind(h);
 
@@ -246,15 +247,17 @@ function cardHint(task) {
   return null;
 }
 
-// A card opens the edit form on a double-click (onEdit), as ✎ does in the
-// list.
-function Card({ task, n, numbers, drag, onEdit = null }) {
+// A card's title opens the edit form (onEdit), as the List's does, and so
+// does a double-click on the card; hovering the title shows the task's
+// card (groups-taskboard-card.js), which carries its id.
+function Card({ task, numbers, drag, api = null, nameOf = null, onEdit = null }) {
   const done = task.status === 'done';
   return html`<div class=${`ui-card tb-card${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
-      data-task-id=${task.id} draggable=${drag ? 'true' : undefined} title=${onEdit ? `${task.id} · double-click to edit` : task.id}
-      onDblClick=${onEdit ? (event) => { event.preventDefault(); onEdit(task.id); } : undefined}
+      data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
+      onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
-    <div class="tb-card-title">${n ? html`<span class="tb-card-n">${n}</span>` : null}${task.title}</div>
+    <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} numbers=${numbers} onOpen=${onEdit ? () => onEdit(task.id) : null}
+      chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} numbers=${numbers} />` }} /></div>
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} numbers=${numbers} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
   </div>`;
 }
@@ -511,7 +514,7 @@ function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
     onChoose=${(choice) => onNewTask(choice, initial)} />`;
 }
 
-export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null }) {
+export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null }) {
   const tasks = entry.tasks || [];
   const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
   const [, bumpLayout] = useState(0);
@@ -536,7 +539,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
-      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} n=${numbers.get(task.id)} numbers=${numbers}
+      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} numbers=${numbers} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
         onEdit=${actions ? onEdit : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"

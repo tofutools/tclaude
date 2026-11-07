@@ -241,8 +241,9 @@ test("sudo, permission saves and messages on another node's row go to that node"
   ]);
 });
 
-test('direct messages go one per recipient to the node, and a partial refusal is reported', async () => {
-  const { createMessageAccessDialogActions } = await import('../dashboard/js/message-access-dialog-actions.js');
+test('direct messages go one per recipient to the node, and a partial refusal is reported', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const sent = []; const notes = [];
   const fetchImpl = async (url, init) => {
     const body = JSON.parse(init.body); sent.push([url, body.to]);

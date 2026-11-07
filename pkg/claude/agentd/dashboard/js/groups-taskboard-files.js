@@ -49,7 +49,7 @@ export async function readFile(api, taskId, attachment) {
 }
 
 // useThumb is a stored image's thumbnail URL, read once per content.
-function useThumb(api, taskId, attachment) {
+export function useThumb(api, taskId, attachment) {
   const key = attachment.image && attachment.sha256 ? attachment.sha256 : '';
   const [url, setUrl] = useState(() => (key ? thumbs.get(key) || '' : ''));
   useEffect(() => {
