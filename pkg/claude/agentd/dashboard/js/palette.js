@@ -57,6 +57,13 @@ import {
   openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
 import { buildProfileSpawnCommands } from './palette-spawn.js';
+import { buildResourceCreateCommands } from './palette-resources.js';
+import { defaultNewContext } from './collab-new-menu.js';
+import { requestProcessStart } from './process-start-handoff.js';
+import { processesAvailable } from './feature-availability.js';
+import { dashPrefs } from './prefs.js';
+import { groupsState } from './groups-state.js';
+import { showGroupRuns } from './groups-focus.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
@@ -313,7 +320,7 @@ export function buildCommands(snapshot) {
         node: page.id, icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home} on ${name}`, `browser scrying portal in ${home} on ${name}`),
-        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
+        keywords: `open new create make add terminal shell console web term cd home dir directory default cwd resource group ${g.name} terminal ${g.name} shell ${g.name}`
           + ' portal scrying party',
         ...(control.state === 'shell'
           ? { run: () => { recordGroupInteraction(g.name); void openRemote('openRemoteShell', { instance: page.id, peerLabel: name, ...control.shell }); } }
@@ -324,7 +331,7 @@ export function buildCommands(snapshot) {
         peerView: 'own', icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home}`, `browser scrying portal in ${home}`),
-        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
+        keywords: `open new create make add terminal shell console web term cd home dir directory default cwd resource group ${g.name} terminal ${g.name} shell ${g.name}`
           + ' portal scrying party',
         run: () => { recordGroupInteraction(g.name); openGroupWebTermPane(g.name, g.name); },
       });
@@ -552,6 +559,23 @@ export function buildCommands(snapshot) {
       },
     });
   }
+  // A drawing board, a live page or a process made in a named group, as the
+  // group's ＋ makes them ("open drawing board in tclaude"). The group's
+  // shell is §1's "Open terminal in group".
+  const make = defaultNewContext();
+  cmds.push(...buildResourceCreateCommands(groups, {
+    wiz,
+    processes: processesAvailable(snap),
+    touch: recordGroupInteraction,
+    make: {
+      board: make.board,
+      page: (g) => make.page(g, []),
+      process: (g) => requestProcessStart({ group: g.name }, {
+        prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
+        showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,
+      }),
+    },
+  }));
   // The fused Groups view's other nodes' groups (group@node) take theirs on
   // their node.
   const fused = fusedGroupListing();
