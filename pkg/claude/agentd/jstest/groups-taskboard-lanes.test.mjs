@@ -110,6 +110,24 @@ test('laneColumn derives the five columns as the design says', async (t) => {
   assert.equal(kind(building, at('agt_builder', 'progress'), at('agt_tester', 'blocked')), 'assign+block', 'reassign and block');
   assert.equal(kind(building, at('agt_builder', 'progress'), at('', 'done')), null, 'unassign and close is not one move');
   assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'blocked'), { assign: false }), null);
+  // A stalled task (open, shown in its agent's Blocked) onto the Unassigned
+  // lane's Blocked is blocked too; a blocked one is only unassigned.
+  const stalled = b.tasks.find((task) => task.stalled);
+  assert.equal(kind(stalled, at('agt_lead', 'blocked'), at('', 'blocked')), 'unassign+block');
+  assert.equal(kind({ ...held, assignee: builder }, at('agt_builder', 'blocked'), at('', 'blocked')), 'unassign');
+
+  // A retry after the second write was refused runs only that write.
+  const calls = [];
+  let refuse = true;
+  const api = {
+    unassign: async (id) => { calls.push(['unassign', id]); },
+    status: async (id, status) => { calls.push(['status', id, status]); if (refuse) throw new Error('refused'); },
+  };
+  const drop = laneDrop(stalled, at('agt_lead', 'blocked'), at('', 'blocked'));
+  await assert.rejects(drop.run(api, 'why'));
+  refuse = false;
+  await drop.run(api, 'why');
+  assert.deepEqual(calls.map(([verb]) => verb), ['unassign', 'status', 'status'], 'the unassign that landed is not repeated');
 });
 
 test('the lanes draw the board by role, with the Unassigned lane first and offline lane groups folded', async (t) => {
