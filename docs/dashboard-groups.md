@@ -522,7 +522,9 @@ colour, then the same buttons in the same order on every row. The buttons
 brighten when you point at the row.
 - **👁** follows the state: it brings an open one forward, takes it off the
   dock, opens it, attaches a running shell or reopens a closed page.
-  Clicking the name does the same.
+  Clicking a shell's name does the same. Clicking a drawing board's or a
+  page's name renames it, as clicking an agent's name does: Enter saves,
+  Escape keeps the old name.
 - **🗑** deletes a drawing board or a page, or kills a running shell, after a
   confirm. Killing works while the shell is open too; its tab then shows
   the session ended, or closes, as your close-tab setting says. Dragging the
@@ -533,7 +535,7 @@ brighten when you point at the row.
   unless the agent passes a title of its own; the audit log says when one
   replaced yours.
 - **Move to group**: lists the groups it can move to. A page moves only to a
-  group its agent is a member of, and the marks sent before stay behind, as
+  group its agent is a member of, and the marks sent before are dropped, as
   when the agent shows it into another group. A group's own blank page moves
   only while closed.
 - **Delete…**, behind a confirm, as 🗑 does.

@@ -279,7 +279,18 @@ export function renameResource(resource, { api, source, notify }) {
 // { title, attrs, run } or null (the 🗑 stays, disabled, so the buttons line
 // up); a row that has one is also deleted by a drop on the trash bin
 // (resource-dnd.js).
-function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, drag = null }) {
+// rename, when the row has one, starts its name field: a click on the name
+// renames, as an agent's does, and 👁 opens.
+function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, rename = null, drag = null }) {
+  // A rename ended from the keyboard leaves focus on the name, as an
+  // agent's does, not on the page.
+  const nameRef = useRef(null);
+  const wasRenaming = useRef(false);
+  useEffect(() => {
+    const doc = typeof document !== 'undefined' ? document : null;
+    if (wasRenaming.current && !renaming && (!doc?.activeElement || doc.activeElement === doc.body)) nameRef.current?.focus?.();
+    wasRenaming.current = !!renaming;
+  }, [!!renaming]);
   const dragAttrs = drag && !renaming ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind, label, closed: !!closed, ...drag }) } : {};
   useEffect(() => (remove && drag ? registerResourceRemover(`${kind}:${drag.id}`, remove.run) : undefined), [kind, drag?.id, remove?.run]);
   return html`<tr class=${closed ? 'gr-trow gr-closed' : 'gr-trow'} data-resource-kind=${`${kind}s`} ...${attrs} ...${dragAttrs}>
@@ -295,6 +306,10 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, r
       </span>
     </span></td>
     <td class="name-cell gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
+      : rename ? html`<span ref=${nameRef} role="button" tabindex="0" class="rowname-text gr-name gr-name-rename" data-resource-name-rename=""
+        title=${`Click to rename ${label} — Enter saves, Esc cancels`} onClick=${(event) => { event.stopPropagation(); rename(); }}
+        onKeyDown=${(event) => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); event.stopPropagation(); rename(); }}
+        ><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}</span>`
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
       onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</td>
     <td><${ResourcePill} view=${view} kind=${kind} /></td>
@@ -339,7 +354,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
     closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageDetail(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
     remove=${{ title: `Delete page ${label}`, attrs: { 'data-page-trash': page.id }, run: resourceRemover(resource, ctx) }}
-    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
+    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }} rename=${ctx.startRename}
     menu=${[...(view !== 'closed' ? [{ label: 'Reload in every view', attrs: { 'data-page-reload': page.id }, run: reload }] : []), ...resourceMenu(resource, ctx)]}
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
@@ -355,7 +370,7 @@ function DrawingBoardRow({ drawingBoard, api, source, notify, confirm, snapshotV
     meta=${drawingBoard.editing > 0 ? `${drawingBoard.editing} editing` : ''} view=${view}
     primary=${{ label: primaryLabel('drawing_board', view), run: focusOr(`drawing_board:${drawingBoard.id}`, () => openDrawingBoardPane(drawingBoard.id, label)) }}
     remove=${{ title: `Delete drawing board ${label}`, attrs: { 'data-drawing-board-trash': drawingBoard.id }, run: resourceRemover(resource, ctx) }}
-    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
+    renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }} rename=${ctx.startRename}
     menu=${resourceMenu(resource, ctx)}
     lock=${html`<${LockChip} kind="drawing_board" id=${drawingBoard.id} name=${label} locked=${!!drawingBoard.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
