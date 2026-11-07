@@ -453,6 +453,28 @@ test("another node older than the /sandbox route is read and assigned through /s
   ]);
 });
 
+test("an older node's real refusal on /sandbox-impl reaches the dialog", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const actions = createActionDialogActions({
+    state: createActionDialogState(),
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url) => (url.endsWith('/sandbox')
+      ? new Response(JSON.stringify({ error: 'not shared', code: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+      : new Response(JSON.stringify({ error: 'moving out deletes state', code: 'opencode_move_out_confirm' }), { status: 409, headers: { 'Content-Type': 'application/json' } })),
+    notify: () => {},
+    refresh: async () => {},
+  });
+  await assert.rejects(
+    actions.assignSandboxImpl({ conv: 'c1', node: 'inst_old7', implementation: 'harness-builtin' }),
+    (cause) => cause.code === 'opencode_move_out_confirm' && cause.status === 409,
+    'the move-out confirm must survive the fallback',
+  );
+});
+
 test("another node's clone sends only what that node's route takes", async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([

@@ -24,18 +24,18 @@ async function responseError(response) {
 // sandboxRequestJSON calls an agent's /sandbox route. Another node may be
 // older than it and serve only the deprecated /sandbox-impl spelling, which
 // refuses the unknown route (404, or a peer view's 403) before doing any work,
-// so that refusal is retried there once. This page's own node serves both.
+// so that refusal is retried there once. The retry's own error is the one
+// reported: on an older node it is the handler's real answer (a move-out
+// confirm, a validation refusal), and a newer node serves both spellings with
+// the same handler and gates, so it answers there exactly as /sandbox did.
+// This page's own node serves both.
 async function sandboxRequestJSON(fetchImpl, conv, remote, options = {}) {
   const base = `/api/agents/${encodeURIComponent(conv)}`;
   try {
     return await requestJSON(fetchImpl, `${base}/sandbox`, options);
   } catch (cause) {
     if (!remote || (cause?.status !== 404 && cause?.status !== 403)) throw cause;
-    try {
-      return await requestJSON(fetchImpl, `${base}/sandbox-impl`, options);
-    } catch (_) {
-      throw cause;
-    }
+    return requestJSON(fetchImpl, `${base}/sandbox-impl`, options);
   }
 }
 
