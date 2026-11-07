@@ -12164,6 +12164,17 @@ body.wizard #group-create-modal .group-create-workspace {
 }
 body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 
+/* The name dialog a new drawing board or live page asks first
+   (resource-name-dialog.js): one field, so narrower than the shared
+   .cron-create-modal. Its surface, title, field and Create button take the
+   wizard skin from the shared tokens; the label, hint and footer edge follow
+   the other wizard dialogs here, scoped to its id. */
+.resource-name-modal { min-width: 0; width: min(460px, calc(100vw - 32px)); }
+.resource-name-modal .ui-input { flex: 1; min-width: 0; }
+.resource-name-modal .resource-name-invalid { margin: -4px 0 0 var(--cron-label-w); }
+body.wizard #resource-name-modal :is(.cron-create-label, .modal-hint) { color: #b39ddb; }
+body.wizard #resource-name-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
 /* Create = ⚔ Form the party! — the submit button re-skinned into a gilded
    conjuring lever, the party twin of the spawn dialog's 🔮 Summon! and the cron
    dialog's ⏳ Bind it!. Same mechanism: the button's static "Create" text is

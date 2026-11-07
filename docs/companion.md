@@ -189,6 +189,8 @@ another tab shows, and a minimized chat keeps its terminal for a few minutes.
   rename it, and drag it to move the whole group along the strip, onto another window, or
   off into a window of its own. A pill that is all its window has drags the window.
   Right-click or hold it for `Rename group…`, `Ungroup tabs` and `Minimize tabs in group`.
+- **Rename a drawing board or a page:** double-click its tab or press F2 on it, as in the
+  Collab strip. Enter saves, Escape or clicking away keeps the name.
 
 Groups belong to their window and come back after a reload. A tab minimized from a group
 returns to it while the group lasts. A group goes with its last tab.

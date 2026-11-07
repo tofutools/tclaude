@@ -49,7 +49,7 @@ function fakeWidgets(harness) {
 }
 
 // A daemon holding the given drawing boards, recording what the page asked it.
-function fakeDaemon(t, drawingBoards = DRAWING_BOARD_LIST) {
+function fakeDaemon(t, drawingBoards = structuredClone(DRAWING_BOARD_LIST)) {
   const requests = [];
   const previous = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -58,6 +58,8 @@ function fakeDaemon(t, drawingBoards = DRAWING_BOARD_LIST) {
     const id = /^\/api\/drawing-boards\/([^/?]+)/.exec(path)?.[1];
     const drawingBoard = drawingBoards.find((b) => b.id === id);
     if (id && !drawingBoard) return { ok: false, status: 404, json: async () => ({}) };
+    // A rename takes, as the daemon's does, so a later read has the new title.
+    if (drawingBoard && init.method === 'POST' && path.endsWith('/title')) Object.assign(drawingBoard, { title: JSON.parse(init.body).title });
     let body = {};
     if (path === '/api/drawing-boards') body = { drawingBoards };
     else if (drawingBoard) body = { ...drawingBoard, version: 1, participants: [], elements: [] };
@@ -463,5 +465,86 @@ test('a lock toggled in the Collab panel shows on the drawing board tab name and
   assert.ok(host.querySelector('[data-rail-lock="drawing_board:plan"]').classList.contains('is-locked'), 'the panel row follows');
   assert.ok(tab().querySelector('[data-lock-badge="drawing_board"]'), 'the tab name wears the lock');
   assert.ok((await menuItems()).includes('Unlock for agents'), 'the tab menu offers the unlock');
+  cleanup();
+});
+
+// A drawing board's or a page's tab renames what it shows, in place: a
+// double-click or F2 turns its label into the name field (Enter saves, Escape
+// keeps it). A terminal's tab has no such field.
+const tabOf = (host, key) => host.querySelector(`.mux-tab[data-pane-key="${key}"]`);
+const renameField = (host, key) => tabOf(host, key)?.querySelector('input.mux-tab-rename');
+
+async function waitUntil(harness, condition, message, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(message);
+    await harness.act(() => wait(5));
+  }
+}
+
+const PAGE_ID = 'pg_00112233445566aa';
+
+async function threeTabs(t) {
+  const requests = fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  const cleanup = await start(env);
+  const { harness, controller, openDrawingBoardPane } = env;
+  const { openPagePane } = await harness.importDashboardModule('js/page-place.js');
+  await harness.act(async () => {
+    await controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
+    await openDrawingBoardPane('plan', 'Release plan');
+    await openPagePane(PAGE_ID, 'sketch');
+    await wait();
+  });
+  const pageKey = [...env.host.querySelectorAll('.mux-tab')].map((tab) => tab.dataset.paneKey).find((key) => key.includes(PAGE_ID));
+  return { ...env, requests, cleanup, pageKey };
+}
+
+test('a double-click on a drawing board\'s tab renames the drawing board', async (t) => {
+  const { harness, host, requests, cleanup } = await threeTabs(t);
+  const key = 'drawing_board:plan';
+  await harness.act(() => harness.fireEvent(tabOf(host, key), 'dblclick'));
+  const field = renameField(host, key);
+  assert.ok(field, 'the tab\'s label becomes the name field');
+  assert.equal(field.value, 'Release plan');
+  assert.notEqual(tabOf(host, key).getAttribute('draggable'), 'true', 'the tab does not drag while its name is edited');
+  // What is typed stays in the field: a Space does not activate the tab.
+  const space = harness.fireEvent(field, 'keydown', { key: ' ' });
+  assert.equal(space.defaultPrevented, false);
+  field.value = 'Launch plan';
+  await harness.act(() => harness.fireEvent(field, 'keydown', { key: 'Enter' }));
+  await waitUntil(harness, () => requests.includes('POST /api/drawing-boards/plan/title'), 'the rename reaches the daemon');
+  await waitUntil(harness, () => tabLabels(host).includes('Launch plan'), 'the tab carries the new name');
+  assert.equal(renameField(host, key), null, 'the field is gone');
+  cleanup();
+});
+
+test('F2 on a page\'s tab renames the page; Escape keeps its name', async (t) => {
+  const { harness, host, requests, cleanup, pageKey } = await threeTabs(t);
+  assert.ok(pageKey, 'the page has a tab');
+  await harness.act(() => harness.fireEvent(tabOf(host, pageKey), 'keydown', { key: 'F2' }));
+  let field = renameField(host, pageKey);
+  assert.ok(field, 'F2 opens the name field');
+  field.value = 'never saved';
+  await harness.act(() => harness.fireEvent(field, 'keydown', { key: 'Escape' }));
+  assert.equal(renameField(host, pageKey), null, 'Escape ends the edit');
+  assert.ok(!requests.some((r) => r.startsWith('POST /api/pages/')), 'and saves nothing');
+
+  await harness.act(() => harness.fireEvent(tabOf(host, pageKey), 'keydown', { key: 'F2' }));
+  field = renameField(host, pageKey);
+  field.value = 'Checkout mock';
+  await harness.act(() => harness.fireEvent(field, 'keydown', { key: 'Enter' }));
+  await waitUntil(harness, () => requests.includes(`POST /api/pages/${PAGE_ID}/title`), 'the rename reaches the daemon');
+  await waitUntil(harness, () => tabLabels(host).includes('Checkout mock'), 'the tab carries the new name');
+  cleanup();
+});
+
+test('a terminal\'s tab has no name field to open', async (t) => {
+  const { harness, host, requests, cleanup } = await threeTabs(t);
+  await harness.act(() => harness.fireEvent(tabOf(host, 'one'), 'dblclick'));
+  await harness.act(() => harness.fireEvent(tabOf(host, 'one'), 'keydown', { key: 'F2' }));
+  assertAbsent(renameField(host, 'one'), 'a terminal is not renamed from its tab');
+  assertAbsent(host.querySelector('input.mux-tab-rename'), 'nor is any other tab');
+  assert.ok(!requests.some((r) => r.endsWith('/title')));
   cleanup();
 });
