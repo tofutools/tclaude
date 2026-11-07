@@ -9,7 +9,8 @@ import (
 )
 
 // A shell row's Age and Last are its tmux session's #{session_created} and
-// #{session_activity}. The snapshot's alive set carries names only, so the
+// the later of #{session_activity} (input, attach) and its current window's
+// #{window_activity} (output), so a noisy build counts as activity. The snapshot's alive set carries names only, so the
 // times take one more list-sessions: made only when the snapshot lists a
 // shell, and shared for shellTimesTTL across polls and parallel callers. It
 // is best effort: on an error, or a tmux that renders no times, the cells
@@ -19,7 +20,7 @@ import (
 // coarse "Nm ago" cell, against one fork per snapshot poll.
 const shellTimesTTL = 5 * time.Second
 
-const shellTimesFormat = "#{session_name}\t#{session_created}\t#{session_activity}"
+const shellTimesFormat = "#{session_name}\t#{session_created}\t#{session_activity}\t#{window_activity}"
 
 type shellTimes struct{ created, activity time.Time }
 
@@ -47,20 +48,32 @@ func (c *shellTimesCache) get() map[string]shellTimes {
 }
 
 func probeShellTimes() map[string]shellTimes {
-	out := map[string]shellTimes{}
 	raw, err := tmuxOutputWithTimeout("list-sessions", "-F", shellTimesFormat)
 	if err != nil {
 		if !tmuxServerNotRunning(err) {
 			slog.Debug("group resources: shell times unavailable", "error", err)
 		}
-		return out
+		return map[string]shellTimes{}
 	}
-	for line := range strings.SplitSeq(string(raw), "\n") {
+	return parseShellTimes(string(raw))
+}
+
+// parseShellTimes reads shellTimesFormat lines; a missing window field
+// leaves the session's own activity.
+func parseShellTimes(raw string) map[string]shellTimes {
+	out := map[string]shellTimes{}
+	for line := range strings.SplitSeq(raw, "\n") {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		if len(fields) < 3 || fields[0] == "" {
 			continue
 		}
-		out[fields[0]] = shellTimes{created: tmuxUnixTime(fields[1]), activity: tmuxUnixTime(fields[2])}
+		activity := tmuxUnixTime(fields[2])
+		if len(fields) > 3 {
+			if window := tmuxUnixTime(fields[3]); window.After(activity) {
+				activity = window
+			}
+		}
+		out[fields[0]] = shellTimes{created: tmuxUnixTime(fields[1]), activity: activity}
 	}
 	return out
 }
