@@ -877,15 +877,15 @@ function SandboxRestartMenuItem({ member }) {
 // left stopped.
 function SandboxImplMenuItem({ member }) {
   const label = member.title || member.conv_id;
-  const regular = '🧩 sandbox implementation…';
+  const regular = '🧩 sandbox implementation / profile…';
   const title = member.online
-    ? `Choose which layer owns OS-level confinement for ${label}. It is running, so assigning restarts it (it must be idle) under the new implementation.`
-    : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed. Recorded now, applied when you wake it.`;
+    ? `Choose which layer owns OS-level confinement for ${label}, and which sandbox profile it applies. It is running, so assigning restarts it (it must be idle) under the new sandbox.`
+    : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed — and which sandbox profile it applies. Recorded now, applied when you wake it.`;
   // data-harness is a fallback only. The dialog renders its catalog from the
   // harness the SERVER reports with the posture; this covers the case where that
   // field is absent, and is never consulted otherwise.
   return html`<${MenuButton}
-    member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation…"
+    member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation / ward…"
     attrs=${{ 'data-harness': member.state?.harness || '' }}
     title=${title}
   />`;

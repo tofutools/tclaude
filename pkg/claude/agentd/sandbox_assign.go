@@ -62,7 +62,7 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, convID, "", nil, "")
+		writeSandboxImplementationResponse(w, convID, sandboxAssignmentResult{})
 		return
 	}
 	assignAgentSandboxImplementation(w, r, convID)
@@ -83,7 +83,7 @@ func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, resolved.ConvID, "", nil, "")
+		writeSandboxImplementationResponse(w, resolved.ConvID, sandboxAssignmentResult{})
 		return
 	}
 	assignAgentSandboxImplementation(w, r, resolved.ConvID)
@@ -98,11 +98,18 @@ func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request,
 // and the only ones that need the resolved chain.
 func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
-		// Implementation is the sandbox implementation to record. Required:
-		// there is no "clear" spelling, because every launch resolves to some
-		// implementation and harness-builtin is how an operator asks for the
-		// compatibility default back.
+		// Implementation is the sandbox implementation to record. Omitted, the
+		// agent keeps the one it has, and the request must change the
+		// sandbox profile instead. There is no "clear" spelling, because every
+		// launch resolves to some implementation and harness-builtin is how an
+		// operator asks for the compatibility default back.
 		Implementation string `json:"implementation"`
+		// SandboxProfile, when present, replaces the agent's EXPLICIT-tier
+		// sandbox profile: a registry name, or "" for no explicit profile. The
+		// global and group tiers are not the agent's to change here; they
+		// follow the workspace and group assignments as always. Omitted, the
+		// explicit profile is left alone.
+		SandboxProfile *string `json:"sandbox_profile,omitempty"`
 		// Sandbox optionally pins the harness-builtin MODE recorded alongside
 		// it. Omitted, the agent's recorded mode is carried forward — unless the
 		// implementation being replaced FORCED that mode, in which case it is an
@@ -124,19 +131,36 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	requested := strings.TrimSpace(body.Implementation)
-	if requested == "" {
+	implChange := requested != ""
+	if !implChange && body.SandboxProfile == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("implementation is required (%s, %s, %s, or %s)",
+			fmt.Sprintf("give an implementation (%s, %s, %s, or %s), a sandbox_profile, or both",
 				sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationTclaudeLayer,
 				sandboxpolicy.ImplementationResourceOnly, sandboxpolicy.ImplementationOff))
 		return
 	}
-	// Judge the VALUE before the state conflicts below, so a misspelling is a 400
-	// rather than whatever the agent happens to be doing right now.
-	if _, err := sandboxpolicy.NormalizeImplementation(requested); err != nil {
-		writeError(w, http.StatusBadRequest,
-			"invalid_"+sandboxImplementationField, err.Error())
+	if !implChange && strings.TrimSpace(body.Sandbox) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"sandbox pins the harness mode recorded with an implementation; give the implementation too")
 		return
+	}
+	// Judge the VALUES before the state conflicts below, so a misspelling is a
+	// 400 rather than whatever the agent happens to be doing right now.
+	if implChange {
+		if _, err := sandboxpolicy.NormalizeImplementation(requested); err != nil {
+			writeError(w, http.StatusBadRequest,
+				"invalid_"+sandboxImplementationField, err.Error())
+			return
+		}
+	}
+	var profileRef *sandboxpolicy.ExplicitProfileRef
+	if body.SandboxProfile != nil {
+		ref, fail := explicitProfileRefForAssignment(*body.SandboxProfile)
+		if fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+		profileRef = &ref
 	}
 
 	agentID, err := db.AgentIDForConv(convID)
@@ -198,6 +222,11 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, http.StatusConflict, "harness", err.Error())
 		return
 	}
+	if !implChange {
+		// A profile-only change judges the new chain against the posture the
+		// agent already has.
+		requested = current.SandboxImplementation
+	}
 
 	// Harness applicability first: an implementation this harness cannot run is
 	// a bad request whatever the host looks like.
@@ -207,10 +236,14 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			"invalid_"+sandboxImplementationField, err.Error())
 		return
 	}
-	mode, fail := assignedHarnessBuiltinMode(h, current, body.Sandbox, implementation)
-	if fail != nil {
-		writeSpawnFailure(w, fail)
-		return
+	mode := current.NormalSandbox
+	if implChange {
+		var fail *spawnFailure
+		mode, fail = assignedHarnessBuiltinMode(h, current, body.Sandbox, implementation)
+		if fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
 	}
 
 	// Then every gate a relaunch applies to an already-resolved posture, against
@@ -227,10 +260,20 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeSpawnFailure(w, fail)
 		return
 	}
-	planned, _, err := resolveCurrentSandboxChainForConv(convID)
-	if err != nil {
-		writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
-		return
+	var planned *sandboxpolicy.Snapshot
+	var profileWrite *explicitProfileWrite
+	if profileRef != nil {
+		profileWrite, planned, err = planExplicitProfileAssignment(convID, agentID, *profileRef)
+		if err != nil {
+			writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+			return
+		}
+	} else {
+		planned, _, err = resolveCurrentSandboxChainForConv(convID)
+		if err != nil {
+			writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
+			return
+		}
 	}
 	if fail := sandboxProfileCapabilityFailure(
 		h.Name, mode, planned, implementation); fail != nil {
@@ -259,21 +302,40 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	// Last of the refusals, so the operator is not asked to accept a move the
 	// assignment would refuse anyway, and before a running agent is stopped.
-	if !body.ConfirmMoveOut && !isTclaudeLayer(implementation) {
+	if implChange && !body.ConfirmMoveOut && !isTclaudeLayer(implementation) {
 		if fail := openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
 		}
 	}
 
-	previous := current.SandboxImplementation
-	var note string
+	result := sandboxAssignmentResult{}
+	if implChange {
+		result.previousImplementation = current.SandboxImplementation
+	}
+	if profileWrite != nil {
+		before := profileWrite.before
+		result.previousProfile = &before
+	}
 	persist := func() *spawnFailure {
+		// The profile first: it is one compare-and-swap row write, so it is the
+		// cheap one to undo if the implementation's write then fails.
+		undoProfile := func() {}
+		if profileWrite != nil {
+			if fail := profileWrite.apply(); fail != nil {
+				return fail
+			}
+			undoProfile = profileWrite.undo
+		}
+		if !implChange {
+			return nil
+		}
 		commit, undo, moveNote, fail := moveOpenCodeStateForAssignment(h, agentID, convID, current.Cwd, implementation, planned)
 		if fail != nil {
+			undoProfile()
 			return fail
 		}
-		note = moveNote
+		result.note = moveNote
 		// Only a move out that finished returns this note, and the posture and
 		// the allocation it gives up must change together.
 		assign := db.AssignAgentSandboxImplementation
@@ -283,6 +345,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		err := assign(agentID, implementation, mode, db.AssignedSandboxImplementationSource)
 		if err != nil {
 			undo()
+			undoProfile()
 		}
 		switch {
 		case err == nil:
@@ -302,7 +365,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			writeSpawnFailure(w, fail)
 			return
 		}
-		writeSandboxImplementationResponse(w, convID, previous, nil, note)
+		writeSandboxImplementationResponse(w, convID, result)
 		return
 	}
 
@@ -321,12 +384,12 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
 	if stopped.Outcome == shutdownFailed {
 		writeError(w, http.StatusInternalServerError, "shutdown_failed",
-			"could not stop the idle agent before changing its sandbox implementation: "+stopped.Detail)
+			"could not stop the idle agent before changing its sandbox: "+stopped.Detail)
 		return
 	}
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
 		writeError(w, http.StatusConflict, "stale_generation",
-			"agent generation changed while stopping; sandbox implementation was not changed: "+err.Error())
+			"agent generation changed while stopping; its sandbox was not changed: "+err.Error())
 		return
 	}
 	if fail := persist(); fail != nil {
@@ -343,17 +406,16 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
-		msg := "sandbox implementation " + implementation + " was recorded, but the agent could not be restarted: " +
+		msg := "the sandbox change was recorded, but the agent could not be restarted: " +
 			resume.Detail + "; use the normal wake action to retry"
-		if note != "" {
-			msg += "; " + note
+		if result.note != "" {
+			msg += "; " + result.note
 		}
 		writeError(w, http.StatusInternalServerError, "restart_failed", msg)
 		return
 	}
-	writeSandboxImplementationResponse(w, convID, previous, &sandboxImplementationRestart{
-		Action: resume.Action, SwitchedClients: switchedClients,
-	}, note)
+	result.restart = &sandboxImplementationRestart{Action: resume.Action, SwitchedClients: switchedClients}
+	writeSandboxImplementationResponse(w, convID, result)
 }
 
 const openCodeMoveNote = "the conversation moved into private state, and its todo list did not: " +
@@ -807,6 +869,22 @@ type sandboxImplementationAssignmentWire struct {
 	SwitchedClients int    `json:"switched_clients,omitempty"`
 	// Note is what an operator should know about what the assignment did.
 	Note string `json:"note,omitempty"`
+	// SandboxProfile is the explicit-tier sandbox profile the next relaunch
+	// resolves ("" for none), and SandboxProfilePending reports that it was
+	// reassigned since the last launch. PreviousSandboxProfile is the one an
+	// assignment replaced; absent when it did not change it.
+	SandboxProfile         string  `json:"sandbox_profile"`
+	SandboxProfilePending  bool    `json:"sandbox_profile_pending,omitempty"`
+	PreviousSandboxProfile *string `json:"previous_sandbox_profile,omitempty"`
+	// SandboxProfilesOmitted reports an agent whose launches omit every
+	// profile tier; SandboxProfileUnchangeable says why its explicit profile
+	// cannot be changed, "" when it can.
+	SandboxProfilesOmitted     bool   `json:"sandbox_profiles_omitted,omitempty"`
+	SandboxProfileUnchangeable string `json:"sandbox_profile_unchangeable,omitempty"`
+	// SandboxProfileTiers is the chain the next relaunch resolves, global
+	// first; SandboxProfileOptions the registry's profile names, for a picker.
+	SandboxProfileTiers   []sandboxProfileTierWire `json:"sandbox_profile_tiers,omitempty"`
+	SandboxProfileOptions []string                 `json:"sandbox_profile_options"`
 }
 
 // sandboxImplementationRestart is what a restarting assignment adds to the
@@ -816,13 +894,29 @@ type sandboxImplementationRestart struct {
 	SwitchedClients int
 }
 
+// sandboxAssignmentResult is what an assignment adds to the posture it
+// reports. The zero value is a read.
+type sandboxAssignmentResult struct {
+	// previousImplementation is the implementation the assignment replaced;
+	// "" when it did not change it.
+	previousImplementation string
+	// previousProfile is the explicit profile the assignment replaced; nil
+	// when it did not change it.
+	previousProfile *sandboxpolicy.ExplicitProfileRef
+	restart         *sandboxImplementationRestart
+	note            string
+}
+
+// sandboxProfileTierWire names one tier of the chain a relaunch resolves.
+type sandboxProfileTierWire struct {
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
+}
+
 // writeSandboxImplementationResponse renders the posture a relaunch would use.
-// previous is the implementation an assignment just replaced, and is empty on a
-// read — the difference is what lets a client report a change rather than a
-// state.
-func writeSandboxImplementationResponse(
-	w http.ResponseWriter, convID, previous string, restart *sandboxImplementationRestart, note string,
-) {
+// result is empty on a read; on an assignment it carries what changed, which
+// is what lets a client report a change rather than a state.
+func writeSandboxImplementationResponse(w http.ResponseWriter, convID string, result sandboxAssignmentResult) {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
@@ -836,21 +930,20 @@ func writeSandboxImplementationResponse(
 	// The chain a relaunch would resolve, not the recorded one, so the reported
 	// answer matches the launch this posture is for.
 	limits := sandboxpolicy.ResourceLimits{}
+	var tiers []sandboxProfileTierWire
 	if planned, _, planErr := resolveCurrentSandboxChainForConv(convID); planErr == nil && planned != nil {
 		limits = planned.Effective.ResourceLimits
+		for _, applied := range planned.Applied {
+			tiers = append(tiers, sandboxProfileTierWire{Scope: string(applied.Scope), Name: applied.Name})
+		}
 	}
 	implementation, normErr := sandboxpolicy.NormalizeImplementation(posture.SandboxImplementation)
-	var restartAction string
-	var switchedClients int
-	if restart != nil {
-		restartAction, switchedClients = restart.Action, restart.SwitchedClients
-	}
-	writeJSON(w, http.StatusOK, sandboxImplementationAssignmentWire{
+	out := sandboxImplementationAssignmentWire{
 		ConvID:           convID,
 		AgentID:          agentID,
 		Harness:          posture.Harness,
 		Implementation:   posture.SandboxImplementation,
-		Previous:         previous,
+		Previous:         result.previousImplementation,
 		Sandbox:          posture.NormalSandbox,
 		Source:           posture.NormalSandboxSource,
 		TemporarySandbox: posture.TemporaryHarnessBuiltinMode,
@@ -859,8 +952,140 @@ func writeSandboxImplementationResponse(
 			resourceCgroupRequested(limits, implementation),
 		ResourceCgroupRequired: normErr == nil &&
 			sandboxpolicy.ResourceCgroupRequired(limits, implementation),
-		Restart:         restartAction,
-		SwitchedClients: switchedClients,
-		Note:            note,
-	})
+		Note:                  result.note,
+		SandboxProfileOptions: []string{},
+		SandboxProfileTiers:   tiers,
+	}
+	if result.restart != nil {
+		out.Restart, out.SwitchedClients = result.restart.Action, result.restart.SwitchedClients
+	}
+	if result.previousProfile != nil {
+		previous := result.previousProfile.Name
+		out.PreviousSandboxProfile = &previous
+	}
+	switch stored, err := db.AgentEffectiveSandboxConfigForConv(convID); {
+	case err != nil || stored == nil:
+		out.SandboxProfileUnchangeable = "this agent has no recorded sandbox snapshot to change"
+	case stored.ProfilesOmitted:
+		out.SandboxProfilesOmitted = true
+		out.SandboxProfileUnchangeable = "this agent's launches omit sandbox profiles"
+	default:
+		out.SandboxProfile = stored.ExplicitProfile().Name
+		out.SandboxProfilePending = stored.ExplicitProfileReassigned != nil
+	}
+	if profiles, err := db.ListSandboxProfiles(); err == nil {
+		for _, profile := range profiles {
+			out.SandboxProfileOptions = append(out.SandboxProfileOptions, profile.Name)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// explicitProfileRefForAssignment resolves a requested explicit profile name
+// to its stable identity; "" asks for no explicit profile.
+func explicitProfileRefForAssignment(name string) (sandboxpolicy.ExplicitProfileRef, *spawnFailure) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return sandboxpolicy.ExplicitProfileRef{}, nil
+	}
+	profile, err := db.GetSandboxProfile(name)
+	if err != nil {
+		return sandboxpolicy.ExplicitProfileRef{}, &spawnFailure{http.StatusInternalServerError, "db", err.Error()}
+	}
+	if profile == nil {
+		return sandboxpolicy.ExplicitProfileRef{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
+			fmt.Sprintf("sandbox profile %q does not exist", name)}
+	}
+	return sandboxpolicy.ExplicitProfileRef{ID: profile.ID, Name: profile.Name}, nil
+}
+
+// explicitProfileWrite is a planned change of an agent's explicit profile,
+// as a compare-and-swap of its stored launch snapshot.
+type explicitProfileWrite struct {
+	agentID   string
+	stored    *sandboxpolicy.Snapshot
+	storedRaw string
+	next      sandboxpolicy.Snapshot
+	// before is the explicit profile the next relaunch would have resolved.
+	before sandboxpolicy.ExplicitProfileRef
+}
+
+// planExplicitProfileAssignment plans replacing an agent's explicit-tier
+// profile with ref and returns the chain the next relaunch resolves under it,
+// for the launch gates. It writes nothing.
+//
+// The change is recorded beside the stored policy rather than in it
+// (Snapshot.ExplicitProfileReassigned): the stored contents stay what the last
+// launch ran under, which is what a relaunch that cannot use the new chain
+// falls back to, and a relaunch policy that reuses stored contents sees a
+// different profile and re-reads, exactly as for a changed group assignment.
+func planExplicitProfileAssignment(
+	convID, agentID string, ref sandboxpolicy.ExplicitProfileRef,
+) (*explicitProfileWrite, *sandboxpolicy.Snapshot, error) {
+	stored, raw, err := db.AgentEffectiveSandboxConfigRaw(agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if stored == nil {
+		return nil, nil, errors.New("this agent has no recorded sandbox snapshot, so it has no sandbox profiles to change")
+	}
+	if stored.ProfilesOmitted {
+		return nil, nil, errors.New("this agent's launches omit sandbox profiles, so it has no explicit profile to change")
+	}
+	planned, err := resolveSandboxChainWith(convID, stored, ref.ID, ref.Name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the sandbox profiles cannot be resolved with %s: %w", explicitProfileLabel(ref), err)
+	}
+	// The relaunch lays the agent's group environment, explicit harness
+	// posture and deny overlay over the chain, and a chain they no longer fit
+	// would only fall back to the stored policy there. Judge it now.
+	policy, _ := relaunchPolicyFor(convID)
+	composed, err := composeRelaunchSandbox(convID, *planned, stored, false,
+		relaunchReuses(policy, groupEnvField))
+	if err != nil {
+		return nil, nil, fmt.Errorf("the agent's launch posture does not apply over %s: %w", explicitProfileLabel(ref), err)
+	}
+	next := *stored
+	next.ExplicitProfileReassigned = ref.Clone()
+	var recorded sandboxpolicy.ExplicitProfileRef
+	for _, applied := range stored.Applied {
+		if applied.Scope == sandboxpolicy.ScopeExplicit {
+			recorded = sandboxpolicy.ExplicitProfileRef{ID: applied.ID, Name: applied.Name}
+		}
+	}
+	if recorded.ID == ref.ID && (ref.ID != 0 || recorded.Name == ref.Name) {
+		// Back to what the last launch ran under: nothing is pending.
+		next.ExplicitProfileReassigned = nil
+	}
+	return &explicitProfileWrite{
+		agentID: agentID, stored: stored, storedRaw: raw, next: next,
+		before: stored.ExplicitProfile(),
+	}, &composed, nil
+}
+
+func (p *explicitProfileWrite) apply() *spawnFailure {
+	err := db.ReplaceAgentEffectiveSandboxConfig(p.agentID, p.storedRaw, &p.next)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, db.ErrAgentLaunchRecordChanged):
+		return &spawnFailure{http.StatusConflict, "changed",
+			"the agent's sandbox snapshot changed meanwhile; try again"}
+	default:
+		return &spawnFailure{http.StatusInternalServerError, "io",
+			"persist sandbox profile: " + err.Error()}
+	}
+}
+
+func (p *explicitProfileWrite) undo() {
+	if err := db.SetAgentEffectiveSandboxConfig(p.agentID, p.stored); err != nil {
+		slog.Warn("sandbox assignment: restore the explicit sandbox profile", "agent", p.agentID, "error", err)
+	}
+}
+
+func explicitProfileLabel(ref sandboxpolicy.ExplicitProfileRef) string {
+	if ref.Name == "" {
+		return "no explicit profile"
+	}
+	return fmt.Sprintf("sandbox profile %q", ref.Name)
 }

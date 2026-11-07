@@ -598,8 +598,8 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermAgentSandboxImplementation,
-		Description: "Assign the durable sandbox implementation an EXISTING offline agent relaunches under (tclaude agent sandbox-impl set). " +
-			"It can move an agent onto an implementation with no OS-level access confinement, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
+		Description: "Assign the durable sandbox implementation and explicit sandbox profile an EXISTING agent relaunches under (tclaude agent sandbox-impl set). " +
+			"It can move an agent onto an implementation with no OS-level access confinement, or onto a wider profile, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
 	},
 	{
 		Slug: PermAgentInboxWatch, GroupSibling: PermGroupsMembersInboxWatch,

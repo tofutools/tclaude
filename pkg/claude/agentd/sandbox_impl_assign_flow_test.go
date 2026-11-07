@@ -205,7 +205,7 @@ func TestSandboxImplAssign_RefusesAnUnknownImplementation(t *testing.T) {
 	_, emptyCode, emptyBody := assignSandboxImpl(t, f, spawn.ConvID,
 		map[string]any{"implementation": "  "})
 	assert.Equal(t, http.StatusBadRequest, emptyCode)
-	assert.Contains(t, emptyBody, "implementation is required")
+	assert.Contains(t, emptyBody, "give an implementation")
 }
 
 // Restoring `harness-builtin` must not quietly land on a posture with no

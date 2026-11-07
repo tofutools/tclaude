@@ -174,3 +174,39 @@ func TestRunSandboxImplShow_JSONEmitsTheWireShape(t *testing.T) {
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(stdout.String()), "{"))
 	assert.Contains(t, stdout.String(), `"sandbox_implementation": "resource-only"`)
 }
+
+func TestRunSandboxImplSet_ProfileOnlyChangeOmitsTheImplementation(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"harness-builtin",
+		"sandbox_profile":"strict","sandbox_profile_pending":true,"previous_sandbox_profile":"loose","online":false}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker", SandboxProfile: "strict"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	body := calls[0].body.(map[string]any)
+	assert.Equal(t, "", body["implementation"], "no implementation change is asked for")
+	assert.Equal(t, "strict", body["sandbox_profile"])
+	assert.Contains(t, stdout.String(), "explicit sandbox profile: loose → strict")
+	assert.Contains(t, stdout.String(), "wake the agent")
+}
+
+func TestRunSandboxImplSet_NoProfileSendsAnEmptyProfile(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"harness-builtin","sandbox_profile":""}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker", NoProfile: true}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	profile, present := calls[0].body.(map[string]any)["sandbox_profile"]
+	assert.True(t, present)
+	assert.Equal(t, "", profile)
+}
+
+func TestRunSandboxImplSet_RequiresSomethingToChange(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker"}, &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "--sandbox-profile")
+}
