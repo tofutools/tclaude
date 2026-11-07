@@ -217,6 +217,10 @@ func waitForDaemon(stderr io.Writer, available func() bool, policy daemonRetryPo
 	return false
 }
 
+// daemonAskHumanHint is the ask-human hint agentd puts in a permission
+// denial, phrased for API callers (agentd/identity.go askHumanHint).
+const daemonAskHumanHint = "X-Tclaude-Ask-Human: <duration>"
+
 // DaemonError represents a non-2xx response from the daemon. Callers can
 // inspect Code to map back to CLI exit codes.
 type DaemonError struct {
@@ -228,7 +232,9 @@ type DaemonError struct {
 
 func (e *DaemonError) Error() string {
 	if e.Msg != "" {
-		return e.Msg
+		// A denial names the API's ask-human header; on the command line the
+		// same thing is the --ask-human flag.
+		return strings.ReplaceAll(e.Msg, daemonAskHumanHint, "--ask-human <duration>")
 	}
 	return fmt.Sprintf("agentd returned %d", e.Status)
 }

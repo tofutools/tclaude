@@ -113,6 +113,18 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &read))
 	assert.Equal(t, "tclaude (system)", read.FromTitle, "tclaude's own mail is not shown as the operator's")
 	assert.False(t, read.Replyable)
+	rec = h.call(h.worker, http.MethodGet, "/v1/inbox?limit=50", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var rows []struct {
+		ID        int64  `json:"id"`
+		FromShort string `json:"from_short"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows))
+	for _, row := range rows {
+		if row.ID == nudge.ID {
+			assert.Equal(t, "tclaude", row.FromShort, "inbox ls names tclaude as the sender of its own mail")
+		}
+	}
 
 	// The context route counts it as needing the operator.
 	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)

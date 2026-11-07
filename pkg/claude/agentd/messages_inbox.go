@@ -667,6 +667,10 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 			item.FromShort = agent.ShortAgentID(m.FromAgent, m.FromConv)
 			if db.IsOperatorAgentMessage(m.ID) {
 				item.FromShort = "human"
+			} else if m.FromConv == "" {
+				if label, _ := remoteSenderLabel(m.ID); label == "" {
+					item.FromShort = "tclaude" // tclaude's own mail
+				}
 			}
 		}
 		out = append(out, item)
