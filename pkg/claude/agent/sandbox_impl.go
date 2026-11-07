@@ -217,7 +217,7 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	}
 	profileChange := profile != "" || p.NoProfile
 	if implementation == "" && !profileChange && !p.OmitProfiles {
-		fmt.Fprintf(stderr, "Error: give an implementation (%s), --sandbox-profile, or both.\n",
+		fmt.Fprintf(stderr, "Error: give an implementation (%s), a profile change (--sandbox-profile, --no-sandbox-profile or --omit-sandbox-profiles), or both.\n",
 			strings.Join(sandboxImplementationChoices(), " | "))
 		return rcInvalidArg
 	}
