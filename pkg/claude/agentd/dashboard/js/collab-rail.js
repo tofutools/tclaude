@@ -29,6 +29,7 @@ import { groupContextEntry, processContext, processRunApi } from './process-cont
 import { processesAvailable } from './feature-availability.js';
 import { onPeerPage } from './node-api.js';
 import { RailGear } from './collab-rail-gear.js';
+import { railBinAction } from './collab-rail-bin.js';
 import { PeerDrawingBoardBadge, PeerNewDrawingBoard } from './peer-drawing-boards-ui.js';
 import { peerDrawingBoardAccess } from './peer-drawing-boards.js';
 import { RenameField, renameResource } from './groups-resources.js';
@@ -188,9 +189,14 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, edita
   const title = attachable ? [item.title, item.group, state || item.status?.label].filter(Boolean).join(' · ')
     : `${item.title} · ${item.row.superseded ? 'previous generation' : item.row.attachLock || 'not a tclaude terminal'}. ${tmuxAttachHint(item.row)}`;
   const ctx = { open: (it) => openRailItem(it, { actions, snapshot, notify }), ...(rowContext || defaultRowContext()), notify };
+  // The Groups tab's bin takes the drag too, where it means something for the
+  // item (retire, delete or kill, collab-rail-bin.js). An Other session, which
+  // cannot be opened, drags only to the bin.
+  const bin = railBinAction(item, ctx);
+  const drags = (attachable || !!bin) && !renaming;
   return html`<div class=${`cr-item cr-${item.bucket} ${statusClass(item)}${idle?.stale ? ' cr-stale' : ''}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
-    draggable=${attachable && !renaming ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
-    onDragStart=${(event) => { if (attachable && !renaming) startRailDrag(event, item, { actions, snapshot, notify, floatsOf }); else event.preventDefault(); }}>
+    draggable=${drags ? 'true' : 'false'} onContextMenu=${(event) => menu.onContextMenu(event, item)}
+    onDragStart=${(event) => { if (drags) startRailDrag(event, item, { actions, snapshot, notify, floatsOf, bin, binOnly: !attachable }); else event.preventDefault(); }}>
     ${renaming ? html`<span class="cr-name"><span class="cr-glyph" aria-hidden="true">${glyph}</span><${RenameField} value=${item.title} label=${item.title}
       onSave=${renameResource(railResource(item), { api: processRunApi, source: processContext, notify: notify || defaultRowContext().notify })} onDone=${() => setRenaming(false)} /></span>`
     : html`<span role="button" tabIndex="0" class="cr-name" title=${title}

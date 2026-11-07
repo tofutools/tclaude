@@ -15996,6 +15996,14 @@ body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { disp
 #dnd-trash.dnd-trash-task-mode .dnd-trash-label-task { display: inline; }
 body.wizard #dnd-trash.dnd-trash-task-mode .dnd-trash-label-task { display: none; }
 body.wizard #dnd-trash.dnd-trash-task-mode .dnd-trash-label-task-wizard { display: inline; }
+/* A Collab panel shell or session dragged to the bin (collab-rail-bin.js) is
+   killed: .dnd-trash-kill-mode says Kill / Dispel. */
+.dnd-trash-label-kill, .dnd-trash-label-kill-wizard { display: none; }
+#dnd-trash.dnd-trash-kill-mode .dnd-trash-label-regular,
+#dnd-trash.dnd-trash-kill-mode .dnd-trash-label-wizard { display: none; }
+#dnd-trash.dnd-trash-kill-mode .dnd-trash-label-kill { display: inline; }
+body.wizard #dnd-trash.dnd-trash-kill-mode .dnd-trash-label-kill { display: none; }
+body.wizard #dnd-trash.dnd-trash-kill-mode .dnd-trash-label-kill-wizard { display: inline; }
 
 /* Wizard: the delete button becomes an unmaking sigil, matching the banishment
    sigil the group member rows' retire icon wears — tarnished gold at rest,

@@ -732,8 +732,11 @@
        the duration of a template drag) picks the template pair, and body.wizard
        picks the voice within whichever pair is active. A group's saved-process
        chip drag (groups-saved-process-dnd.js) sets .dnd-trash-unpin-mode for
-       the Remove/Unbind pair. -->
-  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span><span class="dnd-trash-label-unpin">Remove</span><span class="dnd-trash-label-unpin-wizard">Unbind</span><span class="dnd-trash-label-task">Drop</span><span class="dnd-trash-label-task-wizard">Abandon</span></span>
+       the Remove/Unbind pair. A Collab panel row's drag (collab-rail-bin.js)
+       retires an agent (the default pair), deletes a drawing board or page
+       (the template pair), or sets .dnd-trash-kill-mode for a shell or
+       session: Kill/Dispel. -->
+  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span><span class="dnd-trash-label-unpin">Remove</span><span class="dnd-trash-label-unpin-wizard">Unbind</span><span class="dnd-trash-label-task">Drop</span><span class="dnd-trash-label-task-wizard">Abandon</span><span class="dnd-trash-label-kill">Kill</span><span class="dnd-trash-label-kill-wizard">Dispel</span></span>
 </div>
 <div id="shell-toast-root"></div>
 <!-- The Preact shell owns the command palette overlay. It uses the shared

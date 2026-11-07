@@ -345,18 +345,25 @@ function DrawingBoardRow({ drawingBoard, api, source, notify, confirm, snapshotV
     lock=${html`<${LockChip} kind="drawing_board" id=${drawingBoard.id} name=${label} locked=${!!drawingBoard.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
+// shellKill kills a running shell's session behind a confirm: its Groups
+// row's 🗑 and Kill…, a drop on the trash bin, and the Collab panel's bin
+// for a shell whose row menu has no Kill session….
+export function shellKill(label, session, { confirm, notify, kill = killShell }) {
+  return async () => {
+    const ok = await confirm({ title: `Kill ${label}?`, body: 'Whatever runs in the shell stops. Opening it again starts a fresh one.', okLabel: 'Kill' });
+    if (!ok) return;
+    const error = await kill(session);
+    notify(error ? `Could not kill ${label}: ${error}` : `Killed ${label}`, !!error);
+  };
+}
+
 function ShellRow({ group, shell, notify, confirm, snapshotValue, draggable = true }) {
   const view = resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state);
   // A group's own shell is named for its group; an agent's for its agent.
   const agentShell = !!shell.agent;
   const label = agentShell ? shell.title : `${group.name} shell`;
   const open = focusOr(`shell:${shell.id}`, () => openShellResource(shell, label));
-  const kill = async () => {
-    const ok = await confirm({ title: `Kill ${label}?`, body: 'Whatever runs in the shell stops. Opening it again starts a fresh one.', okLabel: 'Kill' });
-    if (!ok) return;
-    const error = await killShell(shell.session);
-    notify(error ? `Could not kill ${label}: ${error}` : `Killed ${label}`, !!error);
-  };
+  const kill = shellKill(label, shell.session, { confirm, notify });
   const killable = view !== 'closed' && !!shell.session;
   return html`<${ResourceRow} kind="shell" attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
     label=${agentShell ? shell.title : 'Group shell'} drag=${draggable && killable && { id: shell.id, group: group.name }}

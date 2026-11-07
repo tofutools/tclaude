@@ -254,11 +254,19 @@ function markSection(section) {
   markedSection?.classList?.add('cr-drop-over');
 }
 
+// The Groups tab's bin (#dnd-trash, dashboard.html), which a rail drag
+// shows when it means something for the item (collab-rail-bin.js).
+const binOf = (doc) => doc.getElementById?.('dnd-trash') || null;
+const onBin = (e) => !!elementOf(e.target)?.closest?.('#dnd-trash');
+
 // startRailDrag begins dragging an item out of the side panel. Until the
 // drag ends, the page takes the drop: the strip and the home open the item as a
 // tab there, the rest of the page floats it where it lands; the rail itself
 // does nothing. The strip shows where it would land. ctx is what openRailItem
-// takes, with floatsOf(paneKey).
+// takes, with floatsOf(paneKey), and bin: what a drop on the shared bin does
+// ({ mode, run }, collab-rail-bin.js railBinAction), which shows the bin for
+// as long as the drag lasts. binOnly is an item that cannot be opened (an
+// Other session): only the bin takes its drop.
 let endRailDrag = null;
 
 export function startRailDrag(event, item, ctx) {
@@ -270,7 +278,24 @@ export function startRailDrag(event, item, ctx) {
   const aim = (next) => {
     if (!sameLanding(collabDropTarget.peek(), next)) collabDropTarget.value = next;
   };
+  const bin = ctx.bin ? binOf(doc) : null;
+  // The bin shows labelled for the act (its mode class) until the drag ends.
+  bin?.classList.add('show', ...(ctx.bin.mode ? [ctx.bin.mode] : []));
   const over = (e) => {
+    const armed = !!bin && onBin(e);
+    bin?.classList.toggle('dnd-drop-over', armed);
+    if (armed) {
+      aim(null);
+      markSection(null);
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      return;
+    }
+    if (ctx.binOnly) {
+      aim(null);
+      markSection(null);
+      return;
+    }
     const zone = railDropZone(e.target);
     if (zone === 'rail') {
       aim(null);
@@ -293,11 +318,21 @@ export function startRailDrag(event, item, ctx) {
     doc.removeEventListener('drop', drop, true);
     doc.removeEventListener('dragend', finish, true);
     doc.body?.classList?.remove('rail-dragging');
+    bin?.classList.remove('show', 'dnd-drop-over', ...(ctx.bin.mode ? [ctx.bin.mode] : []));
     markSection(null);
     aim(null);
     railDrag.value = null;
   };
   function drop(e) {
+    if (bin && onBin(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      finish();
+      // The act asks first (its own confirm or dialog).
+      void ctx.bin.run();
+      return;
+    }
+    if (ctx.binOnly) return;
     const zone = railDropZone(e.target);
     if (zone === 'rail') {
       const move = railGroupDrop(item, e.target, ctx.snapshot?.value);
