@@ -246,3 +246,19 @@ test('the list packs its columns left: Name is content-sized between a minimum a
   assert.deepEqual(cols.filter((c) => !c.classList.contains('ui-col-fit')).map((c) => c.className), ['ui-col-rest tb-col-files']);
   assert.ok(table.querySelector('td.tb-title-cell > .ui-fit.tb-title-box'), 'the title sits in a fitted box');
 });
+
+test('history drawn as its own table (no live tasks) is a bounded auto-width table too', async (t) => {
+  const harness = await createPreactHarness(t);
+  const group = crew('tb-hist');
+  const quiet = board('tb-hist', { tasks: [], counts: { live: 0, done_this_week: 1 } });
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tb-hist', '1');
+  const { container } = await mountSection(harness, { group, context: { groups: [quiet] } });
+  const toggle = container.querySelector('.tb-history-toggle');
+  assert.ok(toggle, 'the history line');
+  await harness.act(() => harness.fireEvent(toggle, 'click'));
+  const table = container.querySelector('table.tb-closed-table');
+  assert.ok(table, 'the closed tasks, in a table of their own');
+  assert.ok(table.classList.contains('ui-table-auto'));
+  assert.deepEqual([...table.querySelectorAll('colgroup col')].filter((c) => !c.classList.contains('ui-col-fit')).map((c) => c.className), ['ui-col-rest tb-col-files']);
+});

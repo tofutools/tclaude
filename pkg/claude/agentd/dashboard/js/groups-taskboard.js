@@ -728,7 +728,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
-    ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table tb-closed-table">${COLUMNS}<tbody>
+    ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${null} ...${rowProps} />`)}
     </tbody></table>`}
   </div>`;
