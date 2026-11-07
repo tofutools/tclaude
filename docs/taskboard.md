@@ -48,6 +48,8 @@ Neither one is inferred from age or position.
 order. Blocking, closing and reopening a task never changes its stage, and
 reopening puts it back where it was. A task can depend on others (`--after`).
 An open task with a dependency that is not yet done shows as `queued`.
+A dropped dependency counts as not done, so the task stays queued until you
+remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 
 ## Commands
 
@@ -58,7 +60,7 @@ tclaude agent taskboard history <task>
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
-tclaude agent taskboard edit <task> [--title …] [--body …] [--ref …|--clear-ref]
+tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
 tclaude agent taskboard promote <task>     # idea → end of the queue

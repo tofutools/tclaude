@@ -115,3 +115,26 @@ func TestGroupTaskBoardOrderAndLifecycle(t *testing.T) {
 	_, err = GetGroupTask(c.ID)
 	assert.True(t, errors.Is(err, ErrGroupTaskNotFound))
 }
+
+// A reopened task whose rank was handed out while it was closed comes back
+// just after that task, and the two keep a definite order.
+func TestGroupTaskReopenKeepsDistinctRank(t *testing.T) {
+	setupTestDB(t)
+	gid, err := CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	a, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "a", Actor: "t"})
+	require.NoError(t, err)
+	_, err = SetGroupTaskStatus(a.ID, GroupTaskDone, "", "t")
+	require.NoError(t, err)
+	b, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "b", Actor: "t"})
+	require.NoError(t, err)
+	require.Equal(t, a.Rank, b.Rank, "the closed task's rank is free again")
+	reopened, err := SetGroupTaskStatus(a.ID, GroupTaskOpen, "", "t")
+	require.NoError(t, err)
+	assert.Greater(t, reopened.Rank, b.Rank)
+	_, err = CreateGroupTask(NewGroupTask{GroupID: gid, Title: "c", Actor: "t", Position: GroupTaskPosition{After: b.ID}})
+	require.NoError(t, err)
+	tasks, err := ListGroupTasks(gid, GroupTaskListOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b", "c", "a"}, taskIDs(tasks))
+}

@@ -392,17 +392,18 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 }
 
 type taskboardEditParams struct {
-	Task     string `pos:"true" help:"Task id (tk_…)"`
-	Title    string `long:"title" optional:"true" help:"New title"`
-	Body     string `long:"body" optional:"true" help:"New brief"`
-	BodyFile string `long:"body-file" optional:"true" help:"Read the new brief from this file ('-' for stdin)"`
-	Ref      string `long:"ref" optional:"true" help:"New external ref (URL, owner/repo#n, or tracker id)"`
-	RefLabel string `long:"ref-label" optional:"true" help:"New display label for the ref"`
-	ClearRef bool   `long:"clear-ref" help:"Remove the ref"`
-	AddDep   string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
-	RmDep    string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	Task      string `pos:"true" help:"Task id (tk_…)"`
+	Title     string `long:"title" optional:"true" help:"New title"`
+	Body      string `long:"body" optional:"true" help:"New brief"`
+	ClearBody bool   `long:"clear-body" help:"Remove the brief"`
+	BodyFile  string `long:"body-file" optional:"true" help:"Read the new brief from this file ('-' for stdin)"`
+	Ref       string `long:"ref" optional:"true" help:"New external ref (URL, owner/repo#n, or tracker id)"`
+	RefLabel  string `long:"ref-label" optional:"true" help:"New display label for the ref"`
+	ClearRef  bool   `long:"clear-ref" help:"Remove the ref"`
+	AddDep    string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
+	RmDep     string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardEditCmd() *cobra.Command {
@@ -434,7 +435,11 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 	if p.Title != "" {
 		req["title"] = p.Title
 	}
-	if bodySet {
+	if p.ClearBody && bodySet {
+		fmt.Fprintln(stderr, "Error: give --clear-body or --body/--body-file, not both")
+		return rcInvalidArg
+	}
+	if bodySet || p.ClearBody {
 		req["body"] = body
 	}
 	if p.Ref != "" {

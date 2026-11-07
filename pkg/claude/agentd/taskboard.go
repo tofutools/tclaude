@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -134,11 +135,22 @@ func handleTaskboardTask(write bool, fn func(http.ResponseWriter, *http.Request,
 			notFound()
 			return
 		}
-		if conv := confirmedAgentConv(r); conv != "" && !agentReadsTaskboard(r, conv, g) {
+		conv := confirmedAgentConv(r)
+		if conv != "" && !agentReadsTaskboard(r, conv, g) {
 			notFound()
 			return
 		}
-		if !requireTaskboard(w, r, g, write) {
+		// A refused caller that is neither the operator nor a confirmed agent
+		// (a peer, an unidentified or retired caller) gets the same 404 as for
+		// a missing task, so it cannot confirm that an id exists. An agent
+		// that reads the board but may not write it keeps the 403.
+		gate := &taskboardGateWriter{header: http.Header{}}
+		if !requireTaskboard(gate, r, g, write) {
+			if conv == "" && !callerIsHuman(r) {
+				notFound()
+				return
+			}
+			gate.replay(w)
 			return
 		}
 		if write && !requireGroupActive(w, g) {
@@ -146,6 +158,48 @@ func handleTaskboardTask(write bool, fn func(http.ResponseWriter, *http.Request,
 		}
 		fn(w, r, t, g)
 	}
+}
+
+// taskboardGateWriter holds a gate's refusal so the caller can replace it.
+type taskboardGateWriter struct {
+	header http.Header
+	status int
+	body   []byte
+}
+
+func (g *taskboardGateWriter) Header() http.Header { return g.header }
+func (g *taskboardGateWriter) WriteHeader(status int) {
+	if g.status == 0 {
+		g.status = status
+	}
+}
+func (g *taskboardGateWriter) Write(b []byte) (int, error) {
+	if g.status == 0 {
+		g.status = http.StatusOK
+	}
+	g.body = append(g.body, b...)
+	return len(b), nil
+}
+
+func (g *taskboardGateWriter) replay(w http.ResponseWriter) {
+	for k, v := range g.header {
+		w.Header()[k] = v
+	}
+	if g.status == 0 {
+		g.status = http.StatusForbidden
+	}
+	w.WriteHeader(g.status)
+	_, _ = w.Write(g.body)
+}
+
+// taskTextForbidden reports a rune a task's text refuses: control
+// characters (but newline and tab when multiline), line and paragraph
+// separators, and format characters such as bidi overrides.
+func taskTextForbidden(r rune, multiline bool) bool {
+	if multiline && (r == '\n' || r == '\t') {
+		return false
+	}
+	return unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp, unicode.Cf)
 }
 
 // ---- wire shapes ----
@@ -270,8 +324,8 @@ func validateTaskTitle(s string) (string, error) {
 		return "", errors.New("a title must be valid UTF-8")
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) {
-			return "", errors.New("a title is one line with no control characters")
+		if taskTextForbidden(r, false) {
+			return "", errors.New("a title is one line with no control or format characters")
 		}
 	}
 	return s, nil
@@ -287,8 +341,8 @@ func validateTaskText(what, s string, max int) (string, error) {
 		return "", fmt.Errorf("%s must be valid UTF-8", what)
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) && r != '\n' && r != '\t' {
-			return "", fmt.Errorf("%s has a control character", what)
+		if taskTextForbidden(r, true) {
+			return "", fmt.Errorf("%s has a control or format character", what)
 		}
 	}
 	return s, nil
@@ -319,13 +373,17 @@ func parseTaskRef(raw, label string) (kind, refURL, refLabel string, err error) 
 			return "", "", "", err
 		}
 		derived := deriveTaskLabel(raw)
+		host := ""
+		if u, perr := url.Parse(raw); perr == nil {
+			host = strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
+		}
 		kind = "url"
 		switch {
-		case linearIssueRe.MatchString(derived) && strings.Contains(lower, "linear.app"):
+		case (host == "linear.app" || strings.HasSuffix(host, ".linear.app")) && linearIssueRe.MatchString(derived):
 			kind = "linear"
-		case strings.Contains(lower, "://github.com/"):
+		case host == "github.com":
 			kind = "github"
-		case strings.Contains(raw, "#/issues/") && derived != "" && !strings.Contains(derived, "."):
+		case derived != "" && derived != host && strings.Contains(raw, "#/issues/"):
 			kind = "awb"
 		}
 		return kind, raw, firstNonEmpty(label, derived), nil

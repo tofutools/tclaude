@@ -138,9 +138,14 @@ func TestTaskboardMemberCapturesAndOrders(t *testing.T) {
 	rec = h.call(member, http.MethodPatch, "/v1/taskboard/tasks/"+first.ID, map[string]any{"add_deps": []string{second.ID}})
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
 
-	// A title with a newline is refused.
-	rec = h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "a\nb"})
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	// A title with a newline, a line separator or a bidi override is refused.
+	for _, title := range []string{"a\nb", "a\u2028b", "evil\u202Egnp.exe"} {
+		rec = h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": title})
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%q", title)
+	}
+	// A ref's kind comes from its host, not from a substring.
+	spoof := add(map[string]any{"title": "spoof", "ref": "https://evil.example/?u=://github.com/x"})
+	assert.Equal(t, "url", spoof.Ref.Kind)
 
 	rec = h.call(member, http.MethodGet, "/v1/taskboard/tasks/"+idea.ID+"/events", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -199,6 +204,10 @@ func TestTaskboardCrossGroupAccess(t *testing.T) {
 	}
 	rec := h.call(outsider, http.MethodPost, "/v1/taskboard/tasks/"+task.ID+"/status", map[string]any{"status": "dropped"})
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	// An unidentified caller cannot tell an existing id from a missing one.
+	rec = testharness.Serve(h.f.Mux, agentd.AsUnconfirmedPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/tasks/"+task.ID, nil)))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "secret plan")
 	rec = h.call(outsider, http.MethodGet, "/v1/groups/crew/taskboard", nil)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Contains(t, rec.Body.String(), agentd.PermTaskboardRead)

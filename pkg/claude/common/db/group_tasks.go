@@ -698,6 +698,25 @@ func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
 				if live > GroupTaskLiveCap {
 					return ErrGroupTaskCap
 				}
+				// Its rank may have been handed out while it was closed (closed
+				// tasks leave the rank bounds): keep it where it was, just after
+				// the live task that now holds that rank.
+				var taken int
+				if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE group_id = ? AND stage = ?
+					AND status IN ('open','blocked') AND rank = ? AND id <> ?)`,
+					t.GroupID, t.Stage, t.Rank, id).Scan(&taken); err != nil {
+					return err
+				}
+				if taken != 0 {
+					above, err := neighbourRank(tx, t.GroupID, t.Stage, t.Rank, id, false)
+					if err != nil {
+						return err
+					}
+					if _, err := tx.Exec(`UPDATE group_tasks SET rank = ? WHERE id = ?`,
+						taskRankBetween(t.Rank, above), id); err != nil {
+						return err
+					}
+				}
 			}
 		case GroupTaskDone, GroupTaskDropped:
 			if _, err := tx.Exec(`UPDATE group_tasks SET status = ?, closed_at = ?, archived_at = NULL WHERE id = ?`,
@@ -764,6 +783,15 @@ func SweepGroupTasks(archiveBefore, purgeBefore time.Time) (archived, purged int
 // task (a purged dependency) is absent.
 func GroupTaskStatuses(ids []string) (map[string]string, error) {
 	out := map[string]string{}
+	seen := map[string]bool{}
+	uniq := ids[:0:0]
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			uniq = append(uniq, id)
+		}
+	}
+	ids = uniq
 	if len(ids) == 0 {
 		return out, nil
 	}
