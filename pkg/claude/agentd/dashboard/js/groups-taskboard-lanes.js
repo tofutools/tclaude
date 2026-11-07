@@ -15,7 +15,9 @@
 // idea is unassigned), In progress in the Unassigned lane. A cell a new task
 // can land in shows a discreet "+" on hover or focus: a title adds it there
 // (add [--next], then assign --to for an agent's lane), and "full form…"
-// opens the New task form filled from the cell.
+// opens the New task form filled from the cell. Column widths and the order
+// of the lanes and their headings are this viewer's own
+// (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
@@ -23,6 +25,9 @@ import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
 import { submitNewTask } from './groups-taskboard-new.js';
+import {
+  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
+} from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { shellToast } from './shell-state.js';
 import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
@@ -315,15 +320,138 @@ function BlockForm({ task, drop, numbers, actions, group, onClose }) {
   </div>`;
 }
 
-function LaneHead({ lane }) {
+function LaneHead({ lane, order }) {
   if (lane.id === UNASSIGNED) {
     return html`<div class="tb-lane-head"><span class="tb-lane-name">Unassigned</span><span class="tb-lane-sub">${lane.count} task${lane.count === 1 ? '' : 's'} · operator order</span></div>`;
   }
-  return html`<div class="tb-lane-head" data-lane-agent=${lane.id}>
+  const marker = order?.over?.kind === 'lane' && order.over.key === lane.id ? (order.over.after ? ' tb-order-after' : ' tb-order-before') : '';
+  return html`<div class=${`tb-lane-head${marker}`} data-lane-agent=${lane.id} ...${order ? order.laneProps(lane) : {}}>
     <span class="tb-lane-name" title=${lane.name}><span class="tb-avatar" aria-hidden="true">${lane.name.slice(0, 1).toUpperCase()}</span><span class="tb-lane-label">${lane.name}</span></span>
     <span class=${`tb-lane-sub tb-lane-state-${lane.state.replace(/\s+/g, '-')}`}>${lane.state}${lane.member?.owner ? ' · owner' : ''}</span>
     <span class="tb-lane-sub">holds ${lane.holds}</span>
   </div>`;
+}
+
+const LANE_DRAG_TYPE = 'application/x-tclaude-lane';
+
+// useLaneOrder drags a lane head onto another lane head in its heading, or a
+// heading onto another heading, to reorder them (a view preference, stored
+// per group for this viewer). Alt+↑/↓ on a focused head does the same.
+// Unassigned stays first.
+function useLaneOrder(group, groups, by, onChange) {
+  const dragged = useRef(null);
+  const [over, setOver] = useState(null);
+  const groupOf = (laneId) => groups.find((g) => g.lanes.some((lane) => lane.id === laneId));
+  const apply = (kind, moving, target, after) => {
+    if (kind === 'lane') moveLane(group.name, groups, moving, target, after);
+    else moveHead(group.name, groups, by, moving, target, after);
+    onChange();
+  };
+  // accepts says whether the drag in flight may land on target: a lane
+  // within its own heading, a heading among the headings.
+  const accepts = (event, kind, key) => {
+    const types = event.dataTransfer?.types;
+    if (types && !Array.from(types).includes(LANE_DRAG_TYPE)) return false;
+    const from = dragged.current;
+    if (!from || from.kind !== kind || from.key === key) return false;
+    return kind === 'head' || groupOf(from.key) === groupOf(key);
+  };
+  const half = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect?.();
+    return !!rect && rect.height > 0 && event.clientY > rect.top + rect.height / 2;
+  };
+  const props = (kind, key, keys) => ({
+    draggable: 'true',
+    tabindex: '0',
+    title: kind === 'lane' ? 'Drag to reorder the lanes (Alt+↑/↓)' : 'Drag to reorder the headings (Alt+↑/↓)',
+    onDragStart: (event) => {
+      event.stopPropagation();
+      dragged.current = { kind, key };
+      event.dataTransfer?.setData(LANE_DRAG_TYPE, key);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    },
+    onDragEnd: () => { dragged.current = null; setOver(null); },
+    onDragOver: (event) => {
+      if (!accepts(event, kind, key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const after = half(event);
+      if (over?.key !== key || over?.after !== after) setOver({ kind, key, after });
+    },
+    onDrop: (event) => {
+      if (!accepts(event, kind, key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const moving = dragged.current.key;
+      const after = half(event);
+      dragged.current = null;
+      setOver(null);
+      apply(kind, moving, key, after);
+    },
+    onKeyDown: (event) => {
+      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+      const list = keys();
+      const i = list.indexOf(key);
+      const j = event.key === 'ArrowUp' ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= list.length) return;
+      event.preventDefault();
+      apply(kind, key, list[j], event.key === 'ArrowDown');
+    },
+  });
+  return {
+    over,
+    laneProps: (lane) => props('lane', lane.id, () => (groupOf(lane.id)?.lanes || []).map((l) => l.id)),
+    headProps: (lg) => props('head', lg.key, () => groups.filter((g) => g.key !== 'former').map((g) => g.key)),
+  };
+}
+
+// useColumnResize drags a column head's right edge to resize the column;
+// a double-click resets every width. Arrow keys on a focused edge move it
+// 16px. Widths are stored per group for this viewer.
+function useColumnResize(group, onChange) {
+  const [live, setLive] = useState(null);
+  const gridRef = useRef(null);
+  const measure = () => {
+    const head = gridRef.current?.querySelector('.tb-lane-columns');
+    const cells = head ? [...head.children].filter((el) => !el.classList.contains('tb-col-resize')) : [];
+    return cells.map((el) => el.getBoundingClientRect().width);
+  };
+  const commit = (widths) => { setLaneWidths(group.name, widths); setLive(null); onChange(); };
+  const handle = (index, label) => ({
+    role: 'separator', 'aria-orientation': 'vertical', tabindex: '0', 'aria-label': `Resize the ${label} column`,
+    title: 'Drag to resize · double-click to reset all widths · ←/→ when focused',
+    'data-col-resize': LAYOUT_COLUMNS[index],
+    onPointerDown: (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const measured = measure();
+      if (measured.length !== LAYOUT_COLUMNS.length) return;
+      const startX = event.clientX;
+      let latest = null;
+      const move = (e) => { latest = resizeColumns(measured, index, e.clientX - startX); setLive(latest); };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        if (latest) commit(latest);
+        else setLive(null);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    },
+    onDblClick: (event) => { event.preventDefault(); commit(null); },
+    onKeyDown: (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const measured = measure();
+      if (measured.length !== LAYOUT_COLUMNS.length) return;
+      event.preventDefault();
+      commit(resizeColumns(measured, index, event.key === 'ArrowLeft' ? -16 : 16));
+    },
+    onClick: (event) => event.stopPropagation(),
+  });
+  return { gridRef, handle, widths: live || laneWidths(group.name) };
 }
 
 // TaskboardLanes is the section's swim-lane view of the same board the list
@@ -361,11 +489,17 @@ function CellAdd({ lane, column, add, group, actions, onNewTask, wizard }) {
   </div>`;
 }
 
-export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null }) {
+export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null }) {
   const tasks = entry.tasks || [];
   const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
-  const { cells, groups } = laneModel(entry, group, by, snapshot, now);
+  const [, bumpLayout] = useState(0);
+  const relayout = () => { bumpLayout((n) => n + 1); onLayout?.(); };
+  const model = laneModel(entry, group, by, snapshot, now);
+  const { cells } = model;
+  const groups = applyLaneOrder(model.groups, laneOrder(group.name), by);
   const drag = useLaneDrag(actions, group);
+  const order = useLaneOrder(group, groups, by, relayout);
+  const resize = useColumnResize(group, relayout);
   const [unfolded, setUnfolded] = useState({});
   const [doneOpen, setDoneOpen] = useState({});
   const cell = (lane, column) => {
@@ -388,7 +522,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class="tb-lane" data-lane-row=${lane.id || 'unassigned'}>
-    <${LaneHead} lane=${lane} />${LANE_COLUMNS.map((column) => cell(lane, column))}
+    <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED ? null : order} />${LANE_COLUMNS.map((column) => cell(lane, column))}
   </div>`;
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
@@ -396,17 +530,22 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   return html`<div class="tb-lanes-wrap">
     ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking.task} drop=${drag.blocking.drop} numbers=${numbers} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
-    <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} onDragLeave=${actions ? drag.leaveGrid : undefined}>
+    <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
+        style=${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}` : undefined}
+        onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
-        <div class="ui-eyebrow">Lane</div>
-        ${LANE_COLUMNS.map((column) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span></div>`)}
+        <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
+        ${LANE_COLUMNS.map((column, i) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
+          i < LANE_COLUMNS.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>
       ${row(unassigned)}
       ${groups.map((lg) => {
         const folded = lg.offline && !unfolded[lg.key];
         const head = lg.label || lg.offline;
+        const movable = lg.key !== 'former' && groups.filter((g) => g.key !== 'former').length > 1;
+        const marker = order.over?.kind === 'head' && order.over.key === lg.key ? (order.over.after ? ' tb-order-after' : ' tb-order-before') : '';
         return [
-          head && html`<div key=${`${lg.key}-head`} class="tb-lane-group" data-lane-group=${lg.key}>
+          head && html`<div key=${`${lg.key}-head`} class=${`tb-lane-group${marker}`} data-lane-group=${lg.key} ...${movable ? order.headProps(lg) : {}}>
             <span class="ui-eyebrow">${lg.label}</span>
             <span class="tb-lane-sub">${lg.lanes.length} agent${lg.lanes.length === 1 ? '' : 's'}${lg.offline ? ' · offline' : ''}</span>
             ${lg.offline && html`<${Button} size="sm" variant="link" class="tb-lane-fold" aria-expanded=${folded ? 'false' : 'true'}

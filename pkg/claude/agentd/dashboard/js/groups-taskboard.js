@@ -33,6 +33,7 @@ import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes } from './groups-taskboard-lanes.js';
+import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
@@ -561,7 +562,7 @@ function HistoryLine({ entry, open, onToggle, wizard }) {
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, importing = false, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null }) {
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, importing = false, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null, onLayout = null }) {
   const [history, setHistory] = useState(false);
   const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
@@ -581,7 +582,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${importing && actions && html`<${ImportPanel} group=${group} actions=${actions} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
-    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} wizard=${wizard} onNewTask=${onNewTask} />` : tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout} />` : tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-n">#</th><th>${wizard ? 'Quest · top is next' : 'Task · operator order, top is next'}</th>
         <th>Ref</th><th>Who</th><th>State</th><th></th></tr></thead>
       <tbody>
@@ -623,18 +624,25 @@ function useViewPrefs(group) {
     by: taskboardLanesBy(group),
     setView: (value) => set(VIEW_PREF(group), value),
     setBy: (value) => set(LANES_BY_PREF(group), value),
+    // The lanes' own order (groups-taskboard-lanes-layout.js): whether one
+    // is stored, and putting it back to the default.
+    customOrder: hasCustomOrder(group),
+    resetOrder: () => { resetLaneOrder(group); bump((n) => n + 1); },
+    refresh: () => bump((n) => n + 1),
   };
 }
 
 // ViewSelector is the section's List | Lanes switch and, in Lanes, the
-// "lanes by" agent | role | subgroup switch.
+// "lanes by" agent | role | subgroup switch, with "reset order" once the
+// lanes have been reordered.
 function ViewSelector({ prefs }) {
   return html`<${Seg} class="tb-view" aria-label="Task board view">
     <${Button} size="sm" pressed=${prefs.view === 'list'} onClick=${() => prefs.setView('list')}>☰ List<//>
     <${Button} size="sm" pressed=${prefs.view === 'lanes'} onClick=${() => prefs.setView('lanes')}>⇶ Lanes<//>
   <//>${prefs.view === 'lanes' && html`<span class="ui-hint tb-lanes-by-label">lanes by</span><${Seg} class="tb-view" aria-label="Lanes by">
     ${LANES_BY.map((by) => html`<${Button} key=${by} size="sm" pressed=${prefs.by === by} onClick=${() => prefs.setBy(by)}>${by}<//>`)}
-  <//>`}`;
+  <//>${prefs.customOrder && html`<${Button} size="sm" variant="link" class="tb-lanes-reset" title="Put the lanes and their headings back in the default order"
+    onClick=${prefs.resetOrder}>reset order<//>`}`}`;
 }
 
 // TaskboardSection is the group card's Task board: folded, one line of
@@ -672,7 +680,7 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
       actions=${head} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
       importing=${importing} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
-      onNewTask=${(initial) => setAdding({ kind: 'form', initial })} />
+      onNewTask=${(initial) => setAdding({ kind: 'form', initial })} onLayout=${prefs.refresh} />
   <//>`;
 }
 

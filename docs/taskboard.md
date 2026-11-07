@@ -418,7 +418,21 @@ needs you* also holds stalled tasks.
 The *Unassigned* lane comes first, then one lane per agent, grouped by role
 (the owner's role first), by subgroup, or not grouped. Each lane head shows the
 agent's state and how many tasks it holds. A name too long for the lane column
-ends in "…"; hover it for the full name. A lane group whose agents are all
+ends in "…"; hover it for the full name.
+
+You can arrange the grid for yourself. The dashboard remembers the
+arrangement per group, for you only. It is not part of the board, so nobody
+else sees it.
+
+- **Column widths.** Drag the right edge of a column head, including the
+  *Lane* column, to resize it. Every column keeps a minimum width. Double-click
+  an edge to reset every width. A focused edge also moves with ← and →.
+- **Lane order.** Drag a lane head onto another lane to move it there. The
+  *Unassigned* lane always stays first, and a new agent's lane joins at the
+  end. With lanes by role or by subgroup, a lane moves within its heading, and
+  you drag a heading to reorder the headings. A focused lane head or heading
+  also moves with Alt+↑ and Alt+↓. *reset order*, next to the *lanes by*
+  switch, puts the default order back. A lane group whose agents are all
 offline folds; click *show offline lanes* to see it. Striped cells cannot hold a
 card: an agent's *Ideas* (an idea is unassigned) and the Unassigned lane's *In
 progress*.
