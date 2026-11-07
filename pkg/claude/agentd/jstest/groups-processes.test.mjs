@@ -627,9 +627,10 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   // One style per kind: a heading, then rows ending in the lock chip; the
   // runs stay with the processes, above the other kinds.
   const shipRow = feSection.querySelector('[data-saved-process="ship"]');
-  assert.equal(shipRow.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'process:ship', 'a process row\'s actions end in its lock');
-  assert.equal(board.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'board:sprint', 'a board row\'s actions end in its lock');
-  assert.ok(feSection.querySelector('.gq-saved > .gr-kind-label'), 'Processes is a heading, as Boards is');
+  assert.equal(shipRow.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'process:ship', 'a process row has the lock column');
+  assert.equal(board.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'board:sprint', 'and so does a board row');
+  assert.equal(feSection.querySelectorAll('thead').length, 1, 'the processes\' table and the resources\' table share one header row');
+  assert.equal(shipRow.querySelector('.gr-kindcell').textContent, 'process', 'kind is a column, not a heading');
   const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
   assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'boards follow the runs');
 

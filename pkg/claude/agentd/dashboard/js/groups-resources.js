@@ -33,10 +33,28 @@ export { LockChip };
 
 const html = htm.bind(h);
 
-function pageMeta(page, nameOf) {
-  if (page.state === 'closed') return page.closedReason ? `page · closed · ${page.closedReason}` : 'page · closed';
-  if (page.groupOwned) return 'page · blank · no member has taken it over';
-  return `page · ${page.kind === 'static' ? 'static' : 'live'} · ${nameOf(page.owner) || page.owner}`;
+// pageDetail is a page's Detail cell: the Kind and State columns already
+// say page, and live or closed.
+function pageDetail(page, nameOf) {
+  if (page.state === 'closed') return page.closedReason || '';
+  if (page.groupOwned) return 'blank · no member has taken it over';
+  return `${page.kind === 'static' ? 'static' : 'live'} · ${nameOf(page.owner) || page.owner}`;
+}
+
+// KIND_WORD is a resource's Kind cell. A board is a drawing board: the group
+// task board is another thing.
+export const KIND_WORD = Object.freeze({ board: 'drawing board', page: 'page', shell: 'shell', process: 'process' });
+
+// ResourceTable is a group's resources as a table like the agents table: a
+// control column (light, 👁 🗑 ⚙), then Name, Kind, State, Lock and Detail,
+// with fixed widths so the processes' table and the other resources' table
+// line up. head shows the header row (only on the first of the two).
+export function ResourceTable({ head = true, attrs = {}, children }) {
+  return html`<table class="gr-rtable" ...${attrs}>
+    <colgroup><col class="gr-col-ctl" /><col class="gr-col-name" /><col class="gr-col-kind" /><col class="gr-col-state" /><col class="gr-col-lock" /><col class="gr-col-detail" /></colgroup>
+    ${head && html`<thead><tr><th></th><th>Name</th><th>Kind</th><th>State</th><th>Lock</th><th>Detail</th></tr></thead>`}
+    <tbody>${children}</tbody>
+  </table>`;
 }
 
 // --- one state per resource (tcl-k6vici) ---
@@ -177,18 +195,18 @@ export function renameResource(resource, { api, source, notify }) {
   return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
-// ResourceRow is one resource, laid out like a row of the agents table: a
-// light for its state, then 👁 (open, focus or attach it), 🗑 (delete it, or
-// kill a shell) and ⚙ (its other actions), the same buttons in the same
-// places on every row, then the agent lock, its name, state pill and detail,
-// each a column the whole section shares. remove is { title, attrs, run } or
-// null (the 🗑 stays, disabled, so the buttons line up); a row that has one
-// is also deleted by a drop on the trash bin (resource-dnd.js).
+// ResourceRow is one resource, a row of ResourceTable: a light for its
+// state, then 👁 (open, focus or attach it), 🗑 (delete it, or kill a shell)
+// and ⚙ (its other actions), the same buttons in the same places on every
+// row, then its name, kind, state pill, agent lock and detail. remove is
+// { title, attrs, run } or null (the 🗑 stays, disabled, so the buttons line
+// up); a row that has one is also deleted by a drop on the trash bin
+// (resource-dnd.js).
 function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, drag = null }) {
   const dragAttrs = drag && !renaming ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind, label, closed: !!closed, ...drag }) } : {};
   useEffect(() => (remove && drag ? registerResourceRemover(`${kind}:${drag.id}`, remove.run) : undefined), [kind, drag?.id, remove?.run]);
-  return html`<div class=${closed ? 'gr-row gr-trow gr-closed' : 'gr-row gr-trow'} ...${attrs} ...${dragAttrs}>
-    <span class="agent-ctl gr-acts">
+  return html`<tr class=${closed ? 'gr-trow gr-closed' : 'gr-trow'} data-resource-kind=${`${kind}s`} ...${attrs} ...${dragAttrs}>
+    <td class="gr-ctl"><span class="agent-ctl gr-acts">
       <span class=${`gr-light gr-light-${view}`} data-resource-light=${view} title=${view} aria-hidden="true">●</span>
       <span class="row-actions">
         <${Button} size="sm" icon=${true} class="icon-btn gr-primary" data-resource-primary=${primary.label}
@@ -198,14 +216,15 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, r
         <${RowMenu} label=${label} items=${menu} glyph=${html`<span class="cog-glyph">⚙︎</span>`} buttonClass="cog-btn gr-cog" keepSlot=${true}
           title=${`Options for ${label}`} />
       </span>
-      ${lock}
-    </span>
-    <span class="gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
+    </span></td>
+    <td class="name-cell gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
-      onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</span>
-    <${ResourcePill} view=${view} kind=${kind} />
-    <span class="gq-dim gr-meta">${meta}</span>
-  </div>`;
+      onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</td>
+    <td class="gq-dim gr-kindcell">${KIND_WORD[kind] || kind}</td>
+    <td><${ResourcePill} view=${view} kind=${kind} /></td>
+    <td class="gr-lockcell">${lock || html`<span class="gq-dim">—</span>`}</td>
+    <td class="gq-dim gr-meta" title=${meta}>${meta}</td>
+  </tr>`;
 }
 
 // reopenPage reopens a closed page saved with the group (POST
@@ -240,7 +259,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
   const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="page" attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
     drag=${draggable && { id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
-    closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
+    closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageDetail(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
     remove=${{ title: `Delete page ${label}`, attrs: { 'data-page-trash': page.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
@@ -256,7 +275,7 @@ function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId,
   const ctx = { groupId, snapshotValue, api, source, notify, confirm, startRename: () => setRenaming(true) };
   return html`<${ResourceRow} kind="board" attrs=${{ 'data-resource-board': board.id }} glyph="▦" label=${label}
     drag=${draggable && { id: board.id, group: groupName }}
-    meta=${board.editing > 0 ? `board · ${board.editing} editing` : 'board'} view=${view}
+    meta=${board.editing > 0 ? `${board.editing} editing` : ''} view=${view}
     primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
     remove=${{ title: `Delete board ${label}`, attrs: { 'data-board-trash': board.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
@@ -279,7 +298,7 @@ function ShellRow({ group, shell, notify, confirm, snapshotValue, draggable = tr
   const killable = view !== 'closed' && !!shell.session;
   return html`<${ResourceRow} kind="shell" attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
     label=${agentShell ? shell.title : 'Group shell'} drag=${draggable && killable && { id: shell.id, group: group.name }}
-    meta=${shell.detail ? `terminal · ${shell.detail}` : 'terminal'} view=${view}
+    meta=${shell.detail || ''} view=${view}
     primary=${{ label: primaryLabel('shell', view), run: open }}
     remove=${killable && { title: `Kill ${label}`, attrs: { 'data-shell-kill': agentShell ? shell.id : group.name }, run: kill }}
     menu=${[{ label: 'Kill…', danger: true, attrs: { 'data-shell-kill-menu': shell.id }, run: kill }].filter(() => killable)} lock=${null} />`;
@@ -292,29 +311,23 @@ export function groupShellsOf(snapshotValue, group) {
   return [...shells.filter((r) => !r.agent), ...shells.filter((r) => r.agent)];
 }
 
-// GroupResources lists a group's boards, pages and shells, each kind under its
-// own heading and only when it has any.
+// GroupResources lists a group's drawing boards, pages and shells in one
+// table (ResourceTable). head is false when the group's saved processes'
+// table above already shows the header row.
 export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm,
-  snapshot = dashboardState.snapshot }) {
+  snapshot = dashboardState.snapshot, head = true }) {
   const snapshotValue = snapshot?.value;
   const shells = groupShellsOf(snapshotValue, group);
   if (!boards.length && !pages.length && !shells.length) return null;
   // A row drags onto this node's group boxes (resource-dnd.js), which the
   // fused fleet view does not have.
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
-  return html`<div class="gr-resources gr-table" data-group-resources=${group.name}>
-    ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
-      <span class="ui-eyebrow gr-kind-label">Boards</span>
-      ${boards.map((board) => html`<${BoardRow} key=${board.id} board=${board} ...${props} />`)}
-    </div>`}
-    ${pages.length > 0 && html`<div class="gr-kind" data-resource-kind="pages">
-      <span class="ui-eyebrow gr-kind-label">Pages</span>
-      ${pages.map((page) => html`<${PageRow} key=${page.id} page=${page} nameOf=${nameOf} ...${props} />`)}
-    </div>`}
-    ${shells.length > 0 && html`<div class="gr-kind" data-resource-kind="shells">
-      <span class="ui-eyebrow gr-kind-label">${shells.length > 1 ? 'Shells' : 'Shell'}</span>
-      ${shells.map((shell) => html`<${ShellRow} key=${shell.id} group=${group} shell=${shell} ...${props} />`)}
-    </div>`}
+  return html`<div class="gr-resources" data-group-resources=${group.name}>
+    <${ResourceTable} head=${head}>
+      ${boards.map((board) => html`<${BoardRow} key=${`board:${board.id}`} board=${board} ...${props} />`)}
+      ${pages.map((page) => html`<${PageRow} key=${`page:${page.id}`} page=${page} nameOf=${nameOf} ...${props} />`)}
+      ${shells.map((shell) => html`<${ShellRow} key=${`shell:${shell.id}`} group=${group} shell=${shell} ...${props} />`)}
+    <//>
   </div>`;
 }
 

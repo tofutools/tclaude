@@ -22,7 +22,7 @@ import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
-import { RowMenu } from './groups-resources.js';
+import { ResourceTable, RowMenu } from './groups-resources.js';
 import { ResourcePill, resourceView } from './resource-pill.js';
 import { dashboardState } from './snapshot-store.js';
 
@@ -214,21 +214,20 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
   useEffect(() => bindSavedProcessDnd(), []);
   useEffect(() => registerSavedProcessRemover(group.name, removeDropped));
   const current = processes.find((process) => process.templateId === open) || null;
-  // One row per process, under the kind's heading, as Resources lists its
-  // boards, pages and shells (groups-resources.js): the actions first, the
-  // agent lock ending them, then name, state and steps, in shared columns.
-  return html`<div class="gq-saved" data-saved-processes=${group.name}>
-    <span class="ui-eyebrow gq-saved-label gr-kind-label">${wizard ? 'Rites' : 'Processes'}</span>
-    <div class="gq-saved-row">
+  // One row per process in a ResourceTable (groups-resources.js), as the
+  // group's other resources are listed below the runs: its light starts a
+  // run, then 👁 🗑 ⚙, name, kind, state, lock and steps.
+  return html`<div class="gq-saved" data-saved-processes=${group.name} data-resource-kind="processes">
+    <${ResourceTable} head=${true} attrs=${{ class: 'gr-rtable gq-saved-row' }}>
       ${processes.map((process) => {
     const pill = resourceView(dashboardState.snapshot.value, group.id, 'process', process.templateId);
     const start = () => { setOpen(open === process.templateId && !removing ? '' : process.templateId); setRemoving(false); };
-    return html`<span key=${process.templateId} class=${`gq-saved-chip${open === process.templateId ? ' open' : ''}`}
+    return html`<tr key=${process.templateId} class=${`gr-trow gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
         data-saved-process-group=${group.name} data-saved-process-name=${process.name}
         data-dnd-resource=${JSON.stringify({ kind: 'process', id: process.templateId, label: process.name, group: group.name })}
         title=${`Drag onto another group to move ${process.name} there (Ctrl/Cmd: add it there too), or onto the bin to remove it from ${group.name}`}>
-        <span class="agent-ctl gr-acts">
+        <td class="gr-ctl"><span class="agent-ctl gr-acts">
           <button data-ui-exempt type="button" class=${`gr-light gr-light-btn gr-light-${pill}`} data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
             aria-label=${`Start ${process.name}`} title=${`${pill} — click to start ${process.name} in ${group.name}`} onClick=${start}>●</button>
           <span class="row-actions">
@@ -243,15 +242,16 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
               items=${[{ label: 'Start…', attrs: { 'data-saved-start-menu': process.templateId }, run: start },
                 ...(editing ? [] : [{ label: 'Edit as a graph', attrs: { 'data-saved-edit-menu': process.templateId }, run: () => editGraph(process) }])]} />
           </span>
-          <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
-        </span>
-        <span class="gq-saved-namecell"><span class="gr-glyph" aria-hidden="true">⧉</span>
-        <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span></span>
-        <${ResourcePill} view=${pill} />
-        <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
-      </span>`;
+        </span></td>
+        <td class="name-cell gq-saved-namecell"><span class="gr-glyph" aria-hidden="true">⧉</span>
+          <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span></td>
+        <td class="gq-dim gr-kindcell">${wizard ? 'rite' : 'process'}</td>
+        <td><${ResourcePill} view=${pill} /></td>
+        <td class="gr-lockcell"><${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} /></td>
+        <td class="gq-dim gr-meta">${plural(process.steps || 0, 'step')}</td>
+      </tr>`;
   })}
-    </div>
+    <//>
     ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing}
       scribeDraft=${scribeDraftsOf(scribes, [current])[0] || null} scribes=${scribes} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}

@@ -55,10 +55,12 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   const board = row('[data-resource-board="plan"]');
   assert.equal(state(board), 'open-tab', 'a board in the Collab strip is open here');
   assert.equal(primary(board), 'Focus');
-  assert.equal(board.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'board:plan', 'the lock ends the row\'s actions');
-  assert.ok(board.firstElementChild.classList.contains('gr-acts'), 'the actions come first, like the agents table');
-  assert.deepEqual([...board.querySelector('.gr-acts').children].map((el) => el.className.split(' ').find((c) => c.startsWith('gr-light') || c === 'row-actions') || el.dataset.resourceLock),
-    ['gr-light', 'row-actions', 'board:plan'], 'like the agents table: the light, the buttons, then the lock');
+  assert.equal(board.tagName, 'TR', 'a resource is a table row, like an agent');
+  const cells = (el) => [...el.children].map((td) => td.textContent.trim());
+  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.textContent), ['', 'Name', 'Kind', 'State', 'Lock', 'Detail']);
+  assert.deepEqual(cells(board).slice(1, 3), ['▦Plan', 'drawing board'], 'name, then kind: a board is a drawing board');
+  assert.equal(board.children[4].querySelector('[data-resource-lock]').dataset.resourceLock, 'board:plan', 'the lock has its own column');
+  assert.ok(board.firstElementChild.querySelector('.gr-light'), 'the light opens the row, like an agent\'s');
   assert.deepEqual([...board.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
     ['eye', 'trash', 'cog'], 'the same buttons in the same order on every row');
   const shellRow = row('[data-resource-shell="crew"]');
