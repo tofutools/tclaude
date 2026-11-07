@@ -130,10 +130,15 @@ func taskboardMultipart(task any, files []taskboardFile) ([]byte, string, error)
 	return buf.Bytes(), mw.FormDataContentType(), nil
 }
 
+// peerViewDirectMax is the most a request may carry straight through one
+// peer view request (the daemon's fedPeerViewBodyLimit).
+const peerViewDirectMax = 32 << 10
+
 // taskboardUpload posts a multipart request to path on this node or, with
-// peer, through this node's staged upload to that linked node (the
-// operator's; one peer view request is too small for files). A peer's
-// answer is cleaned as remoteRequest cleans it.
+// peer, to that linked node: straight through the peer view when it fits
+// one request (an agent's view too, under its peer grants), through this
+// node's staged upload otherwise (the operator's). A peer's answer is
+// cleaned as remoteRequest cleans it.
 func taskboardUpload(peer, path string, task any, files []taskboardFile, out any, ask time.Duration) error {
 	body, contentType, err := taskboardMultipart(task, files)
 	if err != nil {
@@ -145,8 +150,16 @@ func taskboardUpload(peer, path string, task any, files []taskboardFile, out any
 		return DaemonPostRawWithOptions(path, contentType, body, nil, out, opts)
 	}
 	var raw any
-	staged := "/v1/federation/peer-upload/" + url.PathEscape(peer) + "?" + url.Values{"path": {path}}.Encode()
-	if err := DaemonPostRawWithOptions(staged, contentType, body, nil, &raw, opts); err != nil {
+	target := remotePath(peer, path)
+	if len(body) > peerViewDirectMax {
+		target = "/v1/federation/peer-upload/" + url.PathEscape(peer) + "?" + url.Values{"path": {path}}.Encode()
+	}
+	if err := DaemonPostRawWithOptions(target, contentType, body, nil, &raw, opts); err != nil {
+		var de *DaemonError
+		if len(body) > peerViewDirectMax && errors.As(err, &de) && de.Status == http.StatusForbidden && de.Code == "auth" {
+			return fmt.Errorf("files over %d KiB in all reach a linked node only through the operator's staged upload; ask the operator, or send smaller files: %w",
+				peerViewDirectMax>>10, err)
+		}
 		if clean := proto.StripControls(err.Error()); clean != err.Error() {
 			return fmt.Errorf("%s", clean)
 		}

@@ -90,6 +90,9 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
 		}
+		// Refresh the blobs' grace, so the collector cannot take one the
+		// original lost meanwhile before the clone's rows name it.
+		touchTaskBlobs(files)
 		out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: target.ID, Title: t.Title, Body: t.Body, Stage: stage,
 			RefKind: t.RefKind, RefURL: t.RefURL, RefLabel: t.RefLabel, Actor: actor,
 			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name), Attachments: files})

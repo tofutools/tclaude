@@ -137,9 +137,18 @@ func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	}
 	by := taskboardCallerName(r)
 	from := confirmedAgentConv(r)
+	// Unique names up front (case-folded, as the mail's store needs), so
+	// the brief names the files as the mail carries them.
 	names := make([]string, 0, len(files))
-	for _, f := range files {
-		names = append(names, f.Name)
+	taken := map[string]bool{}
+	for i := range files {
+		name := files[i].Name
+		for n := 2; taken[strings.ToLower(name)]; n++ {
+			name = fmt.Sprintf("%d-%s", n, files[i].Name)
+		}
+		taken[strings.ToLower(name)] = true
+		files[i].Name = name
+		names = append(names, name)
 	}
 	m := &db.AgentMessage{GroupID: g.ID, FromConv: from, ToConv: conv, ToRecipients: []string{conv},
 		Subject: fmt.Sprintf("[taskboard] task request from %s: %s", by, g.Name),

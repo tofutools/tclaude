@@ -101,6 +101,16 @@ func storeTaskBlob(data []byte) (string, error) {
 	return sha, nil
 }
 
+// touchTaskBlobs refreshes the collector's grace on the files' blobs.
+func touchTaskBlobs(files []db.GroupTaskAttachment) {
+	now := time.Now()
+	for _, f := range files {
+		if path, err := taskBlobPath(f.SHA256); err == nil {
+			_ = os.Chtimes(path, now, now)
+		}
+	}
+}
+
 // readTaskBlob reads a stored file, checking it is the size its row says.
 func readTaskBlob(a *db.GroupTaskAttachment) ([]byte, error) {
 	path, err := taskBlobPath(a.SHA256)
@@ -133,7 +143,8 @@ func collectTaskBlobs(now time.Time) {
 		if referenced[d.Name()] {
 			return nil
 		}
-		if info, err := d.Info(); err == nil && now.Sub(info.ModTime()) < taskAttachmentBlobGrace {
+		// Stat afresh: a store or a clone may have just touched it.
+		if info, err := os.Stat(path); err != nil || now.Sub(info.ModTime()) < taskAttachmentBlobGrace {
 			return nil
 		}
 		if os.Remove(path) == nil {

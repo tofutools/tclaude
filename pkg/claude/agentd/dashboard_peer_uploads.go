@@ -307,7 +307,9 @@ var peerUploadExchange = func(ctx context.Context, peer *db.FederationPeer, req 
 	if !validPeerViewReply(reply) {
 		return http.StatusBadGateway, errors.New("peer returned an invalid response")
 	}
-	if reply.Status != http.StatusOK {
+	// A route may answer 201 (a task created with its files): any 2xx is
+	// its success.
+	if reply.Status < 200 || reply.Status > 299 {
 		return reply.Status, &peerDownloadRefused{body: reply.Body}
 	}
 	if out != nil && json.Unmarshal(reply.Body, out) != nil {
