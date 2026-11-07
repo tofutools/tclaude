@@ -50,14 +50,14 @@ const STATE_LABELS = {
 
 function RefChip({ task }) {
   const ref = task.ref;
-  if (!ref) return html`<span class="tb-ref none">—</span>`;
+  if (!ref) return html`<span class="tb-ref-none">—</span>`;
   const label = ref.label || ref.url || ref.kind;
   const title = `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`;
   // The store only keeps http(s) URLs; check again before making a link.
   if (ref.url && /^https?:\/\//i.test(ref.url)) {
-    return html`<a class="tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
+    return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
   }
-  return html`<span class="tb-ref" title=${title}>🔗 ${label}</span>`;
+  return html`<span class="ui-tag ui-tag-accent tb-ref" title=${title}>🔗 ${label}</span>`;
 }
 
 function DepChips({ task, numbers }) {
@@ -95,28 +95,27 @@ function StatePill({ task, numbers }) {
     const when = relTime(task.closed_at);
     if (when) text = `${text} · ${when}`;
   }
-  return html`<span class=${`tb-state tb-state-${state}`}>${text}</span>`;
+  return html`<span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`}>${text}</span>`;
 }
 
 function TaskRow({ task, n, numbers, group, snapshot }) {
   const state = taskRowState(task);
-  const rows = [html`<tr key=${task.id} class=${`tb-row tb-row-${state}`} data-task-id=${task.id}>
+  return html`<tr class=${`tb-row tb-row-${state}`} data-task-id=${task.id}>
     <td class="tb-n">${n || ''}</td>
     <td class="tb-title-cell">
       <span class="tb-title">${task.title}</span>
       <span class="tb-id" title=${task.id}>${task.id}</span>
       <${DepChips} task=${task} numbers=${numbers} />
+      ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
     </td>
     <td><${RefChip} task=${task} /></td>
     <td><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
     <td><${StatePill} task=${task} numbers=${numbers} /></td>
-  </tr>`];
-  if (task.status === 'blocked' && task.block_reason) {
-    rows.push(html`<tr key=${`${task.id}-reason`} class="tb-reason-row"><td></td>
-      <td colspan="4" class="tb-reason">blocked: “${task.block_reason}”</td></tr>`);
-  }
-  return rows;
+  </tr>`;
 }
+
+// Both tables (the list and the closed tasks) share one column grid.
+const COLUMNS = html`<colgroup><col class="tb-col-n" /><col /><col class="tb-col-ref" /><col class="tb-col-who" /><col class="tb-col-state" /></colgroup>`;
 
 function HistoryLine({ entry, open, onToggle, wizard }) {
   const counts = entry.counts || {};
@@ -145,18 +144,18 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
   return html`<div class="tb-board" data-taskboard=${name}>
-    ${tasks.length ? html`<table class="tb-table">
+    ${tasks.length ? html`<table class="ui-compact tb-table">${COLUMNS}
       <thead><tr><th class="tb-n">#</th><th>${wizard ? 'Quest · top is next' : 'Task · operator order, top is next'}</th>
         <th>Ref</th><th>Who</th><th>State</th></tr></thead>
       <tbody>
         ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} numbers=${numbers} group=${group} snapshot=${snapshot} />`)}
-        ${ideas.length > 0 && html`<tr class="tb-ideas-divider"><td></td><td colspan="4">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue</td></tr>`}
+        ${ideas.length > 0 && html`<tr class="tb-ideas-divider"><td></td><td colspan="4"><span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue</span></td></tr>`}
         ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} numbers=${numbers} group=${group} snapshot=${snapshot} />`)}
       </tbody>
     </table>` : html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'} Add one with <code>tclaude agent taskboard add ${name} "…"</code>.</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     <${HistoryLine} entry=${entry} open=${history} wizard=${wizard} onToggle=${() => setHistory(!history)} />
-    ${history && (entry.closed || []).length > 0 && html`<table class="tb-table tb-closed"><tbody>
+    ${history && (entry.closed || []).length > 0 && html`<table class="ui-compact tb-table tb-closed">${COLUMNS}<tbody>
       ${(entry.closed || []).map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} numbers=${numbers} group=${group} snapshot=${snapshot} />`)}
     </tbody></table>`}
   </div>`;
@@ -181,7 +180,7 @@ function TaskboardCounts({ counts }) {
   const parts = taskboardCountParts(counts);
   return html`<span class="tb-counts" title=${taskboardCountsText(counts)}>
     <span class=${`gf-count${counts.live ? '' : ' zero'}`}>${counts.live || 0}</span>
-    ${parts.map((part) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}> · ${part.text}</span>`)}
+    ${parts.map((part) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${` · ${part.text}`}</span>`)}
   </span>`;
 }
 

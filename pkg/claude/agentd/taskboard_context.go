@@ -100,16 +100,12 @@ func handleTaskboardContext(w http.ResponseWriter, r *http.Request) {
 }
 
 // taskboardContextGroups lists the active groups whose board the caller
-// reads. Anyone neither the operator nor a confirmed agent gets the ordinary
-// gate's answer for an unscoped read.
+// reads. Anyone neither the operator nor a confirmed agent (a peer grant,
+// say) goes through the board's own gate group by group, so a grant scoped to
+// some groups never reads as all of them.
 func taskboardContextGroups(w http.ResponseWriter, r *http.Request) ([]*db.AgentGroup, bool) {
-	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
-	if conv == "" && !callerIsHuman(r) {
-		if _, ok := requirePermission(w, r, PermTaskboardRead); !ok {
-			return nil, false
-		}
-	}
+	human := callerIsHuman(r)
 	all, err := db.ListAgentGroups()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
@@ -120,10 +116,23 @@ func taskboardContextGroups(w http.ResponseWriter, r *http.Request) ([]*db.Agent
 		if g.IsArchived() {
 			continue
 		}
-		if conv != "" && !agentReadsTaskboard(r, conv, g) {
-			continue
+		switch {
+		case human:
+		case conv != "":
+			if !agentReadsTaskboard(r, conv, g) {
+				continue
+			}
+		default:
+			if !requireTaskboard(&taskboardGateWriter{header: http.Header{}}, r, g, false) {
+				continue
+			}
 		}
 		out = append(out, g)
+	}
+	if !human && conv == "" && len(out) == 0 {
+		// Nothing readable: answer with the gate's refusal, not an empty list.
+		_, _ = requirePermission(w, r, PermTaskboardRead)
+		return nil, false
 	}
 	return out, true
 }

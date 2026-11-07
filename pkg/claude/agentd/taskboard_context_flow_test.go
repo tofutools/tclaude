@@ -92,7 +92,7 @@ func TestTaskboardContextCountsAndRows(t *testing.T) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = 'human:operator', assigned_at = ? WHERE id = ?`,
-		agentID, time.Now().Unix(), taken.ID)
+		agentID, time.Now().UnixNano(), taken.ID)
 	require.NoError(t, err)
 
 	c := h.context(member)
@@ -175,4 +175,49 @@ func TestTaskboardContextIsOffByDefault(t *testing.T) {
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/context", nil)))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Body.String(), "feature_disabled")
+}
+
+// The bounds: at most 50 live rows (the counts still cover them all), at
+// most 8 closed rows, and a done task older than a week leaves the weekly
+// count.
+func TestTaskboardContextBounds(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	for i := 0; i < 52; i++ {
+		h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "live", "stage": "next"}), http.StatusCreated)
+	}
+	var closed []string
+	for i := 0; i < 10; i++ {
+		task := h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "closed"}), http.StatusCreated)
+		h.task(h.call("", http.MethodPost, "/v1/taskboard/tasks/"+task.ID+"/status", map[string]any{"status": "done"}), http.StatusOK)
+		closed = append(closed, task.ID)
+	}
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE group_tasks SET closed_at = ? WHERE id = ?`, time.Now().Add(-8*24*time.Hour).UnixNano(), closed[0])
+	require.NoError(t, err)
+
+	rec := h.call("", http.MethodGet, "/v1/taskboard/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Groups []struct {
+			Counts struct {
+				Live         int `json:"live"`
+				Next         int `json:"next"`
+				DoneThisWeek int `json:"done_this_week"`
+			} `json:"counts"`
+			Tasks     []tbContextTask `json:"tasks"`
+			Closed    []tbContextTask `json:"closed"`
+			Truncated bool            `json:"truncated"`
+		} `json:"groups"`
+	}
+	testharness.DecodeJSON(t, rec, &out)
+	require.Len(t, out.Groups, 1)
+	g := out.Groups[0]
+	assert.Equal(t, 52, g.Counts.Live)
+	assert.Equal(t, 52, g.Counts.Next)
+	assert.Len(t, g.Tasks, 50)
+	assert.True(t, g.Truncated)
+	assert.Len(t, g.Closed, 8)
+	assert.Equal(t, 9, g.Counts.DoneThisWeek)
 }
