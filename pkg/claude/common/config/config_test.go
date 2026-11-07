@@ -1686,6 +1686,17 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\x1bb"}}), "\n"), "steward.startup_prompt")
 	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\r\nb"}}), "\n"), "steward.startup_prompt", "a summon refuses \\r")
 
+	assert.Empty(t, none.StewardDir())
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, "code", "repo"), (&Config{Steward: &StewardConfig{Dir: " ~/code/repo/ "}}).StewardDir())
+	assert.Equal(t, "/srv/work", (&Config{Steward: &StewardConfig{Dir: "/srv//work"}}).StewardDir())
+	assert.Empty(t, Validate(&Config{Steward: &StewardConfig{Dir: "~/code"}}))
+	for _, dir := range []string{"relative/dir", "~other/dir", "/a\x07b"} {
+		assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{Dir: dir}}), "\n"), "steward.dir", dir)
+	}
+	assert.Empty(t, (&Config{Steward: &StewardConfig{Dir: "relative"}}).StewardDir(), "an unusable path falls back to the default")
+
 	assert.Empty(t, none.StewardDefaultPermissions())
 	c = &Config{Steward: &StewardConfig{DefaultPermissions: []string{" agent.spawn ", ""}}}
 	assert.Equal(t, []string{"agent.spawn"}, c.StewardDefaultPermissions())

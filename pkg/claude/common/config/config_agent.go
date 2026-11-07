@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -214,6 +216,9 @@ type StewardConfig struct {
 	// Profile is the spawn profile a new Steward launches with. Empty means the
 	// global default spawn profile.
 	Profile string `json:"profile,omitempty"`
+	// Dir is the directory a new Steward starts in: an absolute path, or one
+	// under ~/. Empty means the shared scribe workdir, ~/.tclaude/scribe.
+	Dir string `json:"dir,omitempty"`
 	// Name is what the operator calls their Steward. Empty means "the Steward".
 	Name string `json:"name,omitempty"`
 	// StartupPrompt is the operator's own instructions, added to the brief of
@@ -309,6 +314,40 @@ func (c *Config) StewardProfile() string {
 		return ""
 	}
 	return strings.TrimSpace(c.Steward.Profile)
+}
+
+// StewardDir returns the directory a new Steward starts in, with a leading ~/
+// expanded and the path cleaned, or "" for the default scribe workdir (also
+// when the setting is not a usable path; validation reports that). Nil-safe.
+func (c *Config) StewardDir() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	dir, ok := expandStewardDir(c.Steward.Dir)
+	if !ok {
+		return ""
+	}
+	return dir
+}
+
+// expandStewardDir resolves a steward.dir value: "" stays "", "~" and "~/..."
+// expand to the home directory, and anything else must be absolute.
+func expandStewardDir(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", true
+	}
+	if raw == "~" || strings.HasPrefix(raw, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", false
+		}
+		raw = filepath.Join(home, strings.TrimPrefix(raw, "~"))
+	}
+	if !filepath.IsAbs(raw) {
+		return "", false
+	}
+	return filepath.Clean(raw), true
 }
 
 // StewardStartupPrompt returns the operator's instructions, trimmed. Nil-safe.
