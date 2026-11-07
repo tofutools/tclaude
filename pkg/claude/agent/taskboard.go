@@ -44,6 +44,11 @@ func taskboardCmd() *cobra.Command {
 			taskboardStatusCmd("unblock", "open", "Unblock a blocked task", false),
 			taskboardStatusCmd("drop", "dropped", "Drop a task off the board (park it in the external tracker)", true),
 			taskboardStatusCmd("done", "done", "Close a task as done", true),
+			taskboardAssignCmd(),
+			taskboardUnassignCmd("unassign", "Take a task back from its assignee (needs taskboard.assign)"),
+			taskboardTakeCmd(),
+			taskboardUnassignCmd("release", "Give back a task assigned to you"),
+			taskboardReportCmd(),
 		},
 	}.ToCobra()
 }
@@ -64,6 +69,14 @@ type taskboardTask struct {
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 	ClosedAt    string   `json:"closed_at,omitempty"`
+	Assignee    *struct {
+		AgentID string `json:"agent_id"`
+		Name    string `json:"name,omitempty"`
+	} `json:"assignee,omitempty"`
+	AssignedBy  string `json:"assigned_by,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
+	OutcomeNote string `json:"outcome_note,omitempty"`
+	Failures    int    `json:"failures,omitempty"`
 	Ref         *struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url,omitempty"`
@@ -121,11 +134,22 @@ type taskboardLsParams struct {
 	Group string `pos:"true" optional:"true" help:"Group whose board to list (default: your group, when you are in exactly one)"`
 	Stage string `long:"stage" optional:"true" help:"Only this stage: idea or next"`
 	All   bool   `long:"all" help:"Also list done and dropped tasks not yet archived"`
+	Mine  bool   `long:"mine" help:"Only the live tasks assigned to you, in every group"`
 	// Summary is the dashboard's counts for every board you can read, one
 	// line per group (GET /v1/taskboard/context).
 	Summary bool   `long:"summary" help:"Counts for every group board you can read, one line per group"`
 	Peer    string `long:"peer" optional:"true" help:"List a linked node's board instead (name the group), under the grants it gave this node (taskboard.read)"`
 	JSON    bool   `long:"json" help:"Output JSON"`
+}
+
+func (t taskboardTask) assigneeText() string {
+	if t.Assignee == nil {
+		return ""
+	}
+	if t.Assignee.Name != "" {
+		return t.Assignee.Name
+	}
+	return t.Assignee.AgentID
 }
 
 func taskboardLsCmd() *cobra.Command {
@@ -145,8 +169,8 @@ func taskboardLsCmd() *cobra.Command {
 
 func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	if p.Summary {
-		if strings.TrimSpace(p.Group) != "" || p.Stage != "" || p.All {
-			fmt.Fprintln(stderr, "Error: --summary covers every board you can read; it takes no group, --stage or --all")
+		if strings.TrimSpace(p.Group) != "" || p.Stage != "" || p.All || p.Mine {
+			fmt.Fprintln(stderr, "Error: --summary covers every board you can read; it takes no group, --stage, --all or --mine")
 			return rcInvalidArg
 		}
 		return runTaskboardSummary(p.Peer, p.JSON, stdout, stderr)
@@ -169,12 +193,21 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	if g := strings.TrimSpace(p.Group); g != "" {
 		path = "/v1/groups/" + url.PathEscape(g) + "/taskboard"
 	}
+	if p.Mine {
+		if p.Group != "" || p.Stage != "" || p.All {
+			fmt.Fprintln(stderr, "Error: --mine takes no group, --stage or --all")
+			return rcInvalidArg
+		}
+		return runTaskboardMine(p.JSON, stdout, stderr)
+	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
 	var resp struct {
-		Group string          `json:"group"`
-		Tasks []taskboardTask `json:"tasks"`
+		Group   string          `json:"group"`
+		Tasks   []taskboardTask `json:"tasks"`
+		Locked  bool            `json:"locked"`
+		Writers []string        `json:"writers,omitempty"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -189,6 +222,9 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "%s task board\n", resp.Group)
+	if resp.Locked {
+		fmt.Fprintf(stdout, "(locked to writers: %s)\n", strings.Join(append([]string{"owners"}, resp.Writers...), ", "))
+	}
 	section := ""
 	n := 0
 	for _, t := range resp.Tasks {
@@ -219,6 +255,9 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		}
 		if len(t.DependsOn) > 0 {
 			line += "  after " + strings.Join(t.DependsOn, ",")
+		}
+		if a := t.assigneeText(); a != "" {
+			line += "  @" + a
 		}
 		if t.BlockReason != "" {
 			line += "  — " + t.BlockReason
@@ -342,6 +381,15 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	}
 	if t.Ref != nil {
 		fmt.Fprintf(stdout, "  ref:     %s %s %s\n", t.Ref.Kind, t.Ref.Label, t.Ref.URL)
+	}
+	if a := t.assigneeText(); a != "" {
+		fmt.Fprintf(stdout, "  assigned: %s (by %s)\n", a, t.AssignedBy)
+	}
+	if t.Outcome != "" {
+		fmt.Fprintf(stdout, "  last report: %s %s\n", t.Outcome, t.OutcomeNote)
+	}
+	if t.Failures > 0 {
+		fmt.Fprintf(stdout, "  failures: %d\n", t.Failures)
 	}
 	if len(t.DependsOn) > 0 {
 		fmt.Fprintf(stdout, "  after:   %s", strings.Join(t.DependsOn, ", "))
@@ -842,4 +890,279 @@ func taskboardBlockCmd() *cobra.Command {
 				map[string]any{"status": "blocked", "reason": p.Reason}, p.AskHuman, p.JSON, "blocked", cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// ---- assign / take / release / report ----
+
+func runTaskboardMine(asJSON bool, stdout, stderr io.Writer) int {
+	tasks, rc := fetchTaskboardMine(stderr)
+	if rc != rcOK {
+		return rc
+	}
+	if asJSON {
+		return writeJSONTo(stdout, map[string]any{"tasks": tasks})
+	}
+	if len(tasks) == 0 {
+		fmt.Fprintln(stdout, "no tasks are assigned to you")
+		return rcOK
+	}
+	for _, t := range tasks {
+		line := fmt.Sprintf("%s  %-8s %-7s  %s", t.ID, t.Group, t.Status, t.Title)
+		if ref := t.refText(); ref != "" {
+			line += "  [" + ref + "]"
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	return rcOK
+}
+
+func fetchTaskboardMine(stderr io.Writer) ([]taskboardTask, int) {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return nil, rc
+	}
+	var resp struct {
+		Tasks []taskboardTask `json:"tasks"`
+	}
+	if err := DaemonGet("/v1/taskboard/mine", &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, MapDaemonErrorToRC(err)
+	}
+	return resp.Tasks, rcOK
+}
+
+type taskboardAssignParams struct {
+	Task     string `pos:"true" help:"Task id (tk_…)"`
+	To       string `long:"to" help:"Agent to assign it to (name or id); an active member of the task's group"`
+	Peer     string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON     bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardAssignCmd() *cobra.Command {
+	return boa.CmdT[taskboardAssignParams]{
+		Use:   "assign",
+		Short: "Assign a task to a member of its group (they get an inbox brief)",
+		Long: "Assign a task to an active member of the task's group. An idea is promoted to the queue on assign. " +
+			"The assignee gets an inbox message from you with the brief and the report commands. Assigning another " +
+			"agent needs taskboard.assign (group owners have it for their groups). The assignment never retires or " +
+			"stops the agent.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardAssignParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardAssignParams, _ *cobra.Command, _ []string) {
+			if strings.TrimSpace(p.To) == "" {
+				fmt.Fprintln(cliStderr, "Error: --to is required (use `taskboard take` to take a task yourself)")
+				os.Exit(rcInvalidArg)
+			}
+			os.Exit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": p.To},
+				p.AskHuman, p.JSON, "assigned", cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func taskboardTakeCmd() *cobra.Command {
+	return boa.CmdT[taskboardTaskParams]{
+		Use:         "take",
+		Short:       "Take a queued, unassigned task of your group for yourself",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardTaskParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
+			if strings.TrimSpace(p.Peer) != "" {
+				fmt.Fprintln(cliStderr, "Error: take acts on yourself, so it has no --peer; a linked node's tasks are assigned there")
+				os.Exit(rcInvalidArg)
+			}
+			os.Exit(taskboardWrite("", http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": ""},
+				p.AskHuman, p.JSON, "took", cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func taskboardUnassignCmd(use, short string) *cobra.Command {
+	verb := map[string]string{"unassign": "unassigned", "release": "released"}[use]
+	return boa.CmdT[taskboardTaskParams]{
+		Use:         use,
+		Short:       short,
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardTaskParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
+			if use == "release" && strings.TrimSpace(p.Peer) != "" {
+				fmt.Fprintln(cliStderr, "Error: release acts on yourself, so it has no --peer")
+				os.Exit(rcInvalidArg)
+			}
+			os.Exit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/unassign"), map[string]any{"self": use == "release"},
+				p.AskHuman, p.JSON, verb, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+type taskboardReportParams struct {
+	Outcome string `pos:"true" help:"done or failed"`
+	Task    string `long:"task" optional:"true" help:"Task id (default: the one live task assigned to you)"`
+	Note    string `long:"note" optional:"true" help:"What you did, or why it failed (up to 4 KiB)"`
+	JSON    bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardReportCmd() *cobra.Command {
+	return boa.CmdT[taskboardReportParams]{
+		Use:   "report",
+		Short: "Report done or failed on a task assigned to you",
+		Long: "Report done or failed on a task assigned to you. done closes the task; failed gives it back " +
+			"(after three failed reports it is blocked). Reporting does not end your session, and the board's writer " +
+			"lock never stops it. --task may be left out when exactly one live task is assigned to you.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *taskboardReportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTaskboardReport(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runTaskboardReport(p *taskboardReportParams, stdout, stderr io.Writer) int {
+	outcome := strings.TrimSpace(p.Outcome)
+	if outcome != "done" && outcome != "failed" {
+		fmt.Fprintln(stderr, "Error: report done or report failed")
+		return rcInvalidArg
+	}
+	task := strings.TrimSpace(p.Task)
+	if task == "" {
+		tasks, rc := fetchTaskboardMine(stderr)
+		if rc != rcOK {
+			return rc
+		}
+		switch len(tasks) {
+		case 0:
+			fmt.Fprintln(stderr, "Error: no live task is assigned to you")
+			return rcNotFound
+		case 1:
+			task = tasks[0].ID
+		default:
+			ids := make([]string, 0, len(tasks))
+			for _, t := range tasks {
+				ids = append(ids, t.ID)
+			}
+			fmt.Fprintf(stderr, "Error: %d tasks are assigned to you (%s); name one with --task\n", len(tasks), strings.Join(ids, ", "))
+			return rcAmbiguous
+		}
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var resp struct {
+		Task     taskboardTask `json:"task"`
+		Repeated bool          `json:"repeated"`
+		Blocked  bool          `json:"blocked"`
+	}
+	if err := DaemonRequest(http.MethodPost, taskboardPath(task, "/report"),
+		map[string]any{"outcome": outcome, "note": p.Note}, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return writeJSONTo(stdout, resp)
+	}
+	switch {
+	case resp.Repeated:
+		fmt.Fprintf(stdout, "already reported %s on %s\n", outcome, resp.Task.ID)
+	case resp.Blocked:
+		fmt.Fprintf(stdout, "reported failed on %s; it is now blocked (%s)\n", resp.Task.ID, resp.Task.BlockReason)
+	default:
+		fmt.Fprintf(stdout, "reported %s on %s: %s  [%s]\n", outcome, resp.Task.ID, resp.Task.Title, resp.Task.Status)
+	}
+	return rcOK
+}
+
+// ---- groups set-taskboard-writers ----
+
+type groupsTaskboardWritersParams struct {
+	Group    string   `pos:"true" help:"Group whose task board to lock"`
+	Agents   []string `pos:"true" optional:"true" help:"Members who may still change the board (owners, explicit grant holders and the operator always may)"`
+	Members  bool     `long:"members" help:"Unlock: every member may change the board again"`
+	Show     bool     `long:"show" help:"Only show the current lock"`
+	Peer     string   `long:"peer" optional:"true" help:"Lock a linked node's board instead, under the grants it gave this node (taskboard.manage)"`
+	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetTaskboardWritersCmd() *cobra.Command {
+	return boa.CmdT[groupsTaskboardWritersParams]{
+		Use:   "set-taskboard-writers",
+		Short: "Lock a group's task board to listed writers, or open it to every member (--members)",
+		Long: "By default every member of a group may change its task board and take its tasks. Listing writers " +
+			"narrows that to them; owners, the operator, and agents with an explicit unscoped or group-scoped " +
+			"taskboard.write or taskboard.assign grant are not affected, and reporting on your own task is never locked. With no agents and no " +
+			"--members the board is locked to owners only. Needs taskboard.manage (group owners have it).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsTaskboardWritersParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsTaskboardWritersParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetTaskboardWriters(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetTaskboardWriters(p *groupsTaskboardWritersParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/writers"
+	var resp struct {
+		Group   string `json:"group"`
+		Locked  bool   `json:"locked"`
+		Writers []struct {
+			AgentID string `json:"agent_id"`
+			Name    string `json:"name,omitempty"`
+		} `json:"writers"`
+	}
+	if p.Show {
+		if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+	} else {
+		if p.Members && len(p.Agents) > 0 {
+			fmt.Fprintln(stderr, "Error: give agents or --members, not both")
+			return rcInvalidArg
+		}
+		ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+		if rc != rcOK {
+			return rc
+		}
+		body := map[string]any{"members": p.Members, "agents": p.Agents}
+		if err := remoteRequestOpts(p.Peer, http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+	}
+	if !resp.Locked {
+		fmt.Fprintf(stdout, "%s: task board open to every member\n", resp.Group)
+		return rcOK
+	}
+	names := []string{}
+	for _, w := range resp.Writers {
+		names = append(names, firstNonEmptyStr(w.Name, w.AgentID))
+	}
+	if len(names) == 0 {
+		fmt.Fprintf(stdout, "%s: task board locked to owners only\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: task board locked to owners and %s\n", resp.Group, strings.Join(names, ", "))
+	}
+	return rcOK
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

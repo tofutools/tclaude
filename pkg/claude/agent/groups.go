@@ -48,6 +48,7 @@ func groupsCmd() *cobra.Command {
 			groupsRemoveCmd(),
 			groupsMoveCmd(),
 			groupsDropKeptCmd(),
+			groupsSetTaskboardWritersCmd(),
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),

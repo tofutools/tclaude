@@ -76,8 +76,6 @@ func (f FedReach) peerGrantable() bool {
 	return false
 }
 
-// peerPagesWhy: a live page is served from this node's stage origin into
-// its local operator's own dashboard and to its agents.
 const peerPagesWhy = "a page is this node's stage origin, shown to the local operator's own dashboard and its agents; a peer has no view of it"
 
 // peerCredentialProxyWhy: the git, forge, HTTP, Linear and awb proxies carry
@@ -140,7 +138,8 @@ var slugFederationReach = map[string]FedReach{
 	PermSelfTaskboard:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermTaskboardRead:                     {Kind: FedPeerGroup, Cap: "taskboard_read", SelfGate: true},
 	PermTaskboardWrite:                    {Kind: FedPeerGroup, Cap: "taskboard_write", SelfGate: true, Sensitive: true},
-	PermTaskboardManage:                   {Kind: FedLocal, Why: peerTaskboardManageWhy},
+	PermTaskboardManage:                   {Kind: FedPeerGroup, Cap: "taskboard_manage", SelfGate: true, Sensitive: true},
+	PermTaskboardAssign:                   {Kind: FedPeerGroup, Cap: "taskboard_assign", SelfGate: true, Sensitive: true},
 	PermSelfPR:                            {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTags:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfDirRepair:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},

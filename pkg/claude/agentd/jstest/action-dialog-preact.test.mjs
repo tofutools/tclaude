@@ -999,6 +999,10 @@ test('sandbox-impl dialog changes only the sandbox profile when only it moves', 
   const select = host.querySelector('#sandbox-impl-profile');
   assert.match(select.querySelector('option[value="loose"]').textContent, /current/,
     'the server-reported profile is marked current');
+  assert.match(select.querySelector('option[value=""]').textContent, /default \(global \+ group profiles\)/,
+    'no explicit profile is the default, not a "none" that would read as omitting every tier');
+  assert.match(select.options[0].textContent, /keep current \(loose\)/,
+    'the first option, and the initial choice, keeps the current profile');
   assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /group “crew-base”/,
     'the tiers the agent does not own are shown for context');
   assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
@@ -1013,6 +1017,33 @@ test('sandbox-impl dialog changes only the sandbox profile when only it moves', 
   assert.deepEqual(calls, [['assign', {
     conv: 'agent-conv', label: 'worker', implementation: '', sandbox: '', sandboxProfile: 'strict', restart: false,
   }]], 'an untouched implementation is sent empty, so only the profile changes');
+});
+
+test('sandbox-impl dialog sends the default as no explicit profile, and keep as no change', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({ sandbox_profile: 'loose', sandbox_profile_options: ['loose'] }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const select = host.querySelector('#sandbox-impl-profile');
+  const choose = (value) => harness.act(() => {
+    [...select.options].forEach((option) => option.removeAttribute('selected'));
+    [...select.options].find((option) => option.value === value).setAttribute('selected', '');
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  await choose('');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].sandboxProfile, '', 'default clears the explicit profile');
+
+  // Back to keep: nothing to change, so nothing can be assigned.
+  await choose(select.options[0].value);
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
 });
 
 test('sandbox-impl dialog locks the profile picker when the agent has none to change', async (t) => {

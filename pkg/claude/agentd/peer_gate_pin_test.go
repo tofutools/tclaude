@@ -53,8 +53,10 @@ var pinnedPeerGroupGates = map[string][]string{
 	PermProcessAdvance: {"process.advance"},
 	// tcl-0jgecz: a group's task board answers its own gates there; write
 	// implies read through the route (peerTaskboardImpliedGates).
-	PermTaskboardRead:  {"taskboard.read"},
-	PermTaskboardWrite: {"taskboard.write"},
+	PermTaskboardRead:   {"taskboard.read"},
+	PermTaskboardWrite:  {"taskboard.write"},
+	PermTaskboardAssign: {"taskboard.assign"},
+	PermTaskboardManage: {"taskboard.manage"},
 	// A deployed group's re-brief (peer_group_launch.go).
 	PermTemplatesUse: {"templates.instantiate"},
 }

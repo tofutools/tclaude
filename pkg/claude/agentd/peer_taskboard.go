@@ -14,8 +14,10 @@ import (
 // A group's task board over federation (tcl-0jgecz, docs/taskboard.md): a
 // linked node's operator, or one of its agents, reads and changes a board on
 // this node under the peer grants this node's operator gave it:
-// taskboard.read and taskboard.write, scoped per group (default nothing).
-// write implies read, as it does locally. Every route runs this node's own
+// taskboard.read, taskboard.write, taskboard.assign (this node's members, on
+// the task's group) and taskboard.manage (the writer lock), scoped per group
+// (default nothing). Any of them implies read. Taking, releasing and
+// reporting stay with this node's own agents. Every route runs this node's own
 // handler (the dashboard mux, taskboard.go) under a peerGrantAuthority for the
 // board's group, so the board's gates, validation and history are the ones
 // local callers get; history and the peer-view audit row name the peer.
@@ -26,7 +28,7 @@ import (
 
 func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	read := peerViewRule{feature: "groups.taskboard", requires: PermTaskboardRead,
-		orGrants: []string{PermTaskboardWrite}, group: true}
+		orGrants: []string{PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage}, group: true}
 	write := peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite, group: true}
 
 	invoke := &peerInvokeSpec{param: "name", extra: peerTaskboardImpliedGates}
@@ -52,20 +54,42 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 		w.write = servePeerTaskboardTask
 		rules[pattern] = w
 	}
+
+	// Assigning this node's members (an active member of the task's group,
+	// as for any assigner) and the writer lock.
+	assign := peerViewRule{feature: "groups.taskboard.assign", requires: PermTaskboardAssign, group: true, write: servePeerTaskboardTask}
+	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
+	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
+	writers := read
+	writers.invoke = invoke
+	rules["GET /v1/groups/{name}/taskboard/writers"] = withPeerInvoke("GET /v1/groups/{name}/taskboard/writers", writers)
+	manage := peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true, invoke: invoke}
+	rules["POST /v1/groups/{name}/taskboard/writers"] = withPeerInvoke("POST /v1/groups/{name}/taskboard/writers", manage)
 }
 
-// peerTaskboardImpliedGates: a peer that writes a group's board also reads
-// it, so the board's read gate opens to its write grant.
+// peerTaskboardSlugs are the board's peer grants; any of them in a group
+// lets the peer read that group's board.
+var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage}
+
+// peerTaskboardImpliedGates: a peer that writes, assigns on or manages a
+// group's board also reads it, so the board's read gate opens to those
+// grants.
 func peerTaskboardImpliedGates(peer string, g *db.AgentGroup) []string {
-	if fedPeerAllows(peer, g.ID, PermTaskboardWrite) {
+	if peerTaskboardReads(peer, g.ID) {
 		return []string{PermTaskboardRead}
 	}
 	return nil
 }
 
-// peerTaskboardReads reports whether peer reads group's board.
+// peerTaskboardReads reports whether peer reads group's board: any of its
+// taskboard grants there.
 func peerTaskboardReads(peer string, groupID int64) bool {
-	return fedPeerAllows(peer, groupID, PermTaskboardRead) || fedPeerAllows(peer, groupID, PermTaskboardWrite)
+	for _, slug := range peerTaskboardSlugs {
+		if fedPeerAllows(peer, groupID, slug) {
+			return true
+		}
+	}
+	return false
 }
 
 // servePeerTaskboardTask serves a route addressed by a task id: it finds the

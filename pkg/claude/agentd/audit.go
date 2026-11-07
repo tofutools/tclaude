@@ -62,6 +62,7 @@ type auditCtx struct {
 type auditResult struct {
 	targetConv        string
 	targetLabel       string
+	groupName         string
 	eventID           string
 	detail            string
 	spawnResolved     any
@@ -78,6 +79,14 @@ type auditResultContextKey struct{}
 func setAuditTargetLabel(r *http.Request, label string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.targetLabel = auditClip(label, 120)
+	}
+}
+
+// setAuditGroup names the group a command acted in, for a route whose path
+// does not carry it (a task board task id names no group).
+func setAuditGroup(r *http.Request, group string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.groupName = auditClip(group, 120)
 	}
 }
 
@@ -266,6 +275,17 @@ var auditRoutes = []auditRoute{
 	// write. Keeping this route describer-free avoids buffering or recording
 	// arbitrary denied/invalid request bodies.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "attachment"}, verb: "group.attachment"},
+	// Group task board (docs/taskboard.md): every change, with the task id
+	// and the group in the row.
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "tasks"}, verb: "taskboard.add"},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "writers"}, verb: "taskboard.writers"},
+	{method: http.MethodPatch, segs: []string{"taskboard", "tasks", "{id}"}, verb: "taskboard.edit"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "move"}, verb: "taskboard.move"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "stage"}, verb: "taskboard.stage"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "status"}, verb: "taskboard.status"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "assign"}, verb: "taskboard.assign"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "unassign"}, verb: "taskboard.unassign"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "report"}, verb: "taskboard.report"},
 
 	// Membership + ownership.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "members"}, verb: "member.add", describe: describeMemberTarget},
@@ -818,6 +838,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 	if result != nil && result.targetConv != "" {
 		fields.TargetConv = result.targetConv
+	}
+	if result != nil && result.groupName != "" && fields.GroupName == "" {
+		fields.GroupName = result.groupName
 	}
 	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
 		fields.TargetLabel = result.targetLabel
