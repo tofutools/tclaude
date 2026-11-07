@@ -117,6 +117,12 @@ this does anything on touch screens.
   group it is listed under (it stays in any others), or a drawing board to take it out
   of its group. A page always stays in a group, and only moves to a group its
   agent is in.
+- While you drag a row, the Groups tab's bin shows at the right edge. Drop an
+  agent on it to retire it, through the same retire dialog as in the Groups
+  tab (a linked node's agent only where that node lets you retire it). Drop a
+  drawing board or page on it to delete it, or a shell, background session or
+  Other session to kill it. Each asks first. A row the bin can do nothing for,
+  such as a process, shows no bin. An Other session drags only to the bin.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
 - **⚙** on an agent, drawing board or page row opens the same edit menu its Groups-tab
