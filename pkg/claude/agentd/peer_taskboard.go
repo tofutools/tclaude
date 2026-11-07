@@ -44,6 +44,8 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	group("GET /v1/groups/{name}/taskboard", read)
 	group("POST /v1/groups/{name}/taskboard/tasks", write)
 	group("POST /v1/groups/{name}/taskboard/ask", write)
+	// A task moved or cloned in from another node (taskboard.transfer).
+	group("POST /v1/groups/{name}/taskboard/transfer-in", peerViewRule{feature: "groups.taskboard.transfer", requires: PermTaskboardTransfer, group: true})
 
 	context := read
 	context.serve = servePeerTaskboardContext
@@ -66,6 +68,10 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	assign := peerViewRule{feature: "groups.taskboard.assign", requires: PermTaskboardAssign, group: true, write: servePeerTaskboardTask}
 	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
+	// The source side of a move to another node: the holder's write, or
+	// manage on the task's group; the handler tells them apart.
+	rules["POST /v1/taskboard/tasks/{id}/moved-away"] = peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite,
+		orGrants: []string{PermTaskboardManage}, group: true, write: servePeerTaskboardTask}
 	group("GET /v1/groups/{name}/taskboard/writers", read)
 	group("POST /v1/groups/{name}/taskboard/writers", peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true})
 }

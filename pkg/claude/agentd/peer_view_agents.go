@@ -199,20 +199,24 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	// group; a route addressed by a task id names no group in its path, so it
 	// takes a node-wide grant here and the receiver's per-group peer grants
 	// decide the task's own group.
-	"GET /v1/groups/{name}/taskboard":          {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"POST /v1/groups/{name}/taskboard/tasks":   {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
-	"POST /v1/groups/{name}/taskboard/ask":     {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
-	"GET /v1/taskboard/context":                {slugs: []string{PermTaskboardRead}, target: agentViewNode},
-	"GET /v1/taskboard/tasks/{id}":             {slugs: []string{PermTaskboardRead}, target: agentViewNode},
-	"GET /v1/taskboard/tasks/{id}/events":      {slugs: []string{PermTaskboardRead}, target: agentViewNode},
-	"PATCH /v1/taskboard/tasks/{id}":           {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/move":       {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/stage":      {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/status":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/assign":     {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/unassign":   {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"GET /v1/groups/{name}/taskboard/writers":  {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"POST /v1/groups/{name}/taskboard/writers": {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	"GET /v1/groups/{name}/taskboard":        {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/tasks": {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/ask":   {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"GET /v1/taskboard/context":              {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}":           {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/events":    {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"PATCH /v1/taskboard/tasks/{id}":         {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/move":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/stage":    {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/status":   {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/assign":   {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/unassign": {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	// A move or clone across nodes (taskboard_transfer.go): create on the
+	// target, then drop the original on its source with a note.
+	"POST /v1/groups/{name}/taskboard/transfer-in": {slugs: []string{PermTaskboardTransfer}, target: agentViewGroup},
+	"POST /v1/taskboard/tasks/{id}/moved-away":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"GET /v1/groups/{name}/taskboard/writers":      {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/writers":     {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which

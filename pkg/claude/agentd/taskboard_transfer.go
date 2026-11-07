@@ -137,3 +137,133 @@ func writeTaskboardTransfer(w http.ResponseWriter, g *db.AgentGroup, t *db.Group
 	out.Task = views[0]
 	writeJSON(w, http.StatusOK, out)
 }
+
+// Across nodes (tcl-0r0obl, D2): a move or clone between a group here and a
+// linked node's, or between two linked nodes in the fleet view, is driven by
+// the client (the dashboard, or the CLI) in two steps, each on its own node
+// under that node's gates and grants:
+//
+//  1. POST /v1/groups/{name}/taskboard/transfer-in on the target node creates
+//     the task there (taskboard.transfer), naming where it came from.
+//  2. Only after that succeeded, a move closes the original: POST
+//     /v1/taskboard/tasks/{id}/moved-away on the source node drops it with a
+//     "moved to node/group" note (taskboard.write for the task's holder,
+//     taskboard.manage otherwise). The client retries this step and warns
+//     rather than leaving a silent duplicate.
+//
+// A done task stays where it is: only a live task moves across nodes.
+
+// taskboardTransferOrigin names a task on some node.
+type taskboardTransferOrigin struct {
+	Node  string `json:"node"`
+	Group string `json:"group"`
+	Task  string `json:"task"`
+}
+
+func (o taskboardTransferOrigin) String() string {
+	where := guideText(o.Group, 60)
+	if o.Node != "" {
+		where = guideText(o.Node, 60) + "/" + where
+	}
+	if o.Task != "" {
+		where += " " + guideText(o.Task, 40)
+	}
+	return where
+}
+
+// POST /v1/groups/{name}/taskboard/transfer-in {"title", "body", "ref",
+// "ref_label", "stage", "clone", "origin": {node, group, task}}.
+func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if !taskboardEnabled(w) || !requireGroupActive(w, g) {
+		return
+	}
+	if _, ok := requireGroupPermission(w, r, PermTaskboardTransfer, g); !ok || !requireTaskboardUnlocked(w, r, g) {
+		return
+	}
+	var body struct {
+		Title    string                  `json:"title"`
+		Body     string                  `json:"body"`
+		Ref      string                  `json:"ref"`
+		RefLabel string                  `json:"ref_label"`
+		Stage    string                  `json:"stage"`
+		Clone    bool                    `json:"clone"`
+		Origin   taskboardTransferOrigin `json:"origin"`
+	}
+	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	title, err := validateTaskTitle(body.Title)
+	if err == nil {
+		body.Body, err = validateTaskText("the body", body.Body, maxTaskBodyBytes)
+	}
+	var kind, refURL, refLabel string
+	if err == nil {
+		kind, refURL, refLabel, err = parseTaskRef(body.Ref, body.RefLabel)
+	}
+	stage := strings.TrimSpace(body.Stage)
+	if err == nil && stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
+		err = fmt.Errorf("stage is idea or next")
+	}
+	if err == nil && strings.TrimSpace(body.Origin.Group) == "" {
+		err = fmt.Errorf("give the origin: the group (and node and task) the task comes from")
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	verb := "moved from "
+	if body.Clone {
+		verb = "cloned from "
+	}
+	out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: stage,
+		RefKind: kind, RefURL: refURL, RefLabel: refLabel, Actor: taskboardActor(r), Origin: verb + body.Origin.String()})
+	if err != nil {
+		writeTaskboardError(w, err)
+		return
+	}
+	setAuditGroup(r, g.Name)
+	setAuditDetail(r, fmt.Sprintf("%s%s as %s", verb, body.Origin.String(), out.ID))
+	writeTaskboardTask(w, http.StatusCreated, g, out)
+}
+
+// POST /v1/taskboard/tasks/{id}/moved-away {"to": {node, group, task}} — the
+// second step of a move to another node: drop the original, noting where it
+// went. Gated as a move's source side is.
+func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	var body struct {
+		To taskboardTransferOrigin `json:"to"`
+	}
+	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.To.Group) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "give where the task went: to {node, group, task}")
+		return
+	}
+	if !t.Live() {
+		writeError(w, http.StatusConflict, "not_live", fmt.Sprintf("task %s is %s; only a live task moves to another node", t.ID, t.Status))
+		return
+	}
+	if self, _ := callerAgentID(r); self != "" && self == t.AssigneeID {
+		if !requireTaskboard(w, r, g, true) {
+			return
+		}
+	} else if _, ok := requireGroupPermission(w, r, PermTaskboardManage, g); !ok {
+		return
+	}
+	note := "moved to " + body.To.String()
+	out, err := db.SetGroupTaskStatusFor(t.ID, db.GroupTaskDropped, note, taskboardActor(r), db.AnyAssignee)
+	if err != nil {
+		writeTaskboardError(w, err)
+		return
+	}
+	if t.AssigneeID != "" {
+		if conv, _ := db.CurrentConvForAgent(t.AssigneeID); conv != "" {
+			mailTaskboard(r, g, conv, taskboardSubject(g, t, "moved away from you"),
+				fmt.Sprintf("%s moved task %s %q from %s to %s. It is closed here and no longer assigned to you; stop work on it.\n",
+					taskboardCallerName(r), t.ID, t.Title, g.Name, body.To.String()))
+		}
+	}
+	setAuditDetail(r, fmt.Sprintf("%s %s", t.ID, note))
+	writeTaskboardTask(w, http.StatusOK, g, out)
+}
