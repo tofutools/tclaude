@@ -126,6 +126,9 @@ function clearOver(state) {
   state.box = null;
 }
 
+// activeTransferOff ends the task drag in flight (listenForTransfer).
+let activeTransferOff = null;
+
 // CLONE tints the drop label green while Ctrl/Cmd clones, as the group's
 // box takes the groups view's clone look (dnd-ops.js markDropBox).
 const CLONE = 'tb-transfer-clone';
@@ -234,6 +237,10 @@ export function transferMessage({ task, from, to, stage, clone, tasks = [], memb
 // { task, group (the board's own group, with shownName for a linked
 // node's), tasks, actions }. Returns the function that stops listening.
 export function listenForTransfer({ task, group, tasks = [], actions, droppable = false, onDrop = () => {} }) {
+  // One task drag at a time, whichever board it starts on: a drag whose
+  // dragend never came (its row re-rendered away) must not keep the bin up
+  // or take this drag's drop.
+  activeTransferOff?.();
   if (!actions || typeof actions.api?.moveToGroup !== 'function') return () => {};
   const fromShown = group.shownName || group.name;
   const state = { over: null, box: null };
@@ -272,6 +279,8 @@ export function listenForTransfer({ task, group, tasks = [], actions, droppable 
     hideBin();
     document.removeEventListener('dragover', onOver, true);
     document.removeEventListener('drop', onDropEvent, true);
+    document.removeEventListener('dragstart', off, true);
+    if (activeTransferOff === off) activeTransferOff = null;
   };
   const onDropEvent = (event) => {
     if (!isTaskDrag(event)) { off(); return; }
@@ -299,6 +308,9 @@ export function listenForTransfer({ task, group, tasks = [], actions, droppable 
   };
   document.addEventListener('dragover', onOver, true);
   document.addEventListener('drop', onDropEvent, true);
+  // Any later drag (an agent, a resource, the next task) ends this one.
+  document.addEventListener('dragstart', off, true);
+  activeTransferOff = off;
   return off;
 }
 

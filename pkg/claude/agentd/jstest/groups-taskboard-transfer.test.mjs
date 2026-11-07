@@ -435,3 +435,26 @@ test('Ctrl/Cmd over another group shows the groups view\'s clone look, and back 
   over(c.querySelector('details[data-group-key="tbt-a"] > summary'), data);
   assert.equal(box.classList.contains('dnd-drop-over'), false, 'off the target, its look goes');
 });
+
+test('a task drag whose dragend never came leaves no bin behind: the next drag of any kind ends it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { listenForTransfer, transferDeps } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const confirms = [];
+  const saved = { ...transferDeps };
+  transferDeps.confirm = async (o) => { confirms.push(o); return false; };
+  t.after(() => Object.assign(transferDeps, saved));
+  const bin = addBin(harness);
+  const actions = { api: { moveToGroup: async () => ({}) }, run: async () => true };
+  // A drag on one board, its dragend lost; then a drag on another board.
+  listenForTransfer({ task: row('a', 'tk_1', 'stale'), group: { name: 'a' }, actions, droppable: true });
+  listenForTransfer({ task: row('b', 'tk_2', 'dragged'), group: { name: 'b' }, actions, droppable: true });
+  const types = ['application/x-tclaude-task'];
+  harness.fireEvent(bin, 'drop', { dataTransfer: { types } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(confirms.map((c) => c.meta), ['dragged'], 'only the task being dragged is asked about');
+  // Lost again; then an agent drag starts.
+  listenForTransfer({ task: row('b', 'tk_2', 'dragged'), group: { name: 'b' }, actions, droppable: true });
+  assert.ok(bin.classList.contains('dnd-trash-task-mode'));
+  harness.fireEvent(harness.document.body, 'dragstart', { dataTransfer: { types: ['text/plain'] } });
+  assert.equal(bin.classList.contains('dnd-trash-task-mode'), false, 'the agent drag gets the bin as Retire, not Drop');
+});
