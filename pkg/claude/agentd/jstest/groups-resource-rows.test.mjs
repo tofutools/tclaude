@@ -229,7 +229,9 @@ test('Resources sorts by its headers, across kinds, and lines Name and State up 
     + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th></tr></thead></table></div>'
     + '<div data-fused-section="processes"><table class="gr-rtable"></table></div>';
   const rect = (left) => () => ({ left, right: left, top: 0, bottom: 0, width: 0, height: 0 });
-  const [title, state] = card.querySelectorAll('th[data-sort-col]');
+  const title = card.querySelector('th[data-sort-col="title"]');
+  const state = card.querySelector('th[data-sort-col="state"]');
+  card.querySelector('th[data-sort-col="name"]').getBoundingClientRect = rect(70);
   const table = card.querySelector('.gr-rtable');
   title.getBoundingClientRect = rect(280);
   state.getBoundingClientRect = rect(445);
