@@ -296,7 +296,7 @@ function BlockForm({ task, drop, numbers, actions, group, onClose }) {
   const submit = async () => {
     if (!reason.trim() || actions.busy) return;
     const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason.trim()));
-    if (ok && drop.agent) markLanded({ group: group.name, section: 'agents', ids: [drop.agent] });
+    if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     if (ok) onClose();
   };
   const n = numbers.get(task.id);
