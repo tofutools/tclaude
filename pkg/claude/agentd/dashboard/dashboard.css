@@ -18731,15 +18731,15 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
    keeps its size whatever the name. */
 .tb-lane-name .tb-lane-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tb-lane-name .tb-avatar { flex: none; width: 18px; min-width: 18px; height: 18px; box-sizing: border-box; }
-/* A cell's "+" (groups-taskboard-lanes.js CellAdd): discreet until the
-   cell is hovered or holds the focus. */
-.tb-cell .ui-btn.tb-cell-add { align-self: stretch; min-width: 0; padding: 0 6px; line-height: 20px; font-size: 14px; color: var(--ui-muted-text);
-  border: 1px dashed #30363d; border-radius: 4px; justify-content: center; opacity: 0; transition: opacity 0.12s; }
-.tb-cell .ui-btn.tb-cell-add:hover { color: #58a6ff; border-color: #58a6ff; }
-.tb-cell:hover > .ui-btn.tb-cell-add, .tb-cell:focus-within > .ui-btn.tb-cell-add, .tb-cell .ui-btn.tb-cell-add:focus-visible { opacity: 1; }
-.tb-cell-add-form { display: flex; flex-direction: column; gap: 2px; }
-.tb-cell-add-form .tb-cell-add-title { width: 100%; box-sizing: border-box; }
-.tb-cell-add-full { align-self: flex-start; font-size: 11px; }
+/* A cell's "+" (groups-taskboard-lanes.js CellAdd): a small neutral button
+   in the cell's lower-right corner, muted until the cell is hovered. The cell
+   keeps room for it below its cards. */
+.tb-cell.tb-cell-addable { padding-bottom: 24px; }
+.tb-cell .ui-btn.tb-cell-add { position: absolute; right: 4px; bottom: 4px; min-width: 0; width: 18px; height: 18px; padding: 0;
+  line-height: 16px; font-size: 13px; justify-content: center; color: #6e7681; background: transparent;
+  border: 1px solid #30363d; border-radius: 4px; opacity: 0.45; transition: opacity 0.12s, color 0.12s, border-color 0.12s; }
+.tb-cell:hover > .ui-btn.tb-cell-add, .tb-cell .ui-btn.tb-cell-add:focus-visible { opacity: 1; color: #c9d1d9; border-color: #6e7681; }
+.tb-cell .ui-btn.tb-cell-add:hover { background: #21262d; }
 .tb-lane-sub { color: #6e7681; font-size: 11px; }
 .tb-lane-state-working, .tb-lane-state-awaiting { color: #3fb950; }
 .tb-lane-group { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; border-top: 1px solid #21262d; background: #0d1117; }

@@ -252,7 +252,7 @@ test('a diagonal drag runs both writes through the real handlers, the lane first
   assert.deepEqual(api.calls, []);
 });
 
-test('a cell + adds a task there: the stage from the column, the assignee from the lane', async (t) => {
+test('a cell + opens the New task form filled from the cell: the stage from the column, the assignee from the lane', async (t) => {
   const { api, c, cell, harness } = await mountLanes(t, 'tbl-add');
   const plus = (lane, column) => cell(lane, column).querySelector('.tb-cell-add');
   assert.ok(plus('unassigned', 'ideas') && plus('unassigned', 'next') && plus('agt_builder', 'next') && plus('agt_builder', 'progress'));
@@ -261,12 +261,16 @@ test('a cell + adds a task there: the stage from the column, the assignee from t
   assert.equal(plus('unassigned', 'blocked'), null, 'a new task does not land blocked');
   assert.equal(plus('agt_builder', 'done'), null);
   assert.match(plus('agt_builder', 'progress').getAttribute('aria-label'), /builder · In progress/);
+  assert.ok(cell('agt_builder', 'progress').classList.contains('tb-cell-addable'), 'the cell keeps room for its +');
+  assert.equal(c.querySelector('.tb-cell-add-title'), null, 'no inline quick-add');
 
   const addIn = async (lane, column, title) => {
     await harness.act(async () => { harness.fireEvent(plus(lane, column), 'click'); });
-    const input = cell(lane, column).querySelector('.tb-cell-add-title');
-    await harness.input(input, title);
-    await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
+    const modal = c.querySelector('#taskboard-new-modal');
+    assert.ok(modal, `the form opens from ${lane} · ${column}`);
+    await harness.input(modal.querySelector('.tb-new-title'), title);
+    await harness.act(async () => { harness.fireEvent(modal.querySelector('#taskboard-new-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+    assert.equal(c.querySelector('#taskboard-new-modal'), null, 'the form closes after it adds');
   };
   await addIn('unassigned', 'ideas', 'an idea from the cell');
   await addIn('unassigned', 'next', 'queued from the cell');
@@ -276,22 +280,7 @@ test('a cell + adds a task there: the stage from the column, the assignee from t
     ['create', 'tbl-add', { title: 'queued from the cell', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
     ['create', 'tbl-add', { title: 'for builder', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
     ['assign', 'tk_00000099', 'agt_builder'],
-  ]);
-  assert.equal(cell('agt_builder', 'progress').querySelector('.tb-cell-add-title'), null, 'the box closes after it adds');
-
-  // Esc closes the box; "full form…" opens the New task form filled from the cell.
-  await harness.act(async () => { harness.fireEvent(plus('agt_tester', 'next'), 'click'); });
-  await harness.input(cell('agt_tester', 'next').querySelector('.tb-cell-add-title'), 'needs a brief');
-  await harness.act(async () => { harness.fireEvent(cell('agt_tester', 'next').querySelector('.tb-cell-add-full'), 'click'); });
-  const modal = c.querySelector('#taskboard-new-modal');
-  assert.ok(modal, 'the full form opens');
-  assert.equal(modal.querySelector('.tb-new-title').value, 'needs a brief');
-  api.calls.length = 0;
-  await harness.act(async () => { harness.fireEvent(modal.querySelector('#taskboard-new-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  assert.deepEqual(api.calls, [
-    ['create', 'tbl-add', { title: 'needs a brief', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
-    ['assign', 'tk_00000099', 'agt_tester'],
-  ], 'the form carries the cell\'s stage and assignee');
+  ], 'each form carries its cell\'s stage and assignee');
 });
 
 test('without the assign grant, agent lanes have no +', async (t) => {

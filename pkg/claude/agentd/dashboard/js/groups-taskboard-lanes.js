@@ -22,9 +22,7 @@ import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
-import { submitNewTask } from './groups-taskboard-new.js';
 import { markLanded } from './drop-landing.js';
-import { shellToast } from './shell-state.js';
 import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
 
 const html = htm.bind(h);
@@ -328,37 +326,14 @@ function LaneHead({ lane }) {
 
 // TaskboardLanes is the section's swim-lane view of the same board the list
 // shows. Without `actions` it is read-only: no drags.
-// CellAdd is a cell's "+": a title box that adds the task there, and a link
-// to the full form filled from the cell.
-function CellAdd({ lane, column, add, group, actions, onNewTask, wizard }) {
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const key = `add:${lane.id}|${column.key}`;
+// CellAdd is a cell's "+": a small button in its lower-right corner that
+// opens the New task form filled from the cell (its stage, and the lane's
+// agent as the assignee).
+function CellAdd({ lane, column, add, onNewTask, wizard }) {
   const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.name} · ${wizard ? column.wizard : column.label}`;
-  if (!open) {
-    return html`<${Button} size="sm" variant="ghost" class="tb-cell-add" title=${`Add a ${wizard ? 'quest' : 'task'} here: ${where}`}
-      aria-label=${`Add a ${wizard ? 'quest' : 'task'} to ${where}`} onClick=${() => setOpen(true)}>+<//>`;
-  }
-  const close = () => { setOpen(false); setTitle(''); };
-  const submit = async () => {
-    if (!title.trim() || actions.busy) return;
-    const out = await actions.run(key, 'Add', (api) => submitNewTask(api, group.name, { title: title.trim(), stage: add.stage, to: add.to }));
-    if (!out) return;
-    if (out.warning) shellToast(out.warning, true);
-    if (out.task?.id && add.to) markLanded({ group: group.name, section: 'agents', ids: [add.to] });
-    close();
-  };
-  return html`<div class="tb-cell-add-form" data-cell-add=${`${lane.id || 'unassigned'}|${column.key}`}>
-    <${Input} size="sm" class="tb-cell-add-title" aria-label=${`New ${wizard ? 'quest' : 'task'} in ${where}`} autoFocus maxLength=${200}
-      placeholder=${`title… (Enter adds${add.to ? `, assigned to ${lane.name}` : ''})`} value=${title} disabled=${actions.busy === key}
-      onInput=${(event) => setTitle(event.currentTarget.value)}
-      onKeyDown=${(event) => {
-        if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void submit(); }
-        if (event.key === 'Escape') { event.preventDefault(); close(); }
-      }} />
-    ${onNewTask && html`<${Button} size="sm" variant="link" class="tb-cell-add-full"
-      onClick=${() => { onNewTask({ title: title.trim(), stage: add.stage, to: add.to }); close(); }}>full form…<//>`}
-  </div>`;
+  const what = wizard ? 'quest' : 'task';
+  return html`<${Button} size="sm" variant="ghost" class="tb-cell-add" title=${`New ${what} here: ${where}`}
+    aria-label=${`New ${what} in ${where}`} onClick=${() => onNewTask({ stage: add.stage, to: add.to })}>+<//>`;
 }
 
 export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null }) {
@@ -375,8 +350,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const target = { lane: lane.id, column: column.key, name: lane.name, member: lane.id === UNASSIGNED || !!lane.member };
     const over = drag.over?.key === key;
     const shown = column.key === 'done' && !doneOpen[lane.id] ? list.slice(0, DONE_SHOWN) : list;
-    const add = actions && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: lane.id === UNASSIGNED || !!lane.member });
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}`}
+    const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: lane.id === UNASSIGNED || !!lane.member });
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
@@ -384,7 +359,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
         onClick=${() => setDoneOpen({ ...doneOpen, [lane.id]: true })}>+ ${list.length - shown.length} more<//>`}
-      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} group=${group} actions=${actions} onNewTask=${onNewTask} wizard=${wizard} />`}
+      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} />`}
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class="tb-lane" data-lane-row=${lane.id || 'unassigned'}>
