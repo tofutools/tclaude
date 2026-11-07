@@ -38,8 +38,8 @@ var ErrGroupTaskNotAssignee = errors.New("you are not the current assignee of th
 
 // AssignGroupTask makes agentID the task's assignee. take records it as the
 // agent taking the task for itself (event taken) rather than being assigned
-// (event assigned). An idea is promoted to the end of the queue on assign; an
-// agent only takes a queued task. A task already assigned to someone else is
+// (event assigned). An idea is promoted to the end of the queue on an assign
+// and on a take alike; an agent takes only an unassigned task. A task already assigned to someone else is
 // reassigned by an assign, refused by a take.
 //
 // expectAssignee is the holder the caller was authorised against ("" for
@@ -60,10 +60,9 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 			if t.AssigneeID != "" {
 				return taskConflict("assigned", "task %s is assigned to %s; ask whoever assigned it", id, t.AssigneeID)
 			}
-			if t.Stage != GroupTaskStageNext {
-				return taskConflict("not_queued", "task %s is an idea; promote it to the queue first", id)
-			}
 		}
+		// An idea is promoted to the end of the queue on the way, whether it
+		// is assigned or taken.
 		if t.Stage == GroupTaskStageIdea {
 			_, rank, err := placeTask(tx, t.GroupID, GroupTaskStageNext, id, GroupTaskPosition{Bottom: true})
 			if err != nil {

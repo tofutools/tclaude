@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -20,14 +19,10 @@ type tbAssignHarness struct {
 }
 
 // newTaskboardAssignFlow: group crew with an owner (lead, not a member) and
-// two members; self.taskboard is in the default baseline, as setup installs.
+// two members, who hold taskboard.own through membership alone.
 func newTaskboardAssignFlow(t *testing.T) *tbAssignHarness {
 	h := &tbAssignHarness{taskboardHarness: newTaskboardFlow(t),
 		lead: "tb-lead-1111", worker: "tb-worker-2222", peer: "tb-peer-3333"}
-	require.NoError(t, config.Save(&config.Config{
-		Features: &config.FeaturesConfig{Taskboard: new(true)},
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
-	}))
 	for _, c := range []string{h.lead, h.worker, h.peer} {
 		h.agent(t, c)
 	}
@@ -148,14 +143,20 @@ type tbAssignTask struct {
 	Failures   int    `json:"failures"`
 }
 
-// Members take and release queued tasks; a take of an idea is refused; three
-// failed reports block a task; retiring an assignee unassigns.
+// Members take and release queued tasks; a take of an idea promotes it, and
+// a take of someone else's task is refused; three failed reports block a
+// task; retiring an assignee unassigns.
 func TestTaskboardTakeFailAndRetire(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
 	idea := h.add("an idea", "")
 	code, body := h.post(h.worker, idea.ID, "assign", map[string]any{"to": ""})
-	assert.Equal(t, http.StatusConflict, code, body)
-	assert.Contains(t, body, "not_queued")
+	require.Equal(t, http.StatusOK, code, body)
+	var took tbAssignTask
+	require.NoError(t, json.Unmarshal([]byte(body), &took))
+	assert.Equal(t, "next", took.Stage, "a taken idea is promoted")
+	code, body = h.post(h.peer, idea.ID, "assign", map[string]any{"to": ""})
+	assert.Equal(t, http.StatusConflict, code, "no stealing: %s", body)
+	assert.Contains(t, body, `"assigned"`)
 
 	next := h.add("queued", "next")
 	for i := 1; i <= 3; i++ {

@@ -174,9 +174,14 @@ func TestTaskboardTransferPermissions(t *testing.T) {
 	code, _, raw = h.transfer(h.lead, other.ID, map[string]any{"group": "ops"})
 	assert.Equal(t, http.StatusForbidden, code, raw)
 
-	// The peer owns ops: it may move the task it holds (it writes crew as a
-	// member) but not someone else's (that needs taskboard.manage on crew).
+	// The peer owns ops. A member of crew holds only taskboard.own there,
+	// which does not move a task off the board, not even its own; with
+	// taskboard.write on crew (a group grant) it moves the task it holds but
+	// not someone else's (that needs taskboard.manage on crew).
 	require.NoError(t, db.AddAgentGroupOwner(ops.ID, h.peer, "test"))
+	code, _, raw = h.transfer(h.peer, mine.ID, map[string]any{"group": "ops"})
+	assert.Equal(t, http.StatusForbidden, code, raw)
+	h.groupWrites("crew")
 	code, _, raw = h.transfer(h.peer, other.ID, map[string]any{"group": "ops"})
 	assert.Equal(t, http.StatusForbidden, code, raw)
 	code, _, raw = h.transfer(h.peer, other.ID, map[string]any{"group": "ops", "clone": true})

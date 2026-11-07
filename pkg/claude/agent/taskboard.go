@@ -28,8 +28,10 @@ func taskboardCmd() *cobra.Command {
 			"may link to its item there with --ref. Work paused for longer goes back to that tracker: drop the task here " +
 			"(its ref stays in the history).\n\n" +
 			"Tasks are in one of two stages: ideas (captured, not yet queued; where `add` lands) and next (the queue, top " +
-			"first). Members of the group read and change its board; anyone else needs taskboard.read / taskboard.write, " +
-			"scoped with --scope group=<name> or unscoped. A task in a group you cannot read is reported as not found. " +
+			"first). Members of the group read its board and track their own work on it (taskboard.own): a task a member adds " +
+			"is assigned to it, and it edits, blocks, closes and reports on its own tasks, and takes any unassigned one. " +
+			"Owners change everything (taskboard.write); anyone else needs taskboard.read / taskboard.write, " +
+			"scoped with --scope group=<name> or unscoped, and a group grant of taskboard.write gives every member of a group the broad rights. A task in a group you cannot read is reported as not found. " +
 			"On by default; features.taskboard false turns it off.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -616,7 +618,8 @@ type taskboardAddParams struct {
 	RefLabel string `long:"ref-label" optional:"true" help:"Display label for the ref (default: derived)"`
 	// ResolveRef is the dashboard's New task form's ref lookup.
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
-	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas"`
+	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write)"`
+	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
@@ -639,7 +642,10 @@ func taskboardAddCmd() *cobra.Command {
 	return boa.CmdT[taskboardAddParams]{
 		Use:   "add",
 		Short: "Add a task, or import refs or lines (lands in the ideas unless --next)",
-		Long: "Add one task with a title, or import several: --from-awb, --from-linear and --from-github add one task per " +
+		Long: "Add one task with a title, or import several. With taskboard.write a task lands unassigned in the ideas " +
+			"(or the queue with --next), unless --mine or --assignee assigns it. A member without taskboard.write adds under " +
+			"taskboard.own: the task is assigned to it as it is created and starts in progress (or blocked with --blocked, " +
+			"done with --done); an unassigned task (--next, or an idea) and an import need taskboard.write. Imports: --from-awb, --from-linear and --from-github add one task per " +
 			"ref, titled from the tracker through its tclaude proxy (you need the matching proxy.*.read; without it, or when " +
 			"no proxy is configured or the lookup fails, the id becomes the title and the output says why). --lines-file adds " +
 			"one task per line. A ref already on the board is refused on its own; the rest of the import still lands. The exit " +
@@ -688,8 +694,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if p.Assignee != "" || p.Blocked != "" || p.Done {
-			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --blocked and --done are for one task")
+		if p.Assignee != "" || p.Mine || p.Blocked != "" || p.Done {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --mine, --blocked and --done are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -719,8 +725,15 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if p.ResolveRef {
 		req["resolve_ref"] = true
 	}
+	if p.Mine && strings.TrimSpace(p.Assignee) != "" {
+		fmt.Fprintln(stderr, "Error: give --mine or --assignee, not both")
+		return rcInvalidArg
+	}
 	if a := strings.TrimSpace(p.Assignee); a != "" {
 		req["to"] = a
+	}
+	if p.Mine {
+		req["mine"] = true
 	}
 	switch {
 	case strings.TrimSpace(p.Blocked) != "":
@@ -1399,7 +1412,7 @@ func taskboardAssignCmd() *cobra.Command {
 func taskboardTakeCmd() *cobra.Command {
 	return boa.CmdT[taskboardTaskParams]{
 		Use:         "take",
-		Short:       "Take a queued, unassigned task of your group for yourself",
+		Short:       "Take an open, unassigned task of your group for yourself (an idea is promoted to the queue)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardTaskParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -1527,9 +1540,10 @@ func groupsSetTaskboardWritersCmd() *cobra.Command {
 	return boa.CmdT[groupsTaskboardWritersParams]{
 		Use:   "set-taskboard-writers",
 		Short: "Lock a group's task board to listed writers, or open it to every member (--members)",
-		Long: "By default every member of a group may change its task board and take its tasks. Listing writers " +
+		Long: "By default every member of a group may track its own work on the task board (taskboard.own) and take its " +
+			"tasks, and every holder of taskboard.write may change it. Listing writers " +
 			"narrows that to them; owners, the operator, and agents with an explicit unscoped or group-scoped " +
-			"taskboard.write or taskboard.assign grant are not affected, and reporting on your own task is never locked. With no agents and no " +
+			"taskboard.write, taskboard.assign or taskboard.own grant are not affected, and reporting on your own task is never locked. With no agents and no " +
 			"--members the board is locked to owners only. Needs taskboard.manage (group owners have it).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsTaskboardWritersParams, _ *cobra.Command) error {

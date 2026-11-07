@@ -449,6 +449,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsResourcesWrite:              "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
 	PermTaskboardRead:                     "requireTaskboard / agentReadsTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
 	PermTaskboardWrite:                    "requireTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
+	PermTaskboardOwn:                      "requireTaskboardOwn (taskboard_own.go) — requireGroupPermission with ActionContext{Group: the board's group}, and only on a group the agent is an active member of",
 	PermTaskboardManage:                   "handleTaskboardWritersSet (taskboard_assign.go) — requireGroupPermission with ActionContext{Group}",
 	PermTaskboardTransfer:                 "requireTaskboardTransfer (taskboard_transfer.go) — requireGroupPermission on the target group with ActionContext{Group}",
 	PermTaskboardAssign:                   "handleTaskboardAssign / requireTaskboardAssigneeAction (taskboard_assign.go) — requireGroupPermission with ActionContext{Group, TargetAgent}",

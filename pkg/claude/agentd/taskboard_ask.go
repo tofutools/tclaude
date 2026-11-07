@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,16 +17,6 @@ import (
 
 // maxTaskboardAskBytes bounds the request's prose, as a task's brief is.
 const maxTaskboardAskBytes = maxTaskBodyBytes
-
-// taskboardMemberWrites reports whether the member (or owner) behind conv may
-// change g's board under its writer lock; membership and ownership grant
-// taskboard.write. (An explicit deny of taskboard.write on a member is not
-// looked at: its own `add` would be refused.) It is evaluated for that member alone, so none of
-// the caller's own grants (a sudo, say) count for it.
-func taskboardMemberWrites(r *http.Request, g *db.AgentGroup, conv string) bool {
-	ok, err := taskboardLockPasses(r.WithContext(context.Background()), g, conv)
-	return err == nil && ok
-}
 
 // activeGroupOwner returns the live conv of agentID when it is an owner of g
 // that is not retired, "" otherwise. An owner may change the board (it
@@ -119,7 +108,7 @@ func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	}
 	if !taskboardMemberWrites(r, g, conv) {
 		writeError(w, http.StatusConflict, "taskboard_locked",
-			fmt.Sprintf("%s may not change the %s task board (it is locked to its listed writers); ask one of them", guideText(body.To, 60), g.Name))
+			fmt.Sprintf("%s may not add tasks to the %s task board: that takes taskboard.write (an owner has it) and a pass of its writer lock; ask an owner", guideText(body.To, 60), g.Name))
 		return
 	}
 	by := taskboardCallerName(r)

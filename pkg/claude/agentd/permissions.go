@@ -243,7 +243,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermSelfTaskboard,
-		Description: "Take an open task of your group's task board for yourself, release it, and report done or failed on a task assigned to you (tclaude agent taskboard take/release/report). Taking and releasing are narrowed by the board's writer lock; reporting never is. Default-granted, mirroring the self-lifecycle slugs.",
+		Description: "Deprecated alias of taskboard.own, which every active member of a group now holds on its board. An existing grant keeps working and adds nothing; an explicit deny of it still denies taskboard.own. No longer default-granted.",
 	},
 	{
 		Slug:        PermSelfPR,
@@ -799,12 +799,16 @@ var permissionRegistry = []PermSlug{
 		Description: "Read a group's task board: list its tasks, show one and its history (tclaude agent taskboard ls/show/history). Scope with group=<name> for named groups; unscoped reaches every group, future ones included. Conferred by active membership and by ownership of the group; never default-granted. A task in a group the caller cannot read answers 404.",
 	},
 	{
-		Slug: PermTaskboardWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true, MemberImplied: true,
-		Description: "Change a group's task board: add, edit, move, promote/demote, block/unblock, drop and close tasks (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. Scope with group=<name>. Conferred by active membership and by ownership of the group; never default-granted.",
+		Slug: PermTaskboardWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Change a group's task board: add unassigned tasks, import, ask a member for tasks, and edit, move, promote/demote, block/unblock, drop and close any task (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. Scope with group=<name>. Conferred by ownership of the group, not by membership: a member tracks its own work under taskboard.own. A group grant of it, scoped to the group itself, gives every member the broad rights back. Never default-granted.",
+	},
+	{
+		Slug: PermTaskboardOwn, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
+		Description: "Track your own work on the task board of a group you are an active member of: add a task, assigned to you as it is created; edit, promote/demote, block/unblock, close and report on the tasks assigned to you; take any open, unassigned task (an idea is promoted) and release your own; comment on any task of the board (tclaude agent taskboard add/take/release/report/...). Never reaches a group you are not an active member of, whatever its scope. Narrowed by the writer lock, except a report; an explicit grant scoped to the group passes the lock. Conferred by active membership; replaces self.taskboard, now its deprecated alias.",
 	},
 	{
 		Slug: PermTaskboardAssign, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimTargetAgent}, OwnerImplied: true,
-		Description: "Assign a task on a group's task board to another agent, take it back, and close a task assigned to someone else (tclaude agent taskboard assign/unassign/done). The assignee must be an active member of the task's group. Scope with group=<name> and target_agent=<agent|@descendants>. Conferred by ownership of the group, not by membership; never default-granted. Taking and releasing your own task is self.taskboard.",
+		Description: "Assign a task on a group's task board to another agent, take it back, and close a task assigned to someone else (tclaude agent taskboard assign/unassign/done). The assignee must be an active member of the task's group. Scope with group=<name> and target_agent=<agent|@descendants>. Conferred by ownership of the group, not by membership; never default-granted. Taking and releasing your own task is taskboard.own.",
 	},
 	{
 		Slug: PermTaskboardTransfer, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,

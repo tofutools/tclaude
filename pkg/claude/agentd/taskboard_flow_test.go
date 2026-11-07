@@ -68,6 +68,15 @@ func (h *taskboardHarness) task(rec *httptest.ResponseRecorder, want int) tbTask
 	return out
 }
 
+// groupWrites gives every member of group taskboard.write on its own board,
+// as a group grant scoped to it: the broad member rights taskboard.own alone
+// does not give.
+func (h *taskboardHarness) groupWrites(group string) {
+	h.t.Helper()
+	setGroupGrant(h.t, func(method, path string, body any) *httptest.ResponseRecorder { return h.call("", method, path, body) },
+		group, agentd.PermTaskboardWrite, map[string][]string{"group": {group}})
+}
+
 func (h *taskboardHarness) list(conv, path string) []string {
 	h.t.Helper()
 	rec := h.call(conv, http.MethodGet, path, nil)
@@ -91,6 +100,8 @@ func TestTaskboardMemberCapturesAndOrders(t *testing.T) {
 	h.agent(t, member)
 	h.f.HaveGroup("crew")
 	h.f.HaveMember("crew", member)
+	// A group grant of taskboard.write gives its members the broad rights.
+	h.groupWrites("crew")
 
 	add := func(body map[string]any) tbTask {
 		return h.task(h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks", body), http.StatusCreated)

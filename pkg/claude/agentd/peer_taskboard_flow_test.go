@@ -101,6 +101,11 @@ func TestPeerTaskboardReadAndWriteUnderGroupGrants(t *testing.T) {
 	_, _, err = db.EnsureAgentForConv(asked, "test")
 	require.NoError(t, err)
 	fh.f.HaveMember("crew", asked)
+	// The member asked must write the board, not only track its own work
+	// there (taskboard.own): an owner does.
+	crewGroup, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(crewGroup.ID, asked, "test"))
 	code, body = call("POST", "/v1/groups/crew/taskboard/ask", map[string]any{"to": asked, "prompt": "tasks please"})
 	require.Equal(t, http.StatusOK, code, body)
 	askedID, err := db.AgentIDForConv(asked)

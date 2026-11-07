@@ -62,6 +62,10 @@ func TestTaskboardCLIReadsLikeTheDashboard(t *testing.T) {
 	}
 	assert.Equal(t, []string{"1.", "2.", "3.", "4."}, numbered, out)
 
+	// The peer's own task: taskboard.own assigns it to the peer as it is
+	// created.
+	own := h.task(h.call(h.peer, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "the peer's own"}), http.StatusCreated)
+
 	// The lock names its writers.
 	rc, _, errOut = run("set-taskboard-writers", "crew", tbAgentID(t, h.worker))
 	require.Equal(t, 0, rc, errOut)
@@ -69,9 +73,11 @@ func TestTaskboardCLIReadsLikeTheDashboard(t *testing.T) {
 	require.Equal(t, 0, rc, errOut)
 	assert.Contains(t, out, "(locked to writers: owners, builder)")
 	// A member locked out is told who can let it in.
-	code, body = h.post(h.peer, q1.ID, "stage", map[string]any{"stage": "idea"})
+	code, body = h.post(h.peer, own.ID, "status", map[string]any{"status": "blocked", "reason": "waiting"})
 	assert.Equal(t, http.StatusForbidden, code)
 	assert.Contains(t, body, "ask a group owner to add you")
+	code, body = h.post("", own.ID, "status", map[string]any{"status": "dropped"})
+	require.Equal(t, http.StatusOK, code, body)
 
 	// History names agents.
 	rc, out, errOut = run("history", q1.ID)
