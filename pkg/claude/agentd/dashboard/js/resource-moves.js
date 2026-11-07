@@ -133,14 +133,14 @@ export function dropConfirm(resource, to, copy) {
     return resource.kind === 'process'
       ? { title: 'Add process to another group?', meta: label, okLabel: 'Add',
         body: `Save "${label}" to group "${to}" as well. It stays in "${from}"; both use the one template.` }
-      : { title: `Copy ${noun} to another group?`, meta: label, okLabel: 'Copy',
-        body: `Make a copy of "${label}" in group "${to}", with the same drawing. The original stays in "${from}".` };
+      : { title: from === to ? `Copy ${noun}?` : `Copy ${noun} to another group?`, meta: label, okLabel: 'Copy',
+        body: `Make a copy of "${label}" in group "${to}", with the same drawing. The original stays ${from ? `in "${from}"` : 'where it is'}.` };
   }
   if (!to) {
     return { title: `Take ${noun} out of its group?`, meta: label, okLabel: 'Move',
       body: `Take "${label}" out of group "${from}". It is then in no group.` };
   }
-  const note = resource.kind === 'page' ? ' The marks sent before stay behind.'
+  const note = resource.kind === 'page' ? ' The marks sent before are dropped.'
     : resource.kind === 'process' ? ` It is saved to "${to}" and removed from "${from}"; the template itself stays.` : '';
   return { title: `Move ${noun} to another group?`, meta: label, okLabel: 'Move',
     body: `Move "${label}" ${from ? `from group "${from}" ` : ''}to group "${to}".${note}` };
