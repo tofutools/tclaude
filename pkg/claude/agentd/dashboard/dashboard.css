@@ -17689,7 +17689,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .groups-run-kinds { display: flex; flex-direction: column; gap: 2px; }
 /* Keeps the shared .filter-toggle grid so the checkbox sits in the same
    first column as the rows above, then the dot, the label, and the count
-   pinned right. Without counts the trailing auto track simply collapses. */
+   pinned right. Without counts the 1fr label track absorbs the empty one. */
 .view-menu label.groups-run-kind { grid-template-columns: auto auto 1fr auto; }
 .groups-run-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .groups-run-kind-running .groups-run-dot { background: #58a6ff; }
