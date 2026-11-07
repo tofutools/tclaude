@@ -18717,10 +18717,10 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-title-open { cursor: pointer; }
 .tb-title-open:hover, .tb-title-open:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
 .tb-task-hover { position: relative; }
-.tb-task-panel { width: 380px; }
+.tb-task-panel { width: 380px; pointer-events: none; }
+.tb-id-copy { border: 0; padding: 0 4px; background: none; color: #8b949e; font: inherit; cursor: pointer; }
+.tb-id-copy:hover, .tb-id-copy:focus-visible { color: #e6edf3; }
 .tb-task-panel-id { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 11px; color: #8b949e; }
-.tb-task-copy { border: 0; padding: 0 4px; background: none; color: #8b949e; cursor: pointer; }
-.tb-task-copy:hover { color: #e6edf3; }
 .tb-task-panel .prd-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .tb-task-where { text-transform: capitalize; color: #e6edf3; }
 .tb-task-where-blocked { color: #f85149; }
@@ -18733,8 +18733,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-task-panel-files { display: flex; align-items: center; gap: 6px; }
 .tb-card-thumb { width: 44px; height: 30px; object-fit: cover; border: 1px solid #30363d; border-radius: 3px; }
 .tb-task-panel-latest { color: #c9d1d9; margin-left: 6px; }
-.tb-task-more { border: 0; padding: 0; background: none; color: #58a6ff; cursor: pointer; }
-.tb-task-more:hover { text-decoration: underline; }
 .tb-id { margin-left: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: #6e7681; }
 .tb-dep { margin-left: 6px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; white-space: nowrap; }
 .tb-dep.unmet { border-color: #9e6a03; color: #e3b341; }

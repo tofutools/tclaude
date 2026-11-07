@@ -1,30 +1,32 @@
 // groups-taskboard-card.js -- a task's title with its hover card, on a List
-// row's Name cell and a Lanes card: "what is this task" at a glance. It is
-// built as the PR number's card is (pr-link-hover.js): useHoverPopover for
-// hover, keyboard focus, a tap and the leave grace, usePanelPlacement and the
-// .ci-panel look, and the same hover intent before it reads anything.
+// row's Name cell and a Lanes card: "what is this task" at a glance. It has
+// the PR card's look (.ci-panel, usePanelPlacement) and hover intent, but not
+// its stickiness: a board has many tasks, and a card that lingers covers the
+// next ones. So the card shows only while the pointer is on the TITLE (or
+// keyboard focus is), hides HOVER_CLOSE_MS after the pointer leaves it, never
+// takes the pointer itself (pointer-events: none, so the tasks under it stay
+// usable), and closes at once when another hover popover opens
+// (useExclusivePopover). Nothing in it is clickable.
 //
 // The card opens at once with what the board already has: the title, the id,
 // where it is (and why it is blocked), the assignee, who made it and when,
 // the last change, the ref, the dependencies, the files and the 💬 count.
 // The brief and the latest comment are not in the board's context; they are
 // read through the board's api (so a linked node's task reads from its node)
-// once the pointer has rested on the title, or at once for keyboard focus or
-// a tap. "more" opens the edit form.
+// once the pointer has rested on the title, or at once for keyboard focus.
 //
 // A click on the title (or Enter on it) opens the task's edit form, on a
-// List row and a Lanes card alike; it is a button, so a press on it is never
-// a drag (row-drag.js). On a hoverless device a tap opens the card instead,
-// whose "more" opens the form.
+// List row and a Lanes card alike, and never pins the card; the title is a
+// button, so a press on it is never a drag (row-drag.js).
 
 import { h } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
+import { usePanelPlacement } from './pr-checks-hover.js';
+import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { useThumb } from './groups-taskboard-files.js';
-import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -92,17 +94,8 @@ function Thumb({ api, task, attachment }) {
   return url ? html`<img class="tb-card-thumb" src=${url} alt=${attachment.name} title=${attachment.name} />` : null;
 }
 
-async function copyId(id) {
-  try {
-    await globalThis.navigator.clipboard.writeText(id);
-    shellToast(`Copied ${id}`);
-  } catch (cause) {
-    shellToast(`Could not copy ${id}: ${cause?.message || cause}`, true);
-  }
-}
-
 // TaskCardPanel is the card itself.
-function TaskCardPanel({ task, api, read, nameOf, onOpen, panelID, headingID, panelRef, placement, chips }) {
+function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, placement, chips }) {
   const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;`
       + (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
@@ -115,14 +108,10 @@ function TaskCardPanel({ task, api, read, nameOf, onOpen, panelID, headingID, pa
   const assignee = task.assignee?.agent_id ? (task.assignee.name || who(`agent:${task.assignee.agent_id}`)) : '';
   const edited = task.last_edited_at || task.updated_at;
   const editedBy = task.last_edited_by_name || (task.last_edited_by ? who(task.last_edited_by) : '');
-  return html`<div ref=${panelRef} class="ci-panel prd-panel ui-popover tb-task-panel" style=${style} id=${panelID} role="dialog" aria-labelledby=${headingID}
+  return html`<div ref=${panelRef} class="ci-panel prd-panel ui-popover tb-task-panel" style=${style} id=${panelID} role="tooltip"
       data-task-card=${task.id}>
     <div class="prd-title tb-task-panel-title" id=${headingID}>${task.title}</div>
-    <div class="tb-task-panel-id">
-      <code>${task.id}</code>
-      <button data-ui-exempt type="button" class="tb-task-copy" title="Copy the id" aria-label=${`Copy ${task.id}`}
-        onClick=${(event) => { event.stopPropagation(); void copyId(task.id); }}>⧉</button>
-    </div>
+    <div class="tb-task-panel-id"><code>${task.id}</code></div>
     <div class="prd-meta">
       <span class=${`tb-task-where tb-task-where-${whereText(task).replace(/\s+/g, '-')}`}>${whereText(task)}</span>
       ${assignee && html`<span>with ${assignee}</span>`}
@@ -149,11 +138,56 @@ function TaskCardPanel({ task, api, read, nameOf, onOpen, panelID, headingID, pa
         ${read?.latest && html`<span class="tb-task-panel-latest"><b>${read.latest.author_name || who(read.latest.author)}:</b> ${clip(read.latest.body, 140)}</span>`}
       </div>`}
     </div>`}
-    ${onOpen && html`<p class="ci-panel-note">
-      <button data-ui-exempt type="button" class="tb-task-more" onClick=${(event) => { event.stopPropagation(); onOpen(); }}>more ↗</button>
-      <span class="rv-note-sep"> · </span><span class="ui-hint">the full task, its activity and comments</span>
-    </p>`}
   </div>`;
+}
+
+// keyboardFocus reports whether focus came from the keyboard: a click
+// focuses the title too, and that must not hold the card open
+// (pr-checks-hover.js has the same rule).
+function keyboardFocus(target) {
+  try {
+    return target?.matches?.(':focus-visible') !== false;
+  } catch {
+    return true;
+  }
+}
+
+// useTitleHover is the card's open state: the pointer on the title, with
+// HOVER_CLOSE_MS before it hides, or keyboard focus on it.
+function useTitleHover(rootRef) {
+  const [hovered, setHovered] = useState(false);
+  const [lingering, setLingering] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const open = hovered || lingering || focused;
+  const leave = useLeaveGrace(() => setLingering(false));
+  // over is the pointer on the title: a leave after close() (a click that
+  // opened the edit form) must not bring the card back for its grace.
+  const over = useRef(false);
+  const close = () => { over.current = false; leave.cancel(); setHovered(false); setLingering(false); setFocused(false); };
+  useExclusivePopover(rootRef, open, close);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onVisibility = () => { if (document.visibilityState === 'hidden') close(); };
+    window.addEventListener('blur', close);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', close);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [open]);
+  const titleProps = {
+    onMouseEnter: () => { over.current = true; leave.cancel(); setLingering(false); setHovered(true); },
+    onMouseLeave: () => {
+      setHovered(false);
+      if (!over.current) return;
+      over.current = false;
+      setLingering(true);
+      leave.schedule();
+    },
+    onFocus: (event) => { if (keyboardFocus(event.currentTarget)) setFocused(true); },
+    onBlur: () => setFocused(false),
+  };
+  return { open, hovered, focused, close, titleProps };
 }
 
 // TaskTitle is a task's title with its hover card; onOpen opens the edit
@@ -162,39 +196,34 @@ export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = nul
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const { open, hovered, focused, tapped, close, rootProps, onTriggerClick, onTriggerKeyDown } = useHoverPopover(rootRef);
+  const { open, hovered, focused, close, titleProps } = useTitleHover(rootRef);
   const [dwelled, setDwelled] = useState(false);
   useEffect(() => {
     if (!hovered) { setDwelled(false); return undefined; }
     const timer = globalThis.setTimeout(() => setDwelled(true), TASK_CARD_HOVER_MS);
     return () => globalThis.clearTimeout(timer);
   }, [hovered]);
-  const read = useTaskDetails(api, task, dwelled || focused || tapped);
+  const read = useTaskDetails(api, task, dwelled || focused);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
   const panelID = `tb-task-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
-  const openForm = () => { close(); onOpen(); };
-  const start = (event) => {
-    onTriggerClick(event);
-    if (event.defaultPrevented || !onOpen) return;
+  const openForm = (event) => {
     event.stopPropagation();
-    openForm();
+    close();
+    onOpen();
   };
   const key = (event) => {
-    onTriggerKeyDown(event);
-    if (event.defaultPrevented || !onOpen || (event.key !== 'Enter' && event.key !== ' ')) return;
+    if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); close(); return; }
+    if (!onOpen || (event.key !== 'Enter' && event.key !== ' ')) return;
     event.preventDefault();
-    event.stopPropagation();
-    openForm();
+    openForm(event);
   };
-  return html`<span ref=${rootRef} class=${`ci-hover tb-task-hover${open ? ' is-open' : ''}`} ...${rootProps}>
-    <span role="button" tabindex="0" class=${`tb-title${onOpen ? ' tb-title-open' : ''}${extra ? ` ${extra}` : ''}`}
-      aria-expanded=${open ? 'true' : 'false'} aria-controls=${panelID}
-      aria-label=${onOpen ? `${task.title}: opens the task` : task.title}
-      onClick=${start} onKeyDown=${key}>${task.title}</span>
-    ${open && html`<${TaskCardPanel} task=${task} api=${api} read=${read} nameOf=${nameOf} onOpen=${onOpen && openForm}
-        panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} chips=${chips} />
-      ${placement && !placement.hidden && html`<span class="ci-bridge" aria-hidden="true" style=${
-        `top:${placement.bridge.top}px;left:${placement.bridge.left}px;width:${placement.bridge.width}px;height:${placement.bridge.height}px`}></span>`}`}
+  return html`<span ref=${rootRef} class=${`ci-hover tb-task-hover${open ? ' is-open' : ''}`}>
+    <span role=${onOpen ? 'button' : undefined} tabindex="0" class=${`tb-title${onOpen ? ' tb-title-open' : ''}${extra ? ` ${extra}` : ''}`}
+      aria-describedby=${open ? panelID : undefined}
+      aria-label=${onOpen ? `${task.title}: opens the task` : undefined}
+      onClick=${onOpen ? openForm : undefined} onKeyDown=${key} ...${titleProps}>${task.title}</span>
+    ${open && html`<${TaskCardPanel} task=${task} api=${api} read=${read} nameOf=${nameOf}
+        panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} chips=${chips} />`}
   </span>`;
 }

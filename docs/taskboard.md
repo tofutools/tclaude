@@ -684,16 +684,9 @@ a CLI verb:
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
 - **✎ *Edit*** on a row, or a click on a task's title (in the list or on a
   lanes card; Enter on a focused title does the same), opens the edit form.
-  Renaming happens there. A press on the title never starts a drag.
-- **Hovering a title** shows the task's card, as a PR number's card does:
-  its title, its id with a ⧉ copy button, where it is (and why it is
-  blocked), who holds it, who made it and when, its last change, its ref and
-  dependencies, its files, and 💬 with the latest comment. Once the pointer
-  rests on the title (or at once for keyboard focus, or a tap on a touch
-  screen), the card reads the brief, shown as Markdown and clamped, and the
-  latest comment; on a linked node's board they are read from that node.
-  *more ↗* opens the edit form. The list and the cards show no number or id;
-  the card and the edit form's header carry the id. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,
+  Renaming happens there. A press on the title never starts a drag. The
+  form's header shows the task's id, and ⧉ copies it. It has the title, the
+  brief, the ref, *Where it is* (*Idea*, *Next*,
   *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
   assignee (if you may assign), the dependencies (✕ takes one off, and
   *＋ dependency* adds one of the board's other live tasks) and the files.
@@ -703,6 +696,17 @@ a CLI verb:
   (say, a close that needs `taskboard.assign`), the rest still land, and the
   form stays open and names what was not saved. A done or dropped task
   reopens when you pick another place for it.
+- **Hovering a title** shows the task's card: its title, its id, where it
+  is (and why it is blocked), who holds it, who made it and when, its last
+  change, its ref and dependencies, its files, and 💬 with the latest comment.
+  Once the pointer rests on the title (or at once for keyboard focus), the
+  card reads the brief, shown as Markdown and clamped, and the latest comment;
+  on a linked node's board they are read from that node. The card shows only
+  while the pointer is on the title: it hides a moment after the pointer
+  leaves it, and at once when another hover card opens. It never takes the
+  pointer, so the tasks under it stay usable, and a click on the title never
+  pins it. The list and the cards show no number or id; the card and the edit
+  form's header carry the id.
 - **Activity** is at the foot of the edit form: the task's
   [stream](#comments-and-activity), oldest first. Changes show as one line
   each, and comments as Markdown, with their files as tiles and a block,

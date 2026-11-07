@@ -5,6 +5,7 @@
 // rests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -77,41 +78,96 @@ test('Enter on a focused title opens the task too', async (t) => {
   assert.ok(harness.document.querySelector('#taskboard-edit-modal'));
 });
 
+const poll = async (harness, done, what) => {
+  for (let i = 0; i < 100 && !done(); i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  assert.ok(done(), what);
+};
+const titleOf = (c, id) => c.querySelector(`[data-task-id="${id}"] .tb-title`);
+const cardOf = (c, id) => c.querySelector(`[data-task-card="${id}"]`);
+
 test('hovering a title shows the task\'s card; resting on it reads the brief and the latest comment', async (t) => {
-  const { harness, c, api, settle } = await mountBoard(t);
-  const hover = c.querySelector('tr[data-task-id="tk_00000001"] .tb-task-hover');
-  await harness.act(() => harness.fireEvent(hover, 'mouseenter'));
-  const panel = () => c.querySelector('[data-task-card="tk_00000001"]');
+  const { harness, c, api } = await mountBoard(t);
+  await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000001'), 'mouseenter'));
+  const panel = () => cardOf(c, 'tk_00000001');
   assert.ok(panel(), 'the card opens at once');
+  assert.equal(panel().getAttribute('role'), 'tooltip');
+  assert.equal(titleOf(c, 'tk_00000001').getAttribute('aria-describedby'), panel().id, 'the title is described by its card');
   assert.match(panel().textContent, /tk_00000001/, 'with the id');
-  assert.ok(panel().querySelector('.tb-task-copy'), 'and a copy button');
+  assert.equal(panel().querySelector('button, a[href]:not(.tb-ref)'), null, 'nothing in the card is a control: it never takes the pointer');
   assert.match(panel().textContent, /next/);
   assert.match(panel().textContent, /SHOP-1/, 'the ref');
   assert.match(panel().textContent, /📎 1 file/);
   assert.match(panel().textContent, /💬 2/);
   assert.deepEqual(api.calls, [], 'nothing is read before the pointer rests');
   // Hover intent: poll for the reads, up to a limit.
-  for (let i = 0; i < 100 && !panel().querySelector('.tb-task-panel-latest'); i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  await poll(harness, () => panel().querySelector('.tb-task-panel-latest'), 'the latest comment is read after the dwell');
   assert.deepEqual(api.calls.map((x) => x[0]).sort(), ['activity', 'task']);
-  assert.match(panel().querySelector('.tb-task-panel-latest').textContent, /dev: QA has the checklist now/, 'the latest comment');
-  for (let i = 0; i < 100 && !panel().querySelector('.tb-task-brief-clamp strong'); i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 20)));
-  assert.ok(panel().querySelector('.tb-task-brief-clamp strong'), 'the brief, as Markdown');
-  await harness.act(() => harness.fireEvent(panel().querySelector('.tb-task-more'), 'click'));
-  await settle();
-  assert.ok(harness.document.querySelector('#taskboard-edit-modal'), '"more" opens the task');
+  assert.match(panel().querySelector('.tb-task-panel-latest').textContent, /dev: QA has the checklist now/);
+  await poll(harness, () => panel().querySelector('.tb-task-brief-clamp strong'), 'the brief, as Markdown');
 });
 
-test('a blocked task\'s card says why; a press in the card is no drag', async (t) => {
+test('the card follows the title only: it hides after the pointer leaves the title, even onto the card', async (t) => {
   const { harness, c } = await mountBoard(t);
-  const { bindTaskRowDrag } = await harness.importDashboardModule('js/row-drag.js');
-  t.after(bindTaskRowDrag(harness.document));
-  const tr = c.querySelector('tr[data-task-id="tk_00000002"]');
-  await harness.act(() => harness.fireEvent(tr.querySelector('.tb-task-hover'), 'mouseenter'));
-  const panel = c.querySelector('[data-task-card="tk_00000002"]');
-  assert.match(panel.textContent, /blocked: “waiting on QA”/);
-  harness.fireEvent(panel.querySelector('.tb-task-panel-facts'), 'pointerdown', {});
-  assert.equal(tr.draggable, false, 'a press inside the card is a click, not a row drag');
-  harness.fireEvent(harness.document, 'pointerup', {});
+  const title = titleOf(c, 'tk_00000002');
+  await harness.act(() => harness.fireEvent(title, 'mouseenter'));
+  const panel = cardOf(c, 'tk_00000002');
+  assert.match(panel.textContent, /blocked: “waiting on QA”/, 'a blocked task\'s card says why');
+  await harness.act(() => harness.fireEvent(title, 'mouseleave'));
+  assert.ok(cardOf(c, 'tk_00000002'), 'a short grace, as the other hover popovers');
+  // The pointer on the card does not hold it: only the title does.
+  await harness.act(() => harness.fireEvent(panel, 'mouseenter'));
+  await poll(harness, () => !cardOf(c, 'tk_00000002'), 'the card hides once the grace runs out');
+  const css = await readFile(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tb-task-panel \{[^}]*pointer-events: none/, 'the card never takes the pointer from the tasks under it');
+});
+
+test('a click on the title opens the task and never pins the card', async (t) => {
+  const { harness, c, settle } = await mountBoard(t);
+  const title = titleOf(c, 'tk_00000001');
+  await harness.act(() => harness.fireEvent(title, 'mouseenter'));
+  await harness.act(() => harness.fireEvent(title, 'click'));
+  await settle();
+  assert.ok(harness.document.querySelector('#taskboard-edit-modal'), 'the click opens the edit form');
+  assert.equal(cardOf(c, 'tk_00000001'), null, 'and closes the card');
+  await harness.act(() => harness.fireEvent(title, 'mouseleave'));
+  await settle();
+  assert.equal(cardOf(c, 'tk_00000001'), null, 'nothing pinned it');
+});
+
+test('another hover popover opening closes the card at once', async (t) => {
+  const { harness, c } = await mountBoard(t);
+  await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000001'), 'mouseenter'));
+  await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000001'), 'mouseleave'));
+  assert.ok(cardOf(c, 'tk_00000001'), 'in its grace');
+  await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000002'), 'mouseenter'));
+  assert.equal(cardOf(c, 'tk_00000001'), null, 'the first card goes as the next one opens, without waiting out its grace');
+  assert.ok(cardOf(c, 'tk_00000002'));
+  // The registry is the dashboard's one: the PR card and the activity hover
+  // join it (hover-popover.js useExclusivePopover).
+  const src = await readFile(new URL('../dashboard/js/groups-taskboard-card.js', import.meta.url), 'utf8');
+  assert.match(src, /useExclusivePopover\(rootRef, open, close\)/);
+});
+
+test('keyboard focus on a title shows its card; Escape hides it', async (t) => {
+  const { harness, c } = await mountBoard(t);
+  const title = titleOf(c, 'tk_00000001');
+  await harness.act(() => harness.fireEvent(title, 'focus'));
+  assert.ok(cardOf(c, 'tk_00000001'));
+  await harness.act(() => harness.fireEvent(title, 'keydown', { key: 'Escape' }));
+  assert.equal(cardOf(c, 'tk_00000001'), null);
+});
+
+test('the edit form\'s header copies the task\'s id', async (t) => {
+  const { harness, c, settle } = await mountBoard(t);
+  const copied = [];
+  Object.defineProperty(globalThis.navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { copied.push(text); } } });
+  await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000001'), 'click'));
+  await settle();
+  const copy = harness.document.querySelector('#taskboard-edit-modal .tb-id-copy');
+  assert.ok(copy, 'the id has a copy button');
+  await harness.act(() => harness.fireEvent(copy, 'click'));
+  await settle();
+  assert.deepEqual(copied, ['tk_00000001']);
 });
 
 test('a Lanes card shows the title only, which opens the task; the card is no drag from its title', async (t) => {
