@@ -371,7 +371,7 @@ a CLI verb:
 | A pasted list in *Write it myself* | `add <group> --lines-file -` |
 | *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
 | *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
-| *+* in a lanes cell, then a title and Enter | `add <group> "title" [--next]`, then `assign <task> --to <agent>` in an agent's lane |
+| *+* in a lanes cell (opens *Write it myself* filled in from the cell) | `add <group> "title" [--next]`, then `assign <task> --to <agent>` in an agent's lane |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | *✓ Next* on an idea | `promote <task>` |
