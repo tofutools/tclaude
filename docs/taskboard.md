@@ -382,8 +382,8 @@ a CLI verb:
 | *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
 
-- **+ New task** (in wizard mode, *+ New quest*) in the section head is the
-  one way in, in both views. It opens a menu:
+- **＋ ▾** (*New task*; in wizard mode, *New quest*) in the section head is
+  the one way in, in both views. It opens a menu:
   - *Write it myself* opens a form: a title (required, one line, as for
     `add`), a brief, a ref, the stage (*Idea*, the default, or *Next*),
     dependencies picked from the board's live tasks, and, if you may assign,

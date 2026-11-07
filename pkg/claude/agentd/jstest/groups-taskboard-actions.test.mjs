@@ -102,7 +102,7 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
 test('the list view has no capture panel: it adds through + New task', async (t) => {
   const list = await mountBoard(t, 'tba-capture-list');
   assert.equal(list.c.querySelector('[data-taskboard-capture]'), null);
-  assert.match(list.c.querySelector('[data-taskboard-new]').textContent, /New task/);
+  assert.equal(list.c.querySelector('[data-taskboard-new]').getAttribute('aria-label'), 'New task');
 });
 
 test('the lanes capture line adds on Enter, keeps the box for the next line, and adds a pasted list at once', async (t) => {

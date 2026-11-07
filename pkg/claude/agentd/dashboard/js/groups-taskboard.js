@@ -657,7 +657,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
         ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} form=${forms[task.id]} ...${rowProps} />`)}
       </tbody>
     </table>` : html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
-      ? (wizard ? ' Add one with + New quest above.' : ' Add one with + New task above.') : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
+      ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${actions && view === 'lanes' && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} />`}
     <${HistoryLine} entry=${entry} open=${history} wizard=${wizard} onToggle=${() => setHistory(!history)} />

@@ -124,11 +124,13 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose }) {
   const choose = (what) => () => { setOpen(false); onChoose(what); };
   const item = (attr, onClick, name, line, disabled = false, title = undefined) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item"
     onClick=${onClick} disabled=${disabled} title=${title}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
+  // Icon-only, like the Resources ＋ beside it: the name lives in the
+  // title and aria-label.
   const label = wizard ? 'New quest' : 'New task';
-  const title = wizard ? `Add a quest to the ${group.name} quest board` : `Add a task to the ${group.name} task board`;
+  const title = wizard ? `${label}: add a quest to the ${group.name} quest board` : `${label}: add a task to the ${group.name} task board`;
   return html`<span class="gr-add tb-new" ref=${ref}>
     <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn tb-new-btn" data-taskboard-new=${group.name} aria-haspopup="menu"
-      aria-expanded=${open ? 'true' : 'false'} title=${title} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span> ${label}<span class="gr-add-caret" aria-hidden="true">▾</span><//>
+      aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu tb-new-menu">
       ${item('data-taskboard-new-form', choose('form'), wizard ? 'Scribe it myself' : 'Write it myself',
         wizard ? 'Fill in the scroll: title, brief, ref, stage' : 'Fill in a form: title, brief, ref, stage')}

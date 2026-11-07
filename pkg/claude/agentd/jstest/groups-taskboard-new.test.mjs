@@ -81,7 +81,9 @@ async function mountBoard(t, name, { api = fakeApi(), entry = board(name), group
 test('"+ New task" opens a menu of three ways to add, modelled on the Resources ＋ menu', async (t) => {
   const { c, click } = await mountBoard(t, 'tbn-menu');
   const button = c.querySelector('[data-taskboard-new]');
-  assert.match(button.textContent, /New task/);
+  assert.equal(button.textContent.trim(), '＋▾', 'icon-only, as the Resources ＋');
+  assert.equal(button.getAttribute('aria-label'), 'New task');
+  assert.match(button.getAttribute('title'), /^New task: /);
   assert.equal(button.getAttribute('aria-haspopup'), 'menu');
   assert.equal(button.getAttribute('aria-expanded'), 'false');
   assert.equal(c.querySelector('.tb-import-open'), null, 'the import moved into the menu');
