@@ -25,6 +25,7 @@ import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { TaskFiles } from './groups-taskboard-files.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -302,7 +303,10 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   ].filter(Boolean).join(' · ');
   const reasonRow = draft.where === 'blocked' || draft.where === 'dropped';
   const hint = missing ? `needs ${missing}` : whereHint(draft, task);
-  return html`<${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span>`}
+  return html`<${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span><button data-ui-exempt type="button" class="tb-id-copy" title="Copy the id"
+      aria-label=${`Copy ${task.id}`} onClick=${async () => {
+        if (await writeClipboard(task.id)) shellToast(`Copied ${task.id}`); else shellToast(`Could not copy ${task.id}`, true);
+      }}>⧉</button>`}
     onClose=${onClose} busy=${busy} dirty=${dirty} confirmDiscard=${shellConfirmDiscard} initialFocusRef=${titleRef}
     onSubmitHotkey=${() => void save()} resizeKey="tclaude.dash.modalSize.taskboard-edit" error=${error || undefined}
     ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}
