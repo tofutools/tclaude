@@ -134,7 +134,10 @@ type taskboardLsParams struct {
 	Stage string `long:"stage" optional:"true" help:"Only this stage: idea or next"`
 	All   bool   `long:"all" help:"Also list done and dropped tasks not yet archived"`
 	Mine  bool   `long:"mine" help:"Only the live tasks assigned to you, in every group"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	// Summary is the dashboard's counts for every board you can read, one
+	// line per group (GET /v1/taskboard/context).
+	Summary bool `long:"summary" help:"Counts for every group board you can read, one line per group"`
+	JSON    bool `long:"json" help:"Output JSON"`
 }
 
 func (t taskboardTask) assigneeText() string {
@@ -163,6 +166,13 @@ func taskboardLsCmd() *cobra.Command {
 }
 
 func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
+	if p.Summary {
+		if strings.TrimSpace(p.Group) != "" || p.Stage != "" || p.All || p.Mine {
+			fmt.Fprintln(stderr, "Error: --summary covers every board you can read; it takes no group, --stage, --all or --mine")
+			return rcInvalidArg
+		}
+		return RunTaskboardSummary(p.JSON, stdout, stderr)
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -248,6 +258,78 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, line)
 	}
 	return rcOK
+}
+
+// TaskboardCounts are one board's counts as GET /v1/taskboard/context
+// reports them.
+type TaskboardCounts struct {
+	Live         int `json:"live"`
+	NeedsYou     int `json:"needs_you"`
+	InProgress   int `json:"in_progress"`
+	Next         int `json:"next"`
+	Ideas        int `json:"ideas"`
+	Blocked      int `json:"blocked"`
+	Queued       int `json:"queued"`
+	DoneThisWeek int `json:"done_this_week"`
+	Dropped      int `json:"dropped"`
+}
+
+// TaskboardSummaryGroup is one readable group in `ls --summary`.
+type TaskboardSummaryGroup struct {
+	Group  string          `json:"group"`
+	Counts TaskboardCounts `json:"counts"`
+}
+
+// RunTaskboardSummary prints the counts of every board the caller can read,
+// the same counts as the dashboard's Task board sections (`ls --summary`).
+// Exported so flow tests can drive it through the agent client bridge.
+func RunTaskboardSummary(asJSON bool, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var resp struct {
+		Groups []TaskboardSummaryGroup `json:"groups"`
+	}
+	if err := DaemonGet("/v1/taskboard/context", &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.Groups == nil {
+		resp.Groups = []TaskboardSummaryGroup{}
+	}
+	if asJSON {
+		return writeJSONTo(stdout, resp)
+	}
+	if len(resp.Groups) == 0 {
+		fmt.Fprintln(stdout, "no task boards you can read")
+		return rcOK
+	}
+	for _, g := range resp.Groups {
+		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts))
+	}
+	return rcOK
+}
+
+// taskboardCountsLine reads as the dashboard's folded section:
+// "9 · 1 needs you · 2 in progress · 6 next · 3 ideas · 12 done this week".
+func taskboardCountsLine(c TaskboardCounts) string {
+	parts := []string{fmt.Sprintf("%d", c.Live)}
+	add := func(n int, label string) {
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, label))
+		}
+	}
+	add(c.NeedsYou, "needs you")
+	add(c.InProgress, "in progress")
+	add(c.Next, "next")
+	if c.Ideas == 1 {
+		add(c.Ideas, "idea")
+	} else {
+		add(c.Ideas, "ideas")
+	}
+	add(c.DoneThisWeek, "done this week")
+	add(c.Dropped, "dropped")
+	return strings.Join(parts, " · ")
 }
 
 // ---- show / history ----

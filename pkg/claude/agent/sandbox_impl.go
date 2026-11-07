@@ -28,7 +28,7 @@ func sandboxImplCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:     "sandbox-impl",
 		Aliases: []string{"sandbox-implementation"},
-		Short:   "Show or assign the sandbox implementation an agent relaunches under",
+		Short:   "Show or assign the sandbox implementation and profile an agent relaunches under",
 		Long: "Reads and rewrites the durable sandbox implementation recorded for an existing agent — " +
 			"the layer that owns OS-level confinement for its launches.\n\n" +
 			"The implementation is normally frozen when an agent is spawned. `set` is how an agent " +
@@ -37,7 +37,8 @@ func sandboxImplCmd() *cobra.Command {
 			"accounting, OOM attribution and kill handle that brings.\n\n" +
 			"The assignment takes effect on the next launch. A stopped agent is assigned and left " +
 			"stopped; a running agent needs `set --restart`, which stops the idle agent, assigns and " +
-			"resumes it. Both subcommands require the `agent.sandbox-impl` permission, " +
+			"resumes it. `set --sandbox-profile` changes the agent's explicit sandbox profile the same way, " +
+			"alone or together with the implementation. Both subcommands require the `agent.sandbox-impl` permission, " +
 			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd(), sandboxImplDefaultCmd()},
@@ -66,7 +67,9 @@ func sandboxImplShowCmd() *cobra.Command {
 
 type sandboxImplSetParams struct {
 	Agent          string `pos:"true" help:"Agent selector: title, full conv-id, or 8+-char prefix"`
-	Implementation string `pos:"true" help:"harness-builtin | tclaude-layer | resource-only | off"`
+	Implementation string `pos:"true" optional:"true" help:"harness-builtin | tclaude-layer | resource-only | off. Omit it to change only the sandbox profile."`
+	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Replace the agent's explicit sandbox profile with this registry profile. The global and group tiers still apply."`
+	NoProfile      bool   `long:"no-sandbox-profile" optional:"true" help:"Remove the agent's explicit sandbox profile, leaving only the global and group tiers."`
 	Sandbox        string `long:"sandbox" optional:"true" help:"Pin the harness-builtin sandbox mode recorded alongside the implementation. Omitted, the agent's recorded mode is carried through the same resolution a launch applies."`
 	Restart        bool   `long:"restart" optional:"true" help:"If the agent is running, stop it (it must be idle), assign, and resume the same conversation under the new implementation. Without it, a running agent is refused."`
 	Yes            bool   `long:"yes" short:"y" optional:"true" help:"Accept moving an OpenCode agent out of private state, which is otherwise refused with what the move does."`
@@ -77,7 +80,7 @@ type sandboxImplSetParams struct {
 func sandboxImplSetCmd() *cobra.Command {
 	return boa.CmdT[sandboxImplSetParams]{
 		Use:   "set",
-		Short: "Assign the sandbox implementation an agent will relaunch under",
+		Short: "Assign the sandbox implementation and/or profile an agent will relaunch under",
 		Long: "Records a new sandbox implementation for an existing agent. The posture is applied by " +
 			"the launch that follows, so a running agent is refused unless --restart is given: then, " +
 			"once every gate below has passed, the idle agent is stopped, the posture recorded, and the " +
@@ -94,6 +97,9 @@ func sandboxImplSetCmd() *cobra.Command {
 			"has no allow-unenforced override to rescue it. `resource-only` additionally probes that " +
 			"this host can actually create the per-agent cgroup, since a relaunch would only degrade " +
 			"to a notice.\n\n" +
+			"--sandbox-profile <name> (or --no-sandbox-profile) replaces the agent's explicit-tier sandbox " +
+			"profile, with or without an implementation; the same gates judge the chain it gives. An " +
+			"agent whose launches omit sandbox profiles has none to change.\n\n" +
 			"Moving an OpenCode agent out of private state is refused without --yes: the refusal " +
 			"says how many conversations move, who can read them afterwards, and what is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -151,6 +157,19 @@ type sandboxImplResp struct {
 	SwitchedClients int    `json:"switched_clients,omitempty"`
 	// Note is what an operator should know about what the assignment did.
 	Note string `json:"note,omitempty"`
+	// SandboxProfile is the explicit profile the next relaunch resolves;
+	// PreviousSandboxProfile the one an assignment replaced.
+	SandboxProfile             string               `json:"sandbox_profile"`
+	SandboxProfilePending      bool                 `json:"sandbox_profile_pending,omitempty"`
+	PreviousSandboxProfile     *string              `json:"previous_sandbox_profile,omitempty"`
+	SandboxProfilesOmitted     bool                 `json:"sandbox_profiles_omitted,omitempty"`
+	SandboxProfileUnchangeable string               `json:"sandbox_profile_unchangeable,omitempty"`
+	SandboxProfileTiers        []sandboxProfileTier `json:"sandbox_profile_tiers,omitempty"`
+}
+
+type sandboxProfileTier struct {
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
 }
 
 // runSandboxImplShow reads one agent's durable posture and renders it.
@@ -182,17 +201,25 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	implementation := strings.TrimSpace(p.Implementation)
-	if implementation == "" {
-		fmt.Fprintf(stderr, "Error: an implementation is required (%s).\n",
+	profile := strings.TrimSpace(p.SandboxProfile)
+	if profile != "" && p.NoProfile {
+		fmt.Fprintln(stderr, "Error: give --sandbox-profile or --no-sandbox-profile, not both.")
+		return rcInvalidArg
+	}
+	profileChange := profile != "" || p.NoProfile
+	if implementation == "" && !profileChange {
+		fmt.Fprintf(stderr, "Error: give an implementation (%s), --sandbox-profile, or both.\n",
 			strings.Join(sandboxImplementationChoices(), " | "))
 		return rcInvalidArg
 	}
 	// Reject a misspelling locally so the operator sees the closed set rather
 	// than a round-trip. The daemon validates again against the resolved harness
 	// and host, which is where the authoritative refusal lives.
-	if _, err := sandboxpolicy.NormalizeImplementation(implementation); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
+	if implementation != "" {
+		if _, err := sandboxpolicy.NormalizeImplementation(implementation); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcInvalidArg
+		}
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
@@ -205,6 +232,9 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 		"implementation": implementation,
 		"sandbox":        strings.TrimSpace(p.Sandbox),
 		"restart":        p.Restart,
+	}
+	if profileChange {
+		body["sandbox_profile"] = profile
 	}
 	if p.Yes {
 		body["confirm_move_out"] = true
@@ -245,6 +275,32 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 	} else {
 		fmt.Fprintf(stdout, "%s: sandbox implementation %s\n", label, sandboxImplementationDisplayName(resp.Implementation))
 	}
+	profileName := func(name string) string {
+		if name == "" {
+			return "(none)"
+		}
+		return name
+	}
+	switch {
+	case resp.PreviousSandboxProfile != nil && *resp.PreviousSandboxProfile != resp.SandboxProfile:
+		fmt.Fprintf(stdout, "  explicit sandbox profile: %s → %s\n",
+			profileName(*resp.PreviousSandboxProfile), profileName(resp.SandboxProfile))
+	case resp.SandboxProfilesOmitted:
+		fmt.Fprintln(stdout, "  explicit sandbox profile: omitted (the agent's launches omit sandbox profiles)")
+	case resp.SandboxProfileUnchangeable == "":
+		line := "  explicit sandbox profile: " + profileName(resp.SandboxProfile)
+		if resp.SandboxProfilePending {
+			line += " (assigned; applied by the next launch)"
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	if len(resp.SandboxProfileTiers) > 0 {
+		parts := make([]string, 0, len(resp.SandboxProfileTiers))
+		for _, tier := range resp.SandboxProfileTiers {
+			parts = append(parts, tier.Scope+"="+tier.Name)
+		}
+		fmt.Fprintln(stdout, "  sandbox profile chain: "+strings.Join(parts, ", "))
+	}
 	if resp.Sandbox != "" {
 		line := "  harness sandbox mode: " + sandboxImplementationDisplayName(resp.Sandbox)
 		if resp.Source != "" {
@@ -271,11 +327,11 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		fmt.Fprintln(stdout, "  note: "+resp.Note)
 	}
 	if resp.Restart != "" {
-		fmt.Fprintln(stdout, "  restarted: the agent is running under the new implementation")
+		fmt.Fprintln(stdout, "  restarted: the agent is running under the new sandbox posture")
 	} else if resp.Online {
 		fmt.Fprintln(stdout, "  note: the agent is running; the recorded posture applies to its next launch")
-	} else if resp.Previous != "" {
-		fmt.Fprintln(stdout, "  wake the agent to launch it under the new implementation")
+	} else if resp.Previous != "" || resp.PreviousSandboxProfile != nil {
+		fmt.Fprintln(stdout, "  wake the agent to launch it under the new sandbox posture")
 	}
 	return rcOK
 }

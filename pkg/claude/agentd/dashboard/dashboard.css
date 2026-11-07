@@ -17687,12 +17687,15 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* The run-kind checklist in the Groups ▾ view menu (js/groups-focus.js
    RunKindFilter): a coloured dot per kind and a count once runs load. */
 .groups-run-kinds { display: flex; flex-direction: column; gap: 2px; }
-.view-menu label.groups-run-kind { display: flex; gap: 8px; }
+/* Keeps the shared .filter-toggle grid so the checkbox sits in the same
+   first column as the rows above, then the dot, the label, and the count
+   pinned right. Without counts the 1fr label track absorbs the empty one. */
+.view-menu label.groups-run-kind { grid-template-columns: auto auto 1fr auto; }
 .groups-run-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .groups-run-kind-running .groups-run-dot { background: #58a6ff; }
 .groups-run-kind-planned .groups-run-dot { border: 1.5px dashed #6e7f94; width: 6px; height: 6px; }
 .groups-run-kind-done .groups-run-dot { background: #2ea043; }
-.groups-run-count { margin-left: auto; padding-left: 12px; color: #8b949e; font-size: 11px; }
+.groups-run-count { padding-left: 4px; color: #8b949e; font-size: 11px; }
 .groups-processes-placeholder { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 18px 0; padding: 36px 20px; border: 1px dashed #30363d; border-radius: 10px; color: #8b949e; text-align: center; }
 .groups-processes-placeholder strong { color: #e6edf3; font-size: 14px; }
 .groups-processes-placeholder-glyph { font-size: 26px; color: #58a6ff; }
@@ -18605,3 +18608,39 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .ui-tag.peer-board-badge { flex: none; white-space: nowrap; }
 .ui-tag.peer-board-badge.write { color: #3fb950; border-color: #2e6b3a; }
 .peer-group-boards .peer-board-add { margin-top: 4px; }
+
+/* ── Group Task board (groups-taskboard.js, docs/taskboard.md) ── */
+.tb-counts { display: inline-flex; align-items: baseline; font-size: 10.5px; color: #6e7681; font-variant-numeric: tabular-nums; white-space: pre; }
+.tb-count-needs-you { color: #e3b341; font-weight: 600; }
+.group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
+.tb-board { margin: 0 0 6px; }
+.tb-table { width: 100%; table-layout: fixed; font-size: 12.5px; }
+.tb-col-n { width: 32px; }
+.tb-col-ref { width: 150px; }
+.tb-col-who { width: 230px; }
+.tb-col-state { width: 210px; }
+.tb-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+.tb-table .tb-n { text-align: right; color: #6e7681; font-variant-numeric: tabular-nums; }
+.tb-title { color: #e6edf3; }
+.tb-id { margin-left: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: #6e7681; }
+.tb-dep { margin-left: 6px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; white-space: nowrap; }
+.tb-dep.unmet { border-color: #9e6a03; color: #e3b341; }
+.tb-ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: none; white-space: nowrap; }
+a.tb-ref:hover { color: #79c0ff; }
+.tb-ref-none { color: #484f58; }
+.tb-unassigned { color: #6e7681; }
+.tb-who { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tb-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #3fb950; color: #3fb950; font-size: 10px; font-weight: 700; }
+.tb-by { padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; }
+.tb-state { white-space: nowrap; }
+.ui-tag.tb-state-in-progress { border-color: #238636; color: #3fb950; }
+.ui-tag.tb-state-blocked { border-color: #da3633; color: #f85149; }
+.ui-tag.tb-state-idea { border-style: dashed; }
+.tb-row-done .tb-title, .tb-row-dropped .tb-title { color: #7d8590; }
+.tb-row-dropped .tb-title { text-decoration: line-through; }
+.tb-reason { margin-top: 2px; color: #f85149; font-size: 11.5px; }
+.tb-closed { margin-top: 4px; opacity: 0.85; }
+.tb-history, .tb-more { margin: 6px 8px 0; font-size: 11.5px; color: #7d8590; }
+.tb-history-note { color: #6e7681; }
+.tb-history .tb-history-toggle { font-size: 11.5px; }
+.tb-empty code, .tb-more code { font-size: 11px; }

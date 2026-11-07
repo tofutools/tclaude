@@ -56,6 +56,7 @@ func taskboardEnabled(w http.ResponseWriter) bool {
 func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList))
 	mux.HandleFunc("GET /v1/taskboard", handleTaskboardListOwnGroup)
+	mux.HandleFunc("GET /v1/taskboard/context", handleTaskboardContext)
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate))
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow))
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents))

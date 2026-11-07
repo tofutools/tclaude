@@ -981,6 +981,58 @@ test('sandbox-impl dialog asks before moving an OpenCode agent out of private st
   assert.equal(calls[2][1].confirmMoveOut, true);
 });
 
+test('sandbox-impl dialog changes only the sandbox profile when only it moves', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({
+        sandbox_profile: 'loose',
+        sandbox_profile_options: ['loose', 'strict'],
+        sandbox_profile_tiers: [{ scope: 'group', name: 'crew-base' }, { scope: 'explicit', name: 'loose' }],
+      }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const select = host.querySelector('#sandbox-impl-profile');
+  assert.match(select.querySelector('option[value="loose"]').textContent, /current/,
+    'the server-reported profile is marked current');
+  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /group “crew-base”/,
+    'the tiers the agent does not own are shown for context');
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
+
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  select.querySelector('option[value="strict"]').setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  const assign = host.querySelector('#sandbox-impl-assign');
+  assert.equal(assign.disabled, false);
+  assign.click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [['assign', {
+    conv: 'agent-conv', label: 'worker', implementation: '', sandbox: '', sandboxProfile: 'strict', restart: false,
+  }]], 'an untouched implementation is sent empty, so only the profile changes');
+});
+
+test('sandbox-impl dialog locks the profile picker when the agent has none to change', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({
+        sandbox_profiles_omitted: true,
+        sandbox_profile_unchangeable: "this agent's launches omit sandbox profiles",
+        sandbox_profile_options: ['strict'],
+      }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(host.querySelector('#sandbox-impl-profile').disabled, true);
+  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /omit sandbox profiles/);
+});
+
 test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {
   const calls = [];
   const { harness, host, cleanup } = await mountDialogs(

@@ -72,6 +72,35 @@ test('rail model: agents under their group first, live before closed, never-star
 
 });
 
+test('rail model: an agent\'s shell is a shell of its group, not an agent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const model = await harness.importDashboardModule('js/resource-model.js');
+  const groups = [{ id: 1, name: 'crew' }];
+  const agent = { agent_id: 'ag_1', title: 'worker', groups: ['crew'], online: true, state: { status: 'working' } };
+  const status = (item) => ((item.pane?.seed?.agent || item.row?.agent_id) === 'ag_1' ? { key: 'working', agent } : null);
+  const resources = [
+    { kind: 'shell', id: 'term:ag_1:start:', group_id: 1, title: 'worker shell (start)', state: 'running', session: 'tclaude-term-a-start', agent: 'ag_1', which: 'start' },
+    { kind: 'shell', id: 'term:ag_1:current:crew', group_id: 1, title: 'worker shell', state: 'running', session: 'tclaude-term-b-current', agent: 'ag_1', which: 'current' },
+  ];
+  const panes = [{ key: 'term:ag_1:current:crew', seed: { agent: 'ag_1' }, label: 'worker shell' }];
+  const all = m.railItems({
+    resources, groups, statusOf: status, panes, places: model.browserPlaces({ strip: panes.map((p) => p.key) }),
+    background: [{ kind: 'shell', key: 'term:ag_1:start:', tmux_session: 'tclaude-term-a-start', agent_id: 'ag_1', killable: true }],
+  });
+  assert.deepEqual(all.sections.map((s) => s.name), ['crew']);
+  const items = all.sections[0].items;
+  assert.deepEqual(items.map((i) => [i.key, i.kind, i.bucket, i.title]), [
+    ['shell:term:ag_1:current:crew', 'shell', 'open', 'worker shell'],
+    ['shell:term:ag_1:start:', 'shell', 'background', 'worker shell (start)'],
+  ], 'each shell is listed once, as a shell, open here or in the background');
+  assert.equal(items[0].paneKey, 'term:ag_1:current:crew', 'it opens under its terminal pane');
+  assert.equal(items[1].shellSession?.tmux_session, 'tclaude-term-a-start', 'its background session rides on the item, to kill it by');
+  const shellsOnly = { states: m.DEFAULT_FILTER.states, kinds: ['shells'] };
+  assert.equal(m.filterRail(all, { filter: shellsOnly }).sections[0].items.length, 2, 'the Shells filter lists them');
+  assert.equal(m.filterRail(all, { filter: { ...shellsOnly, kinds: ['agents'] } }).sections.length, 0, 'the Agents filter does not');
+});
+
 test('agents sort by what they are doing, then by name: needs you, working, idle', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/collab-rail-model.js');

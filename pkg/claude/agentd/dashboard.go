@@ -132,6 +132,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/process/templates/{id}/export", dashboardProcessRoute(handleProcessTemplateExport))
 	mux.HandleFunc("POST /v1/process/import", dashboardProcessRoute(handleProcessImport))
 	mux.HandleFunc("GET /v1/process/context", dashboardProcessRoute(handleProcessContext))
+	// The Groups tab's Task board sections (taskboard_context.go).
+	mux.HandleFunc("GET /v1/taskboard/context", asDashboardHuman(handleTaskboardContext))
 	// Groups › Processes "+ start process" (G3) starts a group-scoped run.
 	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	// The single-run focus (G5) reads one run's durable view and evidence and
