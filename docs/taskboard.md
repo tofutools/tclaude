@@ -370,7 +370,7 @@ a CLI verb:
 | A pasted list in *Write it myself* | `add <group> --lines-file -` |
 | *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
 | *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
-| Type a line in the lanes view's capture line and press Enter | `add <group> "title"` |
+| *+* in a lanes cell, then a title and Enter | `add <group> "title" [--next]`, then `assign <task> --to <agent>` in an agent's lane |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | *✓ Next* on an idea | `promote <task>` |
@@ -397,11 +397,7 @@ a CLI verb:
     other online member who may change the board. With no such member
     online, the item is off, and says why.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
-- **The capture line** in the lanes view stays focused after each Enter, so
-  you can add a burst of ideas in a row. A pasted list adds one task per line.
-  A line that is only an awb, Linear or GitHub id becomes a task with that
-  ref, titled from the tracker. New tasks land at the end of the ideas. Then
-  drag them where you want them.
+- In the lanes view, a cell's **+** adds a task right there (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
@@ -411,8 +407,9 @@ a CLI verb:
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view. In *Lanes*,
-*lanes by agent | role | subgroup* picks how the lanes are grouped. The
-dashboard remembers both per group, for you only.
+*lanes by agent | role | subgroup* picks how the lanes are grouped: by agent
+unless you pick another. The dashboard remembers both per group, for you
+only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
@@ -420,7 +417,8 @@ needs you* also holds stalled tasks.
 
 The *Unassigned* lane comes first, then one lane per agent, grouped by role
 (the owner's role first), by subgroup, or not grouped. Each lane head shows the
-agent's state and how many tasks it holds. A lane group whose agents are all
+agent's state and how many tasks it holds. A name too long for the lane column
+ends in "…"; hover it for the full name. A lane group whose agents are all
 offline folds; click *show offline lanes* to see it. Striped cells cannot hold a
 card: an agent's *Ideas* (an idea is unassigned) and the Unassigned lane's *In
 progress*.
@@ -437,9 +435,21 @@ Dragging a card is one action, the same as its CLI verb:
 | Done → Next or In progress | reopen (`POST /v1/taskboard/tasks/{id}/status {"status":"open"}`) |
 | Onto an agent's lane (Next or In progress) | `assign <task> --to <agent>` (an idea is promoted) |
 | Onto the Unassigned lane's *Next* | `unassign <task>` |
+| Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
+| From an agent's lane onto the Unassigned lane's *Ideas* | `unassign <task>`, then `demote <task>` |
+| From an agent's lane onto the Unassigned lane's *Blocked* (asks the reason) | `unassign <task>`, then `block <task> --reason …` |
 
-The capture box under the grid is one line, and it lands in Ideas ·
-Unassigned. Order within the queue is set in the *List* view.
+A drag to another lane and another column at once runs both writes in that
+order, the lane first. A move the board cannot make in one step, such as
+unassigning and closing a task, is not accepted.
+
+Hover or focus a cell that a new task can land in to see a discreet **+**.
+These are the Unassigned lane's *Ideas* and *Next*, and an agent's *Next* and
+*In progress*. Type a title and press Enter to add the task there. The column
+sets the stage, and an agent's lane assigns the task to that agent. *full
+form…* opens the New task form filled in from the cell. An agent's lanes show
+no **+** unless you may assign. Order within the queue is set in the *List*
+view.
 
 The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off. A
@@ -457,7 +467,8 @@ those drags aren't accepted in the lanes.
 | `ls <group>` | `GET /v1/groups/{g}/taskboard[?stage=&all=1]` |
 | `ls` (own group) | `GET /v1/taskboard` |
 | `show` / `history` | `GET /v1/taskboard/tasks/{id}` / `…/events` |
-| `add` | `POST /v1/groups/{g}/taskboard/tasks` |
+| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`) |
+| `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
