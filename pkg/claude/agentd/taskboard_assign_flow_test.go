@@ -276,6 +276,11 @@ func TestTaskboardHolderProtections(t *testing.T) {
 	code, body = h.post(h.lead, task.ID, "unassign", map[string]any{"self": true})
 	assert.Equal(t, http.StatusConflict, code, body)
 	assert.Contains(t, body, "not_assignee")
+	// A member releasing a task it does not hold is told so, not asked for
+	// taskboard.assign.
+	code, body = h.post(h.peer, task.ID, "unassign", map[string]any{"self": true})
+	assert.Equal(t, http.StatusConflict, code, body)
+	assert.Contains(t, body, "not_assignee")
 	code, body = h.post(h.lead, task.ID, "unassign", nil)
 	require.Equal(t, http.StatusOK, code, "the owner takes it back: %s", body)
 

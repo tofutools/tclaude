@@ -248,13 +248,16 @@ func handleTaskboardUnassign(w http.ResponseWriter, r *http.Request, t *db.Group
 		writeError(w, http.StatusConflict, "not_assigned", "task "+t.ID+" is not assigned")
 		return
 	}
-	if !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, true) {
-		return
-	}
 	self, _ := callerAgentID(r)
 	release := self != "" && self == t.AssigneeID
+	// A release names the caller's own task: refuse one it does not hold
+	// before the gate, which would otherwise ask for taskboard.assign (and
+	// could put that to the operator) for something the caller never meant.
 	if body.Self && !release {
-		writeError(w, http.StatusConflict, "not_assignee", "task "+t.ID+" is not assigned to you")
+		writeError(w, http.StatusConflict, "not_assignee", "task "+t.ID+" is not assigned to you; to take it back from its assignee, use unassign")
+		return
+	}
+	if !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, true) {
 		return
 	}
 	detail := t.AssigneeID

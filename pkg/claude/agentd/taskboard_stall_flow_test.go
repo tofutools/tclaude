@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -103,9 +104,18 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 	assert.Contains(t, nudge.Subject, "you went idle without reporting")
 	assert.Contains(t, nudge.Body, "tclaude agent taskboard report done --task "+task.ID)
 	assert.Empty(t, nudge.FromConv, "the nudge is from the board, not a peer")
+	rec := h.call(h.worker, http.MethodGet, fmt.Sprintf("/v1/messages/%d?keep-unread=1", nudge.ID), nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var read struct {
+		FromTitle string `json:"from_title"`
+		Replyable bool   `json:"replyable"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &read))
+	assert.Equal(t, "tclaude (system)", read.FromTitle, "tclaude's own mail is not shown as the operator's")
+	assert.False(t, read.Replyable)
 
 	// The context route counts it as needing the operator.
-	rec := h.call("", http.MethodGet, "/v1/taskboard/context", nil)
+	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var ctx struct {
 		Groups []struct {
