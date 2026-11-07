@@ -20,7 +20,7 @@ import (
 func newTaskboardStallFlow(t *testing.T, grace string) *tbAssignHarness {
 	h := newTaskboardAssignFlow(t)
 	require.NoError(t, config.Save(&config.Config{
-		Features:  &config.FeaturesConfig{Taskboard: true},
+		Features:  &config.FeaturesConfig{Taskboard: new(true)},
 		Agent:     &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
 		Taskboard: &config.TaskboardConfig{IdleGrace: grace},
 	}))
@@ -195,7 +195,7 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	code, body = h.post("", other.ID, "assign", map[string]any{"to": h.worker})
 	require.Equal(t, http.StatusOK, code, body)
 	require.NoError(t, config.Save(&config.Config{
-		Features:  &config.FeaturesConfig{Taskboard: true},
+		Features:  &config.FeaturesConfig{Taskboard: new(true)},
 		Agent:     &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
 		Taskboard: &config.TaskboardConfig{IdleGrace: "0"},
 	}))

@@ -20,9 +20,9 @@ import (
 )
 
 // Group task board (tcl-uzmtah, docs/taskboard.md): a short-term, ordered list
-// of tasks per agent group, behind features.taskboard. This slice is the plain
+// of tasks per agent group, on unless features.taskboard is false. This is the
 // store: list, capture, edit, reorder, promote/demote, block/unblock, drop,
-// close and history. Assignment and reports arrive with a later slice.
+// close and history; assignment and reports are in taskboard_assign.go.
 //
 // Access: taskboard.read / taskboard.write are group-scoped and conferred by
 // active membership and by ownership of the group; anyone else needs a grant,
@@ -49,7 +49,7 @@ func taskboardEnabled(w http.ResponseWriter) bool {
 		return true
 	}
 	writeError(w, http.StatusNotFound, "feature_disabled",
-		"the task board is off; enable it with features.taskboard in ~/.tclaude/config.json")
+		"the task board is off; features.taskboard is false in ~/.tclaude/data/config.json")
 	return false
 }
 

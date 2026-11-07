@@ -25,7 +25,7 @@ func newTaskboardAssignFlow(t *testing.T) *tbAssignHarness {
 	h := &tbAssignHarness{taskboardHarness: newTaskboardFlow(t),
 		lead: "tb-lead-1111", worker: "tb-worker-2222", peer: "tb-peer-3333"}
 	require.NoError(t, config.Save(&config.Config{
-		Features: &config.FeaturesConfig{Taskboard: true},
+		Features: &config.FeaturesConfig{Taskboard: new(true)},
 		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
 	}))
 	for _, c := range []string{h.lead, h.worker, h.peer} {

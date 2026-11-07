@@ -29,7 +29,7 @@ func taskboardCmd() *cobra.Command {
 			"Tasks are in one of two stages: ideas (captured, not yet queued; where `add` lands) and next (the queue, top " +
 			"first). Members of the group read and change its board; anyone else needs taskboard.read / taskboard.write, " +
 			"scoped with --scope group=<name> or unscoped. A task in a group you cannot read is reported as not found. " +
-			"Needs features.taskboard.",
+			"On by default; features.taskboard false turns it off.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskboardLsCmd(),

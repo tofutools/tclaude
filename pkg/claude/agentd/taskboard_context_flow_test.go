@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -174,9 +175,13 @@ func TestTaskboardContextVisibility(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "secret plan")
 }
 
-func TestTaskboardContextIsOffByDefault(t *testing.T) {
+// On by default; features.taskboard false answers 404.
+func TestTaskboardContextOnByDefaultAndCanBeTurnedOff(t *testing.T) {
 	f := newFlow(t)
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/context", nil)))
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Taskboard: new(false)}}))
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/context", nil)))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Body.String(), "feature_disabled")
 }

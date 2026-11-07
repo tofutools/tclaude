@@ -204,10 +204,10 @@ type FeaturesConfig struct {
 	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
 
 	// Taskboard enables the group task board: a short-term, ordered task list
-	// per agent group (tclaude agent taskboard, /v1/groups/{g}/taskboard). It
-	// defaults off while the board is built in slices; off, its routes answer
-	// 404 and the sweep does nothing. Stored tasks are kept either way.
-	Taskboard bool `json:"taskboard,omitempty"`
+	// per agent group (tclaude agent taskboard, /v1/groups/{g}/taskboard). On
+	// by default; set false to turn it off, which makes its routes answer 404
+	// and stops its sweeps. Stored tasks are kept either way.
+	Taskboard *bool `json:"taskboard,omitempty"`
 }
 
 // GroupAttachmentsMode values — config features.group_attachments.
@@ -268,9 +268,13 @@ const (
 	DefaultTaskboardRetentionDays    = 90
 )
 
-// TaskboardEnabled reports whether features.taskboard is on. Nil-safe.
+// TaskboardEnabled reports whether features.taskboard is on. It defaults on
+// and is nil-safe.
 func (c *Config) TaskboardEnabled() bool {
-	return c != nil && c.Features != nil && c.Features.Taskboard
+	if c == nil || c.Features == nil || c.Features.Taskboard == nil {
+		return true
+	}
+	return *c.Features.Taskboard
 }
 
 // TaskboardRetention returns the archive and purge periods, in days.

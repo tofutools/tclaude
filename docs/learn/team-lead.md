@@ -52,6 +52,12 @@ other's way:
 The workers got the group's startup context and `alice`'s task when they
 started. You can focus or message any of them, as with `alice`.
 
+The group's **Task board** section, under its agents, is a short list of
+what the team is on now and next. Add a line there, or ask `alice` to put
+the work on the board and assign each piece. A worker that reports done or
+failed tells her, and a task whose worker went idle without reporting shows
+as *stalled*. See [Task boards](../taskboard.md).
+
 ## 4. Read their mail
 
 Open the **Messages** tab. The left side lists mailboxes: all messages, one
@@ -125,6 +131,7 @@ shows how to bring a retired agent back.
 ```bash
 tclaude agent groups grant-owner hello alice
 tclaude agent groups members hello
+tclaude agent taskboard ls hello
 tclaude agent inbox ls --target bob
 tclaude agent retire bob
 ```
@@ -138,7 +145,8 @@ shell. Use the dashboard to write to agents.
   them, so you talk to one agent.
 - Group **ownership** lets an agent manage its group's members and notify
   you.
-- **Groups** shows each worker's branch, pull request and CI.
+- **Groups** shows each worker's branch, pull request and CI, and the
+  group's task board.
 - **Messages** holds the team's mail, your notifications with their
   attachments, and access requests.
 

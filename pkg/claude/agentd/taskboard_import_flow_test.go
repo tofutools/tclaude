@@ -34,7 +34,7 @@ type tbImport struct {
 func newTaskboardImportFlow(t *testing.T, member string) *taskboardHarness {
 	h := newTaskboardFlow(t)
 	require.NoError(t, config.Save(&config.Config{
-		Features: &config.FeaturesConfig{Taskboard: true},
+		Features: &config.FeaturesConfig{Taskboard: new(true)},
 		Agent: &config.AgentConfig{
 			AWBProxy: &config.AWBProxyConfig{URL: "https://awb.example", Username: "tclaude-bot",
 				AllowedWorkspaces: []string{"tcl"}},

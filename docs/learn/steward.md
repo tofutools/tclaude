@@ -36,7 +36,8 @@ Type:
 > Brief me.
 
 The Steward lists what's waiting for you, most urgent first: approvals, questions,
-failed turns, pull requests and unread messages. It can open a waiting agent right
+failed turns, task boards with blocked or stalled tasks, pull requests and unread
+messages. It can open a waiting agent right
 in your companion window.
 
 ![The Steward's tab in the companion window, answering "Brief me." with a numbered list: a permission prompt, a failing check, a pull request ready for review, and an unread message.](../assets/learn-steward-brief.png)

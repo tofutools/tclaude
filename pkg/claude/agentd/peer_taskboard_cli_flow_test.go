@@ -24,7 +24,7 @@ func TestPeerTaskboardCLI(t *testing.T) {
 	fh := newFedHarness(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features = &config.FeaturesConfig{Taskboard: true}
+	cfg.Features = &config.FeaturesConfig{Taskboard: new(true)}
 	require.NoError(t, config.Save(cfg))
 	crew := fh.f.HaveGroup("crew")
 	const member = "tb-cli-peer-member-1111"

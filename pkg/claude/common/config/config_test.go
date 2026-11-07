@@ -1848,3 +1848,13 @@ func TestSidePanelTuning(t *testing.T) {
 	assert.Equal(t, 100, got.BrakePercent)
 	assert.Equal(t, 300, got.PredictMinSpeedFloor, "the floor never exceeds the minimum speed")
 }
+
+// The task board defaults on; an explicit false turns it off. Nil-safe.
+func TestTaskboardEnabledDefaultsOn(t *testing.T) {
+	var nilCfg *Config
+	assert.True(t, nilCfg.TaskboardEnabled())
+	assert.True(t, (&Config{}).TaskboardEnabled())
+	assert.True(t, (&Config{Features: &FeaturesConfig{}}).TaskboardEnabled())
+	assert.True(t, (&Config{Features: &FeaturesConfig{Taskboard: new(true)}}).TaskboardEnabled())
+	assert.False(t, (&Config{Features: &FeaturesConfig{Taskboard: new(false)}}).TaskboardEnabled())
+}
