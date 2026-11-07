@@ -43,7 +43,9 @@ Two motions peek the panel (no button held):
   the edge, the next move onto it opens the panel.
 
 A peek holds while the pointer stays by the edge, and goes shortly after the
-pointer moves away without opening it. With **growing peek** turned on (it is
+pointer moves away without opening it. Over another popover, such as the
+open-PRs list in the lower right, nothing peeks: the pointer is using that
+popover, even where it reaches the edge. With **growing peek** turned on (it is
 off by default), the peek widens as the pointer closes in, and crossing where
 the open panel's edge would be, or stopping there, opens the panel too.
 
