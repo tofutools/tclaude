@@ -240,3 +240,41 @@ test('Resources sorts by its headers, across kinds, and lines Name and State up 
   card.querySelector('[data-fused-section="agents"]').remove();
   assert.equal(mod.agentColumns(table), null, 'no agents table, nothing to line up with');
 });
+
+test('a click on a drawing board\'s or page\'s name renames it, as an agent\'s does; 👁 opens it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const group = { id: 7, name: 'crew' };
+  const calls = [];
+  const api = {
+    renameGroupPage: async (id, title) => { calls.push(['renamePage', id, title]); },
+    renameDrawingBoard: async (id, title) => { calls.push(['renameDrawingBoard', id, title]); },
+    setResourceLock: async () => ({}),
+  };
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group}
+    drawingBoards=${[{ id: 'plan', title: 'Plan' }]} pages=${[{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' }]}
+    api=${api} notify=${() => {}} confirm=${async () => true} snapshot=${{ value: { group_resources: [] } }} />`);
+  for (const [sel, title, call] of [['[data-resource-drawing-board="plan"]', 'Roadmap', ['renameDrawingBoard', 'plan', 'Roadmap']],
+    ['[data-resource-page="pg_live"]', 'Checkout', ['renamePage', 'pg_live', 'Checkout']]]) {
+    const row = container.querySelector(sel);
+    const name = row.querySelector('[data-resource-name-rename]');
+    assert.match(name.getAttribute('title'), /Click to rename/);
+    assert.ok(row.querySelector('[data-resource-primary]'), '👁 still opens it');
+    await harness.act(async () => { harness.fireEvent(name, 'click'); await wait(); });
+    const input = row.querySelector('[data-resource-rename-input]');
+    assert.ok(input, 'the name becomes a field');
+    input.value = title;
+    await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Enter' }); await wait(); await wait(); });
+    assert.equal(row.querySelector('[data-resource-rename-input]'), null);
+    assert.deepEqual(calls.pop(), call);
+  }
+  // From the keyboard: Enter starts it, Escape keeps the name and focus.
+  const name = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  await harness.act(async () => { harness.fireEvent(name, 'keydown', { key: 'Enter' }); await wait(); });
+  const input = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-rename-input]');
+  assert.ok(input, 'Enter on the name opens the field');
+  await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Escape' }); await wait(); });
+  assert.equal(calls.length, 0, 'Escape renames nothing');
+  const again = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  assert.equal(again.ownerDocument.activeElement, again, 'focus returns to the name');
+});

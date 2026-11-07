@@ -84,7 +84,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   const restore = () => { if (suppressed) suppressed.draggable = true; suppressed = null; };
   const down = (e) => {
     const row = e.target.closest?.('[data-dnd-resource]');
-    if (!row || !e.target.closest('button, a, input, select, textarea, label, [contenteditable]')) return;
+    if (!row || !e.target.closest('button, a, input, select, textarea, label, [contenteditable], [role="button"]')) return;
     restore();
     row.draggable = false;
     suppressed = row;
