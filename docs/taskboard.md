@@ -206,9 +206,9 @@ A sweep every 30 seconds announces each stall once per assignment (an unblock
 or a reopen starts a new stretch, which may be announced again):
 
 - the history records a `stalled` event;
-- the assigner is told, `[taskboard] <agent> went idle without reporting (7m):
-  <group> · tk_… "title"`: an agent by inbox mail, the operator in
-  Messages. A task the agent took for itself has no one else to tell;
+- the assigner is told,
+  `[taskboard] <agent> went idle without reporting (7m): <group> · tk_… "title"`:
+  an agent by inbox mail, the operator in Messages. A task the agent took for itself has no one else to tell;
 - the assignee gets an inbox nudge with its report commands. It is never sent
   as keys into the pane.
 
