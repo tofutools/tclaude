@@ -313,7 +313,7 @@ func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
 
 type taskboardAddParams struct {
 	Group    string `pos:"true" help:"Group whose board to add to"`
-	Title    string `pos:"true" help:"Task title (one line, up to 200 bytes)"`
+	Title    string `pos:"true" optional:"true" help:"Task title (one line, up to 200 bytes); not with an import flag"`
 	Body     string `long:"body" optional:"true" help:"Task brief (up to 8 KiB)"`
 	BodyFile string `long:"body-file" optional:"true" help:"Read the brief from this file ('-' for stdin)"`
 	Ref      string `long:"ref" optional:"true" help:"External ref: an http(s) URL, owner/repo#n, or a tracker id (tcl-a1b2c3 for awb, LIN-123 for Linear; prefix awb: or linear: to say which)"`
@@ -322,14 +322,25 @@ type taskboardAddParams struct {
 	After    string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top      bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before   string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	// Import flags: one task per ref or line, titles looked up through the
+	// tracker proxies.
+	FromAWB    string `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
+	FromLinear string `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
+	FromGitHub string `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
+	LinesFile  string `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin); a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
+	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON       bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardAddCmd() *cobra.Command {
 	return boa.CmdT[taskboardAddParams]{
-		Use:         "add",
-		Short:       "Add a task (lands in the ideas unless --next)",
+		Use:   "add",
+		Short: "Add a task, or import refs or lines (lands in the ideas unless --next)",
+		Long: "Add one task with a title, or import several: --from-awb, --from-linear and --from-github add one task per " +
+			"ref, titled from the tracker through its tclaude proxy (you need the matching proxy.*.read; without it, or when " +
+			"no proxy is configured or the lookup fails, the id becomes the title and the output says why). --lines-file adds " +
+			"one task per line. A ref already on the board is refused on its own; the rest of the import still lands. The exit " +
+			"code is non-zero when any item was refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -373,6 +384,13 @@ func splitTaskIDs(s string) []string {
 }
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
+		return runTaskboardImport(p, stdin, stdout, stderr)
+	}
+	if strings.TrimSpace(p.Title) == "" {
+		fmt.Fprintln(stderr, "Error: give a title, or one of --from-awb, --from-linear, --from-github, --lines-file")
+		return rcInvalidArg
+	}
 	body, _, err := readTaskBody(p.Body, p.BodyFile, stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -389,6 +407,132 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
 	return taskboardWrite(http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
+}
+
+// taskboardImportResult is one item of an import's answer.
+type taskboardImportResult struct {
+	Input    string         `json:"input"`
+	Task     *taskboardTask `json:"task,omitempty"`
+	Resolved bool           `json:"resolved,omitempty"`
+	Note     string         `json:"note,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Code     string         `json:"code,omitempty"`
+}
+
+// importRefs splits a comma-separated --from-* value, giving each bare id the
+// tracker prefix so the daemon cannot read it as another kind. URLs and
+// GitHub's owner/repo#n pass through.
+func importRefs(list, prefix string) []string {
+	var out []string
+	for _, ref := range splitTaskIDs(list) {
+		lower := strings.ToLower(ref)
+		if prefix != "" && !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") &&
+			!strings.HasPrefix(lower, prefix) {
+			ref = prefix + ref
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// readImportLines reads --lines-file ('-' is stdin), one task per line.
+func readImportLines(file string, stdin io.Reader) ([]string, error) {
+	var (
+		b   []byte
+		err error
+	)
+	if file == "-" {
+		b, err = io.ReadAll(io.LimitReader(stdin, 48<<10))
+	} else {
+		b, err = os.ReadFile(file)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+func runTaskboardImport(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.Title != "" || p.Body != "" || p.BodyFile != "" || p.Ref != "" || p.RefLabel != "" || p.After != "" ||
+		p.Top || p.Before != "" {
+		fmt.Fprintln(stderr, "Error: an import (--from-*, --lines-file) takes no title, --body, --body-file, --ref, "+
+			"--ref-label, --after, --top or --before; only --next")
+		return rcInvalidArg
+	}
+	refs := importRefs(p.FromAWB, "awb:")
+	refs = append(refs, importRefs(p.FromLinear, "linear:")...)
+	refs = append(refs, importRefs(p.FromGitHub, "")...)
+	var lines []string
+	if p.LinesFile != "" {
+		var err error
+		if lines, err = readImportLines(p.LinesFile, stdin); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcIOFailure
+		}
+	}
+	if len(refs) == 0 && len(lines) == 0 {
+		fmt.Fprintln(stderr, "Error: nothing to import")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	req := map[string]any{"refs": refs, "lines": lines}
+	if p.Next {
+		req["stage"] = "next"
+	}
+	var resp struct {
+		Group   string                  `json:"group"`
+		Created int                     `json:"created"`
+		Results []taskboardImportResult `json:"results"`
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
+	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	refused := 0
+	for _, r := range resp.Results {
+		if r.Error != "" {
+			refused++
+		}
+	}
+	if p.JSON {
+		if rc := writeJSONTo(stdout, resp); rc != rcOK || refused == 0 {
+			return rc
+		}
+		return rcInvalidArg
+	}
+	for _, r := range resp.Results {
+		switch {
+		case r.Error != "":
+			fmt.Fprintf(stdout, "refused  %s: %s\n", r.Input, r.Error)
+		case r.Task != nil:
+			line := fmt.Sprintf("added %s: %s  [%s]", r.Task.ID, r.Task.Title, r.Task.Stage)
+			if ref := r.Task.refText(); ref != "" && ref != r.Task.Title {
+				line += "  " + ref
+			}
+			if r.Note != "" {
+				line += "  (title not looked up: " + r.Note + ")"
+			}
+			fmt.Fprintln(stdout, line)
+		}
+	}
+	fmt.Fprintf(stdout, "%d added to %s, %d refused\n", resp.Created, resp.Group, refused)
+	if refused > 0 {
+		return rcInvalidArg
+	}
+	return rcOK
 }
 
 type taskboardEditParams struct {

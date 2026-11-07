@@ -7,9 +7,9 @@ has one board. The operator and the group's agents read and change it with
 
 > The task board is in development and is off by default. Turn it on with
 > `"features": {"taskboard": true}` in `~/.tclaude/config.json`. While it is
-> off, its routes answer 404, but stored tasks are kept. This first slice is
-> the store, the CLI and the API. Assigning tasks to agents, importing refs from
-> trackers, and the dashboard section come in later slices.
+> off, its routes answer 404, but stored tasks are kept. So far there is the
+> store, the CLI, the API and importing refs from trackers. Assigning tasks to
+> agents and the dashboard section come in later slices.
 
 ## What the board is for, and what it is not
 
@@ -78,10 +78,45 @@ tclaude agent taskboard done <task>
   moved task is promoted or demoted in the same write.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
   id. `LIN-123` is read as a Linear id, and a lower-case `tcl-a1b2c3` as an awb
-  id. Prefix the id with `awb:` or `linear:` to say which one you mean. A bare id
-  is stored with no link for now; a later slice resolves it through the tracker
-  proxies.
+  id. Prefix the id with `awb:` or `linear:` to say which one you mean. On a
+  single `add`, a bare id is stored with no link. An import (below) resolves it.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
+
+## Importing from a tracker
+
+```bash
+tclaude agent taskboard add <group> --from-awb tcl-a1b2c3,tcl-d4e5f6 [--next]
+tclaude agent taskboard add <group> --from-linear LIN-1,LIN-2
+tclaude agent taskboard add <group> --from-github owner/repo#12,https://github.com/owner/repo/pull/34
+printf 'try the fused card\ntcl-a1b2c3\nLIN-7\n' | tclaude agent taskboard add <group> --lines-file -
+```
+
+An import adds one task per ref or line. Like any `add`, it lands in the ideas
+unless you pass `--next`.
+
+- **Titles come from the tracker.** The daemon looks each ref up through the
+  matching [proxy](proxies.md): awb `issue show`, Linear `issue view`, or GitHub
+  `issue view` / `pr view`. It does this as you, so you need the same rights a
+  direct proxy read needs: `proxy.awb.read`, `proxy.linear.read` or
+  `proxy.github.read`, within the operator's workspace, team and remote
+  allow-lists. Each lookup is audited as your own proxy read. The GitHub proxy
+  reads only the repository your working directory's remote points at, so a
+  GitHub ref in another repository is not looked up.
+- **A failed lookup still adds the task.** When no proxy is configured, the
+  lookup is refused, or the tracker has no such item, the id becomes the title.
+  The output says why for each item. Fix the title later with `edit --title`.
+- **The link is filled in.** An awb ref links to the issue on the configured awb
+  server, and a Linear ref to the URL Linear returns.
+- **Duplicates are refused one by one.** A ref that is already on the board
+  (open or blocked, in either stage) is refused, and so is a repeat within the
+  same import. The rest of the import still lands. A GitHub ref is matched by
+  repository and number, so `owner/repo#12` and the issue URL count as the same.
+- **Lines.** `--lines-file` adds one task per non-empty line. A line that is
+  only an awb, Linear or GitHub id (or URL) becomes a task with that ref, and
+  is looked up like the `--from-*` refs. Any other line is the title.
+- An import holds at most 50 items. It takes only `--next`, not `--body`,
+  `--ref`, `--after` or a position. The exit code is non-zero when any item was
+  refused, and `--json` prints the result for each item.
 - Titles are one line of UTF-8, up to 200 bytes, with no control characters.
   A body can be up to 8 KiB.
 
@@ -132,6 +167,7 @@ dependencies. Deleting a group deletes its board.
 | `ls` (own group) | `GET /v1/taskboard` |
 | `show` / `history` | `GET /v1/taskboard/tasks/{id}` / `…/events` |
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` |
+| `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
@@ -139,3 +175,10 @@ dependencies. Deleting a group deletes its board.
 
 `status` also accepts `{"status":"open"}` on a done or dropped task. This
 reopens the task in the stage and position it had before.
+
+An import answers 200 with `{"group", "created", "results":[…]}`, with one
+result per item in input order. Each result carries `input`, and either `task`
+(with `resolved: true`, or a `note` saying why the title is the id) or `error`
+and `code` (`duplicate`, `invalid_arg`, `cap`). The `refs` entries take the same
+forms as `--ref`. The CLI prefixes `--from-awb` ids with `awb:` and
+`--from-linear` ids with `linear:`.
