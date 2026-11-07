@@ -7,9 +7,10 @@ has one board. The operator and the group's agents read and change it with
 
 > The task board is in development and is off by default. Turn it on with
 > `"features": {"taskboard": true}` in `~/.tclaude/config.json`. While it is
-> off, its routes answer 404, but stored tasks are kept. This first slice is
-> the store, the CLI and the API. Assigning tasks to agents, importing refs from
-> trackers, and the dashboard section come in later slices.
+> off, its routes answer 404, but stored tasks are kept. So far there is the
+> store, the CLI, the API and a read-only dashboard section. Assigning tasks to
+> agents, importing refs from trackers, and editing in the dashboard come in
+> later slices.
 
 ## What the board is for, and what it is not
 
@@ -55,6 +56,7 @@ remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 
 ```bash
 tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--json]
+tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard history <task>
 
@@ -74,6 +76,9 @@ tclaude agent taskboard done <task>
 - If you leave out the group in `ls`, it lists your own group's board. This only
   works when you are an active member of exactly one group.
 - `ls --all` also lists done and dropped tasks that are not archived yet.
+- `ls --summary` prints one line of counts for every group board you can
+  read, for example `crew: 9 · 1 needs you · 2 in progress · 6 next · 3 ideas`.
+  These are the counts the dashboard section shows.
 - If `move --before` or `move --after` names a task in the other stage, the
   moved task is promoted or demoted in the same write.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
@@ -124,6 +129,31 @@ A done or dropped task leaves the default list at once. An hourly sweep then:
 A group holds at most 500 live tasks, and a task can have at most 50
 dependencies. Deleting a group deletes its board.
 
+## In the dashboard
+
+Each group card on the Groups tab has a **Task board** section (in wizard mode,
+the **Quest board**), below its Agents and Resources sections. For now the
+section is read-only.
+
+- **Folded**, the section is one line of counts, for example
+  `5 · 1 needs you · 1 in progress · 2 next · 1 idea`. *Needs you* counts the
+  blocked tasks, and *in progress* counts the assigned tasks. *Next* and
+  *ideas* count the unassigned open tasks in each stage. The group's summary
+  line carries the same counts, so a folded group still shows what is on its
+  board.
+- **Open**, the section lists the queue in your order and then the Ideas band.
+  Each row shows its number, title and id, a ref chip that links to the
+  tracker, who holds the task, and its state. A blocked task shows its reason
+  on the line below, and a dependency shows as `after #n` (amber until it is
+  done). The *history* line counts the tasks done this week and the dropped
+  ones. Click *history* to list the recently closed tasks.
+- The section opens on its own when something needs you. If you fold or open
+  it yourself, the dashboard remembers that per group.
+
+The dashboard shows a board only to someone who can read it. The operator sees
+every group. The section is missing while `features.taskboard` is off, and a
+peer node's groups don't show their boards yet.
+
 ## API
 
 | CLI | HTTP |
@@ -136,6 +166,12 @@ dependencies. Deleting a group deletes its board.
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
+| `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
 
 `status` also accepts `{"status":"open"}` on a done or dropped task. This
 reopens the task in the stage and position it had before.
+
+`GET /v1/taskboard/context` is what the dashboard reads. For every group whose
+board the caller can read, it returns the counts, up to 50 live rows (without
+bodies) and the 8 most recently closed tasks. A group the caller cannot read is
+left out entirely, not listed as empty.
