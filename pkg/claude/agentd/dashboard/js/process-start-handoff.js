@@ -19,8 +19,10 @@ const PENDING_TTL_MS = 10_000;
 export function requestProcessStart({ group, templateId }, {
   doc = document, prefs = null, groups = [], showRuns = null, rerender = null, now = Date.now,
 } = {}) {
-  if (!group || !templateId) return;
-  pending = { group, templateId, at: now() };
+  if (!group) return;
+  // No template opens the start form on its picker (the palette's "Start a
+  // process in <group>").
+  pending = { group, templateId: templateId || '', at: now() };
   prefs?.setItem?.(`tclaude.dash.group.${group}`, '1');
   if (prefs) revealGroupPath(group, groups, prefs);
   doc.querySelector('nav [data-tab="groups"]')?.click();

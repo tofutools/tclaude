@@ -469,7 +469,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       const request = takeProcessStart(group.name);
       if (!request) return;
       setQuick(null);
-      setStarting({ templateId: request.templateId, scope: 'group' });
+      setStarting(request.templateId ? { templateId: request.templateId, scope: 'group' } : { scope: 'group' });
     };
     take();
     document.addEventListener('tclaude:process-start', take);
