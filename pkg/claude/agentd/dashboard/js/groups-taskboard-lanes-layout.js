@@ -77,25 +77,32 @@ export function resizeColumns(measured, index, dx) {
 
 // --- lane order ---
 
-// laneOrder reads the stored order: { lanes: [agent ids], heads: { by:
-// [heading keys] } }. Lanes and headings it does not list keep their place
-// after the listed ones, so a new agent appends at the end.
+// laneOrder reads the stored order: { lanes: { by: [agent ids] }, heads: {
+// by: [heading keys] } }, each kept per "lanes by" choice, so arranging the
+// lanes by role leaves the order by agent alone. Lanes and headings it does
+// not list keep their place after the listed ones, so a new agent appends at
+// the end.
 export function laneOrder(group) {
   const stored = readJSON(ORDER_PREF(group));
-  return {
-    lanes: Array.isArray(stored?.lanes) ? stored.lanes.filter((id) => typeof id === 'string') : [],
-    heads: stored?.heads && typeof stored.heads === 'object' ? stored.heads : {},
+  const byKey = (value, ok) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([, keys]) => Array.isArray(keys))
+      .map(([by, keys]) => [by, keys.filter(ok)]));
   };
+  const isString = (key) => typeof key === 'string';
+  return { lanes: byKey(stored?.lanes, isString), heads: byKey(stored?.heads, isString) };
 }
 
+const anyListed = (byKeys) => Object.values(byKeys || {}).some((keys) => Array.isArray(keys) && keys.length > 0);
+
 export function setLaneOrder(group, order) {
-  if (!order || (!order.lanes?.length && !Object.keys(order.heads || {}).length)) dashPrefs.removeItem(ORDER_PREF(group));
+  if (!order || (!anyListed(order.lanes) && !anyListed(order.heads))) dashPrefs.removeItem(ORDER_PREF(group));
   else dashPrefs.setItem(ORDER_PREF(group), JSON.stringify(order));
 }
 
 export function hasCustomOrder(group) {
   const order = laneOrder(group);
-  return order.lanes.length > 0 || Object.values(order.heads).some((keys) => Array.isArray(keys) && keys.length > 0);
+  return anyListed(order.lanes) || anyListed(order.heads);
 }
 
 // sortBy orders items by their key's place in `keys`; the unlisted keep
@@ -116,7 +123,13 @@ export function applyLaneOrder(groups, order, by) {
   const former = groups.filter((g) => g.key === 'former');
   const rest = groups.filter((g) => g.key !== 'former');
   const sorted = sortBy(rest, order.heads?.[by], (g) => g.key);
-  return [...sorted, ...former].map((g) => ({ ...g, lanes: sortBy(g.lanes, order.lanes, (lane) => lane.id) }));
+  return [...sorted, ...former].map((g) => ({ ...g, lanes: sortBy(g.lanes, order.lanes?.[by], (lane) => lane.id) }));
+}
+
+// headedGroups are the lane groups whose heading is drawn and may move:
+// those with a label, but never the former members'.
+export function headedGroups(groups) {
+  return groups.filter((g) => g.key !== 'former' && g.label);
 }
 
 // moveBefore returns keys (the current visible order) with `moving` placed
@@ -130,17 +143,18 @@ export function moveBefore(keys, moving, target, after = false) {
 }
 
 // moveLane stores a lane moved before (or after) another lane in the same
-// heading. `groups` is the visible lane groups; the stored lane order is the
-// whole visible order of lanes, so every lane keeps the place it showed in.
-export function moveLane(group, groups, moving, target, after = false) {
+// heading, for `by`. `groups` is the visible lane groups; the stored lane
+// order is the whole visible order of lanes, so every lane keeps the place
+// it showed in.
+export function moveLane(group, groups, by, moving, target, after = false) {
   const visible = groups.flatMap((g) => g.lanes.map((lane) => lane.id));
   const order = laneOrder(group);
-  setLaneOrder(group, { ...order, lanes: moveBefore(visible, moving, target, after) });
+  setLaneOrder(group, { ...order, lanes: { ...order.lanes, [by]: moveBefore(visible, moving, target, after) } });
 }
 
 // moveHead stores a heading moved before (or after) another one, for `by`.
 export function moveHead(group, groups, by, moving, target, after = false) {
-  const visible = groups.filter((g) => g.key !== 'former').map((g) => g.key);
+  const visible = headedGroups(groups).map((g) => g.key);
   const order = laneOrder(group);
   setLaneOrder(group, { ...order, heads: { ...order.heads, [by]: moveBefore(visible, moving, target, after) } });
 }

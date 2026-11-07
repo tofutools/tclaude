@@ -18728,7 +18728,9 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-form .tb-form-assignee { min-width: 180px; }
 /* Swim lanes (groups-taskboard-lanes.js): a lane head column and the five stage columns. */
 .tb-lanes-wrap { margin: 0 8px; }
-.tb-lanes { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; font-size: 12.5px; }
+/* Stored column widths can need more room than a narrow card has: the grid
+   scrolls sideways rather than clipping its last columns. */
+.tb-lanes { border: 1px solid #30363d; border-radius: 6px; overflow-x: auto; overflow-y: hidden; font-size: 12.5px; }
 .tb-lane { display: grid; grid-template-columns: var(--tb-lane-cols, 170px repeat(5, minmax(0, 1fr))); border-top: 1px solid #21262d; }
 /* Column widths and lane order (groups-taskboard-lanes-layout.js): a
    column head's right edge is a resize handle; a lane head or heading drags
