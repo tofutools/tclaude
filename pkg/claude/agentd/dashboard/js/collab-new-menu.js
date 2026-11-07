@@ -47,8 +47,8 @@ export function newMenuEntries({ group = null, groups = [], processes = false, w
   }
   if (processes) entries.push({ id: 'process', label: wizard ? 'Rite…' : 'Process…', line: wizard ? 'Open a rite, or shape a new one' : 'Open a process, or build a new one', view: 'processes' });
   entries.push(group
-    ? { id: 'page', label: 'Page…', line: 'A blank page you draw on; a member takes it over', run: (ctx) => ctx.page(group) }
-    : { id: 'page', label: 'Page…', line: 'A blank page in a group', view: 'page', disabled: !groups.length });
+    ? { id: 'page', label: 'Page…', line: 'A web page a member serves, live here for you to view and mark up; starts blank', run: (ctx) => ctx.page(group) }
+    : { id: 'page', label: 'Page…', line: 'A web page a member of a group serves, live to view and mark up', view: 'page', disabled: !groups.length });
   entries.push({ id: 'import', label: 'Import drawing board…', line: 'From an .excalidraw file', separated: true, run: (ctx) => ctx.pickImport() });
   return entries;
 }
