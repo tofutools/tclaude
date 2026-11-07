@@ -35,7 +35,7 @@ import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
-import { AddResource, GroupResources, PeerGroupResources, groupShellOf } from './groups-resources.js';
+import { AddResource, GroupResources, PeerGroupResources, groupShellsOf } from './groups-resources.js';
 import { dashboardState } from './snapshot-store.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
@@ -606,7 +606,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
       notify=${notify || defaultNotify} nameOf=${nameOf} />`}`;
   if (fused) {
-    const shell = groupShellOf(dashboardState.snapshot.value, group) ? 1 : 0;
+    const shell = groupShellsOf(dashboardState.snapshot.value, group).length;
     const listed = savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell;
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0 || listed > 0;
     // One line only when the section holds nothing at all: the count is
