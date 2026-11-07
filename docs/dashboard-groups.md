@@ -486,7 +486,7 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
 
 **Resources** lists everything attached to the group in a table like the
 agents table, with the columns Name, State, Last, Age, Kind, Lock and
-Detail. Name, State, Last and Age line up with the agents table's. Age is
+Detail, in the agents table's order and look; its column widths are its own. Age is
 when a resource was made: a drawing board's creation, a page's first show, a
 saved process's save to the group, a shell's start. Last is its latest
 change: a drawing board's last save, a page's last show (or its close), a

@@ -25,7 +25,6 @@ import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
-import { useAgentColumns } from './agent-align.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
 import { createTaskboardApi, importRefs, taskboardApi } from './taskboard-actions.js';
@@ -413,20 +412,12 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
   return [row, html`<${RowForm} key=${`${task.id}-form`} task=${task} mode=${form} actions=${actions} onClose=${() => onForm(task.id, null)} />`];
 }
 
-// The list's columns. The leading cluster, Name, State, Last and Age take
-// the Agents table's tracks above (useAgentColumns), as a Resources table
-// does, so they line up down the group's card; Who, Ref, Deps and Files
-// are the board's own. The Ideas band and history are rows of the same table.
+// The list's columns: the leading cluster, Name, State, Last and Age in the
+// Agents table's order and look, then the board's own Who, Ref, Deps and
+// Files. Each is as wide as its content (dashboard.css .tb-table); Name takes
+// the rest. The Ideas band and history are rows of the same table.
 const COLUMNS = html`<colgroup><col class="tb-col-ctl" /><col class="tb-col-name" /><col class="tb-col-state" /><col class="tb-col-last" /><col class="tb-col-age" /><col class="tb-col-who" /><col class="tb-col-ref" /><col class="tb-col-deps" /><col class="tb-col-files" /></colgroup>`;
 const TABLE_COLS = 9;
-
-// alignWithAgents sets the list's cluster, Name, State, Last and Age widths
-// to the Agents table's (agent-align.js), or back to its own without one.
-function alignWithAgents(table, cols) {
-  // Not narrower than the row's own cluster (⋮⋮ ✓ ✎ ⋯).
-  table.style.setProperty('--tb-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
-  for (const key of ['name', 'state', 'last', 'age']) table.style.setProperty(`--tb-${key}-w`, cols?.[key] ? `${cols[key]}px` : '');
-}
 
 const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 
@@ -687,8 +678,6 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setForms((current) => ({ ...current, [id]: mode })));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
-  const tableRef = useRef(null);
-  useAgentColumns(tableRef, alignWithAgents);
   const ideasBand = (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
       onDragOver=${actions ? drag.overIdeas : undefined} onDrop=${actions ? drag.dropOnIdeas : undefined}><td colspan=${TABLE_COLS}>
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
@@ -696,7 +685,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
-  const table = tasks.length ? html`<table class="tb-table" ref=${tableRef} onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+  const table = tasks.length ? html`<table class="tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
