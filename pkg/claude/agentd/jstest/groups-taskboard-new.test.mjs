@@ -268,3 +268,48 @@ test('the client sends create and ask to their routes with only the fields given
     ['POST', '/v1/groups/my%20crew/taskboard/ask', { to: 'agt_lead', prompt: 'make tasks' }],
   ]);
 });
+
+// Fleet- and federation-wide: in the fused view a linked node's group is
+// name@node, while that node's board, grants and routes know it as name.
+test('on a linked node\'s group in the fused view, the board is found and every write names the group as that node does', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection, TaskboardSummaryChip }, { dashPrefs }, { setNodeSnapshotSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  setNodeSnapshotSource((node) => (node === 'inst_forge' ? { peer_view: { level: 'restricted', groups: { 'tbn-peer': ['taskboard.write', 'taskboard.assign'] } } } : null));
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbn-peer@forge', '1');
+  const api = fakeApi();
+  const source = { context: harness.signals.signal({ groups: [board('tbn-peer')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const asked = [];
+  const boards = (node) => { asked.push(node); return { source, api }; };
+  const group = { name: 'tbn-peer@forge', fleet_node: { id: 'inst_forge', name: 'forge', local: false }, members: members() };
+  const mounted = await harness.mount(harness.html`<div>
+    <${TaskboardSummaryChip} group=${group} boards=${boards} />
+    <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} boards=${boards} />
+  </div>`);
+  const c = mounted.container;
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await settle(); });
+  assert.ok(asked.length && asked.every((node) => node === 'inst_forge'), 'read and written through the group\'s node');
+  assert.ok(c.querySelector('[data-fused-taskboard="tbn-peer@forge"]'), 'the board is found under the group\'s own name');
+  assert.ok(c.querySelector('[data-taskboard-chip="tbn-peer@forge"]'));
+
+  // Write it myself, with an assignee (the peer grants taskboard.assign).
+  await click(c.querySelector('[data-taskboard-new]'));
+  await click(c.querySelector('[data-taskboard-new-form]'));
+  const form = c.querySelector('#taskboard-new-modal');
+  await harness.input(form.querySelector('.tb-new-title'), 'from the fleet view');
+  await selectValue(harness, form.querySelector('.tb-new-assignee'), 'agt_dev');
+  await click(form.querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls.map(([verb, group]) => [verb, group]), [['create', 'tbn-peer'], ['assign', 'tk_00000009']]);
+
+  // Ask an agent.
+  api.calls.length = 0;
+  await click(c.querySelector('[data-taskboard-new]'));
+  await click(c.querySelector('[data-taskboard-new-ask]'));
+  await harness.input(c.querySelector('#taskboard-ask-modal .tb-ask-prompt'), 'plan it');
+  await click(c.querySelector('#taskboard-ask-submit'));
+  assert.deepEqual(api.calls, [['ask', 'tbn-peer', 'agt_lead', 'plan it']]);
+});

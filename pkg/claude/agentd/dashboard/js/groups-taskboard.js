@@ -91,6 +91,16 @@ function peerApi(api, peerView, groupName) {
   return byCan.get(key);
 }
 
+// ownBoardGroup is group as its own node names it. The fused view names a
+// linked node's group name@node; that node's board, its grants and its
+// routes all know it as name. Anything else is returned as it is.
+export function ownBoardGroup(group) {
+  const node = group?.fleet_node;
+  const at = `@${node?.name || ''}`;
+  if (!node || node.local || !group.name?.endsWith(at)) return group;
+  return { ...group, name: group.name.slice(0, -at.length), shownName: group.name };
+}
+
 // boardOf picks the source and write client for group: this node's own, or
 // the linked node's it lives on (api null where its grants allow no writes).
 function boardOf(group, source, api, boards) {
@@ -274,7 +284,7 @@ function RowForm({ task, mode, actions, onClose, group }) {
     } else if (mode === 'assign') {
       if (!to) return;
       ok = await actions.run(`${task.id}:form`, 'Assign', (api) => api.assign(task.id, to));
-      if (ok) markLanded({ group: group.name, section: 'agents', ids: [to] });
+      if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [to] });
     } else if (mode === 'block') {
       if (!reason.trim()) return;
       ok = await actions.run(`${task.id}:form`, 'Block', (api) => api.status(task.id, 'blocked', reason.trim()));
@@ -350,9 +360,12 @@ const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 // agents are not targets (assignees must be members).
 export function agentDropRow(target, group) {
   const row = target?.closest?.('tr[data-dnd-agent]');
-  if (!row || row.dataset.dndSourceGroup !== group.name) return null;
+  // The DOM names the group as the view shows it (name@node for a linked
+  // node's group).
+  const shown = group.shownName || group.name;
+  if (!row || row.dataset.dndSourceGroup !== shown) return null;
   const card = row.closest('details[data-group-key]');
-  if (card?.dataset.groupKey !== group.name) return null;
+  if (card?.dataset.groupKey !== shown) return null;
   const member = assignableMembers(group).find((m) => m.agent_id === row.dataset.dndAgent);
   return member ? { row, member } : null;
 }
@@ -404,7 +417,7 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
       end();
       if (task.assignee?.agent_id === hit.member.agent_id) return;
       void actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, hit.member.agent_id))
-        .then((ok) => { if (ok) markLanded({ group: group.name, section: 'agents', ids: [hit.member.agent_id] }); });
+        .then((ok) => { if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [hit.member.agent_id] }); });
     };
     document.addEventListener('dragover', onOver, true);
     document.addEventListener('drop', onDrop, true);
@@ -649,7 +662,11 @@ function ViewSelector({ prefs }) {
 // counts; it opens on its own when something needs the operator, until they
 // fold or open it themselves (remembered per group). `api` is the writes'
 // client; null draws the read-only list.
-export function TaskboardSection({ group, snapshot, source: ownSource = taskboardContext, api: ownApi = taskboardApi, boards = nodeTaskboard }) {
+export function TaskboardSection({ group: shown, snapshot, source: ownSource = taskboardContext, api: ownApi = taskboardApi, boards = nodeTaskboard }) {
+  // The board, its grants and every write use the group's own name; the
+  // section's fold and hooks keep the name the view shows (name@node for a
+  // linked node's group), which is unique across nodes.
+  const group = ownBoardGroup(shown);
   const { source, api } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
@@ -657,7 +674,7 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   // adding is the open "+ New task" dialog: { kind: 'form' | 'ask',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);
-  const prefs = useViewPrefs(group.name);
+  const prefs = useViewPrefs(shown.name);
   // Once the section has opened on its own (something needed the
   // operator), it stays open for this page, so clearing the last blocked
   // task never folds it under a form or the capture box in use. The
@@ -678,9 +695,9 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
         members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
     : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} onClose=${closeAdding} />` : null;
-  return html`${dialog}<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
+  return html`${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
-      closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
+      closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
       importing=${importing} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
@@ -698,13 +715,14 @@ function TaskboardCounts({ counts }) {
 
 // TaskboardSummaryChip carries the counts on the group's summary line, so a
 // folded group still says what is on its board. Nothing when it is empty.
-export function TaskboardSummaryChip({ group, source: ownSource = taskboardContext, boards = nodeTaskboard }) {
+export function TaskboardSummaryChip({ group: shown, source: ownSource = taskboardContext, boards = nodeTaskboard }) {
+  const group = ownBoardGroup(shown);
   const { source } = boardOf(group, ownSource, null, boards);
   const entry = useTaskboardEntry(group.name, source);
   if (!entry || !entry.counts?.live) return null;
   const parts = taskboardCountParts(entry.counts);
   const wizard = isWizardActive();
-  return html`<span class="group-taskboard-chip" data-taskboard-chip=${group.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts)}`}>
+  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts)}`}>
     ${wizard ? 'quest board' : 'task board'}: ${parts.length
       ? parts.map((part, i) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${i ? ' · ' : ''}${part.text}</span>`)
       : `${entry.counts.live}`}
