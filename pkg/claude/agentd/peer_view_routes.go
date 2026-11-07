@@ -337,17 +337,6 @@ var peerViewLocalRoutes = []string{
 // notifications, which has none, is reached as local above). Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
-	// A peer reads and changes no task board until the federation slice
-	// (peerTaskboardWhy), not even under unrestricted trust.
-	"GET /v1/taskboard/context",
-	"POST /v1/groups/{name}/taskboard/tasks",
-	"GET /v1/taskboard/tasks/{id}/events",
-	"PATCH /v1/taskboard/tasks/{id}",
-	"POST /v1/taskboard/tasks/{id}/move",
-	"POST /v1/taskboard/tasks/{id}/stage",
-	"POST /v1/taskboard/tasks/{id}/status",
-	"POST /v1/taskboard/tasks/{id}/assign",
-	"POST /v1/taskboard/tasks/{id}/unassign",
 	// Cancelling a spawn waiting for this node's capacity (it can deny a
 	// peer's request); peers never see the queue (CapacityQueue is denied).
 	"DELETE /api/spawn-queue/{id}",

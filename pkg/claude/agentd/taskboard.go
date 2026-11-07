@@ -134,8 +134,12 @@ func requireTaskboardUnlocked(w http.ResponseWriter, r *http.Request, g *db.Agen
 	return false
 }
 
-// taskboardActor names the caller in a task's history.
+// taskboardActor names the caller in a task's history. A linked node's
+// change is recorded as its own, never as this node's operator's.
 func taskboardActor(r *http.Request) string {
+	if author := taskboardPeerAuthor(r); author != "" {
+		return "peer: " + author
+	}
 	if conv := confirmedAgentConv(r); conv != "" {
 		if id, err := db.AgentIDForConv(conv); err == nil && id != "" {
 			return "agent:" + id

@@ -199,7 +199,9 @@ var dashboardTaskboardRoutes = []struct {
 	pattern string
 	handler http.HandlerFunc
 }{
+	{"GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList)},
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
+	{"GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow)},
 	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
 	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit)},
 	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove)},
@@ -207,6 +209,8 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus)},
 	{"POST /v1/taskboard/tasks/{id}/assign", handleTaskboardTask(taskboardOwnGate, handleTaskboardAssign)},
 	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
+	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},
+	{"POST /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersSet)},
 }
 
 func registerDashboardTaskboardRoutes(mux *http.ServeMux) {

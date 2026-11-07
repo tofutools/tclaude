@@ -53,6 +53,46 @@ func taskboardCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// taskboardExit ends a taskboard verb; RunTaskboardCLI swaps it so a verb can
+// run in-process.
+var taskboardExit = os.Exit
+
+// taskboardExitCode is the panic RunTaskboardCLI's taskboardExit raises.
+type taskboardExitCode int
+
+// RunTaskboardCLI runs one `tclaude agent taskboard …` invocation (or, with
+// args[0] "set-taskboard-writers", `tclaude agent groups set-taskboard-writers`)
+// in-process and returns its exit code, its output going to stdout and
+// stderr. It is the flow tests' entry into the CLI; it is not safe to run
+// concurrently.
+func RunTaskboardCLI(args []string, stdout, stderr io.Writer) (rc int) {
+	prevExit, prevOut, prevErr := taskboardExit, cliStdout, cliStderr
+	taskboardExit = func(code int) { panic(taskboardExitCode(code)) }
+	cliStdout, cliStderr = stdout, stderr
+	defer func() {
+		taskboardExit, cliStdout, cliStderr = prevExit, prevOut, prevErr
+		if r := recover(); r != nil {
+			code, ok := r.(taskboardExitCode)
+			if !ok {
+				panic(r)
+			}
+			rc = int(code)
+		}
+	}()
+	cmd := taskboardCmd()
+	if len(args) > 0 && args[0] == "set-taskboard-writers" {
+		cmd = groupsSetTaskboardWritersCmd()
+		args = args[1:]
+	}
+	cmd.SetArgs(args)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	if err := cmd.Execute(); err != nil {
+		return rcInvalidArg
+	}
+	return rcOK
+}
+
 // taskboardTask is the daemon's wire shape for one task.
 type taskboardTask struct {
 	ID          string   `json:"id"`
@@ -108,7 +148,7 @@ func writeJSONTo(stdout io.Writer, v any) int {
 }
 
 // taskboardWrite sends a mutation and prints the task it returns.
-func taskboardWrite(method, path string, body any, askHuman string, asJSON bool, verb string, stdout, stderr io.Writer) int {
+func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON bool, verb string, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -117,7 +157,7 @@ func taskboardWrite(method, path string, body any, askHuman string, asJSON bool,
 		return rc
 	}
 	var t taskboardTask
-	if err := DaemonRequest(method, path, body, &t, DaemonOpts{AskHuman: ask}); err != nil {
+	if err := remoteRequestOpts(peer, method, path, body, &t, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -137,8 +177,9 @@ type taskboardLsParams struct {
 	Mine  bool   `long:"mine" help:"Only the live tasks assigned to you, in every group"`
 	// Summary is the dashboard's counts for every board you can read, one
 	// line per group (GET /v1/taskboard/context).
-	Summary bool `long:"summary" help:"Counts for every group board you can read, one line per group"`
-	JSON    bool `long:"json" help:"Output JSON"`
+	Summary bool   `long:"summary" help:"Counts for every group board you can read, one line per group"`
+	Peer    string `long:"peer" optional:"true" help:"List a linked node's board instead (name the group), under the grants it gave this node (taskboard.read)"`
+	JSON    bool   `long:"json" help:"Output JSON"`
 }
 
 func (t taskboardTask) assigneeText() string {
@@ -161,7 +202,7 @@ func taskboardLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardLs(p, cliStdout, cliStderr))
+			taskboardExit(runTaskboardLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -172,7 +213,15 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "Error: --summary covers every board you can read; it takes no group, --stage, --all or --mine")
 			return rcInvalidArg
 		}
-		return RunTaskboardSummary(p.JSON, stdout, stderr)
+		return runTaskboardSummary(p.Peer, p.JSON, stdout, stderr)
+	}
+	if strings.TrimSpace(p.Peer) != "" && p.Mine {
+		fmt.Fprintln(stderr, "Error: --mine lists your own tasks on this node; it takes no --peer")
+		return rcInvalidArg
+	}
+	if strings.TrimSpace(p.Peer) != "" && strings.TrimSpace(p.Group) == "" {
+		fmt.Fprintln(stderr, "Error: --peer needs the group whose board to list")
+		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
@@ -204,13 +253,14 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		Locked  bool            `json:"locked"`
 		Writers []string        `json:"writers,omitempty"`
 	}
-	if err := DaemonGet(path, &resp); err != nil {
+	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	if p.JSON {
 		return writeJSONTo(stdout, resp)
 	}
+	printRemoteScheduleBanner(stdout, p.Peer, "task board")
 	if len(resp.Tasks) == 0 {
 		fmt.Fprintf(stdout, "%s: the task board is empty\n", resp.Group)
 		return rcOK
@@ -285,13 +335,17 @@ type TaskboardSummaryGroup struct {
 // the same counts as the dashboard's Task board sections (`ls --summary`).
 // Exported so flow tests can drive it through the agent client bridge.
 func RunTaskboardSummary(asJSON bool, stdout, stderr io.Writer) int {
+	return runTaskboardSummary("", asJSON, stdout, stderr)
+}
+
+func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var resp struct {
 		Groups []TaskboardSummaryGroup `json:"groups"`
 	}
-	if err := DaemonGet("/v1/taskboard/context", &resp); err != nil {
+	if err := remoteRequest(peer, http.MethodGet, "/v1/taskboard/context", nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -301,6 +355,7 @@ func RunTaskboardSummary(asJSON bool, stdout, stderr io.Writer) int {
 	if asJSON {
 		return writeJSONTo(stdout, resp)
 	}
+	printRemoteScheduleBanner(stdout, peer, "task boards")
 	if len(resp.Groups) == 0 {
 		fmt.Fprintln(stdout, "no task boards you can read")
 		return rcOK
@@ -337,6 +392,7 @@ func taskboardCountsLine(c TaskboardCounts) string {
 
 type taskboardShowParams struct {
 	Task string `pos:"true" help:"Task id (tk_…)"`
+	Peer string `long:"peer" optional:"true" help:"A task on a linked node's board, under the grants it gave this node (taskboard.read)"`
 	JSON bool   `long:"json" help:"Output JSON"`
 }
 
@@ -346,7 +402,7 @@ func taskboardShowCmd() *cobra.Command {
 		Short:       "Show one task",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *taskboardShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardShow(p, cliStdout, cliStderr))
+			taskboardExit(runTaskboardShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -356,13 +412,14 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var t taskboardTask
-	if err := DaemonGet(taskboardPath(p.Task, ""), &t); err != nil {
+	if err := remoteRequest(p.Peer, http.MethodGet, taskboardPath(p.Task, ""), nil, &t); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	if p.JSON {
 		return writeJSONTo(stdout, t)
 	}
+	printRemoteScheduleBanner(stdout, p.Peer, "task")
 	fmt.Fprintf(stdout, "%s  %s\n", t.ID, t.Title)
 	fmt.Fprintf(stdout, "  group:   %s\n  stage:   %s\n  status:  %s\n", t.Group, t.Stage, t.Status)
 	if t.BlockReason != "" {
@@ -403,7 +460,7 @@ func taskboardHistoryCmd() *cobra.Command {
 		Short:       "Show a task's history",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *taskboardShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardHistory(p, cliStdout, cliStderr))
+			taskboardExit(runTaskboardHistory(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -422,13 +479,14 @@ func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
 			Detail string `json:"detail,omitempty"`
 		} `json:"events"`
 	}
-	if err := DaemonGet(taskboardPath(p.Task, "/events"), &resp); err != nil {
+	if err := remoteRequest(p.Peer, http.MethodGet, taskboardPath(p.Task, "/events"), nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	if p.JSON {
 		return writeJSONTo(stdout, resp)
 	}
+	printRemoteScheduleBanner(stdout, p.Peer, "task history")
 	fmt.Fprintf(stdout, "%s  %s\n", resp.ID, resp.Title)
 	for _, e := range resp.Events {
 		line := fmt.Sprintf("  %s  %-9s  %s", e.At, e.Kind, e.Actor)
@@ -459,6 +517,7 @@ type taskboardAddParams struct {
 	FromLinear string `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
 	FromGitHub string `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
 	LinesFile  string `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin); a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
+	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON       bool   `long:"json" help:"Output JSON"`
 }
@@ -479,7 +538,7 @@ func taskboardAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardAdd(p, os.Stdin, cliStdout, cliStderr))
+			taskboardExit(runTaskboardAdd(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -537,7 +596,7 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		req["stage"] = "next"
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
-	return taskboardWrite(http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
+	return taskboardWrite(p.Peer, http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
 }
 
 // taskboardImportResult is one item of an import's answer.
@@ -638,7 +697,7 @@ func runTaskboardImport(p *taskboardAddParams, stdin io.Reader, stdout, stderr i
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
 	// The daemon spends up to a minute on title lookups; wait past that.
 	opts := DaemonOpts{AskHuman: ask, Timeout: 90 * time.Second}
-	if err := DaemonRequest(http.MethodPost, path, req, &resp, opts); err != nil {
+	if err := remoteRequestOpts(p.Peer, http.MethodPost, path, req, &resp, opts); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -687,6 +746,7 @@ type taskboardEditParams struct {
 	ClearRef  bool   `long:"clear-ref" help:"Remove the ref"`
 	AddDep    string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
 	RmDep     string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
+	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
 }
@@ -701,7 +761,7 @@ func taskboardEditCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardEdit(p, os.Stdin, cliStdout, cliStderr))
+			taskboardExit(runTaskboardEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -746,7 +806,7 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: nothing to change; see --help")
 		return rcInvalidArg
 	}
-	return taskboardWrite(http.MethodPatch, taskboardPath(p.Task, ""), req, p.AskHuman, p.JSON, "edited", stdout, stderr)
+	return taskboardWrite(p.Peer, http.MethodPatch, taskboardPath(p.Task, ""), req, p.AskHuman, p.JSON, "edited", stdout, stderr)
 }
 
 // ---- move / stage / status ----
@@ -757,6 +817,7 @@ type taskboardMoveParams struct {
 	Bottom   bool   `long:"bottom" help:"To the end of its stage"`
 	Before   string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
 	After    string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -771,7 +832,7 @@ func taskboardMoveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardMoveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardMove(p, cliStdout, cliStderr))
+			taskboardExit(runTaskboardMove(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -788,11 +849,12 @@ func runTaskboardMove(p *taskboardMoveParams, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	req := map[string]any{"top": p.Top, "bottom": p.Bottom, "before": p.Before, "after": p.After}
-	return taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/move"), req, p.AskHuman, p.JSON, "moved", stdout, stderr)
+	return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/move"), req, p.AskHuman, p.JSON, "moved", stdout, stderr)
 }
 
 type taskboardTaskParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -807,7 +869,7 @@ func taskboardStageCmd(use, stage, short string) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": stage},
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": stage},
 				p.AskHuman, p.JSON, use+"d", cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -816,6 +878,7 @@ func taskboardStageCmd(use, stage, short string) *cobra.Command {
 type taskboardStatusParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	Reason   string `long:"reason" optional:"true" help:"Why (kept in the task's history)"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -832,7 +895,7 @@ func taskboardStatusCmd(use, status, short string, withReason bool) *cobra.Comma
 				return nil
 			},
 			RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-				os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/status"), map[string]any{"status": status},
+				taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/status"), map[string]any{"status": status},
 					p.AskHuman, p.JSON, verbs[use], cliStdout, cliStderr))
 			},
 		}.ToCobra()
@@ -846,7 +909,7 @@ func taskboardStatusCmd(use, status, short string, withReason bool) *cobra.Comma
 			return nil
 		},
 		RunFunc: func(p *taskboardStatusParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/status"),
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/status"),
 				map[string]any{"status": status, "reason": p.Reason}, p.AskHuman, p.JSON, verbs[use], cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -855,6 +918,7 @@ func taskboardStatusCmd(use, status, short string, withReason bool) *cobra.Comma
 type taskboardBlockParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	Reason   string `long:"reason" help:"Why the task is blocked"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -869,7 +933,7 @@ func taskboardBlockCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardBlockParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/status"),
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/status"),
 				map[string]any{"status": "blocked", "reason": p.Reason}, p.AskHuman, p.JSON, "blocked", cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -916,6 +980,7 @@ func fetchTaskboardMine(stderr io.Writer) ([]taskboardTask, int) {
 type taskboardAssignParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	To       string `long:"to" help:"Agent to assign it to (name or id); an active member of the task's group"`
+	Peer     string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -936,9 +1001,9 @@ func taskboardAssignCmd() *cobra.Command {
 		RunFunc: func(p *taskboardAssignParams, _ *cobra.Command, _ []string) {
 			if strings.TrimSpace(p.To) == "" {
 				fmt.Fprintln(cliStderr, "Error: --to is required (use `taskboard take` to take a task yourself)")
-				os.Exit(rcInvalidArg)
+				taskboardExit(rcInvalidArg)
 			}
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": p.To},
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": p.To},
 				p.AskHuman, p.JSON, "assigned", cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -954,7 +1019,11 @@ func taskboardTakeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": ""},
+			if strings.TrimSpace(p.Peer) != "" {
+				fmt.Fprintln(cliStderr, "Error: take acts on yourself, so it has no --peer; a linked node's tasks are assigned there")
+				taskboardExit(rcInvalidArg)
+			}
+			taskboardExit(taskboardWrite("", http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": ""},
 				p.AskHuman, p.JSON, "took", cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -971,7 +1040,11 @@ func taskboardUnassignCmd(use, short string) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/unassign"), map[string]any{"self": use == "release"},
+			if use == "release" && strings.TrimSpace(p.Peer) != "" {
+				fmt.Fprintln(cliStderr, "Error: release acts on yourself, so it has no --peer")
+				taskboardExit(rcInvalidArg)
+			}
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/unassign"), map[string]any{"self": use == "release"},
 				p.AskHuman, p.JSON, verb, cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -993,7 +1066,7 @@ func taskboardReportCmd() *cobra.Command {
 			"lock never stops it. --task may be left out when exactly one live task is assigned to you.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *taskboardReportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskboardReport(p, cliStdout, cliStderr))
+			taskboardExit(runTaskboardReport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1059,6 +1132,7 @@ type groupsTaskboardWritersParams struct {
 	Agents   []string `pos:"true" optional:"true" help:"Members who may still change the board (owners, explicit grant holders and the operator always may)"`
 	Members  bool     `long:"members" help:"Unlock: every member may change the board again"`
 	Show     bool     `long:"show" help:"Only show the current lock"`
+	Peer     string   `long:"peer" optional:"true" help:"Lock a linked node's board instead, under the grants it gave this node (taskboard.manage)"`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -1077,7 +1151,7 @@ func groupsSetTaskboardWritersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsTaskboardWritersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetTaskboardWriters(p, cliStdout, cliStderr))
+			taskboardExit(runGroupsSetTaskboardWriters(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1096,7 +1170,7 @@ func runGroupsSetTaskboardWriters(p *groupsTaskboardWritersParams, stdout, stder
 		} `json:"writers"`
 	}
 	if p.Show {
-		if err := DaemonGet(path, &resp); err != nil {
+		if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}
@@ -1110,7 +1184,7 @@ func runGroupsSetTaskboardWriters(p *groupsTaskboardWritersParams, stdout, stder
 			return rc
 		}
 		body := map[string]any{"members": p.Members, "agents": p.Agents}
-		if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		if err := remoteRequestOpts(p.Peer, http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}
