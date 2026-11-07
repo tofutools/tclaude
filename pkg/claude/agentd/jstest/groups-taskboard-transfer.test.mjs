@@ -458,3 +458,66 @@ test('a task drag whose dragend never came leaves no bin behind: the next drag o
   harness.fireEvent(harness.document.body, 'dragstart', { dataTransfer: { types: ['text/plain'] } });
   assert.equal(bin.classList.contains('dnd-trash-task-mode'), false, 'the agent drag gets the bin as Retire, not Drop');
 });
+
+// asMacChrome makes the page's browser macOS Chrome for one test, as
+// helpers.js isMacChromeZeroReleaseLeave reads it.
+function asMacChrome(t) {
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true,
+    value: { platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' } });
+  t.after(() => { if (desc) Object.defineProperty(globalThis, 'navigator', desc); else delete globalThis.navigator; });
+}
+
+const zeroRelease = { relatedTarget: null, clientX: 0, clientY: 0, screenX: 0, screenY: 0 };
+
+test('macOS Chrome: a Cmd-clone that ends with no drop is finished from its release, as an agent clone is', async (t) => {
+  const { harness, calls, confirms, dt, start, over, summary } = await mountTwo(t);
+  // After the harness, which installs its own navigator.
+  asMacChrome(t);
+  const data = dt();
+  await start('tk_00000001', data);
+  over(summary('tbt-b'), data, { metaKey: true });
+  // The release: an all-zero dragleave, and no drop event.
+  await harness.act(async () => { harness.fireEvent(summary('tbt-b'), 'dragleave', { dataTransfer: data, ...zeroRelease }); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(confirms[0]?.title, 'Clone task to another group?', 'the clone asks, as a drop would');
+  assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: true, stage: 'idea' }]]);
+  assert.equal(summary('tbt-b').classList.contains('tb-transfer-over'), false, 'and the look goes');
+});
+
+test('a clone left pending is finished on dragend; a real drop, a plain move or Escape leave nothing pending', async (t) => {
+  const { harness, c, calls, confirms, dt, start, over, drop, summary } = await mountTwo(t);
+  const rowOf = (id) => c.querySelector(`tr[data-task-id="${id}"]`);
+  const end = async (id) => {
+    await harness.act(async () => { harness.fireEvent(rowOf(id), 'dragend', {}); await new Promise((r) => setTimeout(r, 0)); });
+    await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+  // Pending, then dragend with no drop: the clone runs.
+  let data = dt();
+  await start('tk_00000001', data);
+  over(summary('tbt-b'), data, { ctrlKey: true });
+  await end('tk_00000001');
+  assert.equal(confirms.length, 1);
+  assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: true, stage: 'idea' }]]);
+  // A real drop: one clone, not a second from dragend.
+  data = dt();
+  await start('tk_00000002', data);
+  over(summary('tbt-b'), data, { ctrlKey: true });
+  await drop(summary('tbt-b'), data, { ctrlKey: true });
+  await end('tk_00000002');
+  assert.equal(calls.length, 2, 'the drop ran it once');
+  // A move hover, or Escape, leaves no clone for dragend.
+  data = dt();
+  await start('tk_00000001', data);
+  over(summary('tbt-b'), data, { ctrlKey: true });
+  data.dropEffect = 'move';
+  over(summary('tbt-b'), data);
+  await end('tk_00000001');
+  data = dt();
+  await start('tk_00000001', data);
+  over(summary('tbt-b'), data, { ctrlKey: true });
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  await end('tk_00000001');
+  assert.equal(calls.length, 2, 'released or Escaped: nothing runs');
+  assert.equal(confirms.length, 2);
+});

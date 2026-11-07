@@ -21,6 +21,7 @@ import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
 import { shellToast } from './shell-state.js';
 import { clearDropBox, markDropBox } from './dnd-ops.js';
+import { isMacChromeZeroReleaseLeave } from './helpers.js';
 
 const OVER = 'tb-transfer-over';
 // TASK_DRAG_TYPE is a task drag's data type (groups-taskboard.js, the
@@ -124,6 +125,7 @@ function clearOver(state) {
   state.over = null;
   clearDropBox(state.box);
   state.box = null;
+  state.cloneHit = null;
 }
 
 // activeTransferOff ends the task drag in flight (listenForTransfer).
@@ -235,7 +237,9 @@ export function transferMessage({ task, from, to, stage, clone, tasks = [], memb
 // another group's board or header, and (when droppable: a live task the
 // viewer may drop, as ⋯ Drop) a drop on the groups view's bin. from is
 // { task, group (the board's own group, with shownName for a linked
-// node's), tasks, actions }. Returns the function that stops listening.
+// node's), tasks, actions }. Returns the function that stops listening;
+// the drag's dragend calls it with { ended: true }, which first finishes a
+// Ctrl/Cmd clone the browser ended without a drop (macOS Chrome).
 export function listenForTransfer({ task, group, tasks = [], actions, droppable = false, onDrop = () => {} }) {
   // One task drag at a time, whichever board it starts on: a drag whose
   // dragend never came (its row re-rendered away) must not keep the bin up
@@ -273,13 +277,45 @@ export function listenForTransfer({ task, group, tasks = [], actions, droppable 
     const box = realGroupBox(hit.el);
     if (state.box !== box) { clearDropBox(state.box); state.box = box; }
     markDropBox(box, clone ? 'clone' : 'move');
+    // The target a still-green clone points at: macOS Chrome can end a copy
+    // drag with no usable drop, so dragend (or its all-zero release
+    // dragleave) finishes the clone from here, as dnd.js does for an agent.
+    state.cloneHit = clone ? hit : null;
   };
+  const transfer = (hit, clone) => {
+    if (hit.cross) {
+      void runCrossTransfer({ task, group, actions, to: hit.group, node: hit.node, nodeName: hit.nodeName,
+        fromNodeName: fromBox()?.getAttribute('data-fleet-node-name') || '', stage: hit.stage, clone });
+    } else {
+      void runTransfer({ task, group, tasks, actions, to: hit.group, stage: hit.stage, clone });
+    }
+  };
+  // finishClone runs the clone a drag ended on without a drop.
+  const finishClone = () => {
+    const hit = state.cloneHit;
+    off();
+    if (!hit) return;
+    onDrop();
+    transfer(hit, true);
+  };
+  const onLeave = (event) => {
+    if (!state.cloneHit) return;
+    if (isMacChromeZeroReleaseLeave(event)) { finishClone(); return; }
+    // Leaving the window can finish as a copy somewhere else: no clone here.
+    const outside = !event.relatedTarget && (event.clientX <= 0 || event.clientY <= 0
+      || event.clientX >= window.innerWidth - 1 || event.clientY >= window.innerHeight - 1);
+    if (outside) state.cloneHit = null;
+  };
+  const onKey = (event) => { if (event.key === 'Escape') state.cloneHit = null; };
   const off = () => {
     clearOver(state);
     hideBin();
     document.removeEventListener('dragover', onOver, true);
     document.removeEventListener('drop', onDropEvent, true);
     document.removeEventListener('dragstart', off, true);
+    document.removeEventListener('dragleave', onLeave, true);
+    document.removeEventListener('dragend', finishClone, true);
+    document.removeEventListener('keydown', onKey, true);
     if (activeTransferOff === off) activeTransferOff = null;
   };
   const onDropEvent = (event) => {
@@ -299,19 +335,20 @@ export function listenForTransfer({ task, group, tasks = [], actions, droppable 
     const clone = cloneGesture(event);
     off();
     onDrop();
-    if (hit.cross) {
-      void runCrossTransfer({ task, group, actions, to: hit.group, node: hit.node, nodeName: hit.nodeName,
-        fromNodeName: fromBox()?.getAttribute('data-fleet-node-name') || '', stage: hit.stage, clone });
-    } else {
-      void runTransfer({ task, group, tasks, actions, to: hit.group, stage: hit.stage, clone });
-    }
+    transfer(hit, clone);
   };
   document.addEventListener('dragover', onOver, true);
   document.addEventListener('drop', onDropEvent, true);
   // Any later drag (an agent, a resource, the next task) ends this one.
   document.addEventListener('dragstart', off, true);
+  // Capture runs before the row's own dragend, which ends the drag too.
+  document.addEventListener('dragleave', onLeave, true);
+  document.addEventListener('dragend', finishClone, true);
+  document.addEventListener('keydown', onKey, true);
   activeTransferOff = off;
-  return off;
+  // The drag's own dragend passes { ended: true }: a clone still pending
+  // then runs (whichever of it and the document's dragend comes first).
+  return (opts) => (opts?.ended ? finishClone() : off());
 }
 
 // runTransfer asks, then moves or clones the task.
