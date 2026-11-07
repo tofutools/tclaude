@@ -282,6 +282,15 @@ export function renameResource(resource, { api, source, notify }) {
 // rename, when the row has one, starts its name field: a click on the name
 // renames, as an agent's does, and 👁 opens.
 function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, rename = null, drag = null }) {
+  // A rename ended from the keyboard leaves focus on the name, as an
+  // agent's does, not on the page.
+  const nameRef = useRef(null);
+  const wasRenaming = useRef(false);
+  useEffect(() => {
+    const doc = typeof document !== 'undefined' ? document : null;
+    if (wasRenaming.current && !renaming && (!doc?.activeElement || doc.activeElement === doc.body)) nameRef.current?.focus?.();
+    wasRenaming.current = !!renaming;
+  }, [!!renaming]);
   const dragAttrs = drag && !renaming ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind, label, closed: !!closed, ...drag }) } : {};
   useEffect(() => (remove && drag ? registerResourceRemover(`${kind}:${drag.id}`, remove.run) : undefined), [kind, drag?.id, remove?.run]);
   return html`<tr class=${closed ? 'gr-trow gr-closed' : 'gr-trow'} data-resource-kind=${`${kind}s`} ...${attrs} ...${dragAttrs}>
@@ -297,7 +306,7 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, r
       </span>
     </span></td>
     <td class="name-cell gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
-      : rename ? html`<span role="button" tabindex="0" class="rowname-text gr-name gr-name-rename" data-resource-name-rename=""
+      : rename ? html`<span ref=${nameRef} role="button" tabindex="0" class="rowname-text gr-name gr-name-rename" data-resource-name-rename=""
         title=${`Click to rename ${label} — Enter saves, Esc cancels`} onClick=${(event) => { event.stopPropagation(); rename(); }}
         onKeyDown=${(event) => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); event.stopPropagation(); rename(); }}
         ><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}</span>`

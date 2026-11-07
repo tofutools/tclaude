@@ -268,4 +268,13 @@ test('a click on a drawing board\'s or page\'s name renames it, as an agent\'s d
     assert.equal(row.querySelector('[data-resource-rename-input]'), null);
     assert.deepEqual(calls.pop(), call);
   }
+  // From the keyboard: Enter starts it, Escape keeps the name and focus.
+  const name = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  await harness.act(async () => { harness.fireEvent(name, 'keydown', { key: 'Enter' }); await wait(); });
+  const input = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-rename-input]');
+  assert.ok(input, 'Enter on the name opens the field');
+  await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Escape' }); await wait(); });
+  assert.equal(calls.length, 0, 'Escape renames nothing');
+  const again = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  assert.equal(again.ownerDocument.activeElement, again, 'focus returns to the name');
 });
