@@ -67,7 +67,7 @@ test('the save plan writes only what changed, in an order the routes accept', as
     ['remove shot.png', 'attach 2 files']);
 });
 
-async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose = true } = {}) {
+async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose = true, me = 'human:operator' } = {}) {
   const harness = await createPreactHarness(t);
   const { EditTaskDialog } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
   let closed = false;
@@ -75,7 +75,7 @@ async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose =
   const group = { name: 'crew', members: [] };
   const members = [{ agent_id: 'agt_dev', title: 'dev', online: true }];
   await harness.mount(harness.html`<${EditTaskDialog} group=${group} entry=${{ tasks: [the, task({ id: 'tk_00000002', title: 'other' })] }} task=${the}
-    api=${api} canAssign=${canAssign} canClose=${canClose} members=${members} onClose=${() => { closed = true; }} onSaved=${() => { saved += 1; }} />`);
+    api=${api} me=${me} canAssign=${canAssign} canClose=${canClose} members=${members} onClose=${() => { closed = true; }} onSaved=${() => { saved += 1; }} />`);
   const dialog = harness.document.querySelector('#taskboard-edit-modal');
   const flush = () => harness.act(() => new Promise((r) => setTimeout(r, 0)));
   const click = async (el) => { await harness.act(() => harness.fireEvent(el, 'click')); await flush(); };
@@ -278,4 +278,52 @@ test('a dirty Ask an agent dialog asks before it closes', async (t) => {
   assert.equal(closed, false);
   await harness.act(async () => { shellState.resolveConfirmation(true); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(closed, true, 'the dialog closes once the discard is confirmed');
+});
+
+test('a comment being written keeps the form open: Save does not send it, and closing asks first', async (t) => {
+  const api = fakeApi();
+  api.activity = async (id) => ({ id, entries: [] });
+  const { harness, dialog, save, closed, flush } = await mountEdit(t, task(), { api });
+  await flush();
+  assert.match(dialog.textContent, /no comments yet/);
+  await harness.input(dialog.querySelector('.tb-comment-new'), 'half a thought');
+  await flush();
+  await save();
+  assert.equal(closed(), false, 'an unsent comment is not lost to Save');
+  assert.deepEqual(api.calls, [], 'and Save sends nothing it was not asked to');
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  const cancel = [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel');
+  await harness.act(async () => { harness.fireEvent(cancel, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(shellState.confirmation.value?.title, 'Discard input?', 'closing asks before the comment is lost');
+  await harness.act(async () => { shellState.resolveConfirmation(false); });
+});
+
+test('files dropped or pasted on the comment box go with the comment, not the task', async (t) => {
+  const api = fakeApi();
+  api.activity = async (id) => ({ id, entries: [{ id: 1, at: ago(5), actor: 'human:operator', kind: 'comment',
+    comment: { id: 1, kind: 'comment', body: 'mine', author: 'human:operator', at: ago(5) } }] });
+  api.comment = async (...args) => { api.calls.push(['comment', ...args]); return {}; };
+  const { harness, dialog, save, flush } = await mountEdit(t, task(), { api });
+  await flush();
+  const composer = dialog.querySelector('.tb-comment-composer');
+  const shot = new File(['png'], 'shot.png', { type: 'image/png' });
+  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new'), 'drop', { dataTransfer: { types: ['Files'], files: [shot] } }));
+  const paste = 'onpaste' in composer ? 'paste' : 'Paste';
+  const log = new File(['x'], 'cart.log', { type: 'text/plain' });
+  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new'), paste, { clipboardData: { files: [log], items: [] } }));
+  assert.deepEqual([...composer.querySelectorAll('.att-name')].map((n) => n.textContent), ['shot.png', 'cart.log'], 'the comment holds them');
+  assert.equal(dialog.querySelectorAll('[data-file-new]').length, 0, 'the task\'s own files do not');
+  await harness.input(composer.querySelector('.tb-comment-new'), 'see the shot');
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-comment-send'), 'click'); });
+  await flush();
+  const sent = api.calls.find((c) => c[0] === 'comment');
+  assert.deepEqual(sent[4].map((f) => f.name), ['shot.png', 'cart.log']);
+
+  // An open edit of a comment is unsaved input: Save waits, and writes nothing.
+  await harness.input(dialog.querySelector('.tb-edit-title'), 'renamed');
+  await harness.act(() => harness.fireEvent(dialog.querySelector('[data-comment="1"] .tb-comment-edit'), 'click'));
+  await harness.input(dialog.querySelector('.tb-comment-edit-body'), 'mine, reworded');
+  await flush();
+  await save();
+  assert.equal(api.calls.some((c) => c[0] === 'edit'), false, 'Save does not run while a comment is being edited');
 });

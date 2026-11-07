@@ -655,6 +655,7 @@ a CLI verb:
 | ⋯ *Drop…* (with an optional reason), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
 | ✎ *Edit* (or double-click a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
+| *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
@@ -691,6 +692,14 @@ a CLI verb:
   (say, a close that needs `taskboard.assign`), the rest still land, and the
   form stays open and names what was not saved. A done or dropped task
   reopens when you pick another place for it.
+- **Activity** is at the foot of the edit form: the task's
+  [stream](#comments-and-activity), oldest first. Changes show as one line
+  each, and comments as Markdown, with their files as tiles and a block,
+  close, drop or report reason marked as such. A comment is sent at once with
+  *Comment* (or Ctrl+Enter), not with *Save*; 📎 or a paste into the comment
+  attaches files to it. Your own comments have *Edit* and *Delete*. A row or a
+  lanes card with comments shows 💬 and the count; a click opens the edit
+  form. On a linked node's board, your comments are your node's.
 - In the lanes view, a cell's **+** opens the same menu, anchored at the
   **+** (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it
