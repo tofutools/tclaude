@@ -178,6 +178,15 @@ type NewGroupTask struct {
 	// Origin, when set, is added to the first event's detail (a clone names
 	// the task it was cloned from).
 	Origin string
+	// The task's start state, set in the same transaction as the create:
+	// Status open (the default), blocked (BlockReason says why) or done
+	// (work logged after the fact: closed now). AssigneeID, when set, is who
+	// holds it (in progress) or, done, who did it; AssignedBy records who
+	// assigned it. An assigned task always lands in next.
+	Status      string
+	BlockReason string
+	AssigneeID  string
+	AssignedBy  string
 }
 
 type taskTx interface {
@@ -366,21 +375,48 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var live int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE group_id = ? AND status IN ('open','blocked')`,
-		in.GroupID).Scan(&live); err != nil {
-		return nil, err
+	status := in.Status
+	if status == "" {
+		status = GroupTaskOpen
 	}
-	if live >= GroupTaskLiveCap {
-		return nil, ErrGroupTaskCap
+	switch status {
+	case GroupTaskOpen, GroupTaskBlocked, GroupTaskDone:
+	default:
+		return nil, taskConflict("invalid_arg", "a new task starts open, blocked or done, not %s", status)
+	}
+	if status == GroupTaskBlocked && strings.TrimSpace(in.BlockReason) == "" {
+		return nil, taskConflict("invalid_arg", "a blocked task needs its reason")
+	}
+	// A done task is not live: logging work never meets the cap.
+	if status != GroupTaskDone {
+		var live int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE group_id = ? AND status IN ('open','blocked')`,
+			in.GroupID).Scan(&live); err != nil {
+			return nil, err
+		}
+		if live >= GroupTaskLiveCap {
+			return nil, ErrGroupTaskCap
+		}
 	}
 	stage := in.Stage
 	if stage == "" {
 		stage = GroupTaskStageIdea
 	}
+	// An assigned task is queued, done or not: assign promotes an idea, and
+	// a done task reopened comes back assigned.
+	if in.AssigneeID != "" {
+		stage = GroupTaskStageNext
+	}
 	stage, rank, err := placeTask(tx, in.GroupID, stage, "", in.Position)
 	if err != nil {
 		return nil, err
+	}
+	// An anchor (before/after) names its own stage; an assigned task stays in
+	// next, at its end.
+	if in.AssigneeID != "" && stage != GroupTaskStageNext {
+		if stage, rank, err = placeTask(tx, in.GroupID, GroupTaskStageNext, "", GroupTaskPosition{Bottom: true}); err != nil {
+			return nil, err
+		}
 	}
 	id := newGroupTaskID()
 	for range 8 {
@@ -418,6 +454,32 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	}
 	if err := addGroupTaskEventTx(tx, id, in.Actor, kind, detail, now); err != nil {
 		return nil, err
+	}
+	if in.AssigneeID != "" {
+		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = ?, assigned_at = ? WHERE id = ?`,
+			in.AssigneeID, in.AssignedBy, dbTime(now), id); err != nil {
+			return nil, err
+		}
+		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventAssigned, "→ "+in.AssigneeID, now); err != nil {
+			return nil, err
+		}
+	}
+	switch status {
+	case GroupTaskBlocked:
+		reason := strings.TrimSpace(in.BlockReason)
+		if _, err := tx.Exec(`UPDATE group_tasks SET status = 'blocked', block_reason = ? WHERE id = ?`, reason, id); err != nil {
+			return nil, err
+		}
+		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventBlocked, reason, now); err != nil {
+			return nil, err
+		}
+	case GroupTaskDone:
+		if _, err := tx.Exec(`UPDATE group_tasks SET status = 'done', closed_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
+			return nil, err
+		}
+		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventDone, "logged as done", now); err != nil {
+			return nil, err
+		}
 	}
 	out, err := getGroupTaskTx(tx, id)
 	if err != nil {

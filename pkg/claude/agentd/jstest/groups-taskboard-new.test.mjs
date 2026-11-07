@@ -115,7 +115,7 @@ test('the writer lock narrows who Ask an agent may mail', async (t) => {
   assert.match(askUnavailable(group, board('crew', { locked: true, writers: [] })), /writer lock/);
 });
 
-test('Write it myself sends every field through the add route, then assigns', async (t) => {
+test('Write it myself sends every field, the assignee included, in one add', async (t) => {
   const { harness, c, api, choose, dialog, click, refreshes } = await mountBoard(t, 'tbn-form');
   await choose('form');
   assert.ok(dialog(), 'the form opens as a dialog');
@@ -132,8 +132,8 @@ test('Write it myself sends every field through the add route, then assigns', as
   await selectValue(harness, assignee, 'agt_dev');
   await click(submit());
   assert.deepEqual(api.calls, [
-    ['create', 'tbn-form', { title: 'Port the sweep', body: 'see the review notes', ref: 'tcl-a1b2c3', stage: 'next', after: ['tk_00000001'], resolveRef: true }],
-    ['assign', 'tk_00000009', 'agt_dev'],
+    ['create', 'tbn-form', { title: 'Port the sweep', body: 'see the review notes', ref: 'tcl-a1b2c3', stage: 'next', after: ['tk_00000001'], resolveRef: true,
+      status: '', to: 'agt_dev' }],
   ]);
   assert.equal(dialog(), null, 'closes when the task landed');
   assert.ok(refreshes() > 0, 'the board is read again');
@@ -303,7 +303,7 @@ test('on a linked node\'s group in the fused view, the board is found and every 
   await harness.input(form.querySelector('.tb-new-title'), 'from the fleet view');
   await selectValue(harness, form.querySelector('.tb-new-assignee'), 'agt_dev');
   await click(form.querySelector('#taskboard-new-submit'));
-  assert.deepEqual(api.calls.map(([verb, group]) => [verb, group]), [['create', 'tbn-peer'], ['assign', 'tk_00000009']]);
+  assert.deepEqual(api.calls.map(([verb, group, payload]) => [verb, group, payload?.to]), [['create', 'tbn-peer', 'agt_dev']]);
 
   // Ask an agent.
   api.calls.length = 0;
@@ -312,4 +312,53 @@ test('on a linked node\'s group in the fused view, the board is found and every 
   await harness.input(c.querySelector('#taskboard-ask-modal .tb-ask-prompt'), 'plan it');
   await click(c.querySelector('#taskboard-ask-submit'));
   assert.deepEqual(api.calls, [['ask', 'tbn-peer', 'agt_lead', 'plan it']]);
+});
+
+test('the form starts a task in any column: In progress needs an assignee, Blocked a reason, Done logs work', async (t) => {
+  const { harness, api, choose, dialog, click } = await mountBoard(t, 'tbn-start');
+  await choose('form');
+  const states = () => [...dialog().querySelectorAll('input[name="tb-new-stage"]')].map((el) => el.getAttribute('value'));
+  assert.deepEqual(states(), ['idea', 'next', 'progress', 'blocked', 'done']);
+  const pick = (key) => harness.act(async () => { harness.fireEvent(dialog().querySelector(`input[name="tb-new-stage"][value="${key}"]`), 'change'); });
+  const submit = () => dialog().querySelector('#taskboard-new-submit');
+  await harness.input(dialog().querySelector('.tb-new-title'), 'started');
+
+  await pick('progress');
+  assert.equal(submit().disabled, true, 'in progress needs its assignee');
+  await selectValue(harness, dialog().querySelector('.tb-new-assignee'), 'agt_dev');
+  assert.equal(submit().disabled, false);
+
+  await pick('blocked');
+  assert.ok(dialog().querySelector('.tb-new-reason'), 'blocked asks why');
+  assert.equal(submit().disabled, true, 'blocked needs its reason');
+  await harness.input(dialog().querySelector('.tb-new-reason'), 'waiting on review');
+  await click(submit());
+  assert.deepEqual(api.calls.at(-1), ['create', 'tbn-start', { title: 'started', body: '', ref: '', after: [], resolveRef: false,
+    stage: 'next', status: 'blocked', blockReason: 'waiting on review', to: 'agt_dev' }]);
+
+  await choose('form');
+  await harness.input(dialog().querySelector('.tb-new-title'), 'already did it');
+  await pick('done');
+  await click(submit());
+  assert.deepEqual(api.calls.at(-1), ['create', 'tbn-start', { title: 'already did it', body: '', ref: '', after: [], resolveRef: false,
+    stage: 'idea', status: 'done', to: '' }], 'done needs no assignee');
+});
+
+test('without the assign grant the form offers no In progress', async (t) => {
+  const api = fakeApi();
+  api.can = { assign: false };
+  const { dialog, choose } = await mountBoard(t, 'tbn-start-noassign', { api });
+  await choose('form');
+  const states = [...dialog().querySelectorAll('input[name="tb-new-stage"]')].map((el) => el.getAttribute('value'));
+  assert.deepEqual(states, ['idea', 'next', 'blocked', 'done']);
+});
+
+test('a tracker id with a start state is one add with the id as its ref, so nobody is mailed for done work', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { newTaskPlan } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  assert.equal(newTaskPlan({ title: 'tcl-a1b2c3', start: 'next' }).kind, 'tracker', 'Ideas or Next unassigned: the import, titled from the tracker');
+  assert.deepEqual(newTaskPlan({ title: 'tcl-a1b2c3', start: 'done', to: 'agt_dev' }), {
+    kind: 'add', task: { title: 'tcl-a1b2c3', body: '', ref: 'tcl-a1b2c3', after: [], resolveRef: true, stage: 'idea', status: 'done', to: 'agt_dev' },
+  });
+  assert.equal(newTaskPlan({ title: 'tcl-a1b2c3', start: 'progress', to: 'agt_dev' }).task.to, 'agt_dev');
 });

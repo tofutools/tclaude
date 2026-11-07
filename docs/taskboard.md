@@ -59,6 +59,7 @@ tclaude agent taskboard history <task>
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
+                                    [--assignee <agent>] [--blocked "reason"|--done]
 tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt-file f
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
@@ -107,6 +108,23 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   member must be an active member who may change the board, so a
   [writer lock](#the-writer-lock) limits who can be asked.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
+
+### Where a new task starts
+
+`add` creates a task in any column of the board, in one call:
+
+- **Ideas**, the default, or **Next** with `--next`.
+- **In progress** with `--assignee <agent>`. The task is assigned as it is
+  created, so it lands in next, and the assignee gets the brief in its inbox,
+  as with `assign`. Naming yourself takes the task. Anyone else needs
+  `taskboard.assign`, and the assignee must be an active member of the group.
+- **Blocked** with `--blocked "reason"`. The reason is required. An
+  `--assignee` makes it a blocked task that agent holds.
+- **Done** with `--done`, for logging work after the fact. The task is closed
+  now and counts in *done this week*. An `--assignee` records who did it, and
+  nobody is mailed. A done task does not count toward the live cap.
+
+An import (`--from-*`, `--lines-file`) lands in Ideas or Next only.
 
 ## Importing from a tracker
 
@@ -475,11 +493,11 @@ a CLI verb:
 
 | In the section | CLI |
 |---|---|
-| *+ New task › Write it myself* | `add <group> "title" --body … --ref … --resolve-ref [--next] --after …`, then `assign <task> --to <agent>` when an assignee is picked |
+| *+ New task › Write it myself* | `add <group> "title" --body … --ref … --resolve-ref [--next] --after … [--assignee …] [--blocked "…"\|--done]` |
 | A pasted list in *Write it myself* | `add <group> --lines-file -` |
 | *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
 | *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
-| *+* in a lanes cell (opens *Write it myself* filled in from the cell) | `add <group> "title" [--next]`, then `assign <task> --to <agent>` in an agent's lane |
+| *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | *✓ Next* on an idea | `promote <task>` |
@@ -495,9 +513,13 @@ a CLI verb:
 - **＋ ▾** (*New task*; in wizard mode, *New quest*) in the section head is
   the one way in, in both views. It opens a menu:
   - *Write it myself* opens a form: a title (required, one line, as for
-    `add`), a brief, a ref, the stage (*Idea*, the default, or *Next*),
-    dependencies picked from the board's live tasks, and, if you may assign,
-    an assignee from the group's members. A bare awb or Linear ref gets its
+    `add`), a brief, a ref, where it starts, dependencies picked from the
+    board's live tasks, and, if you may assign, an assignee from the group's
+    members. It can start in any column (see
+    [Where a new task starts](#where-a-new-task-starts)): *Idea* (the
+    default), *Next*, *In progress* (only if you may assign; it needs the
+    assignee), *Blocked* (it asks for the reason) or *Done* (the assignee,
+    optional, is who did it). A bare awb or Linear ref gets its
     link, as with `--resolve-ref`. If you paste a list into the title, the
     form adds one task per line instead. A title that is only an awb, Linear
     or GitHub id becomes that ref, titled from the tracker. Enter or
@@ -507,8 +529,8 @@ a CLI verb:
     other online member who may change the board. With no such member
     online, the item is off, and says why.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
-- In the lanes view, a cell's **+** opens the same form, filled in from the
-  cell (see below).
+- In the lanes view, a cell's **+** opens the same menu, anchored at the
+  **+** (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
@@ -585,12 +607,21 @@ A drag to another lane and another column at once runs both writes in that
 order, the lane first. A move the board cannot make in one step, such as
 unassigning and closing a task, is not accepted.
 
-Each cell that a new task can land in has a small grey **+** in its
-lower-right corner, which brightens when you hover the cell. These are the
-Unassigned lane's *Ideas* and *Next*, and an agent's *Next* and *In progress*.
-It opens the New task form filled in from the cell: the column sets the
-stage, and an agent's lane sets that agent as the assignee. An agent's lanes
-show no **+** unless you may assign. Order within the queue is set in the
+Each cell that a new task can start in has a small grey **+** in its
+lower-right corner, which brightens when you hover the cell. That is every
+cell but the striped ones. An agent's lanes show no **+** unless you may
+assign. The **+** opens the add menu, and whichever item you pick starts from
+the cell:
+
+- *Write it myself* has the cell's column picked as where the task starts.
+  An agent's *Next* and *In progress* both start it in progress. An agent's
+  lane also picks that agent as the assignee.
+- *Ask an agent* opens with a first line that says where the tasks should
+  land, such as "Land the tasks in Next for builder", for you to add your
+  request to.
+- *From awb/Linear/GitHub…* imports into the queue from a Next cell or an
+  agent's lane. An import lands in Ideas or Next only, so you assign, block or
+  close the tasks on the board afterwards. Order within the queue is set in the
 *List* view.
 
 The dashboard shows a board only to someone who can read it. The operator sees
@@ -609,7 +640,7 @@ those drags aren't accepted in the lanes.
 | `ls <group>` | `GET /v1/groups/{g}/taskboard[?stage=&all=1]` |
 | `ls` (own group) | `GET /v1/taskboard` |
 | `show` / `history` | `GET /v1/taskboard/tasks/{id}` / `…/events` |
-| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`) |
+| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |

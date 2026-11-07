@@ -14,7 +14,7 @@
 //   From awb/Linear/…   the import panel (`add --from-awb` and kin).
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button, Check, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
@@ -54,25 +54,57 @@ export function askUnavailable(group, entry, wizard = false) {
   return wizard ? 'No awake hero may write on this board' : 'No online member may change this board (writer lock)';
 }
 
+// START_STATES are the board columns a new task can start in: the stage
+// (idea, next), in progress (assigned), blocked (with its reason) and done
+// (work logged after the fact). `taskboard add` takes the same: --next,
+// --assignee, --blocked "<reason>", --done.
+export const START_STATES = [
+  { key: 'idea', label: 'Idea', wizard: 'Vision' },
+  { key: 'next', label: 'Next', wizard: 'Next' },
+  { key: 'progress', label: 'In progress', wizard: 'Underway', assign: true },
+  { key: 'blocked', label: 'Blocked', wizard: 'Blocked' },
+  { key: 'done', label: 'Done', wizard: 'Fulfilled' },
+];
+
+// startFields are the create's fields for a start state.
+export function startFields(start, { to = '', reason = '' } = {}) {
+  switch (start) {
+    case 'next': return { stage: 'next', status: '', to };
+    case 'progress': return { stage: 'next', status: '', to };
+    case 'blocked': return { stage: 'next', status: 'blocked', blockReason: reason.trim(), to };
+    case 'done': return { stage: 'idea', status: 'done', to };
+    default: return { stage: 'idea', status: '', to };
+  }
+}
+
 // newTaskPlan turns the form into its writes, in order. `lines` is a pasted
-// list: one task per line, as an import. A single title that is only a
-// tracker id (and no ref) is that ref, titled from the tracker: an import
-// too, whose brief and dependencies follow as an edit. Anything else is one
-// `add`. The assignee, when picked, is an `assign` after it.
+// list: one task per line, as an import, in Ideas or Next. A single title
+// that is only a tracker id (and no ref) is that ref, titled from the
+// tracker: an import too, whose brief, dependencies, assignee and status
+// follow as edits. Anything else is one `add`, its start state and assignee
+// included.
 export function newTaskPlan(draft) {
-  const next = draft.stage === 'next';
+  const start = draft.start || 'idea';
+  const next = start !== 'idea' && start !== 'done';
   if (draft.list) {
-    return { kind: 'lines', text: captureLines(draft.list).join('\n'), next };
+    return { kind: 'lines', text: captureLines(draft.list).join('\n'), next: start === 'next' };
   }
   const title = String(draft.title || '').trim();
   const body = String(draft.body || '').trim();
   const ref = String(draft.ref || '').trim();
   const after = draft.after || [];
-  const to = draft.to || '';
-  if (!ref && isTrackerLine(title)) {
-    return { kind: 'tracker', text: title, next, body, after, to };
+  const fields = startFields(start, { to: draft.to || '', reason: draft.reason || '' });
+  // A title that is only a tracker id is an import, titled from the tracker,
+  // when it starts in Ideas or Next unassigned. With any other start state
+  // it is one add with the id as its ref (linked through its tracker), so
+  // the state lands in the same call: an import cannot carry it.
+  if (!ref && isTrackerLine(title) && !fields.to && !fields.status) {
+    return { kind: 'tracker', text: title, next, body, after };
   }
-  return { kind: 'add', task: { title, body, ref, stage: next ? 'next' : 'idea', after, resolveRef: !!ref }, to };
+  if (!ref && isTrackerLine(title)) {
+    return { kind: 'add', task: { title, body, ref: title, after, resolveRef: true, ...fields } };
+  }
+  return { kind: 'add', task: { title, body, ref, after, resolveRef: !!ref, ...fields } };
 }
 
 // submitNewTask runs the plan. It resolves to { created, task, warning }:
@@ -103,37 +135,64 @@ export async function submitNewTask(api, groupName, draft) {
       }
     }
   } else {
-    task = await api.create(groupName, plan.task);
-  }
-  if (plan.to && task?.id) {
-    try {
-      await api.assign(task.id, plan.to);
-    } catch (cause) {
-      return { created: 1, task, warning: `added as ${task.id}, but not assigned: ${cause?.message || cause}` };
-    }
+    return { created: 1, task: await api.create(groupName, plan.task), warning: '' };
   }
   return { created: 1, task, warning: '' };
 }
 
-// NewTaskMenu is the section head's "+ New task" button and its menu.
-export function NewTaskMenu({ group, entry, wizard = false, onChoose }) {
+// CELL_MENU_HEIGHT is about the add menu's height: less room than this below
+// a cell's "+" opens it above.
+const CELL_MENU_HEIGHT = 170;
+
+// NewTaskMenu is the section head's "+ New task" button and its menu. With
+// `cell` it is a lanes cell's small "+" instead ({ label, title }): the same
+// menu, anchored at the "+" and fixed to the viewport, so the lanes grid's
+// own scrolling never clips it; the caller carries the cell's start state
+// into whichever choice is made.
+export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = null }) {
   const [open, setOpen] = useState(false);
+  const [at, setAt] = useState(null);
   const ref = useRef(null);
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
   const off = askUnavailable(group, entry, wizard);
   const choose = (what) => () => { setOpen(false); onChoose(what); };
+  // The cell menu is fixed at its "+": below it, or above it where the
+  // viewport has no room below; a scroll moves the "+" away, so it closes.
+  const toggle = (event) => {
+    if (cell && !open) {
+      const rect = event.currentTarget.getBoundingClientRect?.();
+      const width = globalThis.document?.documentElement?.clientWidth || globalThis.innerWidth || 0;
+      const height = globalThis.innerHeight || 0;
+      const room = height - (rect?.bottom || 0);
+      setAt(rect ? { right: Math.max(4, width - rect.right),
+        ...(height && room < CELL_MENU_HEIGHT ? { bottom: Math.max(4, height - rect.top + 2) } : { top: rect.bottom + 2 }) } : null);
+    }
+    setOpen(!open);
+  };
+  useEffect(() => {
+    if (!cell || !open) return undefined;
+    const close = () => setOpen(false);
+    // Capturing on the document sees the page's scroll and any scroller's.
+    document.addEventListener('scroll', close, true);
+    return () => document.removeEventListener('scroll', close, true);
+  }, [cell, open]);
   const item = (attr, onClick, name, line, disabled = false, title = undefined) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item"
     onClick=${onClick} disabled=${disabled} title=${title}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   // Icon-only, like the Resources ＋ beside it: the name lives in the
   // title and aria-label.
   const label = wizard ? 'New quest' : 'New task';
   const title = wizard ? `${label}: add a quest to the ${group.name} quest board` : `${label}: add a task to the ${group.name} task board`;
-  return html`<span class="gr-add tb-new" ref=${ref}>
-    <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn tb-new-btn" data-taskboard-new=${group.name} aria-haspopup="menu"
-      aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>
-    ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu tb-new-menu">
+  const button = cell
+    ? html`<${Button} size="sm" variant="ghost" class="tb-cell-add" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+        title=${cell.title} aria-label=${cell.label} onClick=${toggle}>+<//>`
+    : html`<${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn tb-new-btn" data-taskboard-new=${group.name} aria-haspopup="menu"
+      aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} onClick=${toggle}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>`;
+  const fixed = cell && at ? `position: fixed; right: ${at.right}px; left: auto; ${at.bottom !== undefined ? `bottom: ${at.bottom}px; top: auto;` : `top: ${at.top}px;`}` : undefined;
+  return html`<span class=${cell ? 'tb-cell-add-wrap' : 'gr-add tb-new'} ref=${ref}>
+    ${button}
+    ${open && html`<${Menu} size="sm" class=${`gr-add-menu gr-new-menu tb-new-menu${cell ? ' tb-cell-menu' : ''}`} style=${fixed}>
       ${item('data-taskboard-new-form', choose('form'), wizard ? 'Scribe it myself' : 'Write it myself',
-        wizard ? 'Fill in the scroll: title, brief, ref, stage' : 'Fill in a form: title, brief, ref, stage')}
+        wizard ? 'Fill in the scroll: title, brief, ref, where it starts' : 'Fill in a form: title, brief, ref, where it starts')}
       ${item('data-taskboard-new-ask', choose('ask'), wizard ? 'Ask a hero' : 'Ask an agent',
         off || (wizard ? 'Tell it in your words; a hero scribes the quests' : 'Describe it; an agent writes the tasks'), !!off, off || undefined)}
       <${MenuSep} />
@@ -142,12 +201,15 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose }) {
   </span>`;
 }
 
-// The stage switch: Idea (the default) or Next.
-function StagePick({ value, onChange, wizard, disabled }) {
-  return html`<span class="tb-new-stage" role="radiogroup" aria-label="Stage">
-    ${[['idea', wizard ? 'Vision' : 'Idea'], ['next', 'Next']].map(([key, text]) => html`<label key=${key} class="tb-new-stage-opt">
-      <input type="radio" name="tb-new-stage" value=${key} checked=${value === key} disabled=${disabled} onChange=${() => onChange(key)} />
-      <span>${text}</span></label>`)}
+// StartPick is where the task starts: a board column. In progress needs
+// an assignee, so only a viewer who may assign gets it; a list starts in
+// Ideas or Next.
+function StartPick({ value, onChange, wizard, disabled, canAssign, listMode }) {
+  const states = START_STATES.filter((s) => (!s.assign || canAssign) && (!listMode || s.key === 'idea' || s.key === 'next'));
+  return html`<span class="tb-new-stage" role="radiogroup" aria-label="Starts in">
+    ${states.map((s) => html`<label key=${s.key} class="tb-new-stage-opt">
+      <input type="radio" name="tb-new-stage" value=${s.key} checked=${value === s.key} disabled=${disabled} onChange=${() => onChange(s.key)} />
+      <span>${wizard ? s.wizard : s.label}</span></label>`)}
   </span>`;
 }
 
@@ -162,7 +224,7 @@ function DepsPick({ tasks, value, onChange, disabled }) {
   </div>`;
 }
 
-const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', stage: 'idea', after: [], to: '' };
+const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', start: 'idea', reason: '', after: [], to: '' };
 
 // NewTaskDialog is "Write it myself". `canAssign` shows the assignee
 // picker; `members` are the ones a task can go to.
@@ -177,7 +239,10 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const lines = captureLines(draft.list);
   const tasks = entry?.tasks || [];
   const tracker = !listMode && !draft.ref.trim() && isTrackerLine(draft.title);
-  const ready = listMode ? lines.length > 0 : draft.title.trim().length > 0;
+  // In progress needs its assignee, blocked its reason.
+  const missing = listMode ? '' : draft.start === 'progress' && !draft.to ? 'pick who it is in progress with'
+    : draft.start === 'blocked' && !draft.reason.trim() ? 'say why it is blocked' : '';
+  const ready = (listMode ? lines.length > 0 : draft.title.trim().length > 0) && !missing;
   const dirty = Object.keys(EMPTY_DRAFT).some((key) => JSON.stringify(draft[key]) !== JSON.stringify({ ...EMPTY_DRAFT, ...initial }[key]));
   const submit = async () => {
     if (!ready || sending.current) return;
@@ -221,7 +286,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     <div class="modal-meta">${listMode
       ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.${
         draft.body.trim() || draft.ref.trim() || draft.after.length || draft.to ? ' A list takes no brief, ref, dependencies or assignee: they are not used.' : ''}`
-      : wizard ? 'The quest lands among the visions unless you queue it as next.' : 'The task lands in the ideas unless you queue it as next.'}</div>
+      : wizard ? 'The quest lands among the visions unless you start it elsewhere.' : 'The task lands in the ideas unless you start it in another column.'}</div>
     ${listMode
       ? row('Tasks', html`<${Textarea} class="tb-new-list" rows="6" aria-label="Tasks, one per line" value=${draft.list} disabled=${busy}
           domRef=${titleRef} onInput=${(event) => set('list')(event.currentTarget.value)} />
@@ -231,13 +296,18 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           domRef=${titleRef} placeholder=${`one line (required); paste a list for one ${noun} per line`}
           onInput=${(event) => set('title')(event.currentTarget.value)} onPaste=${onPaste}
           onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void submit(); } }} />`,
-          tracker ? 'only a tracker id: it becomes the ref, titled from the tracker' : null)}
+          tracker ? (draft.to || !['idea', 'next'].includes(draft.start)
+            ? 'only a tracker id: it becomes the ref, and stays the title (an import cannot start it here or assign it)'
+            : 'only a tracker id: it becomes the ref, titled from the tracker') : null)}
         ${row('Brief', html`<${Textarea} class="tb-new-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
           placeholder="what the assignee needs to know (optional)" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}
         ${row('Ref', html`<${Input} class="tb-new-ref" aria-label="Ref" value=${draft.ref} disabled=${busy || tracker}
           placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123 (optional)" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
           draft.ref.trim() ? 'a bare awb or Linear id is linked through its tracker' : null)}`}
-    ${row('Stage', html`<${StagePick} value=${draft.stage} wizard=${wizard} disabled=${busy} onChange=${set('stage')} />`)}
+    ${row('Starts in', html`<${StartPick} value=${listMode && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
+      canAssign=${canAssign} listMode=${listMode} onChange=${set('start')} />`, missing || null)}
+    ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Input} class="tb-new-reason" aria-label="Block reason" required maxLength=${400}
+      value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
     ${!listMode && row('After', html`<${DepsPick} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
     ${!listMode && canAssign && row('Assignee', members.length
       ? html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
@@ -245,26 +315,44 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}
         <//>`
       : html`<span class="ui-hint">No member to assign to.</span>`,
-      draft.to ? `the brief goes to its inbox${draft.stage === 'idea' ? '; the idea joins the queue' : ''}` : null)}
+      draft.start === 'done' ? (draft.to ? 'who did it; nobody is mailed' : 'optional: who did it')
+        : draft.to ? `the brief goes to its inbox${draft.start === 'idea' ? '; the idea joins the queue' : ''}` : null)}
   <//>`;
 }
 
 // AskAgentDialog is "Ask an agent": the request goes to the picked member's
 // inbox, never as keys into its pane.
-export function AskAgentDialog({ group, entry, api, wizard = false, onClose }) {
+// askHint is the request's opening line for a start state picked in a lanes
+// cell: where the agent should put the tasks it writes.
+export function askHint(initial = {}, wizard = false) {
+  const noun = wizard ? 'quests' : 'tasks';
+  const who = initial.toName || initial.to || '';
+  switch (initial.start) {
+    case 'next': return `Land the ${noun} in Next.\n\n`;
+    case 'progress': return `Land the ${noun} in Next for ${who} (assign them to ${who}).\n\n`;
+    case 'blocked': return `Land the ${noun} as blocked${who ? ` for ${who}` : ''}, with the reason.\n\n`;
+    case 'done': return `Log the ${noun} as done${who ? `, done by ${who}` : ''} (taskboard add --done).\n\n`;
+    case 'idea': return `Land the ${noun} in the ideas.\n\n`;
+    default: return '';
+  }
+}
+
+export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}, onClose }) {
   const members = askableMembers(group, entry);
   const [pickedId, setTo] = useState(defaultAskee(members)?.agent_id || '');
   // The pick falls back to the default while it is not (or no longer) one
   // of them: an agent can go offline, or the writer lock change, while the
   // dialog is open.
   const to = members.some((member) => member.agent_id === pickedId) ? pickedId : (defaultAskee(members)?.agent_id || '');
-  const [prompt, setPrompt] = useState('');
+  const opening = askHint(initial, wizard);
+  const [prompt, setPrompt] = useState(opening);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const sending = useRef(false);
   const promptRef = useRef(null);
   const picked = members.find((member) => member.agent_id === to) || null;
-  const ready = !!picked && prompt.trim().length > 0;
+  // The cell's opening line alone is not a request.
+  const ready = !!picked && prompt.trim().length > 0 && prompt.trim() !== opening.trim();
   const submit = async () => {
     if (!ready || sending.current) return;
     sending.current = true;
@@ -283,7 +371,7 @@ export function AskAgentDialog({ group, entry, api, wizard = false, onClose }) {
   };
   const noun = wizard ? 'quests' : 'tasks';
   return html`<${Dialog} id="taskboard-ask-modal" title=${wizard ? `Ask a hero · ${group.name}` : `Ask an agent · ${group.name}`}
-    onClose=${onClose} busy=${busy} dirty=${prompt.trim().length > 0} confirmDiscard=${shellConfirmDiscard}
+    onClose=${onClose} busy=${busy} dirty=${prompt.trim().length > 0 && prompt !== opening} confirmDiscard=${shellConfirmDiscard}
     initialFocusRef=${promptRef} onSubmitHotkey=${() => void submit()} resizeKey="tclaude.dash.modalSize.taskboard-ask" error=${error}
     cancel="Cancel"
     footerStart=${html`<span class="ui-hint tb-new-cli"><code>tclaude agent taskboard ask ${group.name} --to … "…"</code></span>`}

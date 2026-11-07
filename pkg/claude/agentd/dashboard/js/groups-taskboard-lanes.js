@@ -29,6 +29,7 @@ import {
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
 import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
+import { NewTaskMenu } from './groups-taskboard-new.js';
 
 const html = htm.bind(h);
 
@@ -218,17 +219,18 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
   }
 }
 
-// cellAdd is what the "+" in a cell pre-fills, or null where a new task
-// cannot land: Ideas and Next set the stage; an agent's lane (Next or In
-// progress) sets the assignee, only for a viewer who may assign. Blocked and
-// Done take no new task, and striped cells none at all.
+// cellAdd is the start state the "+" in a cell carries into the add menu's
+// choice, or null where a new task cannot start: every cell the form can
+// create a task in. The Unassigned lane's cells set the column; an agent's
+// lane also sets the assignee (Next and In progress both start it in
+// progress), only for a viewer who may assign. Striped cells take none.
 export function cellAdd(lane, column, { assign = true, member = true } = {}) {
   if (striped(lane, column)) return null;
-  if (lane === UNASSIGNED) {
-    return column === 'ideas' || column === 'next' ? { stage: column === 'ideas' ? 'idea' : 'next', to: '' } : null;
-  }
-  if (!assign || !member || (column !== 'next' && column !== 'progress')) return null;
-  return { stage: 'next', to: lane };
+  const start = { ideas: 'idea', next: 'next', progress: 'progress', blocked: 'blocked', done: 'done' }[column];
+  if (!start) return null;
+  if (lane === UNASSIGNED) return { start, to: '' };
+  if (!assign || !member) return null;
+  return { start: start === 'next' ? 'progress' : start, to: lane };
 }
 
 function cardHint(task) {
@@ -492,13 +494,16 @@ function useColumnResize(group, onChange) {
 // TaskboardLanes is the section's swim-lane view of the same board the list
 // shows. Without `actions` it is read-only: no drags.
 // CellAdd is a cell's "+": a small button in its lower-right corner that
-// opens the New task form filled from the cell (its stage, and the lane's
-// agent as the assignee).
-function CellAdd({ lane, column, add, onNewTask, wizard }) {
+// opens the add menu (the section's ＋▾ menu, anchored here); whichever
+// choice is made starts from the cell: its column, and the lane's agent as
+// the assignee.
+function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
   const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.name} · ${wizard ? column.wizard : column.label}`;
   const what = wizard ? 'quest' : 'task';
-  return html`<${Button} size="sm" variant="ghost" class="tb-cell-add" title=${`New ${what} here: ${where}`}
-    aria-label=${`New ${what} in ${where}`} onClick=${() => onNewTask({ stage: add.stage, to: add.to })}>+<//>`;
+  const initial = { start: add.start, to: add.to, toName: add.to ? lane.name : '' };
+  return html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard}
+    cell=${{ title: `New ${what} here: ${where}`, label: `New ${what} in ${where}` }}
+    onChoose=${(choice) => onNewTask(choice, initial)} />`;
 }
 
 export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null }) {
@@ -530,7 +535,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
         onClick=${() => setDoneOpen({ ...doneOpen, [lane.id]: true })}>+ ${list.length - shown.length} more<//>`}
-      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} />`}
+      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} group=${group} entry=${entry} />`}
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class="tb-lane" data-lane-row=${lane.id || 'unassigned'}>
