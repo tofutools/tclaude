@@ -18,6 +18,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
+import { TaskActivity } from './groups-taskboard-comments.js';
 import { Button, Input, Select, Textarea } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
@@ -211,7 +212,7 @@ function whereHint(draft, task) {
 // canAssign shows the assignee picker, canClose offers Done and Dropped.
 // onSaved runs after a Save (also a partial one), to read the board again.
 export function EditTaskDialog({ group, entry, task, api, canAssign = false, canClose = true, members = [], wizard = false,
-  nameOf = (actor) => actor, onClose, onSaved = () => {} }) {
+  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {} }) {
   // The board's context carries no brief: the form reads the task in full,
   // and the brief field waits for it.
   const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
@@ -251,10 +252,17 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const n = tasks.findIndex((t) => t.id === task.id) + 1;
   const steps = editPlan(base, draft, { add: pending.map(({ file, name }) => ({ file, name })), remove: removed, bodyKnown: brief.state === 'ready' });
   const missing = missingOf(draft);
-  const dirty = steps.length > 0;
+  // A comment being written counts too: closing the form would lose it.
+  const [commenting, setCommenting] = useState(false);
+  const dirty = steps.length > 0 || commenting;
   const save = async () => {
     if (missing || sending.current) return;
-    if (!steps.length) { onClose(); return; }
+    // An unsent comment keeps the form open: Save does not send it.
+    const close = () => {
+      if (commenting) { shellToast('The comment is not sent yet: press Comment, or clear it', true); return; }
+      onClose();
+    };
+    if (!steps.length) { close(); return; }
     sending.current = true;
     setBusy(true);
     setError('');
@@ -263,7 +271,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       onSaved(out);
       if (!out.refused.length) {
         shellToast(`Saved ${task.id}`);
-        onClose();
+        close();
         return;
       }
       setError(`${out.saved.length ? `Saved: ${out.saved.join(', ')}. ` : ''}Not saved: ${out.refused.map((r) => `${r.name} (${r.message})`).join('; ')}`);
@@ -330,5 +338,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('After', html`<${DepsEdit} task=${task} tasks=${tasks} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}
+    ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} />`,
+      'a comment is sent at once, not with Save')}
   <//>`;
 }

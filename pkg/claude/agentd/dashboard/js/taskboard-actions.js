@@ -64,9 +64,9 @@ async function answer(response) {
 // taskForm is a request with files, as the CLI's --attach sends it: a "task"
 // part with the JSON body (none for a bare attach) and one "file" part per
 // file.
-export function taskForm(task, files) {
+export function taskForm(task, files, part = 'task') {
   const form = new FormData();
-  if (task) form.append('task', new Blob([JSON.stringify(task)], { type: 'application/json' }));
+  if (task) form.append(part, new Blob([JSON.stringify(task)], { type: 'application/json' }));
   for (const file of files) form.append('file', file.file || file, file.name || file.file?.name || 'file');
   return form;
 }
@@ -200,6 +200,27 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // brief out.
     task(id) {
       return call('GET', taskPath(id));
+    },
+    // activity is the task's stream, oldest first (`activity`): changes and
+    // comments, each comment in its current state.
+    activity(id) {
+      return call('GET', taskPath(id, '/activity'));
+    },
+    // comment adds a comment (`comment add`), with its files as multipart.
+    // key makes a retry safe: the same key and body return the first
+    // comment, so a Send whose answer was lost is never a second comment.
+    async comment(id, body, key, files = []) {
+      const path = taskPath(id, '/comments');
+      if (files.length) return answer(await send(path, { body: taskForm({ body, key }, files, 'comment') }));
+      return call('POST', path, { body, key });
+    },
+    // editComment and deleteComment are the author's own (`comment edit` /
+    // `comment rm`); a delete leaves a tombstone.
+    editComment(id, commentId, body) {
+      return call('PATCH', taskPath(id, `/comments/${encodeURIComponent(commentId)}`), { body });
+    },
+    deleteComment(id, commentId) {
+      return call('DELETE', taskPath(id, `/comments/${encodeURIComponent(commentId)}`));
     },
     // attach adds files to a task (`attach`); detach removes one by id.
     attach(id, files) {

@@ -80,7 +80,7 @@ function extLabel(name) {
   return dot > 0 ? String(name).slice(dot + 1, dot + 5).toUpperCase() : 'FILE';
 }
 
-function StoredTile({ api, taskId, attachment, removed, onToggle, busy, nameOf }) {
+export function StoredTile({ api, taskId, attachment, removed, onToggle, busy, nameOf }) {
   const thumb = useThumb(api, taskId, attachment);
   const by = nameOf ? nameOf(attachment.added_by) : '';
   return html`<div class=${`tb-file${removed ? ' tb-file-removed' : ''}`} data-file=${attachment.id}>
@@ -107,21 +107,21 @@ function PendingTile({ attachment, remove, busy }) {
 }
 
 // FilePicker is the 📎 button and the hint that a drop or a paste works too.
-export function FilePicker({ add, busy, full = false }) {
+export function FilePicker({ add, busy, full = false, hint = '' }) {
   const input = useRef(null);
   return html`<span class="tb-files-pick">
     <${Button} size="sm" class="tb-files-choose" disabled=${busy || full} onClick=${() => input.current?.click()}>📎 Choose files…<//>
     <input ref=${input} type="file" class="tb-files-input" multiple hidden disabled=${busy}
       onChange=${(event) => { add(event.currentTarget.files); event.currentTarget.value = ''; }} />
-    <span class="ui-hint">${full ? `the task holds ${TASK_FILE_MAX} files` : `…or drop files on the dialog, or paste (${shortcutText('terminal-paste')}) · ${FILE_LIMIT_TEXT}`}</span>
+    <span class="ui-hint">${full ? `that is ${TASK_FILE_MAX} files` : `${hint || `…or drop files on the dialog, or paste (${shortcutText('terminal-paste')})`} · ${FILE_LIMIT_TEXT}`}</span>
   </span>`;
 }
 
 // FilesField is the files of a request that has no task yet (New task, Ask):
 // the picked files as a list, and the picker.
-export function FilesField({ intake, attachments, busy }) {
+export function FilesField({ intake, attachments, busy, hint = '' }) {
   return html`<span class="tb-files-field">
-    <${FilePicker} add=${intake.add} busy=${busy} full=${attachments.length >= TASK_FILE_MAX} />
+    <${FilePicker} add=${intake.add} busy=${busy} full=${attachments.length >= TASK_FILE_MAX} hint=${hint} />
     ${attachments.length > 0 && html`<${AttachmentList} class="tb-files-list" attachments=${attachments} remove=${intake.remove} busy=${busy} />`}
   </span>`;
 }

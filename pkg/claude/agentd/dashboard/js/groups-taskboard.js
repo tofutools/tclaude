@@ -38,6 +38,7 @@ import { TaskboardLanes } from './groups-taskboard-lanes.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
+import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
@@ -362,6 +363,7 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form
     <td class="tb-title-cell">
       ${n ? html`<span class="tb-n" title="Its place in the operator's order: top is next">${n}</span>` : ''}
       <span class="tb-title">${task.title}</span>
+      <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       <span class="tb-id" title=${task.id}>${task.id}</span>
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
     </td>
@@ -673,6 +675,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       </tbody>
     </table>` : null;
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
+    me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
     nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${() => setEditing('')} onSaved=${() => { void actions.refresh(); }} />`;
   return html`<div class="tb-board" data-taskboard=${name}>

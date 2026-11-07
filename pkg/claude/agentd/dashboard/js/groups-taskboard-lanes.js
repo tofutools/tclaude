@@ -30,6 +30,7 @@ import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
 import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
+import { CommentCount } from './groups-taskboard-comments.js';
 
 const html = htm.bind(h);
 
@@ -254,7 +255,7 @@ function Card({ task, n, numbers, drag, onEdit = null }) {
       onDblClick=${onEdit ? (event) => { event.preventDefault(); onEdit(task.id); } : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
     <div class="tb-card-title">${n ? html`<span class="tb-card-n">${n}</span>` : null}${task.title}</div>
-    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} numbers=${numbers} />${cardHint(task)}</div>`}
+    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} numbers=${numbers} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
   </div>`;
 }
 

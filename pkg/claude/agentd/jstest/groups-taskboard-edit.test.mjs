@@ -279,3 +279,21 @@ test('a dirty Ask an agent dialog asks before it closes', async (t) => {
   await harness.act(async () => { shellState.resolveConfirmation(true); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(closed, true, 'the dialog closes once the discard is confirmed');
 });
+
+test('a comment being written keeps the form open: Save does not send it, and closing asks first', async (t) => {
+  const api = fakeApi();
+  api.activity = async (id) => ({ id, entries: [] });
+  const { harness, dialog, save, closed, flush } = await mountEdit(t, task(), { api });
+  await flush();
+  assert.match(dialog.textContent, /no comments yet/);
+  await harness.input(dialog.querySelector('.tb-comment-new'), 'half a thought');
+  await flush();
+  await save();
+  assert.equal(closed(), false, 'an unsent comment is not lost to Save');
+  assert.deepEqual(api.calls, [], 'and Save sends nothing it was not asked to');
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  const cancel = [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel');
+  await harness.act(async () => { harness.fireEvent(cancel, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(shellState.confirmation.value?.title, 'Discard input?', 'closing asks before the comment is lost');
+  await harness.act(async () => { shellState.resolveConfirmation(false); });
+});
