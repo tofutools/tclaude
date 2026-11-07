@@ -240,7 +240,10 @@ a changed group assignment is. Choosing the profile the agent last launched
 under again cancels a pending change. An agent whose launches omit sandbox
 profiles has no explicit profile to change and is refused. In the dashboard,
 the same dialog has a **Sandbox profile** picker beside the implementations,
-and shows the global and group profiles that also apply.
+and shows the global and group profiles that also apply. It starts on **keep
+current**, which changes nothing. **Default** removes the agent's explicit
+profile, so it resolves like a spawn that names none: the global profile,
+then the group's (`--no-sandbox-profile` on the command line).
 
 A peer with restricted trust cannot change a profile: its sandbox-impl
 requests carry only an implementation.
