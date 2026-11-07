@@ -11,7 +11,7 @@ import (
 
 // permissionScopeValueItem is one value the permission editor's picker may
 // offer for a dimension whose catalogue is not on the snapshot: for resource=,
-// one board or process template, with what the picker shows and groups by.
+// one drawing board or process template, with what the picker shows and groups by.
 type permissionScopeValueItem struct {
 	Kind   string   `json:"kind"`
 	ID     string   `json:"id"`
@@ -23,7 +23,7 @@ type permissionScopeValueItem struct {
 // /api/permissions/scope-values?dim=resource: the resource catalogue the
 // editor's resource= picker searches. It is loaded once when the picker opens,
 // not on the 2s snapshot poll, because the process-template listing is a
-// filesystem walk (see scopeDimOptionsSnapshot). Every board and every
+// filesystem walk (see scopeDimOptionsSnapshot). Every drawing board and every
 // process template is offered, listed or not, since a grant may name either;
 // a group that is archived grants nothing and is left off the groups.
 //
@@ -46,16 +46,16 @@ func handleDashboardPermissionScopeValues(w http.ResponseWriter, r *http.Request
 }
 
 // resourceScopeCatalogue lists every resource a resource= matcher may name,
-// boards first, each kind sorted by id.
+// drawing boards first, each kind sorted by id.
 func resourceScopeCatalogue(r *http.Request) ([]permissionScopeValueItem, error) {
 	items := []permissionScopeValueItem{}
-	boards, err := db.ListCollabBoards()
+	drawingBoards, err := db.ListCollabDrawingBoards()
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(boards, func(a, b *db.CollabBoard) int { return strings.Compare(a.ID, b.ID) })
-	for _, b := range boards {
-		item := permissionScopeValueItem{Kind: resourceScopeKindBoard, ID: b.ID, Title: b.Title}
+	slices.SortFunc(drawingBoards, func(a, b *db.CollabDrawingBoard) int { return strings.Compare(a.ID, b.ID) })
+	for _, b := range drawingBoards {
+		item := permissionScopeValueItem{Kind: resourceScopeKindDrawingBoard, ID: b.ID, Title: b.Title}
 		if b.GroupName != "" { // "" for no group or an archived one
 			item.Groups = []string{b.GroupName}
 		}

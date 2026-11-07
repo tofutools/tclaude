@@ -1,5 +1,5 @@
 // overlay-tab-model.js -- what an overlay window holds (tcl-e4i44z): a list of
-// tabs and the one showing. A chat, a shell or a board is a tab's kind, not a
+// tabs and the one showing. A chat, a shell or a drawing board is a tab's kind, not a
 // window's: a window is { id, tabs, active, minimized }, and a tab is
 // { id, kind, label, ...what its kind needs }. A tab minimized by itself leaves
 // its window, and waits as { tab, home, place }: the window it came from and that
@@ -19,7 +19,7 @@ import { MAX_TERMINAL_TAB_GROUPS, normalizeColor, normalizeGrouping, sanitizeGro
 
 export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
 export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
-export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
+export const DRAWING_BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.drawing-board-overlay.placement';
 export const PROCESS_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.process-overlay.placement';
 export const PAGE_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.page-overlay.placement';
 
@@ -27,7 +27,7 @@ export const PAGE_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.page-overlay.placement'
 const PLACEMENTS = Object.freeze({
   chat: [CHAT_PLACEMENT_PREF, 'agent'],
   terminal: [TERMINAL_WINDOW_PREF, 'paneKey'],
-  board: [BOARD_OVERLAY_PLACEMENT_PREF, 'board'],
+  drawing_board: [DRAWING_BOARD_OVERLAY_PLACEMENT_PREF, 'drawingBoard'],
   process: [PROCESS_OVERLAY_PLACEMENT_PREF, 'template'],
   page: [PAGE_OVERLAY_PLACEMENT_PREF, 'page'],
 });

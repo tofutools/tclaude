@@ -92,7 +92,7 @@ func TestGroupProcessesAreMembersToReadAndEdit(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodDelete, "/v1/process/templates/gate", nil).Code)
 
 	// The lock refuses the member's save and keeps its read.
-	rec = testharness.Serve(agentd.BuildDashboardHandlerForTest(), boardDashReq(t, http.MethodPost, "/api/resource-locks",
+	rec = testharness.Serve(agentd.BuildDashboardHandlerForTest(), drawingBoardDashReq(t, http.MethodPost, "/api/resource-locks",
 		map[string]any{"kind": "process", "id": "gate", "locked": true}))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec = save(member, map[string]any{})

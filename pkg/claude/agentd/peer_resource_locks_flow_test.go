@@ -30,10 +30,10 @@ type peerResourcesOut struct {
 		AgentsLocked bool   `json:"agentsLocked"`
 		CanLock      bool   `json:"canLock"`
 	} `json:"processes"`
-	Boards []struct {
+	DrawingBoards []struct {
 		ID           string `json:"id"`
 		AgentsLocked bool   `json:"agentsLocked"`
-	} `json:"boards"`
+	} `json:"drawingBoards"`
 	Pages []struct {
 		ID           string `json:"id"`
 		AgentsLocked bool   `json:"agentsLocked"`
@@ -41,7 +41,7 @@ type peerResourcesOut struct {
 }
 
 // peerLockEnv is one node seen by peer "bob" through its peer view, with the
-// crew group's resources: board "plan", process "ship" (pinned to crew) and
+// crew group's resources: drawing board "plan", process "ship" (pinned to crew) and
 // process "shared" (pinned to crew and backstage), and a page.
 type peerLockEnv struct {
 	fh   *fedHarness
@@ -70,13 +70,13 @@ func newPeerLockEnv(t *testing.T) *peerLockEnv {
 		r.Header.Set("Origin", origin)
 		return testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
 	}
-	rec := dash(http.MethodPost, "/api/boards", map[string]any{"id": "plan", "title": "Plan"})
+	rec := dash(http.MethodPost, "/api/drawing-boards", map[string]any{"id": "plan", "title": "Plan"})
 	require.Less(t, rec.Code, 300, rec.Body.String())
-	rec = dash(http.MethodPost, "/api/boards/plan/group", map[string]any{"group": "crew"})
+	rec = dash(http.MethodPost, "/api/drawing-boards/plan/group", map[string]any{"group": "crew"})
 	require.Less(t, rec.Code, 300, rec.Body.String())
-	rec = dash(http.MethodPost, "/api/boards", map[string]any{"id": "secret", "title": "Secret"})
+	rec = dash(http.MethodPost, "/api/drawing-boards", map[string]any{"id": "secret", "title": "Secret"})
 	require.Less(t, rec.Code, 300, rec.Body.String())
-	rec = dash(http.MethodPost, "/api/boards/secret/group", map[string]any{"group": "hidden"})
+	rec = dash(http.MethodPost, "/api/drawing-boards/secret/group", map[string]any{"group": "hidden"})
 	require.Less(t, rec.Code, 300, rec.Body.String())
 	for _, id := range []string{"ship", "shared"} {
 		rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/"+id, map[string]any{"template": shipFeatureTemplate(id)})
@@ -152,7 +152,7 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 	e := newPeerLockEnv(t)
 
 	// A group the peer does not see: its resources are not found, not refused.
-	rec := e.lock(t, "board", "plan", true)
+	rec := e.lock(t, "drawing_board", "plan", true)
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	_, rec = e.resources(t, "crew")
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
@@ -164,16 +164,16 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 	out, rec := e.resources(t, "crew")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.False(t, out.CanLock, "no lock grant yet")
-	require.Len(t, out.Boards, 1)
-	assert.Equal(t, "plan", out.Boards[0].ID)
+	require.Len(t, out.DrawingBoards, 1)
+	assert.Equal(t, "plan", out.DrawingBoards[0].ID)
 	require.Len(t, out.Processes, 2)
 	require.Len(t, out.Pages, 1)
-	assert.NotContains(t, rec.Body.String(), "secret", "another group's board is not listed")
+	assert.NotContains(t, rec.Body.String(), "secret", "another group's drawing board is not listed")
 
-	for _, c := range []struct{ kind, id string }{{"board", "plan"}, {"process", "ship"}, {"page", e.page}} {
+	for _, c := range []struct{ kind, id string }{{"drawing_board", "plan"}, {"process", "ship"}, {"page", e.page}} {
 		requirePeerRefused(t, e.lock(t, c.kind, c.id, true), "group:crew")
 	}
-	assert.False(t, db.GroupResourceLocked(db.GroupResourceBoard, "plan"), "a refused toggle changes nothing")
+	assert.False(t, db.GroupResourceLocked(db.GroupResourceDrawingBoard, "plan"), "a refused toggle changes nothing")
 	assert.False(t, db.GroupResourceLocked(db.GroupResourceProcess, "ship"))
 	assert.False(t, pageLocked(t, e))
 
@@ -181,11 +181,11 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 	e.grant(t, agentd.PermGroupsResourcesLock, "crew")
 	out, _ = e.resources(t, "crew")
 	assert.True(t, out.CanLock)
-	for _, c := range []struct{ kind, id string }{{"board", "plan"}, {"process", "ship"}, {"page", e.page}} {
+	for _, c := range []struct{ kind, id string }{{"drawing_board", "plan"}, {"process", "ship"}, {"page", e.page}} {
 		rec = e.lock(t, c.kind, c.id, true)
 		require.Equal(t, http.StatusOK, rec.Code, "%s %s: %s", c.kind, c.id, rec.Body.String())
 	}
-	assert.True(t, db.GroupResourceLocked(db.GroupResourceBoard, "plan"))
+	assert.True(t, db.GroupResourceLocked(db.GroupResourceDrawingBoard, "plan"))
 	assert.True(t, db.GroupResourceLocked(db.GroupResourceProcess, "ship"))
 	assert.True(t, pageLocked(t, e))
 
@@ -201,10 +201,10 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.True(t, db.GroupResourceLocked(db.GroupResourceProcess, "shared"))
 
-	// Another group's board stays not found, granted or not elsewhere.
-	rec = e.lock(t, "board", "secret", true)
+	// Another group's drawing board stays not found, granted or not elsewhere.
+	rec = e.lock(t, "drawing_board", "secret", true)
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-	assert.False(t, db.GroupResourceLocked(db.GroupResourceBoard, "secret"))
+	assert.False(t, db.GroupResourceLocked(db.GroupResourceDrawingBoard, "secret"))
 
 	// The toggle is audited as the peer's operator, never as this node's.
 	audit, err := db.ListFederationActivity(e.fh.peer.id.ID(), time.Time{}, 200)
@@ -220,8 +220,8 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 
 	// Revoked: unlocking is refused, and the lock holds.
 	e.revoke(t, agentd.PermGroupsResourcesLock, "crew")
-	requirePeerRefused(t, e.lock(t, "board", "plan", false), "group:crew")
-	assert.True(t, db.GroupResourceLocked(db.GroupResourceBoard, "plan"))
+	requirePeerRefused(t, e.lock(t, "drawing_board", "plan", false), "group:crew")
+	assert.True(t, db.GroupResourceLocked(db.GroupResourceDrawingBoard, "plan"))
 }
 
 // Unrestricted trust holds the grant in every group it sees.
@@ -234,7 +234,7 @@ func TestPeerViewResourceLockUnrestrictedTrust(t *testing.T) {
 	rec = e.lock(t, "process", "shared", true)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.True(t, db.GroupResourceLocked(db.GroupResourceProcess, "shared"))
-	rec = e.lock(t, "board", "plan", true)
+	rec = e.lock(t, "drawing_board", "plan", true)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
@@ -251,11 +251,11 @@ func TestResourceLockNeverReachesAFederatedAgent(t *testing.T) {
 	const conv = "fed-lock-agent"
 	f.HaveConvWithTitle(conv, "visitor")
 	f.HaveMember("crew", conv)
-	grantEverything(t, conv, agentd.PermGroupsResourcesLock, agentd.PermBoardsWrite, agentd.PermProcessTemplatesManage)
+	grantEverything(t, conv, agentd.PermGroupsResourcesLock, agentd.PermDrawingBoardsWrite, agentd.PermProcessTemplatesManage)
 	agent := func(method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
 	}
-	body := map[string]any{"kind": "board", "id": "plan", "locked": true}
+	body := map[string]any{"kind": "drawing_board", "id": "plan", "locked": true}
 	for _, path := range []string{
 		"/api/resource-locks",
 		"/api/peer/" + e.fh.peer.id.ID() + "/api/resource-locks",
@@ -263,7 +263,7 @@ func TestResourceLockNeverReachesAFederatedAgent(t *testing.T) {
 		rec := agent(http.MethodPost, path, body)
 		assert.NotEqual(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
 	}
-	assert.False(t, db.GroupResourceLocked(db.GroupResourceBoard, "plan"), "no agent request locked it")
+	assert.False(t, db.GroupResourceLocked(db.GroupResourceDrawingBoard, "plan"), "no agent request locked it")
 }
 
 // tcl-cpsepi: the resource list mirrors the local rule under its own peer
@@ -291,7 +291,7 @@ func TestPeerViewResourceListFollowsReadGrant(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, "crew", out.Group)
 	require.Len(t, out.Processes, 2, "processes are listed")
-	require.Len(t, out.Boards, 1, "boards are listed")
+	require.Len(t, out.DrawingBoards, 1, "drawing boards are listed")
 	require.Len(t, out.Pages, 1, "pages are listed")
 	assert.True(t, out.CanLock)
 
@@ -315,7 +315,7 @@ func TestPeerViewResourceListUnrestrictedTrust(t *testing.T) {
 
 // tcl-xrs9v5: a template pinned to several groups locks only with the grant in
 // every one of them, so the list says so per template: the group's canLock is
-// for its boards and pages, and a template carries its own.
+// for its drawing boards and pages, and a template carries its own.
 func TestPeerViewResourceListCanLockIsPerTemplate(t *testing.T) {
 	e := newPeerLockEnv(t)
 	e.grant(t, agentd.PermGroupsResourcesRead, "crew")
@@ -324,7 +324,7 @@ func TestPeerViewResourceListCanLockIsPerTemplate(t *testing.T) {
 		t.Helper()
 		out, rec := e.resources(t, "crew")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		assert.True(t, out.CanLock, "the group's own boards and pages")
+		assert.True(t, out.CanLock, "the group's own drawing boards and pages")
 		got := map[string]bool{}
 		for _, p := range out.Processes {
 			got[p.TemplateID] = p.CanLock

@@ -2300,7 +2300,7 @@ func RefreshFederationCatalogsForTest() {
 	}
 }
 
-// ResetBoardUpdatesForTest gives the test a fresh board-update state
+// ResetBoardUpdatesForTest gives the test a fresh drawing-board-update state
 // (nothing checked, nothing announced) and restores the previous one.
 func ResetBoardUpdatesForTest(notesPath string) func() {
 	prev, prevPath := boardUpdates, boardUpdateNotesPath
@@ -2313,7 +2313,7 @@ func ResetBoardUpdatesForTest(notesPath string) func() {
 // restart does, keeping the notes file.
 func RestartBoardUpdatesForTest() { boardUpdates = &boardUpdateState{} }
 
-// ExpireBoardUpdatesForTest makes the next board-update read scan again.
+// ExpireBoardUpdatesForTest makes the next drawing-board-update read scan again.
 func ExpireBoardUpdatesForTest() { boardUpdates.expire() }
 
 // Source fixture uses the real managed-server launch on its seeded native ID;

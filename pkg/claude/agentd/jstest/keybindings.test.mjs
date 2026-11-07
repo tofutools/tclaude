@@ -33,8 +33,8 @@ test('display spells keys with spaces, never "+", and Mod follows the platform',
   assert.equal(kb.shortcutText('wizard', 'macos'), 'Option Shift ⌘ W');
   assert.equal(kb.shortcutText('terminal-tab-left', 'windows'), 'Alt Shift ←');
   assert.equal(kb.shortcutText('node-switch', 'linux'), 'Alt 1…9');
-  assert.equal(kb.shortcutText('board-zoom-in', 'linux'), '=');
-  assert.equal(kb.withShortcut('Undo', 'board-undo', 'macos'), 'Undo (⌘ Z)');
+  assert.equal(kb.shortcutText('drawing-board-zoom-in', 'linux'), '=');
+  assert.equal(kb.withShortcut('Undo', 'drawing-board-undo', 'macos'), 'Undo (⌘ Z)');
   assert.equal(kb.modClickText('linux'), 'Ctrl-click');
   assert.equal(kb.modClickText('macos'), '⌘-click');
   for (const entry of kb.SHORTCUTS) {
@@ -73,7 +73,7 @@ test('modifiers match exactly; Mod takes Ctrl or ⌘ but not both', () => {
   // IME composition never fires a shortcut.
   assert.ok(!kb.matchesShortcut(key({ code: 'KeyK', key: 'k', ctrlKey: true, isComposing: true }), 'palette'));
   // Alternates: redo is also Mod Y.
-  assert.ok(kb.matchesShortcut(key({ code: 'KeyY', key: 'y', ctrlKey: true }), 'board-redo'));
+  assert.ok(kb.matchesShortcut(key({ code: 'KeyY', key: 'y', ctrlKey: true }), 'drawing-board-redo'));
 });
 
 test('a digit range matches each digit in it', () => {
@@ -163,7 +163,7 @@ test('rebinding checks other shortcuts, browser and OS chords, and terminal keys
   assert.ok(kb.validOverride('expose', 'Ctrl+Alt+KeyE'));
   assert.ok(!kb.validOverride('expose', 'Ctrl+Ctrl'), 'a chord that does not parse');
   assert.ok(!kb.validOverride('no-such-shortcut', 'Ctrl+KeyE'));
-  assert.deepEqual(kinds(kb.rebindProblems('board-duplicate', 'Mod+KeyD', {}, 'linux').filter((p) => p.kind === 'shortcut')), [],
+  assert.deepEqual(kinds(kb.rebindProblems('drawing-board-duplicate', 'Mod+KeyD', {}, 'linux').filter((p) => p.kind === 'shortcut')), [],
     'scopes that are never live together do not collide');
 });
 

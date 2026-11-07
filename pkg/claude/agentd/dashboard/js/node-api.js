@@ -39,7 +39,7 @@ export function isTaskboardPath(pathname) {
 }
 
 // onPeerPage reports whether this page is a peer's per-node view. Collab (the
-// companion, boards, overlays, live pages, the access panel) is this node's own,
+// companion, drawing boards, overlays, live pages, the access panel) is this node's own,
 // so a peer's page leaves it out.
 export function onPeerPage(remote = globalThis.__tclaudeRemoteNode) {
   return !!remote?.id;

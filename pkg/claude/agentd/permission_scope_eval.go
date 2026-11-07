@@ -63,7 +63,7 @@ type ActionContext struct {
 	// several workspaces describes each of them in turn rather than passing a
 	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
-	// Resource is the resource acted on as kind:id (board:plan,
+	// Resource is the resource acted on as kind:id (drawing_board:plan,
 	// process_template:release), "" when the action targets no one resource.
 	Resource string
 	// RemotePeer is the trusted instance ID targeted by a federation action.

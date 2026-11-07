@@ -1,5 +1,5 @@
 // terminal-window-model.js -- a plain terminal's overlay window (tcl-0qd62y): a
-// directory shell or a group shell, as a board or a chat floats. An agent's own
+// directory shell or a group shell, as a drawing board or a chat floats. An agent's own
 // terminal floats as its chat window instead, and a peer's terminal stays a tab.
 // The window keeps the pane's key, so a terminal is in one place at a time and
 // goes back to the same tab.
@@ -14,7 +14,7 @@ const SHELL_ROUTE = /^\/api\/(?:term-ws|group-term-ws)\/(?!\.|%2e)(?![^?#]*%(?:2
 
 // overlayablePane reports whether a Terminals pane can float.
 export function overlayablePane(pane) {
-  return !pane?.seed?.remote && !pane?.seed?.board && SHELL_ROUTE.test(pane?.seed?.ws || '');
+  return !pane?.seed?.remote && !pane?.seed?.drawingBoard && SHELL_ROUTE.test(pane?.seed?.ws || '');
 }
 
 // An agent's live session, as a tab opens it. A shell of its stays a shell.

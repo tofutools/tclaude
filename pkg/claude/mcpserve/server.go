@@ -53,18 +53,18 @@ type notifyHumanInput struct {
 	Body    string `json:"body" jsonschema:"The message for the human"`
 }
 
-type readBoardInput struct {
-	ID    string `json:"id" jsonschema:"The board's ID"`
-	Since *int64 `json:"since,omitempty" jsonschema:"Only elements changed after this board version, tombstones included. Without it, the live elements"`
+type readDrawingBoardInput struct {
+	ID    string `json:"id" jsonschema:"The drawing board's ID"`
+	Since *int64 `json:"since,omitempty" jsonschema:"Only elements changed after this drawing board version, tombstones included. Without it, the live elements"`
 }
 
-type createBoardInput struct {
-	Title string `json:"title" jsonschema:"The board's title"`
+type createDrawingBoardInput struct {
+	Title string `json:"title" jsonschema:"The drawing board's title"`
 	Group string `json:"group,omitempty" jsonschema:"The group it belongs to, if any"`
 }
 
-type updateBoardInput struct {
-	ID       string           `json:"id" jsonschema:"The board's ID"`
+type updateDrawingBoardInput struct {
+	ID       string           `json:"id" jsonschema:"The drawing board's ID"`
 	Elements []map[string]any `json:"elements" jsonschema:"Excalidraw-style elements: id, type, x, y, width, height, text, version and so on"`
 }
 
@@ -133,17 +133,17 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 		}))
 	case stewardtools.WaitForActivity:
 		mcp.AddTool(server, def, c.waitForActivity)
-	case stewardtools.ListBoards:
-		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/boards" }))
-	case stewardtools.ReadBoard:
-		mcp.AddTool(server, def, get[readBoardInput](c, boardPath))
-	case stewardtools.CreateBoard:
-		mcp.AddTool(server, def, post(c, func(in createBoardInput) (string, any) {
-			return "/v1/boards", map[string]any{"title": in.Title, "group": in.Group}
+	case stewardtools.ListDrawingBoards:
+		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/drawing-boards" }))
+	case stewardtools.ReadDrawingBoard:
+		mcp.AddTool(server, def, get[readDrawingBoardInput](c, drawingBoardPath))
+	case stewardtools.CreateDrawingBoard:
+		mcp.AddTool(server, def, post(c, func(in createDrawingBoardInput) (string, any) {
+			return "/v1/drawing-boards", map[string]any{"title": in.Title, "group": in.Group}
 		}))
-	case stewardtools.UpdateBoard:
-		mcp.AddTool(server, def, send(c, http.MethodPatch, func(in updateBoardInput) (string, any) {
-			return "/v1/boards/" + url.PathEscape(in.ID), map[string]any{"elements": in.Elements}
+	case stewardtools.UpdateDrawingBoard:
+		mcp.AddTool(server, def, send(c, http.MethodPatch, func(in updateDrawingBoardInput) (string, any) {
+			return "/v1/drawing-boards/" + url.PathEscape(in.ID), map[string]any{"elements": in.Elements}
 		}))
 	case stewardtools.DashboardView:
 		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/dashboard/view" }))
@@ -177,8 +177,8 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 	}
 }
 
-func boardPath(in readBoardInput) string {
-	path := "/v1/boards/" + url.PathEscape(in.ID)
+func drawingBoardPath(in readDrawingBoardInput) string {
+	path := "/v1/drawing-boards/" + url.PathEscape(in.ID)
 	if in.Since != nil {
 		path += "?since=" + strconv.FormatInt(*in.Since, 10)
 	}

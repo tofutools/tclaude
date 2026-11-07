@@ -1135,25 +1135,25 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${Group} title="Stewards">
         <${Setting} title="Stewards" forId="cfg-steward-enabled" k="steward.disabled" badges=${['refresh']}
           summary=${html`a Steward in the companion window, and external stewards if allowed below`}
-          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion offers no Steward (no chips, no summon, no Ctrl+.), and external stewards are refused. Boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
+          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion offers no Steward (no chips, no summon, no Ctrl+.), and external stewards are refused. Drawing boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
           <${Toggle} id="cfg-steward-enabled" />
         </${Setting}>
       </${Group}>
       <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can reply to a Steward that wrote to them; writing to it first needs message.direct or a shared group.">
         <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
           summary="What a Steward can read."
-          more="Every level lists all agents and groups, as you see them, and reads boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. Reads never include other agents' mail through the API, private setup text, or GitHub, Linear and AWB through your credentials. At every level a Steward can capture your dashboard, so it sees what is on screen, including any open messages, and you see a notice each time.">
+          more="Every level lists all agents and groups, as you see them, and reads drawing boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. Reads never include other agents' mail through the API, private setup text, or GitHub, Linear and AWB through your credentials. At every level a Steward can capture your dashboard, so it sees what is on screen, including any open messages, and you see a notice each time.">
           <${ConfigSelect} id="cfg-steward-reads" aria-label="What a Steward can read">
             <option value="operator">Operator level (default)</option>
-            <option value="fleet">Fleet and boards only</option>
+            <option value="fleet">Fleet and drawing boards only</option>
           </${ConfigSelect}>
         </${Setting}>
         <${Setting} title="Writes" forId="cfg-steward-writes" k="steward.writes"
           summary="What a Steward can change without asking."
-          more="Every level can draw on boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
+          more="Every level can draw on drawing boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
           <${ConfigSelect} id="cfg-steward-writes" aria-label="What a Steward can change without asking">
             <option value="messaging">Message agents (default)</option>
-            <option value="none">Boards and notifying you only</option>
+            <option value="none">Drawing boards and notifying you only</option>
             <option value="workers">Message agents and start workers</option>
           </${ConfigSelect}>
         </${Setting}>

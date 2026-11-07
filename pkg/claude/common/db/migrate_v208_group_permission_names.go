@@ -39,6 +39,9 @@ func CanonicalPermissionSlug(slug string) string {
 	if canonical, ok := groupPermissionRenames[slug]; ok {
 		return canonical
 	}
+	if canonical, ok := drawingBoardPermissionRenames[slug]; ok {
+		return canonical
+	}
 	return slug
 }
 

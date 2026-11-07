@@ -171,13 +171,13 @@ ask the same question twice.
 
 ```bash
 tclaude agent notify-human "The build is broken here; have a look." --action terminal
-tclaude agent notify-human "The layout is on the board." --action board:<id>
+tclaude agent notify-human "The layout is on the drawing board." --action drawing_board:<id>
 tclaude agent notify-human "Ready for review." --action pr:<url>
 tclaude agent notify-human "Usage is close to the limit." --action tab:usage
 ```
 
 - `terminal` opens a shell in your own tracked directory. It takes no path.
-- `board:<id>` opens a board.
+- `drawing_board:<id>` opens a drawing board.
 - `pr:<url>` opens a GitHub PR (`https://github.com/<owner>/<repo>/pull/<n>`)
   you presented with `tclaude agent present-pr` first.
 - `tab:<name>` goes to `groups`, `terminals`, `automations`, `processes`,

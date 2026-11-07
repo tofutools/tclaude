@@ -16,7 +16,7 @@ import (
 )
 
 // umbrellaEnv is a manager agent in no group, beside two groups' resources:
-//   - boards: plan (crew), secret (hidden), loose (no group);
+//   - drawing boards: plan (crew), secret (hidden), loose (no group);
 //   - templates: ship (crew), shared (crew and hidden), solo (pinned nowhere).
 type umbrellaEnv struct {
 	t       *testing.T
@@ -34,9 +34,9 @@ func newUmbrellaEnv(t *testing.T) *umbrellaEnv {
 	_, _, err := db.EnsureAgentForConv(e.manager, "test")
 	require.NoError(t, err)
 	for id, group := range map[string]string{"plan": "crew", "secret": "hidden", "loose": ""} {
-		require.Less(t, e.operator(http.MethodPost, "/api/boards", map[string]any{"id": id, "title": id}).Code, 300)
+		require.Less(t, e.operator(http.MethodPost, "/api/drawing-boards", map[string]any{"id": id, "title": id}).Code, 300)
 		if group != "" {
-			rec := e.operator(http.MethodPost, "/api/boards/"+id+"/group", map[string]any{"group": group})
+			rec := e.operator(http.MethodPost, "/api/drawing-boards/"+id+"/group", map[string]any{"group": group})
 			require.Less(t, rec.Code, 300, rec.Body.String())
 		}
 	}
@@ -52,7 +52,7 @@ func newUmbrellaEnv(t *testing.T) *umbrellaEnv {
 }
 
 func (e *umbrellaEnv) operator(method, path string, body any) *httptest.ResponseRecorder {
-	return testharness.Serve(agentd.BuildDashboardHandlerForTest(), boardDashReq(e.t, method, path, body))
+	return testharness.Serve(agentd.BuildDashboardHandlerForTest(), drawingBoardDashReq(e.t, method, path, body))
 }
 
 func (e *umbrellaEnv) agent(method, path string, body any) *httptest.ResponseRecorder {
@@ -73,8 +73,8 @@ func (e *umbrellaEnv) reads(paths ...string) map[string]int {
 	return out
 }
 
-func (e *umbrellaEnv) draw(board string) int {
-	return e.agent(http.MethodPatch, "/v1/boards/"+board, map[string]any{"elements": []any{rect("u", 1, 1, 0)}}).Code
+func (e *umbrellaEnv) draw(drawingBoard string) int {
+	return e.agent(http.MethodPatch, "/v1/drawing-boards/"+drawingBoard, map[string]any{"elements": []any{rect("u", 1, 1, 0)}}).Code
 }
 
 // save saves template's current head again, as the editor would.
@@ -96,14 +96,14 @@ func (e *umbrellaEnv) save(template string, extra map[string]any) *httptest.Resp
 	return e.agent(http.MethodPost, "/v1/process/templates/"+template, body)
 }
 
-func (e *umbrellaEnv) listedBoards() []string {
+func (e *umbrellaEnv) listedDrawingBoards() []string {
 	e.t.Helper()
-	rec := e.agent(http.MethodGet, "/v1/boards", nil)
+	rec := e.agent(http.MethodGet, "/v1/drawing-boards", nil)
 	require.Equal(e.t, http.StatusOK, rec.Code, rec.Body.String())
-	var out struct{ Boards []struct{ ID string } }
+	var out struct{ DrawingBoards []struct{ ID string } }
 	require.NoError(e.t, json.Unmarshal(rec.Body.Bytes(), &out))
 	ids := []string{}
-	for _, b := range out.Boards {
+	for _, b := range out.DrawingBoards {
 		ids = append(ids, b.ID)
 	}
 	slices.Sort(ids)
@@ -125,9 +125,9 @@ func (e *umbrellaEnv) listedTemplates() []string {
 }
 
 const (
-	pathPlan   = "/v1/boards/plan"
-	pathSecret = "/v1/boards/secret"
-	pathLoose  = "/v1/boards/loose"
+	pathPlan   = "/v1/drawing-boards/plan"
+	pathSecret = "/v1/drawing-boards/secret"
+	pathLoose  = "/v1/drawing-boards/loose"
 	pathShip   = "/v1/process/templates/ship"
 	pathShared = "/v1/process/templates/shared"
 	pathSolo   = "/v1/process/templates/solo"
@@ -135,7 +135,7 @@ const (
 
 var umbrellaReadPaths = []string{pathPlan, pathSecret, pathLoose, pathShip, pathShared, pathSolo}
 
-// An unscoped resources.read reads every board and template, wherever it is
+// An unscoped resources.read reads every drawing board and template, wherever it is
 // linked, and changes none of them.
 func TestResourcesReadUmbrellaReadsEveryResourceKind(t *testing.T) {
 	e := newUmbrellaEnv(t)
@@ -147,7 +147,7 @@ func TestResourcesReadUmbrellaReadsEveryResourceKind(t *testing.T) {
 	for p, code := range e.reads(umbrellaReadPaths...) {
 		assert.Equal(t, http.StatusOK, code, p)
 	}
-	assert.Equal(t, []string{"loose", "plan", "secret"}, e.listedBoards())
+	assert.Equal(t, []string{"loose", "plan", "secret"}, e.listedDrawingBoards())
 	assert.Equal(t, []string{"shared", "ship", "solo"}, e.listedTemplates())
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, "/v1/process/runs", nil).Code, "process.runs.read is implied too")
 
@@ -155,7 +155,7 @@ func TestResourcesReadUmbrellaReadsEveryResourceKind(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, e.save("solo", nil).Code)
 }
 
-// An unscoped resources.write changes boards and templates, but never past an
+// An unscoped resources.write changes drawing boards and templates, but never past an
 // operator lock, and neither unlocks nor steers runs.
 func TestResourcesWriteUmbrellaChangesButNotPastALock(t *testing.T) {
 	e := newUmbrellaEnv(t)
@@ -165,7 +165,7 @@ func TestResourcesWriteUmbrellaChangesButNotPastALock(t *testing.T) {
 	rec := e.save("shared", nil)
 	assert.Less(t, rec.Code, 300, rec.Body.String())
 
-	for _, lock := range []map[string]any{{"kind": "board", "id": "loose", "locked": true}, {"kind": "process", "id": "shared", "locked": true}} {
+	for _, lock := range []map[string]any{{"kind": "drawing_board", "id": "loose", "locked": true}, {"kind": "process", "id": "shared", "locked": true}} {
 		rec = e.operator(http.MethodPost, "/api/resource-locks", lock)
 		require.Less(t, rec.Code, 300, rec.Body.String())
 	}
@@ -173,7 +173,7 @@ func TestResourcesWriteUmbrellaChangesButNotPastALock(t *testing.T) {
 	rec = e.save("shared", nil)
 	assert.GreaterOrEqual(t, rec.Code, 400, "a lock holds against resources.write: %s", rec.Body.String())
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, pathLoose, nil).Code, "write implies read, and a lock does not stop a read")
-	rec = e.agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "board", "id": "loose", "locked": false})
+	rec = e.agent(http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "drawing_board", "id": "loose", "locked": false})
 	assert.Equal(t, http.StatusForbidden, rec.Code, "only groups.resources.lock or the human unlocks")
 	assert.Contains(t, rec.Body.String(), agentd.PermGroupsResourcesLock)
 }
@@ -189,7 +189,7 @@ func TestResourcesUmbrellaScopedToAGroup(t *testing.T) {
 		pathPlan: http.StatusOK, pathSecret: http.StatusForbidden, pathLoose: http.StatusForbidden,
 		pathShip: http.StatusOK, pathShared: http.StatusOK, pathSolo: http.StatusForbidden,
 	}, e.reads(umbrellaReadPaths...))
-	assert.Equal(t, []string{"plan"}, e.listedBoards())
+	assert.Equal(t, []string{"plan"}, e.listedDrawingBoards())
 	assert.Equal(t, []string{"shared", "ship"}, e.listedTemplates())
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, "/v1/process/runs?group=crew", nil).Code)
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, "/v1/process/runs?group=hidden", nil).Code)
@@ -207,27 +207,27 @@ func TestResourcesUmbrellaScopedToAGroup(t *testing.T) {
 		"pinning stays process.templates.manage's")
 	assert.Equal(t, http.StatusForbidden, e.save("ship", map[string]any{"listed": true}).Code,
 		"listing stays process.templates.manage's")
-	// The scope reaches a new board in crew, but linking a board to a group
-	// still takes membership: the link mails the board's activity to it.
-	rec = e.agent(http.MethodPost, "/v1/boards", map[string]any{"id": "new", "title": "New", "group": "crew"})
+	// The scope reaches a new drawing board in crew, but linking a drawing board to a group
+	// still takes membership: the link mails the drawing board's activity to it.
+	rec = e.agent(http.MethodPost, "/v1/drawing-boards", map[string]any{"id": "new", "title": "New", "group": "crew"})
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Contains(t, rec.Body.String(), "not_member")
-	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodPost, "/v1/boards", map[string]any{"id": "new2", "title": "New"}).Code)
+	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodPost, "/v1/drawing-boards", map[string]any{"id": "new2", "title": "New"}).Code)
 }
 
 // A resource= scope reaches exactly the resources it names, linked to a group
 // or not.
 func TestResourcesUmbrellaScopedToResources(t *testing.T) {
 	e := newUmbrellaEnv(t)
-	e.grant(agentd.PermResourcesRead, `{"resource":["board:secret","process_template:solo"]}`)
+	e.grant(agentd.PermResourcesRead, `{"resource":["drawing_board:secret","process_template:solo"]}`)
 	assert.Equal(t, map[string]int{
 		pathPlan: http.StatusForbidden, pathSecret: http.StatusOK, pathLoose: http.StatusForbidden,
 		pathShip: http.StatusForbidden, pathShared: http.StatusForbidden, pathSolo: http.StatusOK,
 	}, e.reads(umbrellaReadPaths...))
-	assert.Equal(t, []string{"secret"}, e.listedBoards())
+	assert.Equal(t, []string{"secret"}, e.listedDrawingBoards())
 	assert.Equal(t, []string{"solo"}, e.listedTemplates())
 
-	e.grant(agentd.PermResourcesWrite, `{"resource":["board:loose","process_template:shared"]}`)
+	e.grant(agentd.PermResourcesWrite, `{"resource":["drawing_board:loose","process_template:shared"]}`)
 	assert.Equal(t, http.StatusOK, e.draw("loose"))
 	assert.Equal(t, http.StatusForbidden, e.draw("plan"))
 	rec := e.save("shared", nil)
@@ -235,10 +235,10 @@ func TestResourcesUmbrellaScopedToResources(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, e.save("ship", nil).Code)
 }
 
-// Dimensions AND: group=crew with resource=board:plan reaches plan only.
+// Dimensions AND: group=crew with resource=drawing_board:plan reaches plan only.
 func TestResourcesUmbrellaScopeDimensionsAnd(t *testing.T) {
 	e := newUmbrellaEnv(t)
-	e.grant(agentd.PermResourcesRead, `{"group":["crew"],"resource":["board:plan","board:secret"]}`)
+	e.grant(agentd.PermResourcesRead, `{"group":["crew"],"resource":["drawing_board:plan","drawing_board:secret"]}`)
 	assert.Equal(t, map[string]int{
 		pathPlan: http.StatusOK, pathSecret: http.StatusForbidden, pathLoose: http.StatusForbidden,
 		pathShip: http.StatusForbidden, pathShared: http.StatusForbidden, pathSolo: http.StatusForbidden,
@@ -250,7 +250,7 @@ func TestResourcesUmbrellaScopeDimensionsAnd(t *testing.T) {
 func TestResourcesUmbrellaYieldsToADedicatedDeny(t *testing.T) {
 	e := newUmbrellaEnv(t)
 	e.grant(agentd.PermResourcesRead, "")
-	require.NoError(t, db.SetAgentPermissionOverride(e.manager, agentd.PermBoardsRead, db.PermEffectDeny, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(e.manager, agentd.PermDrawingBoardsRead, db.PermEffectDeny, "test"))
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, pathPlan, nil).Code)
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, pathLoose, nil).Code)
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, pathShip, nil).Code)
@@ -268,7 +268,7 @@ func TestResourcesUmbrellaSudoIsScopedAndTimeBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, e.agent(http.MethodGet, pathPlan, nil).Code)
 	assert.Equal(t, http.StatusForbidden, e.agent(http.MethodGet, pathSecret, nil).Code)
-	assert.Equal(t, []string{"plan"}, e.listedBoards())
+	assert.Equal(t, []string{"plan"}, e.listedDrawingBoards())
 
 	_, err = db.RevokeSudoGrant(id)
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestResourcesWriteUmbrellaImpliesRead(t *testing.T) {
 		pathPlan: http.StatusOK, pathSecret: http.StatusForbidden, pathLoose: http.StatusForbidden,
 		pathShip: http.StatusOK, pathShared: http.StatusOK, pathSolo: http.StatusForbidden,
 	}, e.reads(umbrellaReadPaths...))
-	assert.Equal(t, []string{"plan"}, e.listedBoards())
+	assert.Equal(t, []string{"plan"}, e.listedDrawingBoards())
 	assert.Equal(t, []string{"shared", "ship"}, e.listedTemplates())
 
 	require.NoError(t, db.SetAgentPermissionOverride(e.manager, agentd.PermResourcesRead, db.PermEffectDeny, "test"))

@@ -58,7 +58,7 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermGroupsSettingsEnvironment:     "group_environment",
 	PermGroupsResourcesLock:           "resource_lock",
 	PermGroupsResourcesRead:           "resource_read",
-	// Its collab boards, edited from the peer's dashboard (peer_boards.go).
+	// Its collab drawing boards, edited from the peer's dashboard (peer_drawing_boards.go).
 	PermGroupsResourcesWrite:            "resource_write",
 	PermGroupsMembersManage:             "member_manage",
 	PermGroupsMembersStop:               "stop",

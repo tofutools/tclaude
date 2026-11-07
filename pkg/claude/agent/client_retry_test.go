@@ -347,18 +347,18 @@ func TestDaemonSupportsIdempotency(t *testing.T) {
 // tcl-79am76: a raw GET asks the human the way a JSON request does, and waits
 // for the popup as long as it may run.
 func TestRawGetRequestCarriesAskHuman(t *testing.T) {
-	req, client, err := rawGetRequest("/v1/boards/plan/snapshot", DaemonOpts{AskHuman: 45 * time.Second})
+	req, client, err := rawGetRequest("/v1/drawing-boards/plan/snapshot", DaemonOpts{AskHuman: 45 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, "45s", req.Header.Get("X-Tclaude-Ask-Human"))
 	assert.Equal(t, http.MethodGet, req.Method)
 	assert.GreaterOrEqual(t, client.Timeout, daemonRawTimeout)
 
-	req, client, err = rawGetRequest("/v1/boards/plan/snapshot", DaemonOpts{AskHuman: 20 * time.Minute})
+	req, client, err = rawGetRequest("/v1/drawing-boards/plan/snapshot", DaemonOpts{AskHuman: 20 * time.Minute})
 	require.NoError(t, err)
 	assert.Equal(t, 20*time.Minute+30*time.Second, client.Timeout, "a popup longer than the raw budget extends it")
 	assert.Equal(t, "20m0s", req.Header.Get("X-Tclaude-Ask-Human"))
 
-	req, client, err = rawGetRequest("/v1/boards/plan/snapshot", DaemonOpts{})
+	req, client, err = rawGetRequest("/v1/drawing-boards/plan/snapshot", DaemonOpts{})
 	require.NoError(t, err)
 	assert.Empty(t, req.Header.Get("X-Tclaude-Ask-Human"))
 	assert.Equal(t, daemonRawTimeout, client.Timeout)

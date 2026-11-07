@@ -7,10 +7,11 @@
 
 import { signal } from '@preact/signals';
 import { OTHER_SESSIONS, UNGROUPED, isAgentItem, railItems } from './collab-rail-model.js';
+import { shellConfirm } from './shell-state.js';
 import { MOVABLE_KINDS, canMoveResource, moveResource } from './resource-moves.js';
 import { processContext, processRunApi } from './process-context.js';
 import { onPeerPage } from './node-api.js';
-import { peerBoardResources, peerBoards } from './peer-boards.js';
+import { peerDrawingBoardResources, peerDrawingBoards } from './peer-drawing-boards.js';
 import { overlayResourceKey } from './resource-model.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
@@ -18,7 +19,7 @@ import { moveTabsToCollab } from './overlay-tab-moves.js';
 import { collabDropTarget, collabStripLanding } from './overlay-tab-drag.js';
 import { droppedAt } from './overlay-window-model.js';
 import { attachBackgroundTerminal, backgroundTerminals, rowView, visibleBackgroundTerminals } from './background-terminals.js';
-import { openBoardOverlay, openBoardPane } from './board-overlay-state.js';
+import { openDrawingBoardOverlay, openDrawingBoardPane } from './drawing-board-overlay-state.js';
 import { expectPage, openPageOverlay, openPagePane } from './page-place.js';
 import { openProcessOverlay, openProcessTab } from './process-editor-place.js';
 import { openShellResource, placeTerminalPane } from './terminals-tab.js';
@@ -67,11 +68,11 @@ function terminalStatus(item, value) {
 
 // collabItems is everything the rail and the home list now: panes are the
 // strip's, snapshot the dashboard's.
-// On a peer's page its snapshot carries no resources: the boards it shares
-// come from its board list (peer-boards.js, tcl-ug8bb8).
+// On a peer's page its snapshot carries no resources: the drawing boards it shares
+// come from its drawing board list (peer-drawing-boards.js, tcl-ug8bb8).
 export function collabItems(panes, snapshot, peer = onPeerPage()) {
   const value = snapshot?.value;
-  const resources = peer ? peerBoardResources(peerBoards.value, value) : value?.group_resources || [];
+  const resources = peer ? peerDrawingBoardResources(peerDrawingBoards.value, value) : value?.group_resources || [];
   return railItems({
     resources, groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
@@ -105,7 +106,7 @@ export async function openRailItem(item, { actions, snapshot, fetchImpl = (...ar
         notify(`Could not reopen ${item.title}: ${cause?.message || cause}`, true);
       }
       return null;
-    case 'board': return openBoardPane(r.id, item.title);
+    case 'drawing_board': return openDrawingBoardPane(r.id, item.title);
     case 'process': return openProcessTab(r.id, item.title);
     case 'shell': return openShellResource(r, item.title);
     default: return null;
@@ -138,8 +139,8 @@ export async function railItemToFloat(item, at, ctx) {
   if (item.view === 'open-tab') return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
   const r = item.resource;
   if (r?.kind === 'page' && item.view !== 'closed') return openPageOverlay(r.id, item.title, at);
-  // A peer's board opens as a tab only: the overlay is this node's own.
-  if (r?.kind === 'board') return r.peer ? openRailItem(item, ctx) : openBoardOverlay(r.id, item.title, at);
+  // A peer's drawing board opens as a tab only: the overlay is this node's own.
+  if (r?.kind === 'drawing_board') return r.peer ? openRailItem(item, ctx) : openDrawingBoardOverlay(r.id, item.title, at);
   if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
   // A shell or a terminal floats from the tab it opens in.
   const key = (await openRailItem(item, ctx))?.key || item.paneKey;
@@ -190,7 +191,7 @@ const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
 
 // --- moving an item to another group (tcl-eq8pq9) ---
 
-// railResource is a board or page item as resource-moves.js reads it.
+// railResource is a drawing board or page item as resource-moves.js reads it.
 export function railResource(item) {
   if (!MOVABLE_KINDS.includes(item.kind)) return null;
   const id = item.resource?.id || item.key.slice(item.kind.length + 1);
@@ -227,12 +228,12 @@ export function railGroupDrop(item, target, snapshotValue, peer = onPeerPage()) 
 // railItemToGroup makes the move railGroupDrop found. An agent goes through
 // the Groups tab's own drop operations (dnd-ops.js, the same confirm and
 // calls): into a group from none it is added, out to none it is removed,
-// between two it moves. A board or page moves as its ⋯ → Move to group does.
+// between two it moves. A drawing board or page moves as its ⋯ → Move to group does.
 //   ctx: { notify, groupOps?, api? } (tests pass groupOps and api).
 export async function railItemToGroup(item, drop, ctx = {}) {
   const notify = ctx.notify || (() => {});
   if (drop.resource) {
-    return moveResource(drop.resource, drop.to, { api: ctx.api || processRunApi, notify, refresh: () => processContext.refresh() });
+    return moveResource(drop.resource, drop.to, { api: ctx.api || processRunApi, notify, refresh: () => processContext.refresh(), confirm: ctx.confirm || shellConfirm });
   }
   const ops = ctx.groupOps || (await import('./dnd.js')).dndOps;
   const conv = drop.agent.conv_id || drop.agent.agent_id;

@@ -7,9 +7,9 @@ import { Component, h } from 'preact';
 import { useRef } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { BoardOverlayWindow, boardStartPlacement } from './board-overlay.js';
+import { DrawingBoardOverlayWindow, drawingBoardStartPlacement } from './drawing-board-overlay.js';
 import { WINDOW_GLYPHS } from './overlay-dock.js';
-import { BOARD_WINDOW_KIND, boardOverlays } from './board-overlay-state.js';
+import { DRAWING_BOARD_WINDOW_KIND, drawingBoardOverlays } from './drawing-board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.js';
 import { PAGE_WINDOW_KIND } from './page-pane-model.js';
@@ -32,7 +32,7 @@ const html = htm.bind(h);
 const TAB_BODIES = Object.freeze({
   [CHAT_WINDOW_KIND]: ChatWindow,
   [TERMINAL_WINDOW_KIND]: TerminalWindow,
-  [BOARD_WINDOW_KIND]: BoardOverlayWindow,
+  [DRAWING_BOARD_WINDOW_KIND]: DrawingBoardOverlayWindow,
   [PROCESS_WINDOW_KIND]: ProcessOverlayWindow,
   [PAGE_WINDOW_KIND]: PageOverlayWindow,
 });
@@ -69,8 +69,8 @@ const closeTitle = (window, stewardInside) => {
 
 export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = null, add = null }) {
   const tab = activeTabOf(window);
-  const start = tab.kind === BOARD_WINDOW_KIND
-    ? boardStartPlacement(prefs, boardOverlays.value.findIndex((board) => board.id === tab.id))
+  const start = tab.kind === DRAWING_BOARD_WINDOW_KIND
+    ? drawingBoardStartPlacement(prefs, drawingBoardOverlays.value.findIndex((drawingBoard) => drawingBoard.id === tab.id))
     : tab.kind === PROCESS_WINDOW_KIND ? processStartPlacement : tab.kind === PAGE_WINDOW_KIND ? pageStartPlacement : defaultPlacement;
   useDropPoint(tab, { win, prefs, prefKey: window.place, start });
   const focusRef = useRef(null);
@@ -107,7 +107,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   const fallback = (retry) => {
     const look = windowControlsLook(snapshot.value?.window_controls);
     return html`<${OverlayWindow} id=${window.id} window=${overlay} open=${!window.minimized} className="companion-window chat-window" frameClass="companion-resize-frame"
-      titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Failed: ${tab.label}`} title=${strip}
+      titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Failed: ${tab.label}`} title=${strip}
       controls=${{ look, closeLabel: `Close ${tab.label}`, closeTitle: close.title, onClose: close.onClose }}>
       <div class="companion-empty" role="alert"><p><b>${tab.label}</b> stopped drawing. Nothing it runs has stopped.</p>
         <${Button} size="sm" variant="primary" class="companion-primary" onClick=${retry}>Try again<//></div>

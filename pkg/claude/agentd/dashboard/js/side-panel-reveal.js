@@ -73,6 +73,10 @@
 //    by itself (tcl-bg5qm1): no snap and no reveal from a peek, and
 //    a revealed panel does not go. A pointer there means to pin or unpin the
 //    panel. Moving off it resumes the rest; the prediction ignores it.
+//  - Over another popover (the footer's open-PRs list, a hover card, a
+//    menu), nothing peeks or snaps: the pointer is on that popover, not
+//    heading for the panel, even where it reaches into the edge zone. A peek
+//    already showing runs out from there. Moving off it starts afresh.
 //  - A debug overlay draws each prediction (side-panel-predict-debug.js):
 //    ?side_panel_predict_debug=1 in the URL, or localStorage
 //    tclaude.dash.sidePanelPredictDebug = "1".
@@ -183,6 +187,16 @@ export function modalOpen(doc) {
   });
 }
 
+// POPOVER is another floating surface drawn over the page: the dashboard's
+// popovers (.ui-popover), menus, listboxes, dialogs and native popovers.
+const POPOVER = '.ui-popover, [role="menu"], [role="listbox"], [role="dialog"], [popover]';
+
+// onPopover is whether the pointer is on such a surface outside the panel.
+function onPopover(target, dock) {
+  if (!target?.closest || dock?.contains(target)) return false;
+  return !!target.closest(POPOVER);
+}
+
 // typing is a text-entry control: focus there (the Find box) holds the panel,
 // focus a click left on a button does not.
 function typing(el) {
@@ -216,6 +230,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   let motion = null; // where the current rightward motion started: { x, t }
   let lastT = 0; // when the last pointermove came
   let onHandle = false; // the last move was on the handle (#dock-toggle)
+  let overPopover = false; // the last move was on another popover
   let pressOnHandle = false; // a press on the handle of a peeking panel is held
   let outside = false; // the pointer left the window and has not moved back in
   let peekStartX = 0; // where the pointer was when the peek started
@@ -361,6 +376,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     // anywhere.
     const moved = !last || last.x !== event.clientX || last.y !== event.clientY;
     onHandle = !!doc.getElementById('dock-toggle')?.contains(event.target);
+    overPopover = onPopover(event.target, dock());
     const t = now();
     // The motion restarts at any leftward move (so a rightward one starts from
     // its low point) and after a pause (from where it rested, a frame before
@@ -399,6 +415,15 @@ export function bindEdgeReveal(doc = globalThis.document, {
       cancelStop();
       samples = [];
       motion = null;
+      return;
+    }
+    // On another popover the pointer is using it, not heading for the panel:
+    // no motion counts, and a peek showing runs out.
+    if (overPopover) {
+      cancelStop();
+      samples = [];
+      motion = null;
+      if (isSidePanelPeeking() && !retract) armRetract();
       return;
     }
     if (isSidePanelPeeking() && dock()?.contains(event.target)) {
@@ -579,7 +604,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     const c = C();
     const rect = dock()?.getBoundingClientRect?.();
     const inBand = !rect?.height || (last && last.y >= rect.top && last.y <= rect.bottom);
-    if (motion && last && inBand && !onHandle && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && !modalOpen(doc) && finePointer() && canRevealSidePanel(doc)) {
+    if (motion && last && inBand && !onHandle && !overPopover && !event.buttons && enabled && !dragging && !isSidePanelRevealed() && !modalOpen(doc) && finePointer() && canRevealSidePanel(doc)) {
       const speed = (last.x - motion.x) / Math.max(1, lastT - motion.t);
       const next = last.x + speed * c.FRAME_MS;
       const edgeX = contentRight() - c.EDGE_PX;
@@ -600,7 +625,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
   });
   doc.addEventListener('dragend', dragOver);
   // A motion is only measured from a rest the page saw: no pointermove comes
-  // while the pointer is over a frame (a page or a board), so the gap after
+  // while the pointer is over a frame (a page or a drawing board), so the gap after
   // one is no rest, and the next move starts a new motion where it is.
   const isFrame = (el) => /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(el?.tagName || '');
   doc.addEventListener('pointerout', (event) => {
@@ -625,7 +650,7 @@ export function bindEdgeReveal(doc = globalThis.document, {
     } else if (isSidePanelPeeking() && !retract) armRetract();
   }, true);
   doc.addEventListener('drop', dragOver, true);
-  // The pointer can leave the panel straight into a frame (a page or a board),
+  // The pointer can leave the panel straight into a frame (a page or a drawing board),
   // after which the page sees no pointermove: the panel's own leave says so.
   const panel = dock();
   panel?.addEventListener('pointerleave', () => {

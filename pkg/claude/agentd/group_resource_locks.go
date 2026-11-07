@@ -11,7 +11,7 @@ import (
 
 // The lock on a group resource (tcl-dwzsq0).
 //
-// A process template, a collab board or a live page can be locked against
+// A process template, a collab drawing board or a live page can be locked against
 // agent changes. While locked, an agent's change is refused with
 // resource_locked (403) whatever else it holds (a slug, a sudo grant, group
 // ownership, a template), unless it holds groups.resources.lock in every group
@@ -24,7 +24,7 @@ import (
 // never conferred by ownership or membership: the operator grants it. A
 // trusted peer's operator reaches the dashboard route through the peer view,
 // only under its groups.resources.lock peer grants (peer_resource_locks.go).
-// Process and board locks are stored (group_resource_locks); a page's lock
+// Process and drawing board locks are stored (group_resource_locks); a page's lock
 // lives with the page (livePage.agentsLocked), and ends when it is closed.
 //
 // What a lock refuses an agent:
@@ -32,15 +32,15 @@ import (
 //     unpinning it from a group, and importing over it (a .pwf or a config
 //     bundle). Pinning it to another group is allowed: that changes the group,
 //     not the template.
-//   - board: every patch (the agent PATCH route); the operator's dashboard
+//   - drawing board: every patch (the agent PATCH route); the operator's dashboard
 //     patch stays open.
 //   - page: patches, eval, close and re-show, by its shower or a member.
 
 // Resource kinds as the API names them.
 const (
-	resourceKindProcess = db.GroupResourceProcess
-	resourceKindBoard   = db.GroupResourceBoard
-	resourceKindPage    = "page"
+	resourceKindProcess      = db.GroupResourceProcess
+	resourceKindDrawingBoard = db.GroupResourceDrawingBoard
+	resourceKindPage         = "page"
 )
 
 func writeResourceLocked(w http.ResponseWriter, what string) {
@@ -123,7 +123,7 @@ func pageLocksHeld(r *http.Request, ids ...string) map[string]bool {
 }
 
 // POST /api/resource-locks {kind, id, locked} — the operator locks or
-// unlocks a resource. kind is process (a template id), board (a board id) or
+// unlocks a resource. kind is process (a template id), drawing board (a drawing board id) or
 // page (a page's public id). A trusted peer's operator reaches the same
 // change through the peer view, under its groups.resources.lock grant
 // (peer_resource_locks.go).
@@ -151,7 +151,7 @@ func decodeResourceLock(w http.ResponseWriter, r *http.Request) (resourceLockReq
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil || req.Locked == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", `body must be {"kind": "process"|"board"|"page", "id": "...", "locked": true|false}`)
+		writeError(w, http.StatusBadRequest, "invalid_arg", `body must be {"kind": "process"|"drawing_board"|"page", "id": "...", "locked": true|false}`)
 		return req, false
 	}
 	req.ID = strings.TrimSpace(req.ID)
@@ -171,9 +171,9 @@ func applyResourceLock(w http.ResponseWriter, r *http.Request, req resourceLockR
 		if *req.Locked && !processTemplateExists(w, r, id) {
 			return
 		}
-	case resourceKindBoard:
-		if _, err := db.GetCollabBoard(id); *req.Locked && err != nil {
-			writeBoardStoreError(w, err)
+	case resourceKindDrawingBoard:
+		if _, err := db.GetCollabDrawingBoard(id); *req.Locked && err != nil {
+			writeDrawingBoardStoreError(w, err)
 			return
 		}
 	case resourceKindPage:
@@ -210,15 +210,15 @@ func applyResourceLock(w http.ResponseWriter, r *http.Request, req resourceLockR
 		writeJSON(w, http.StatusOK, map[string]any{"kind": req.Kind, "id": id, "locked": *req.Locked})
 		return
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, board or page")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, drawing board or page")
 		return
 	}
 	if err := db.SetGroupResourceLocked(req.Kind, id, *req.Locked); err != nil {
 		writeError(w, http.StatusInternalServerError, "resource_lock", err.Error())
 		return
 	}
-	if req.Kind == resourceKindBoard {
-		boardLive.publish(id, "")
+	if req.Kind == resourceKindDrawingBoard {
+		drawingBoardLive.publish(id, "")
 	}
 	setAuditTargetLabel(r, req.Kind+" "+id)
 	writeJSON(w, http.StatusOK, map[string]any{"kind": req.Kind, "id": id, "locked": *req.Locked})

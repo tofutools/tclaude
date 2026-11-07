@@ -8,7 +8,7 @@ import (
 )
 
 // Group resource access: a group's members read and change the resources
-// linked to that group (today its collab boards) without a global slug.
+// linked to that group (today its collab drawing boards) without a global slug.
 //
 // groups.resources.read and groups.resources.write are group-scoped and
 // MemberImplied: active membership in the resource's group confers them as a
@@ -16,8 +16,8 @@ import (
 // the group takes effect at once. A same-slug explicit deny wins over the
 // membership source, as it does over ownership. write implies read.
 //
-// The global boards.read / boards.write keep covering every board, and a
-// board linked to no group (or to an archived one) is reachable through them
+// The global drawing-boards.read / drawing-boards.write keep covering every drawing board, and a
+// drawing board linked to no group (or to an archived one) is reachable through them
 // only. An operator lock on a resource (group_resource_locks.go) still refuses
 // an agent's change, whatever the source of its access.
 
@@ -35,12 +35,12 @@ func groupResourceSlugs(write bool) []string {
 	return []string{PermGroupsResourcesRead, PermGroupsResourcesWrite}
 }
 
-// boardGlobalSlug is the global slug for an access to any board.
-func boardGlobalSlug(write bool) string {
+// drawingBoardGlobalSlug is the global slug for an access to any drawing board.
+func drawingBoardGlobalSlug(write bool) string {
 	if write {
-		return PermBoardsWrite
+		return PermDrawingBoardsWrite
 	}
-	return PermBoardsRead
+	return PermDrawingBoardsRead
 }
 
 // silentAgentAllows reports whether the confirmed, non-retired agent behind r
@@ -144,19 +144,19 @@ func requireGlobalAndRecord(w http.ResponseWriter, r *http.Request, global strin
 	return conv, ok
 }
 
-// boardGroupName is the active group a stored board is linked to, "" when it
+// drawingBoardGroupName is the active group a stored drawing board is linked to, "" when it
 // has none (GroupName is "" for an archived group, too) or does not exist.
-func boardGroupName(id string) string {
-	b, err := db.GetCollabBoard(id)
+func drawingBoardGroupName(id string) string {
+	b, err := db.GetCollabDrawingBoard(id)
 	if err != nil || b == nil {
 		return ""
 	}
 	return b.GroupName
 }
 
-// requireBoardAccess gates a read (or a write) of one board.
-func requireBoardAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
-	return requireGroupResourceAccess(w, r, boardGlobalSlug(write), boardGroupName(id), resourceRef(resourceScopeKindBoard, id), write)
+// requireDrawingBoardAccess gates a read (or a write) of one drawing board.
+func requireDrawingBoardAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
+	return requireGroupResourceAccess(w, r, drawingBoardGlobalSlug(write), drawingBoardGroupName(id), resourceRef(resourceScopeKindDrawingBoard, id), write)
 }
 
 // resourceLockContexts are the action contexts the lock slug must hold in for
@@ -199,16 +199,16 @@ func agentHoldsResourceLock(r *http.Request, kind, id string) bool {
 // POST /v1/resource-locks {kind, id, locked} — an agent locks or unlocks a
 // resource. It needs groups.resources.lock in every group the resource
 // belongs to (an unscoped grant for one in no group); the operator always
-// passes. kind is process, board or page, as on /api/resource-locks.
+// passes. kind is process, drawing board or page, as on /api/resource-locks.
 func handleAgentResourceLock(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeResourceLock(w, r)
 	if !ok {
 		return
 	}
 	switch req.Kind {
-	case resourceKindProcess, resourceKindBoard, resourceKindPage:
+	case resourceKindProcess, resourceKindDrawingBoard, resourceKindPage:
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, board or page")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, drawing board or page")
 		return
 	}
 	ctxs, found := resourceLockContexts(req.Kind, req.ID)
@@ -224,9 +224,9 @@ func handleAgentResourceLock(w http.ResponseWriter, r *http.Request) {
 	applyResourceLock(w, r, req)
 }
 
-// GET /v1/groups/{name}/resources — a group's processes, boards and pages
+// GET /v1/groups/{name}/resources — a group's processes, drawing boards and pages
 // with their locks, for a member (groups.resources.read) or the operator.
-// canLock says whether the caller may lock and unlock the group's boards and
+// canLock says whether the caller may lock and unlock the group's drawing boards and
 // pages; each process carries its own, since a template pinned to several
 // groups needs the grant in each.
 func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
@@ -250,12 +250,12 @@ func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
 	if conv != "" {
 		canLock, _, _ = permissionAllowsAction(r, conv, PermGroupsResourcesLock, groupResourceContext(g.Name))
 	}
-	boards, pages := groupResources()
+	drawingBoards, pages := groupResources()
 	out := peerGroupResources{
-		Group: g.Name, Processes: []peerGroupProcess{}, Boards: boards[g.ID], Pages: pages[g.ID], CanLock: canLock,
+		Group: g.Name, Processes: []peerGroupProcess{}, DrawingBoards: drawingBoards[g.ID], Pages: pages[g.ID], CanLock: canLock,
 	}
-	if out.Boards == nil {
-		out.Boards = []processGroupBoard{}
+	if out.DrawingBoards == nil {
+		out.DrawingBoards = []processGroupDrawingBoard{}
 	}
 	if out.Pages == nil {
 		out.Pages = []processGroupPage{}

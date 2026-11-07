@@ -22,7 +22,7 @@ export const FILTER_STATES = Object.freeze([
   ['background', 'Background'], ['open', 'Open'], ['closed', 'Closed'],
 ]);
 export const FILTER_KINDS = Object.freeze([
-  ['agents', 'Agents'], ['shells', 'Shells'], ['boards', 'Boards'], ['pages', 'Pages'], ['processes', 'Processes'],
+  ['agents', 'Agents'], ['shells', 'Shells'], ['drawing-boards', 'Drawing boards'], ['pages', 'Pages'], ['processes', 'Processes'],
 ]);
 export const DEFAULT_FILTER = Object.freeze({
   states: Object.freeze(FILTER_STATES.map(([key]) => key).filter((key) => key !== 'closed')),
@@ -53,7 +53,7 @@ export function filterChanges(filter) {
 
 // itemPlace, itemKind and itemActivity are the filter's view of an item.
 const itemPlace = (item) => (item.bucket === 'minimized' ? 'open' : item.bucket);
-const KIND_OF = Object.freeze({ shell: 'shells', board: 'boards', page: 'pages', process: 'processes' });
+const KIND_OF = Object.freeze({ shell: 'shells', drawing_board: 'drawing-boards', page: 'pages', process: 'processes' });
 const itemKind = (item) => (item.kind === 'terminal' ? (isAgentItem(item) ? 'agents' : 'shells') : KIND_OF[item.kind] || 'shells');
 function itemActivity(item) {
   if (needsYou(item)) return 'needs_you';
@@ -121,7 +121,7 @@ export function itemState(item) {
 // AGENT_STATE is what an agent's row says it is doing, in a word or two.
 const AGENT_STATE = Object.freeze({ awaiting_permission: 'needs you', awaiting_input: 'needs you', waking: 'starting' });
 
-const KIND_GLYPH = Object.freeze({ page: '◧', board: '▦', process: '⚙', shell: '▭', terminal: '▭' });
+const KIND_GLYPH = Object.freeze({ page: '◧', drawing_board: '▦', process: '⚙', shell: '▭', terminal: '▭' });
 export const railGlyph = (kind) => KIND_GLYPH[kind] || '▭';
 
 // The strip pane key a resource opens under, for closing or popping it out.
@@ -167,9 +167,9 @@ export function railItems({
   const stamp = (item) => ({ ...item, usedAt: used.get(item.key) || 0 });
 
   for (const r of resources) {
-    // A board in no group (group_id 0) is listed under Not in a group, where
+    // A drawing board in no group (group_id 0) is listed under Not in a group, where
     // its ⚙ or a drag moves it into one.
-    if (r && !r.group_id && r.kind === 'board') {
+    if (r && !r.group_id && r.kind === 'drawing_board') {
       const view = resourceState(r, places);
       add(UNGROUPED.id, stamp({ key: resourceKey(r), kind: r.kind, title: r.title || r.id, view, bucket: bucketOf(view), resource: r, group: '', paneKey: resourcePaneKey(r) }));
       continue;
@@ -188,7 +188,7 @@ export function railItems({
     }));
   }
 
-  // A resource open here that no group lists (a board linked to none, a page
+  // A resource open here that no group lists (a drawing board linked to none, a page
   // shown outside a group, a shell whose group was archived) still shows.
   const listed = new Set([...byGroup.values()].flat().map((item) => item.key));
   for (const pane of panes) {
@@ -214,7 +214,7 @@ export function railItems({
     add(name ? byName.get(name) : UNGROUPED.id, stamp({ ...item, kind: 'terminal', group: name, status }));
   };
   for (const pane of panes) {
-    if (!pane?.key || stripResourceKey(pane.key) || pane.seed?.page || pane.seed?.board || pane.seed?.process) continue;
+    if (!pane?.key || stripResourceKey(pane.key) || pane.seed?.page || pane.seed?.drawingBoard || pane.seed?.process) continue;
     terminal({ key: `pane:${pane.key}`, title: pane.label || pane.key, view: 'open-tab', bucket: 'open', paneKey: pane.key, pane });
   }
   for (const tab of overlays) {
@@ -226,18 +226,18 @@ export function railItems({
   // (a minimized one is detached, so the listing has it too). One that can be
   // attached goes under its agent's group; one that cannot (a superseded
   // generation, a stray tmux session, a locked one: it has no key) goes under
-  // Other sessions, where it can be killed. A board's agent sessions ride on
-  // the board's own item (its row menu ends them), and a group shell's session
+  // Other sessions, where it can be killed. A drawing board's agent sessions ride on
+  // the drawing board's own item (its row menu ends them), and a group shell's session
   // on its group's shell item (its row menu kills it); one whose item no
   // group lists is listed under Not in a group.  A peer's rows are never this
   // node's resources: they list as terminals.
   const held = new Set(overlays.map((tab) => tab?.paneKey).filter(Boolean));
-  const boardSessions = new Map();
+  const drawingBoardSessions = new Map();
   const shellSessions = new Map();
   for (const row of background) {
     if (!row || held.has(row.key)) continue;
-    if (row.kind === 'board' && row.board && !row.node) {
-      boardSessions.set(`board:${row.board}`, row);
+    if (row.kind === 'drawing_board' && row.drawingBoard && !row.node) {
+      drawingBoardSessions.set(`drawing_board:${row.drawingBoard}`, row);
       continue;
     }
     if ((row.kind === 'group_shell' || row.kind === 'shell') && row.key && !row.node) {
@@ -253,11 +253,11 @@ export function railItems({
   }
   for (const items of byGroup.values()) {
     for (const [index, item] of items.entries()) {
-      const sessions = item.kind === 'board' && boardSessions.get(item.key);
-      // The snapshot calls a board closed whatever runs on it: one with
+      const sessions = item.kind === 'drawing_board' && drawingBoardSessions.get(item.key);
+      // The snapshot calls a drawing board closed whatever runs on it: one with
       // sessions is in the background, where the Background box lists it.
       if (sessions) {
-        boardSessions.delete(item.key);
+        drawingBoardSessions.delete(item.key);
         const live = item.bucket === 'closed' ? { view: 'background', bucket: 'background' } : {};
         items[index] = { ...item, ...live, ...(sessions.killable ? { sessions } : {}) };
       }
@@ -271,10 +271,10 @@ export function railItems({
   for (const [key, row] of shellSessions) {
     add(UNGROUPED.id, stamp({ key: `bg::${row.tmux_session || key}`, kind: 'terminal', title: titleOf(row), view: 'background', bucket: 'background', group: '', status: null, row }));
   }
-  // A board with sessions that no group lists still shows, so they can be
+  // A drawing board with sessions that no group lists still shows, so they can be
   // reached and ended.
-  for (const [key, row] of boardSessions) {
-    add(UNGROUPED.id, stamp({ key, kind: 'board', title: titleOf(row), view: 'background', bucket: 'background', group: '', row,
+  for (const [key, row] of drawingBoardSessions) {
+    add(UNGROUPED.id, stamp({ key, kind: 'drawing_board', title: titleOf(row), view: 'background', bucket: 'background', group: '', row,
       sessions: row.killable ? row : undefined }));
   }
 

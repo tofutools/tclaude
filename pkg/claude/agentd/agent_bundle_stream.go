@@ -46,7 +46,7 @@ type agentBundleDataContextKey struct{}
 type agentBundleLossesContextKey struct{}
 
 // agentBundleForeignFileContextKey marks an imported file that may have come
-// from another node, as a board or custody snapshot can.
+// from another node, as a drawing board or custody snapshot can.
 type agentBundleForeignFileContextKey struct{}
 
 func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd string) error {

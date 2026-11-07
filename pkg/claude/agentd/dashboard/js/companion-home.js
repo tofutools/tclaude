@@ -31,10 +31,10 @@ function HomeWindow({ instance, overlay, strip, close, minimize, snapshot, label
   const look = windowControlsLook(snapshot.value?.window_controls);
   const onMinimize = minimize || (() => minimizeOverlayWindow(instance.id));
   const title = html`${strip}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`} onClick=${onMinimize}>–</button>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`} onClick=${close.onClose}>×</button>`}`;
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`} onClick=${onMinimize}>–</button>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title=${close.title} aria-label=${`Close ${label}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${!instance.minimized} className="companion-window chat-window" frameClass="companion-resize-frame"
-    titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${label} title=${title}
+    titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${label} title=${title}
     controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
     <div class="companion-body">${children}</div>
   <//>`;

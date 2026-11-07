@@ -1,7 +1,7 @@
 // resource-lock.js -- the agent lock on a group resource (tcl-dwzsq0) as a
 // chip that is also its toggle: '🔒 agents: read-only' or '✎ agents can
 // edit'. It sits on each row of a group's Resources section and on the
-// resource's own header (process editor, board, page). In the Collab view a
+// resource's own header (process editor, drawing board, page). In the Collab view a
 // locked resource also wears a small LockBadge on its tab name and side panel
 // row. The operator's dashboard toggles it (POST /api/resource-locks); an
 // agent does through its own route under groups.resources.lock.
@@ -42,7 +42,7 @@ function pendingEntry(entry, now = Date.now()) {
   return entry?.pendingUntil && now < entry.pendingUntil ? entry : null;
 }
 
-// rememberLock records what a surface read (a board's load). A read does not
+// rememberLock records what a surface read (a drawing board's load). A read does not
 // undo a toggle still waiting for its snapshot, unless it agrees with it.
 export function rememberLock(kind, id, locked) {
   const key = lockKey(kind, id);
@@ -72,7 +72,7 @@ export function lockChanged(kind, id, locked, { now = Date.now() } = {}) {
   return Promise.resolve().then(() => lockRefresh.run()).catch(() => {});
 }
 
-const kindNoun = { board: 'board', page: 'page', process: 'process' };
+const kindNoun = { drawing_board: 'drawing board', page: 'page', process: 'process' };
 
 // lockBadgeTitle is the small lock icon's tooltip.
 export const lockBadgeTitle = (kind) => `Locked: members can read this ${kindNoun[kind] || 'resource'} but not edit it. `
@@ -80,7 +80,7 @@ export const lockBadgeTitle = (kind) => `Locked: members can read this ${kindNou
 
 // resourceLocked reports whether a resource is locked against agents, from
 // the snapshot's group resources, else from what a surface last read
-// (knownLock): a board linked to no group is not in the snapshot.
+// (knownLock): a drawing board linked to no group is not in the snapshot.
 export function resourceLocked(snapshotValue, kind, id) {
   return !!resourceLockState(snapshotValue, kind, id);
 }
@@ -122,7 +122,7 @@ export async function setResourceLock(kind, id, locked, fetchImpl = (...args) =>
 }
 
 // LockChip shows and toggles one resource's agent lock. The group card passes
-// its process api and context source; a resource's own header (board, page,
+// its process api and context source; a resource's own header (drawing board, page,
 // process editor) passes onChanged instead, with the new state. A peer's
 // group card passes peer: the fetch that reaches that node, and whether the
 // node grants this one the lock there (groups.resources.lock).
@@ -144,7 +144,7 @@ export function LockChip({ kind, id, name, locked, api = null, source = null, on
       setBusy(false);
     }
   };
-  // On a peer's page this node's own surfaces (a board, a page) cannot reach
+  // On a peer's page this node's own surfaces (a drawing board, a page) cannot reach
   // that peer's lock, so they show no chip; a peer's group card does (peer).
   if (onPeerPage() && !peer) return null;
   const denied = peer && !peer.allowed;
@@ -177,7 +177,7 @@ const lockGlyph = (locked) => html`<svg viewBox="0 0 16 16" width="12" height="1
 // RailLock is the lock icon at the right end of a Collab panel resource row:
 // always there, amber, while the resource is locked; shown on row hover or
 // focus while unlocked. Clicking it toggles the lock (POST /api/resource-locks,
-// the same route as the board tab menu and the Groups tab chip). On a peer's
+// the same route as the drawing board tab menu and the Groups tab chip). On a peer's
 // page this node cannot reach the lock: the icon shows the state but does
 // nothing. snapshot is the dashboard's (read here, so a lock change that
 // re-renders only this icon reads the current one). The state is resourceLockState's, so the tab name and the tab

@@ -15,7 +15,7 @@ import (
 // operator's, for rendering the Collab view's home and side panel. 39 groups
 // with a directory (so each could start a group shell), two group shells
 // running, five agents of group tclaude running out of sight, and a few
-// boards and saved pages, most of them closed.
+// drawing boards and saved pages, most of them closed.
 
 // collabFleetGroups are the groups, tclaude first.
 var collabFleetGroups = []string{
@@ -88,19 +88,19 @@ func seedCollabFleet(t *testing.T, f *testharness.Flow, quiet bool) {
 			t.Fatalf("save session %s: %v", a.title, err)
 		}
 	}
-	boards := []struct{ id, title, group string }{
+	drawingBoards := []struct{ id, title, group string }{
 		{"collab-plan", "Collab plan", "tclaude"},
 		{"launch-map", "Launch-resolution map", "tclaude"},
 		{"release-train", "Release train", "release"},
 		{"net-diagram", "Network diagram", "home-lab"},
 		{"pricing-v3", "Pricing v3", "pricing"},
 	}
-	for _, b := range boards {
-		if _, err := db.CreateCollabBoard(b.id, b.title, "docshots", 100); err != nil {
-			t.Fatalf("board %s: %v", b.id, err)
+	for _, b := range drawingBoards {
+		if _, err := db.CreateCollabDrawingBoard(b.id, b.title, "docshots", 100); err != nil {
+			t.Fatalf("drawing board %s: %v", b.id, err)
 		}
-		if err := db.SetCollabBoardGroup(b.id, ids[b.group]); err != nil {
-			t.Fatalf("board group %s: %v", b.id, err)
+		if err := db.SetCollabDrawingBoardGroup(b.id, ids[b.group]); err != nil {
+			t.Fatalf("drawing board group %s: %v", b.id, err)
 		}
 	}
 	pages := []struct{ id, name, title, group string }{

@@ -23,7 +23,7 @@ import (
 
 func setResourceLock(t *testing.T, kind, id string, locked bool) *httptest.ResponseRecorder {
 	t.Helper()
-	return testharness.Serve(agentd.BuildDashboardHandlerForTest(), boardDashReq(t, http.MethodPost, "/api/resource-locks",
+	return testharness.Serve(agentd.BuildDashboardHandlerForTest(), drawingBoardDashReq(t, http.MethodPost, "/api/resource-locks",
 		map[string]any{"kind": kind, "id": id, "locked": locked}))
 }
 
@@ -103,37 +103,37 @@ func TestResourceLockRefusesAgentProcessChanges(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, setResourceLock(t, "group", "ship", true).Code, "an unknown kind is refused")
 }
 
-func TestResourceLockRefusesAgentBoardPatches(t *testing.T) {
+func TestResourceLockRefusesAgentDrawingBoardPatches(t *testing.T) {
 	f := newFlow(t)
-	const conv = "lock-board-agent"
+	const conv = "lock-drawing-board-agent"
 	f.HaveConvWithTitle(conv, "drawer")
-	grantEverything(t, conv, agentd.PermBoardsRead, agentd.PermBoardsWrite)
+	grantEverything(t, conv, agentd.PermDrawingBoardsRead, agentd.PermDrawingBoardsWrite)
 	agent := func(method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
 	}
 	dash := agentd.BuildDashboardHandlerForTest()
-	require.Equal(t, http.StatusCreated, agent(http.MethodPost, "/v1/boards", map[string]any{"id": "arch", "title": "Architecture"}).Code)
+	require.Equal(t, http.StatusCreated, agent(http.MethodPost, "/v1/drawing-boards", map[string]any{"id": "arch", "title": "Architecture"}).Code)
 
-	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "arch", true).Code)
-	requireLocked(t, agent(http.MethodPatch, "/v1/boards/arch", map[string]any{"elements": []any{rect("n1", 1, 1, 0)}}), "agent patch")
+	require.Equal(t, http.StatusOK, setResourceLock(t, "drawing_board", "arch", true).Code)
+	requireLocked(t, agent(http.MethodPatch, "/v1/drawing-boards/arch", map[string]any{"elements": []any{rect("n1", 1, 1, 0)}}), "agent patch")
 
-	b := agent(http.MethodGet, "/v1/boards/arch", nil)
+	b := agent(http.MethodGet, "/v1/drawing-boards/arch", nil)
 	require.Equal(t, http.StatusOK, b.Code)
-	assert.Contains(t, b.Body.String(), `"agents_locked":true`, "the board says it is locked")
+	assert.Contains(t, b.Body.String(), `"agents_locked":true`, "the drawing board says it is locked")
 
-	rec := testharness.Serve(dash, boardDashReq(t, http.MethodPatch, "/api/boards/arch", map[string]any{"elements": []any{rect("n1", 1, 1, 0)}}))
+	rec := testharness.Serve(dash, drawingBoardDashReq(t, http.MethodPatch, "/api/drawing-boards/arch", map[string]any{"elements": []any{rect("n1", 1, 1, 0)}}))
 	assert.Equal(t, http.StatusOK, rec.Code, "the operator still draws: %s", rec.Body.String())
 
-	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "arch", false).Code)
-	rec = agent(http.MethodPatch, "/v1/boards/arch", map[string]any{"elements": []any{rect("n2", 1, 2, 0)}})
+	require.Equal(t, http.StatusOK, setResourceLock(t, "drawing_board", "arch", false).Code)
+	rec = agent(http.MethodPatch, "/v1/drawing-boards/arch", map[string]any{"elements": []any{rect("n2", 1, 2, 0)}})
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	// A deleted board's lock goes with it: a new board by its id is unlocked.
-	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "arch", true).Code)
-	rec = testharness.Serve(dash, boardDashReq(t, http.MethodDelete, "/api/boards/arch", nil))
+	// A deleted drawing board's lock goes with it: a new drawing board by its id is unlocked.
+	require.Equal(t, http.StatusOK, setResourceLock(t, "drawing_board", "arch", true).Code)
+	rec = testharness.Serve(dash, drawingBoardDashReq(t, http.MethodDelete, "/api/drawing-boards/arch", nil))
 	require.Less(t, rec.Code, 300, rec.Body.String())
-	require.Equal(t, http.StatusCreated, agent(http.MethodPost, "/v1/boards", map[string]any{"id": "arch", "title": "Again"}).Code)
-	rec = agent(http.MethodPatch, "/v1/boards/arch", map[string]any{"elements": []any{rect("n3", 1, 3, 0)}})
+	require.Equal(t, http.StatusCreated, agent(http.MethodPost, "/v1/drawing-boards", map[string]any{"id": "arch", "title": "Again"}).Code)
+	rec = agent(http.MethodPatch, "/v1/drawing-boards/arch", map[string]any{"elements": []any{rect("n3", 1, 3, 0)}})
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
@@ -181,7 +181,7 @@ func TestResourceLockRefusesAgentPageChanges(t *testing.T) {
 	assert.Equal(t, http.StatusOK, e.call(t, shower, http.MethodPost, "/v1/pages/app/patches", css).Code)
 }
 
-// The group context lists a group's boards and pages, with their locks, to
+// The group context lists a group's drawing boards and pages, with their locks, to
 // the operator only: they feed the dashboard's Resources section.
 func TestGroupContextListsResourcesToTheOperatorOnly(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
@@ -190,35 +190,35 @@ func TestGroupContextListsResourcesToTheOperatorOnly(t *testing.T) {
 	f.HaveConvWithTitle(conv, "member")
 	f.HaveMember("webshop", conv)
 	dash := agentd.BuildDashboardHandlerForTest()
-	require.Equal(t, http.StatusCreated, testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/boards", map[string]any{"id": "sprint", "title": "Sprint"})).Code)
-	require.Equal(t, http.StatusOK, testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/boards/sprint/group", map[string]any{"group": "webshop"})).Code)
-	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "sprint", true).Code)
+	require.Equal(t, http.StatusCreated, testharness.Serve(dash, drawingBoardDashReq(t, http.MethodPost, "/api/drawing-boards", map[string]any{"id": "sprint", "title": "Sprint"})).Code)
+	require.Equal(t, http.StatusOK, testharness.Serve(dash, drawingBoardDashReq(t, http.MethodPost, "/api/drawing-boards/sprint/group", map[string]any{"group": "webshop"})).Code)
+	require.Equal(t, http.StatusOK, setResourceLock(t, "drawing_board", "sprint", true).Code)
 
 	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/context", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var view struct {
 		Groups []struct {
-			Group  string `json:"group"`
-			Boards []struct {
+			Group         string `json:"group"`
+			DrawingBoards []struct {
 				ID           string `json:"id"`
 				AgentsLocked bool   `json:"agentsLocked"`
-			} `json:"boards"`
+			} `json:"drawingBoards"`
 		} `json:"groups"`
 	}
 	testharness.DecodeJSON(t, rec, &view)
 	var found bool
 	for _, g := range view.Groups {
 		if g.Group == "webshop" {
-			require.Len(t, g.Boards, 1)
-			assert.Equal(t, "sprint", g.Boards[0].ID)
-			assert.True(t, g.Boards[0].AgentsLocked)
+			require.Len(t, g.DrawingBoards, 1)
+			assert.Equal(t, "sprint", g.DrawingBoards[0].ID)
+			assert.True(t, g.DrawingBoards[0].AgentsLocked)
 			found = true
 		}
 	}
-	assert.True(t, found, "the operator sees the group's board: %s", rec.Body.String())
+	assert.True(t, found, "the operator sees the group's drawing board: %s", rec.Body.String())
 
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessRunsRead, "test"))
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/context", nil), conv))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.NotContains(t, rec.Body.String(), `"boards"`, "an agent's context lists no resources")
+	assert.NotContains(t, rec.Body.String(), `"drawing-boards"`, "an agent's context lists no resources")
 }

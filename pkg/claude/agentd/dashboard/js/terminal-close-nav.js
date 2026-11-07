@@ -1,4 +1,4 @@
-// What the dashboard does when its last open terminal or board tab closes. An
+// What the dashboard does when its last open terminal or drawing board tab closes. An
 // empty Terminals tab has nothing to act on, so by default the operator is moved
 // to Groups; config dashboard.stay_on_terminals_after_last_close keeps them put.
 // The dashboard snapshot refreshes the setting each poll (refresh.js).
@@ -17,7 +17,7 @@ export function setStayOnTerminalsAfterLastClose(value) {
 // a terminal closed from elsewhere (an agent hidden from the Groups tab) must
 // never pull the operator off the tab they are on, and the URL there already
 // names that tab. `stayHere` keeps the operator put whatever config says, for a
-// board that moved to the overlay and is still being worked on.
+// drawing board that moved to the overlay and is still being worked on.
 export function leaveTerminalsAfterLastClose({ stayHere = false, documentRef = globalThis.document } = {}) {
   if (!documentRef?.getElementById('tab-terminals')?.classList.contains('active')) return false;
   // The current history entry may still name the tab that just closed, and a

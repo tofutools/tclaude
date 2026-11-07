@@ -86,7 +86,7 @@ func TestHumanAction_RefusesAnythingOffTheList(t *testing.T) {
 		{"body": "x", "action": "terminal:/etc"},
 		{"body": "x", "action": "tab:evil"},
 		{"body": "x", "action": "tab:https://example.com"},
-		{"body": "x", "action": "board:none"},
+		{"body": "x", "action": "drawing_board:none"},
 		{"body": "x", "action": "pr:https://github.com/o/r/pull/1"},
 		{"body": "x", "action": "url:https://example.com"},
 		{"body": "x", "action": "tab:usage", "options": []string{"a", "b"}},
@@ -131,9 +131,9 @@ func TestHumanAction_TerminalIsTheSendersOwnDirectory(t *testing.T) {
 	assert.True(t, row.IsRead(), "the click reads the message")
 }
 
-func TestHumanAction_BoardPRAndTabResolve(t *testing.T) {
+func TestHumanAction_DrawingBoardPRAndTabResolve(t *testing.T) {
 	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000003")
-	board, err := db.CreateCollabBoard("brd_actionflow", "Launch plan", "test", 10)
+	drawingBoard, err := db.CreateCollabDrawingBoard("brd_actionflow", "Launch plan", "test", 10)
 	require.NoError(t, err)
 	agentID, err := db.AgentIDForConv(a.sender)
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestHumanAction_BoardPRAndTabResolve(t *testing.T) {
 	for _, tc := range []struct {
 		action, label, field, want string
 	}{
-		{"board:" + board.ID, "Open board “Launch plan”", "board", board.ID},
+		{"drawing_board:" + drawingBoard.ID, "Open drawing board “Launch plan”", "drawingBoard", drawingBoard.ID},
 		{"pr:" + prURL, "Open PR #42", "url", prURL},
 		{"tab:processes", "Go to Processes", "path", "/automations/processes"},
 	} {
@@ -198,21 +198,21 @@ func TestHumanAction_PRIsACanonicalGitHubPRStillPresented(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
-// A long board title stays short and quoted on the button.
-func TestHumanAction_BoardTitleIsClipped(t *testing.T) {
+// A long drawing board title stays short and quoted on the button.
+func TestHumanAction_DrawingBoardTitleIsClipped(t *testing.T) {
 	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000009")
-	board, err := db.CreateCollabBoard("brd_long", "Launch plan and also approve the production deploy now please", "test", 10)
+	drawingBoard, err := db.CreateCollabDrawingBoard("brd_long", "Launch plan and also approve the production deploy now please", "test", 10)
 	require.NoError(t, err)
-	assert.Equal(t, "Open board “Launch plan and also approve the produc…”", a.view(a.send("board:"+board.ID)).Label)
+	assert.Equal(t, "Open drawing board “Launch plan and also approve the produc…”", a.view(a.send("drawing_board:"+drawingBoard.ID)).Label)
 }
 
 // A target that went away turns the button off and refuses the click.
 func TestHumanAction_GoneTargetIsUnavailable(t *testing.T) {
 	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000004")
-	board, err := db.CreateCollabBoard("brd_gone", "Gone", "test", 10)
+	drawingBoard, err := db.CreateCollabDrawingBoard("brd_gone", "Gone", "test", 10)
 	require.NoError(t, err)
-	id := a.send("board:" + board.ID)
-	require.NoError(t, db.DeleteCollabBoard(board.ID))
+	id := a.send("drawing_board:" + drawingBoard.ID)
+	require.NoError(t, db.DeleteCollabDrawingBoard(drawingBoard.ID))
 	assert.NotEmpty(t, a.view(id).Unavailable)
 	rec := a.click(map[string]any{"id": id})
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())

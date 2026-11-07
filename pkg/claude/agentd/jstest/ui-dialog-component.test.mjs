@@ -34,7 +34,7 @@ test('the scanner counts direct overlays under any alias', () => {
 
 // Dialogs used to build their own .modal-overlay around a role="dialog" box
 // and trap focus with useDialogFocus, each with its own backdrop click, error
-// line and footer. The plugin, daemon-profile, process rename/create, board
+// line and footer. The plugin, daemon-profile, process rename/create, drawing board
 // delete, config diff and sandbox diff dialogs were the last of those. What is
 // left is not a form dialog: the media and Markdown previews, the command
 // palette (a popover on the overlay backdrop) and the shell confirm, which

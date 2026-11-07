@@ -8,14 +8,14 @@ import (
 )
 
 // A group's collab resources beside its saved processes (tcl-dwzsq0): the
-// boards linked to it and the live pages shown into it, each with the
+// drawing boards linked to it and the live pages shown into it, each with the
 // operator's lock. They feed the dashboard's Resources section, so they are
 // listed only to the operator (processContextVisible.human).
 
-type processGroupBoard struct {
+type processGroupDrawingBoard struct {
 	ID           string `json:"id"`
 	Title        string `json:"title"`
-	Editing      int    `json:"editing"` // agents with an open board session
+	Editing      int    `json:"editing"` // agents with an open drawing board session
 	AgentsLocked bool   `json:"agentsLocked,omitempty"`
 }
 
@@ -34,20 +34,20 @@ type processGroupPage struct {
 	ClosedAt     string `json:"closedAt,omitempty"`
 }
 
-// groupResources lists every group's boards and pages, by group id.
-func groupResources() (map[int64][]processGroupBoard, map[int64][]processGroupPage) {
-	boards := map[int64][]processGroupBoard{}
-	all, err := db.ListCollabBoards()
+// groupResources lists every group's drawing boards and pages, by group id.
+func groupResources() (map[int64][]processGroupDrawingBoard, map[int64][]processGroupPage) {
+	drawingBoards := map[int64][]processGroupDrawingBoard{}
+	all, err := db.ListCollabDrawingBoards()
 	if err != nil {
-		slog.Warn("process context: boards unavailable", "error", err)
+		slog.Warn("process context: drawing boards unavailable", "error", err)
 	}
 	editing := map[string]int{}
-	if sessions, err := db.ListCollabBoardSessions(); err == nil {
+	if sessions, err := db.ListCollabDrawingBoardSessions(); err == nil {
 		for _, s := range sessions {
-			editing[s.BoardID]++
+			editing[s.DrawingBoardID]++
 		}
 	}
-	locked, err := db.GroupResourceLocks(db.GroupResourceBoard)
+	locked, err := db.GroupResourceLocks(db.GroupResourceDrawingBoard)
 	if err != nil {
 		locked = map[string]bool{}
 	}
@@ -55,7 +55,7 @@ func groupResources() (map[int64][]processGroupBoard, map[int64][]processGroupPa
 		if b.GroupID == 0 {
 			continue
 		}
-		boards[b.GroupID] = append(boards[b.GroupID], processGroupBoard{
+		drawingBoards[b.GroupID] = append(drawingBoards[b.GroupID], processGroupDrawingBoard{
 			ID: b.ID, Title: b.Title, Editing: editing[b.ID], AgentsLocked: locked[b.ID],
 		})
 	}
@@ -81,5 +81,5 @@ func groupResources() (map[int64][]processGroupBoard, map[int64][]processGroupPa
 	for _, list := range pages {
 		sort.Slice(list, func(i, j int) bool { return list[i].Owner+"/"+list[i].Name < list[j].Owner+"/"+list[j].Name })
 	}
-	return boards, pages
+	return drawingBoards, pages
 }
