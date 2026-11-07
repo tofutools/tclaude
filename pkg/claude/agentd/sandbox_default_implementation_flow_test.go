@@ -96,7 +96,7 @@ func TestSpawn_InstallDefaultRefusalNamesTheWayOut(t *testing.T) {
 	failure := decodeFailure(t, resp.Raw)
 	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code)
 	assert.Contains(t, failure.Error, sandboxLayerUnavailableMessage(errNoBwrap))
-	assert.Contains(t, failure.Error, "tclaude agent sandbox-impl default set harness")
+	assert.Contains(t, failure.Error, "tclaude agent sandbox default set harness")
 }
 
 func TestSpawn_InstallDefaultConfinesANewAgent(t *testing.T) {

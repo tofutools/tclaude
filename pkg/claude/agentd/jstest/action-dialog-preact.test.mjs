@@ -396,7 +396,7 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   const state = createActionDialogState();
   const requests = [];
   const replies = {
-    '/api/peer/inst_forge7/agents/c1/sandbox-impl': { sandbox_implementation: 'harness-builtin', harness: 'codex' },
+    '/api/peer/inst_forge7/agents/c1/sandbox': { sandbox_implementation: 'harness-builtin', harness: 'codex' },
     '/api/peer/inst_forge7/spawn-launch-catalog': {
       harnesses: [{ name: 'codex', display_name: 'Codex', can_sandbox: true, sandbox_modes: ['workspace-write'] }],
       sandbox_impl: { options: [{ value: 'harness-builtin', label: 'harness' }] },
@@ -418,8 +418,61 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   assert.equal(actions.sandboxImplOptions('codex', posture.catalog).length, 1);
   state.openSandboxImpl({ conv: 'c1', node: 'inst_forge7' });
   await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_forge7', implementation: 'tclaude-layer' }, state.dialog.value);
-  assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox-impl', 'POST']);
+  assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox', 'POST']);
   assert.equal(state.dialog.value, null);
+});
+
+test("another node older than the /sandbox route is read and assigned through /sandbox-impl", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const actions = createActionDialogActions({
+    state,
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url, options = {}) => {
+      requests.push([url, options.method || 'GET']);
+      if (url.endsWith('/sandbox')) {
+        return new Response(JSON.stringify({ error: 'not shared', code: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ sandbox_implementation: 'tclaude-layer' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: () => {},
+    refresh: async () => {},
+  });
+  const posture = await actions.loadSandboxImpl('c1', { node: 'inst_old7' });
+  assert.equal(posture.sandbox_implementation, 'tclaude-layer');
+  state.openSandboxImpl({ conv: 'c1', node: 'inst_old7' });
+  await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_old7', implementation: 'tclaude-layer' }, state.dialog.value);
+  assert.deepEqual(requests.slice(-2), [
+    ['/api/peer/inst_old7/agents/c1/sandbox', 'POST'],
+    ['/api/peer/inst_old7/agents/c1/sandbox-impl', 'POST'],
+  ]);
+});
+
+test("an older node's real refusal on /sandbox-impl reaches the dialog", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const actions = createActionDialogActions({
+    state: createActionDialogState(),
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url) => (url.endsWith('/sandbox')
+      ? new Response(JSON.stringify({ error: 'not shared', code: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+      : new Response(JSON.stringify({ error: 'moving out deletes state', code: 'opencode_move_out_confirm' }), { status: 409, headers: { 'Content-Type': 'application/json' } })),
+    notify: () => {},
+    refresh: async () => {},
+  });
+  await assert.rejects(
+    actions.assignSandboxImpl({ conv: 'c1', node: 'inst_old7', implementation: 'harness-builtin' }),
+    (cause) => cause.code === 'opencode_move_out_confirm' && cause.status === 409,
+    'the move-out confirm must survive the fallback',
+  );
 });
 
 test("another node's clone sends only what that node's route takes", async (t) => {

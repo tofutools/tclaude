@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestRunSandboxImplSet_PostsTheSelectorAndBody(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		assert.Equal(t, http.MethodPost, method)
-		assert.Equal(t, "/v1/agent/legacy-worker/sandbox-impl", path)
+		assert.Equal(t, "/v1/agent/legacy-worker/sandbox", path)
 		return 200, "", sandboxImplAssignedBody
 	})
 
@@ -142,7 +143,7 @@ func TestRunSandboxImplShow_GetsAndRenders(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		assert.Equal(t, http.MethodGet, method)
-		assert.Equal(t, "/v1/agent/some%20agent/sandbox-impl", path)
+		assert.Equal(t, "/v1/agent/some%20agent/sandbox", path)
 		return 200, "", `{
 			"conv_id":"5f8c1e2a-1111-2222-3333-444455556666",
 			"sandbox_implementation":"harness-builtin",
@@ -209,4 +210,52 @@ func TestRunSandboxImplSet_RequiresSomethingToChange(t *testing.T) {
 	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker"}, &stdout, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
 	assert.Contains(t, stderr.String(), "--sandbox-profile")
+}
+
+// A daemon older than the /sandbox route refuses it as an unknown verb; the
+// CLI then retries the deprecated /sandbox-impl spelling it does serve.
+func TestRunSandboxImplSet_FallsBackToTheLegacyRouteOnAnOlderDaemon(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var paths []string
+	DaemonRequestImpl = func(_, path string, _, out any, _ DaemonOpts) error {
+		paths = append(paths, path)
+		if strings.HasSuffix(path, "/sandbox") {
+			return &DaemonError{Status: http.StatusNotFound, Code: "not_found",
+				Msg: "unknown verb sandbox for /v1/agent/{selector}/..."}
+		}
+		return json.Unmarshal([]byte(sandboxImplAssignedBody), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{
+		Agent: "legacy-worker", Implementation: "resource-only",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Equal(t, []string{"/v1/agent/legacy-worker/sandbox", "/v1/agent/legacy-worker/sandbox-impl"}, paths)
+}
+
+// A selector that does not resolve is a 404 too, but not an unknown verb: it
+// is reported, not retried.
+func TestRunSandboxImplShow_DoesNotRetryAnUnresolvedAgent(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(_, _ string) (int, string, string) {
+		return http.StatusNotFound, "not_found", ""
+	})
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplShow(&sandboxImplShowParams{Agent: "nobody"}, &stdout, &stderr)
+	assert.NotEqual(t, rcOK, rc)
+	assert.Len(t, calls, 1)
+}
+
+func TestSandboxImplLegacyCmd_IsDeprecatedAndHidden(t *testing.T) {
+	cmd := sandboxImplLegacyCmd()
+	assert.Equal(t, "sandbox-impl", cmd.Name())
+	assert.True(t, cmd.Hidden)
+	assert.Contains(t, cmd.Deprecated, "tclaude agent sandbox")
+	set, _, err := cmd.Find([]string{"set"})
+	require.NoError(t, err)
+	assert.Contains(t, set.Deprecated, "tclaude agent sandbox set")
+	assert.Equal(t, "sandbox", sandboxCmd().Name())
 }

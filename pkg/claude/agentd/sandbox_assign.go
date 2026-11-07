@@ -39,7 +39,8 @@ import (
 // one operation, like the sandbox unlock restart beside it.
 
 // handleAgentSandboxImplementation serves GET (read the durable posture) and
-// POST (assign a new implementation) on /v1/agent/{selector}/sandbox-impl.
+// POST (assign a new implementation and/or sandbox profile) on
+// /v1/agent/{selector}/sandbox, and on its deprecated /sandbox-impl spelling.
 func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, convID string) {
 	switch r.Method {
 	case http.MethodGet, http.MethodPost:
@@ -1152,4 +1153,11 @@ func explicitProfileLabel(ref sandboxpolicy.ExplicitProfileRef) string {
 		return "no explicit profile"
 	}
 	return fmt.Sprintf("sandbox profile %q", ref.Name)
+}
+
+// markDeprecatedRoute flags a response from a deprecated route spelling, and
+// names its successor (RFC 9745 Deprecation, RFC 8288 Link).
+func markDeprecatedRoute(w http.ResponseWriter, successor string) {
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", "<"+successor+">; rel=\"successor-version\"")
 }

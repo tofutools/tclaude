@@ -33,7 +33,7 @@ type sandboxProfileAssignWire struct {
 func postSandboxAssign(t *testing.T, f *testharness.Flow, convID string, body map[string]any) (sandboxProfileAssignWire, int, string) {
 	t.Helper()
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
-		testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+convID+"/sandbox-impl", body)))
+		testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+convID+"/sandbox", body)))
 	var wire sandboxProfileAssignWire
 	if rec.Code == http.StatusOK {
 		testharness.DecodeJSON(t, rec, &wire)
@@ -44,7 +44,7 @@ func postSandboxAssign(t *testing.T, f *testharness.Flow, convID string, body ma
 func getSandboxAssign(t *testing.T, f *testharness.Flow, convID string) sandboxProfileAssignWire {
 	t.Helper()
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
-		testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+convID+"/sandbox-impl", nil)))
+		testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+convID+"/sandbox", nil)))
 	require.Equalf(t, http.StatusOK, rec.Code, "show body=%s", rec.Body.String())
 	var wire sandboxProfileAssignWire
 	testharness.DecodeJSON(t, rec, &wire)
@@ -294,4 +294,23 @@ func TestSandboxProfileAssign_RefusesLiftingTheOmissionUnderImplementationOff(t 
 	_, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{"sandbox_profile": "new-profile"})
 	assert.Equal(t, http.StatusConflict, code)
 	assert.Contains(t, body, "cannot carry sandbox profiles")
+}
+
+// The deprecated /sandbox-impl spelling still serves, and says it is deprecated.
+func TestSandboxAssign_LegacyRouteStillServesAndIsMarkedDeprecated(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+spawn.ConvID+"/sandbox-impl", nil)))
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "true", rec.Header().Get("Deprecation"))
+	assert.Contains(t, rec.Header().Get("Link"), "/sandbox>")
+
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+spawn.ConvID+"/sandbox", nil)))
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Empty(t, rec.Header().Get("Deprecation"))
 }

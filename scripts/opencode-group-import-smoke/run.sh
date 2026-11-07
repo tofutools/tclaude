@@ -261,7 +261,7 @@ land_offline crew-landed parked harness-builtin
 log "importing again under tclaude's sandbox"
 node dst tclaude agent groups stop crew-landed --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
-node dst tclaude agent sandbox-impl default set tclaude-layer
+node dst tclaude agent sandbox default set tclaude-layer
 node dst tclaude agent stop "$OFFLINE" --force
 AMBIENT_BEFORE=$(sessions_on_dst | jq -c '[.[].id] | sort')
 node dst tclaude agent groups import "$ROOT/crew.paf" --dry-run --into "$DST_CWD" --as crew-walled | tee "$ROOT/walled-dry-run.txt"
@@ -435,7 +435,7 @@ jq --arg id "$CHILD_ID" --arg parent "$LANDED" --arg cwd "$DST_CWD" '
 (cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/before-move.json"
 node dst tclaude agent groups stop crew-walled --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
-node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer | tee "$ROOT/move.txt"
+node dst tclaude agent sandbox set "$LANDED" tclaude-layer | tee "$ROOT/move.txt"
 grep -q 'todo list' "$ROOT/move.txt" || die "the assignment does not disclose the todo list"
 sessions_on_dst | jq -es --arg id "$LANDED" 'add // [] | all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
 if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
@@ -470,12 +470,12 @@ log "assigning another implementation moves the agent back to the shared store"
 node dst tclaude agent groups stop crew-walled --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
 private_opencode export "$LANDED" >"$ROOT/before-move-out.json"
-if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin >"$ROOT/move-out-refused.txt" 2>&1; then
+if node dst tclaude agent sandbox set "$LANDED" harness-builtin >"$ROOT/move-out-refused.txt" 2>&1; then
 	die "the move out did not ask first"
 fi
 grep -q "Run again with --yes" "$ROOT/move-out-refused.txt" || die "the refused move out does not say how to accept it"
 [[ -e $MOVED_ROOT ]] || die "the refused move out touched the private state"
-node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin --yes | tee "$ROOT/move-out.txt"
+node dst tclaude agent sandbox set "$LANDED" harness-builtin --yes | tee "$ROOT/move-out.txt"
 grep -q "outside tclaude's sandbox" "$ROOT/move-out.txt" || die "the assignment does not say the conversation is readable"
 (cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/after-move-out.json"
 cmp "$ROOT/before-move-out.json" "$ROOT/after-move-out.json" || die "the conversation changed moving out"

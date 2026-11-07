@@ -21,6 +21,24 @@ async function responseError(response) {
   return { message: text || `HTTP ${response.status}`, code: '' };
 }
 
+// sandboxRequestJSON calls an agent's /sandbox route. Another node may be
+// older than it and serve only the deprecated /sandbox-impl spelling, which
+// refuses the unknown route (404, or a peer view's 403) before doing any work,
+// so that refusal is retried there once. The retry's own error is the one
+// reported: on an older node it is the handler's real answer (a move-out
+// confirm, a validation refusal), and a newer node serves both spellings with
+// the same handler and gates, so it answers there exactly as /sandbox did.
+// This page's own node serves both.
+async function sandboxRequestJSON(fetchImpl, conv, remote, options = {}) {
+  const base = `/api/agents/${encodeURIComponent(conv)}`;
+  try {
+    return await requestJSON(fetchImpl, `${base}/sandbox`, options);
+  } catch (cause) {
+    if (!remote || (cause?.status !== 404 && cause?.status !== 403)) throw cause;
+    return requestJSON(fetchImpl, `${base}/sandbox-impl`, options);
+  }
+}
+
 async function requestJSON(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
   if (!response.ok) {
@@ -370,8 +388,9 @@ export function createActionDialogActions({
     // neither.
     async loadSandboxImpl(conv, { signal, node = '' } = {}) {
       const api = nodeFetch(node, { fetchImpl });
-      const posture = requestJSON(api, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
-      if (!node && !globalThis.__tclaudeRemoteNode?.id) return posture;
+      const remote = !!node || !!globalThis.__tclaudeRemoteNode?.id;
+      const posture = sandboxRequestJSON(api, conv, remote, { signal });
+      if (!remote) return posture;
       const [data, catalog] = await Promise.all([posture,
         // An older node without the catalog route still shows its posture.
         requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
@@ -382,8 +401,8 @@ export function createActionDialogActions({
     // implementation alone. omitSandboxProfiles instead makes the agent's
     // launches omit every tclaude sandbox profile.
     async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, sandboxProfile, omitSandboxProfiles = false, restart = false, confirmMoveOut = false }, owner) {
-      const payload = await requestJSON(
-        nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
+      const payload = await sandboxRequestJSON(
+        nodeFetch(node, { fetchImpl }), conv, !!node || !!globalThis.__tclaudeRemoteNode?.id, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             implementation: implementation || '', sandbox: sandbox || '',
