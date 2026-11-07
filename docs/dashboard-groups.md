@@ -484,9 +484,12 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
 
 ### Resources
 
-**Resources** lists everything attached to the group, grouped by kind:
+**Resources** lists everything attached to the group in a table like the
+agents table, with the columns Name, Kind, State, Lock and Detail. Its saved
+processes come first, then their runs, then the rest of the table. The kinds
+are:
 - **Processes:** its saved processes and runs.
-- **Boards:** the collab boards linked to the group.
+- **Drawing boards:** the collab boards linked to the group.
 - **Pages:** the live pages its members showed into it, including closed
   ones saved with the group.
 - **Shells:** the group's terminal, in its default directory, and every
@@ -495,7 +498,7 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
   agent's own group. A shell lists only while it runs: once it exits (or is
   killed) the row goes away, and the **＋** menu starts a new group shell.
 
-A kind with nothing in it is hidden. The section's count is its saved
+The section's count is its saved
 processes, boards, pages and shells (runs are not counted), and a section with
 nothing at all says *No resources yet*.
 The **＋** menu starts a process for the group or for one agent, adds a new board
@@ -515,8 +518,8 @@ Open, floating and minimized are this browser's own: another browser of
 yours keeps its own windows.
 
 Each row starts like a row of the agents table: a light in the state's
-colour, then the same buttons in the same order on every row, then the
-agent lock. The buttons brighten when you point at the row.
+colour, then the same buttons in the same order on every row. The buttons
+brighten when you point at the row.
 - **👁** follows the state: it brings an open one forward, takes it off the
   dock, opens it, attaches a running shell or reopens a closed page.
   Clicking the name does the same.
@@ -541,7 +544,7 @@ agent's light turns the agent on. **👁** opens it here as a graph, **🗑**
 removes it from the group (the template stays), and **⚙** holds Start… and
 Edit as a graph.
 
-Each resource has a lock chip. It shows the state and is also the toggle:
+Each resource but a shell has a lock chip, in the Lock column. It shows the state and is also the toggle:
 click it (or focus it and press Enter) to switch between:
 - **✎ agents can edit** (the default): members read and edit the resource.
 - **🔒 agents: read-only:** members still read the resource, but no agent can

@@ -18055,10 +18055,6 @@ body.wizard .gm-ghost { border-color: #d4af37; color: #d4af37; background: rgba(
 body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px solid #d4af37; }
 /* A group's saved processes (mock Q3): chips with a ▶ start strip. */
 .gq-saved { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; }
-.gq-saved-row { display: flex; flex-direction: column; gap: 2px; }
-.gq-saved-chip { display: flex; align-items: center; gap: 8px; min-height: 24px; border: 1px solid transparent; border-radius: 6px; padding: 0 0 0 4px; font-size: 13px; }
-.gq-saved-chip.open { border-color: #58a6ff; }
-.gq-saved-chip[data-saved-process-drag] { cursor: grab; }
 .gq-saved-chip.gq-saved-drag-source { opacity: .45; }
 .gq-saved-name { color: var(--ui-strong-text); font-weight: 600; }
 .gq-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
@@ -18070,7 +18066,6 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 .gq-strip .gq-error { flex-basis: 100%; margin-top: 0; }
 .gq-confirm { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #e3b341; }
 body.wizard .gq-strip { background: #181226; border-color: rgba(122, 93, 176, 0.4); }
-body.wizard .gq-saved-chip.open { border-color: #d4af37; }
 body.wizard .gq-strip-title b { color: #f3e6c0; }
 
 /* Groups header process graphs (js/groups-process-indicators.js): the process
@@ -18536,7 +18531,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-kind-label { margin: 2px 0; }
 .gr-row { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-left: 4px; font-size: 13px; }
 .gr-glyph { color: var(--ui-muted-text); margin-right: 6px; }
-.gq-saved-chip .gr-glyph { margin-right: 0; }
 .gr-row .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
 .gr-spacer { flex: 1; }
 .gr-lock { cursor: pointer; white-space: nowrap; background: none; }
@@ -18555,16 +18549,27 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-pill.gr-pill-background { color: #3fb950; border-color: #238636; }
 .gr-pill.gr-pill-closed { color: var(--ui-muted-text); }
 .gr-row .gr-primary { min-width: 0; }
-/* The group's own Resources (ResourceRow) read as a table, like the agents
-   table: actions first in one order, then name, state and detail, each a
-   column shared by every row of the section (subgrid). */
-.gr-resources.gr-table { display: grid; grid-template-columns: max-content minmax(0, max-content) max-content minmax(0, 1fr); column-gap: 12px; row-gap: 6px; }
-.gr-table > .gr-kind { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; row-gap: 2px; }
-.gr-table .gr-kind-label { grid-column: 1 / -1; }
-.gr-table .gr-trow { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 0 12px; padding-left: 4px; }
-.gr-trow .gr-acts, .gq-saved-chip .gr-acts { gap: 6px; }
-.gr-trow:hover .row-actions, .gr-trow:focus-within .row-actions,
-.gq-saved-chip:hover .row-actions, .gq-saved-chip:focus-within .row-actions { opacity: 1; }
+/* A group's Resources are tables like the agents table (ResourceTable in
+   groups-resources.js): fixed column widths, so the processes' table above
+   the runs and the other resources' table below them line up. */
+.gr-rtable { table-layout: fixed; width: 100%; margin: 2px 0 6px; }
+.gr-rtable .gr-col-ctl { width: 128px; }
+.gr-rtable .gr-col-name { width: 34%; }
+.gr-rtable .gr-col-kind { width: 104px; }
+.gr-rtable .gr-col-state { width: 104px; }
+.gr-rtable .gr-col-lock { width: 150px; }
+.gr-rtable td { vertical-align: middle; }
+.gr-rtable td.gr-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; justify-content: flex-start; }
+.gr-rtable td.gr-meta, .gr-rtable td.gr-kindcell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-rtable tr.gq-saved-chip.open td { background: rgba(31, 111, 235, 0.08); }
+.gr-rtable tr.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
+.gr-rtable .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
+.gr-rtable tr[draggable="true"] { cursor: grab; }
+.gr-rtable .gq-saved-name { font-size: 13px; font-weight: 600; color: var(--ui-strong-text); }
+.gr-rtable td.gq-saved-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gr-rtable .gr-acts { gap: 6px; }
+.gr-rtable tr:focus-within .row-actions { opacity: 1; }
 /* A resource's light: the state pill's colour, as an agent's light is its
    on/off. A process's light is a button that starts a run. */
 .gr-light { display: inline-block; width: 1.4em; text-align: center; font-size: 12px; line-height: 1; padding: 2px 0; }
@@ -18579,13 +18584,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-acts .ui-btn.cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
 .gr-acts .ui-btn.cog-btn:hover:not(:disabled) { color: #ffb52e; }
 .gr-acts .ui-btn.cog-btn:disabled { opacity: 0.35; }
-.gr-trow .gr-namecell { display: flex; align-items: center; min-width: 0; max-width: 28em; }
-.gr-trow .gr-namecell .gr-name.ui-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gr-trow > .gr-pill { justify-self: start; }
-.gq-saved-row { display: grid; grid-template-columns: max-content minmax(0, max-content) max-content minmax(0, 1fr); row-gap: 2px; }
-.gq-saved-row > .gq-saved-chip { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 0 12px; }
-.gq-saved-chip .gq-saved-namecell { display: flex; align-items: center; min-width: 0; max-width: 28em; }
-.gq-saved-chip > .gr-pill { justify-self: start; }
 .gr-new-menu .gr-new-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .gr-new-menu .gr-new-name { font-weight: 600; }
 .gr-new-menu .gr-new-line { color: var(--ui-muted-text); font-size: 11px; white-space: normal; text-align: left; }

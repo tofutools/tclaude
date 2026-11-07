@@ -604,7 +604,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
     ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
-      notify=${notify || defaultNotify} nameOf=${nameOf} />`}`;
+      notify=${notify || defaultNotify} nameOf=${nameOf} head=${!savedProcesses.length} />`}`;
   if (fused) {
     const shell = groupShellsOf(dashboardState.snapshot.value, group).length;
     const listed = savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell;

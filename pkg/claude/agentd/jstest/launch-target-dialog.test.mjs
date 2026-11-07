@@ -96,7 +96,17 @@ async function mountDialog(t, props) {
   const pickGroup = async (value) => { await comboPick(harness, q('#lt-group'), value); await settle(); };
   // pickProfile chooses a morph's profile (#lt-morph-profile).
   const pickProfile = async (value) => { await comboPick(harness, q('#lt-morph-profile'), value); await settle(); };
-  return { harness, q, click, change, pickGroup, pickProfile, settle, setValue, timers, toasts, closed: () => closed };
+  // until settles until cond() holds, up to a time limit: the dialog's api
+  // calls chain several awaits, which one fixed settle may not cover on a
+  // loaded machine.
+  const until = async (cond, what, limitMs = 2000) => {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > limitMs) throw new Error(`timed out waiting for ${what}`);
+      await settle();
+    }
+  };
+  return { harness, q, click, change, pickGroup, pickProfile, settle, setValue, timers, toasts, until, closed: () => closed };
 }
 
 test('move from the ⚙ menu: pick a node, then a receiving group, then confirm', async (t) => {
@@ -401,17 +411,13 @@ test('encrypted compaction requests a handoff using the summary wait without a l
  const pending={history:'summary',handoff_reason:'encrypted_compaction_summary',expires_at:new Date(Date.now()+60000).toISOString()};
  const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
  await s.pickProfile('small');
- assert.match(s.q('#lt-ok').textContent,/Request handoff/);
+ await s.until(()=>/Request handoff/.test(s.q('#lt-ok')?.textContent||''),'the dry run to ask for a handoff');
  assert.match(s.q('#launch-target').textContent,/Compaction summary unreadable/);
  assert.equal(s.q('#lt-morph-now').disabled,true);
  assert.equal(s.q('#lt-confirm-cut'),null);
  assert.ok(s.q('#lt-proceed-without-summary'));
  await s.click(s.q('#lt-ok'));
- // The pending state renders after the morph reply resolves; wait for it
- // rather than for a fixed number of ticks (this asserted after one and
- // flaked under CI load).
- for (let i = 0; i < 40 && !s.q('[data-lt-state="waiting-summary"]'); i++) await s.settle();
- assert.ok(s.q('[data-lt-state="waiting-summary"]'));
+ await s.until(()=>!!s.q('[data-lt-state="waiting-summary"]'),'the summary wait');
  assert.equal(sent.length,1);
  assert.equal(sent[0].now,undefined);
  assert.equal(s.closed(),0);
