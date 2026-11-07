@@ -21,7 +21,6 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
 import {
   LAYOUT_COLUMNS, applyLaneOrder, gridColumns, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
@@ -235,15 +234,11 @@ export function cellAdd(lane, column, { assign = true, member = true } = {}) {
   return { start: start === 'next' ? 'progress' : start, to: lane };
 }
 
+// cardHint is what a card's column does not say: why it is blocked, or that
+// its agent went quiet. No times (the List's Last and Age carry them).
 function cardHint(task) {
   if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why">${task.block_reason || 'blocked'}</span>`;
-  if (task.stalled && task.assignee?.agent_id) {
-    const idle = relTime(task.idle_since).replace(/ ago$/, '');
-    return html`<span class="ui-tag ui-tag-warn">${idle ? `idle ${idle}, no report` : 'stalled'}</span>`;
-  }
-  if (task.assignee?.agent_id && task.status === 'open' && task.assigned_at) {
-    return html`<span class="ui-tag">${relTime(task.assigned_at).replace(/ ago$/, '')}</span>`;
-  }
+  if (task.stalled && task.assignee?.agent_id) return html`<span class="ui-tag ui-tag-warn" title="its agent went idle without reporting">idle, no report</span>`;
   return null;
 }
 

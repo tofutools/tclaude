@@ -82,17 +82,30 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   // Who and state.
   assert.equal(rows[0].querySelector('.tb-who-name').textContent, 'builder');
   assert.match(rows[0].querySelector('.tb-who').getAttribute('title'), /^builder · assigned .* by operator$/, 'who assigned it is the tooltip');
-  assert.match(rows[0].querySelector('.tb-state').textContent, /^in progress · 41m$/);
+  // The pill is the bare state; its tooltip has the rest, as the Agents
+  // table's state pill does, and never a time (Last and Age have those).
+  const tip = (row) => row.querySelector('.tb-state-wrap').getAttribute('title');
+  assert.equal(rows[0].querySelector('.tb-state').textContent, 'in progress');
+  assert.equal(tip(rows[0]), 'in progress · with builder');
+  assert.equal(rows[0].querySelector('.tb-state-wrap').getAttribute('tabindex'), '0', 'the tooltip is reachable by keyboard');
+  assert.ok(rows[0].querySelector('.tb-state-wrap').classList.contains('state-pill-wrap'), 'and shown on focus, as the Agents pill\'s is');
+  assert.equal(rows[0].querySelector('.tb-state-wrap').dataset.fullStatus, tip(rows[0]));
+  assert.match(rows[0].querySelector('.tb-state-wrap').getAttribute('aria-label'), /^state: in progress · with builder/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');
   // Rows carry no number: a dependency is named by its title (clipped), and
   // its whole title and id are the tooltip.
   assert.equal(rows[2].querySelector('.tb-dep.unmet').textContent, 'after Engine: dynamic nodes');
   assert.equal(rows[2].querySelector('.tb-dep.unmet').getAttribute('title'), 'Waits on “Engine: dynamic nodes” (tk_00000002)');
-  assert.equal(rows[2].querySelector('.tb-state').textContent, 'queued · waits on Engine: dynamic nod…');
+  assert.equal(rows[2].querySelector('.tb-state').textContent, 'queued');
+  assert.equal(tip(rows[2]), 'queued · waits on “Engine: dynamic nodes”');
   assert.equal(rows[3].querySelector('.tb-state').textContent, 'blocked');
+  assert.equal(tip(rows[3]), 'blocked · “wait for the CSS move”');
   assert.match(section.querySelector('.tb-reason').textContent, /wait for the CSS move/);
-  assert.match(rows[4].querySelector('.tb-state').textContent, /^idea · 5m ago$/);
+  assert.equal(rows[4].querySelector('.tb-state').textContent, 'idea');
+  assert.equal(tip(rows[4]), 'idea · captured, not yet in the queue');
+  assert.equal(tip(rows[1]), 'open · next in the queue', 'nothing more to say: what the state means');
+  for (const row of rows) assert.doesNotMatch(tip(row), /\bago\b|\d+[smhd]\b/, 'no time in a state\'s tooltip');
 
   // History: the counts, and the closed rows on demand.
   assert.match(section.querySelector('.tb-history').textContent, /3 done this week · 1 dropped/);
@@ -190,7 +203,7 @@ test('while the feature is off the source looks again only now and then', async 
     '9 · 1 needs you · 2 in progress · 6 next · 3 ideas');
 });
 
-test('a stalled assignment shows amber with how long its agent has been idle', async (t) => {
+test('a stalled assignment shows amber and says its agent went idle', async (t) => {
   const group = crew('tb-stalled');
   const harness = await createPreactHarness(t);
   const context = { groups: [{
@@ -205,7 +218,8 @@ test('a stalled assignment shows amber with how long its agent has been idle', a
   const state = section.querySelector('tr.tb-row-stalled .tb-state');
   assert.ok(state, 'the row is drawn as stalled');
   assert.ok(state.classList.contains('tb-state-stalled'));
-  assert.equal(state.textContent, 'stalled · idle 7m');
+  assert.equal(state.textContent, 'stalled');
+  assert.match(state.closest('.tb-state-wrap').getAttribute('title'), /^stalled · with .* · idle, no report$/);
 });
 
 test('the list lines its cluster, Name, State, Last and Age up with the agents table above', async (t) => {
