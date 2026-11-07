@@ -19,7 +19,7 @@
 // taskboard.write (or unrestricted trust).
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
@@ -28,6 +28,7 @@ import { shellToast } from './shell-state.js';
 import { captureLines, createTaskboardApi, importRefs, isTrackerLine, taskboardApi } from './taskboard-actions.js';
 import { nodeFetch, nodeSnapshot, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
+import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import {
@@ -145,7 +146,7 @@ function DepChips({ task, numbers }) {
 function Who({ task, group, snapshot }) {
   const agent = task.assignee?.agent_id;
   if (!agent) return html`<span class="tb-unassigned">unassigned</span>`;
-  const name = agentLabel(agent, group, snapshot);
+  const name = task.assignee?.name || agentLabel(agent, group, snapshot);
   const by = actorLabel(task.assigned_by, group, snapshot);
   return html`<span class="tb-who" title=${task.assigned_at ? `assigned ${relTime(task.assigned_at)}` : agent}>
     <span class="tb-avatar" aria-hidden="true">${name.slice(0, 1).toUpperCase()}</span>
@@ -191,6 +192,13 @@ function useBoardActions(source, api) {
   return { busy, run, api };
 }
 
+// canAssign says whether the viewer may assign on this board. The api may
+// carry `can.assign` (a peer node's board sets it from its peer_view grants);
+// the local operator may always.
+export function canAssign(actions) {
+  return !!actions && actions.api?.can?.assign !== false;
+}
+
 // RowActions are a row's buttons for its state. Each names its CLI verb.
 function RowActions({ task, actions, onForm }) {
   const state = taskRowState(task);
@@ -206,19 +214,33 @@ function RowActions({ task, actions, onForm }) {
   if (state === 'blocked') {
     return [b('unblock', 'Unblock', 'taskboard unblock', go('unblock', 'Unblock', (api) => api.status(task.id, 'open'))), edit, drop];
   }
+  const assign = !canAssign(actions) ? null : b('assign', 'Assign ▾', 'taskboard assign --to: give it to a member (or drag the row onto an agent)', () => onForm('assign'));
   if (task.stage === 'idea') {
-    return [b('promote', '✓ Next', 'taskboard promote: to the end of the queue', go('promote', 'Promote', (api) => api.stage(task.id, 'next')), 'primary'), edit, drop];
+    return [b('promote', '✓ Next', 'taskboard promote: to the end of the queue', go('promote', 'Promote', (api) => api.stage(task.id, 'next')), 'primary'), assign, edit, drop].filter(Boolean);
   }
+  const holder = !canAssign(actions) ? null : task.assignee?.agent_id
+    ? b('unassign', 'Unassign', 'taskboard unassign: take it back from its assignee', go('unassign', 'Unassign', (api) => api.unassign(task.id)))
+    : assign;
   return [
+    holder,
     b('done', 'Done', 'taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done'))),
     b('block', 'Block', 'taskboard block: with a reason', () => onForm('block')),
     edit, drop,
-  ];
+  ].filter(Boolean);
 }
 
 // RowForm is the inline form under a row: edit its title and ref, or give
 // the reason for a block or a drop. Enter submits, Escape closes.
-function RowForm({ task, mode, actions, onClose }) {
+// assignableMembers are the group's members a task can go to: active
+// agents with a stable id, online ones first.
+export function assignableMembers(group) {
+  return (group?.members || []).filter((member) => member.agent_id && !member.retired)
+    .sort((a, b) => Number(!!b.online) - Number(!!a.online) || String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+function RowForm({ task, mode, actions, onClose, group }) {
+  const members = mode === 'assign' ? assignableMembers(group) : [];
+  const [to, setTo] = useState(members[0]?.agent_id || '');
   const [title, setTitle] = useState(task.title);
   const [ref, setRef] = useState(task.ref?.url || task.ref?.label || '');
   const [reason, setReason] = useState('');
@@ -234,6 +256,10 @@ function RowForm({ task, mode, actions, onClose }) {
       }
       if (!Object.keys(change).length) { onClose(); return; }
       ok = await actions.run(`${task.id}:form`, 'Edit', (api) => api.edit(task.id, change));
+    } else if (mode === 'assign') {
+      if (!to) return;
+      ok = await actions.run(`${task.id}:form`, 'Assign', (api) => api.assign(task.id, to));
+      if (ok) markLanded({ group: group.name, section: 'agents', ids: [to] });
     } else if (mode === 'block') {
       if (!reason.trim()) return;
       ok = await actions.run(`${task.id}:form`, 'Block', (api) => api.status(task.id, 'blocked', reason.trim()));
@@ -247,7 +273,14 @@ function RowForm({ task, mode, actions, onClose }) {
     if (event.key === 'Escape') { event.preventDefault(); onClose(); }
   };
   const busy = actions.busy === `${task.id}:form`;
-  const fields = mode === 'edit'
+  const fields = mode === 'assign'
+    ? (members.length
+      ? html`<${Select} size="sm" class="tb-form-assignee" aria-label="Assign to" value=${to} autoFocus
+          onChange=${(event) => setTo(event.currentTarget.value)} onKeyDown=${keys}>
+          ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}
+        <//><span class="ui-hint">the brief goes to its inbox${task.stage === 'idea' ? '; the idea joins the queue' : ''}</span>`
+      : html`<span class="ui-hint">No member to assign to: tasks go to members of this group.</span>`)
+    : mode === 'edit'
     ? html`<${Input} size="sm" class="tb-form-title" aria-label="Title" value=${title} maxLength=${200} autoFocus
         onInput=${(event) => setTitle(event.currentTarget.value)} onKeyDown=${keys} />
       <${Input} size="sm" class="tb-form-ref" aria-label="Ref" placeholder="ref: URL, owner/repo#12 or a tracker id" value=${ref}
@@ -255,11 +288,11 @@ function RowForm({ task, mode, actions, onClose }) {
     : html`<${Input} size="sm" class="tb-form-reason" aria-label=${mode === 'block' ? 'Block reason' : 'Drop reason'} autoFocus
         placeholder=${mode === 'block' ? 'why is it blocked? (required)' : 'why drop it? (optional, e.g. "parked in awb")'}
         value=${reason} maxLength=${400} onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${keys} />`;
-  const label = mode === 'edit' ? 'Save' : mode === 'block' ? 'Block' : 'Drop';
+  const label = mode === 'edit' ? 'Save' : mode === 'block' ? 'Block' : mode === 'assign' ? 'Assign' : 'Drop';
   return html`<tr class="tb-form-row" data-task-form=${mode}><td></td><td colspan="5">
     <div class="tb-form">${fields}
       <${Button} size="sm" variant=${mode === 'drop' ? 'danger' : 'primary'} busy=${busy}
-        disabled=${busy || (mode === 'block' && !reason.trim()) || (mode === 'edit' && !title.trim())} onClick=${() => void submit()}>${label}<//>
+        disabled=${busy || (mode === 'block' && !reason.trim()) || (mode === 'edit' && !title.trim()) || (mode === 'assign' && !to)} onClick=${() => void submit()}>${label}<//>
       <${Button} size="sm" variant="ghost" onClick=${onClose}>Cancel<//>
     </div>
   </td></tr>`;
@@ -285,7 +318,7 @@ function TaskRow({ task, n, numbers, group, snapshot, actions, drag, form, onFor
     <td class="tb-actions">${actions && html`<${RowActions} task=${task} actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
   </tr>`;
   if (!form || !actions) return row;
-  return [row, html`<${RowForm} key=${`${task.id}-form`} task=${task} mode=${form} actions=${actions} onClose=${() => onForm(task.id, null)} />`];
+  return [row, html`<${RowForm} key=${`${task.id}-form`} task=${task} mode=${form} actions=${actions} group=${group} onClose=${() => onForm(task.id, null)} />`];
 }
 
 // Both tables (the list and the closed tasks) share one column grid.
@@ -297,10 +330,72 @@ const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 // or after it, by the pointer's half) or onto the Ideas band (demote to the
 // top of the ideas). Its events stop here, so the group's own drags (agent
 // rows, group reorder) never see them.
-function useRowDrag(tasks, actions) {
+// agentDropRow is the member row of this group's own card under a task
+// drag, with the member's stable agent id; a subgroup's or another card's
+// agents are not targets (assignees must be members).
+export function agentDropRow(target, group) {
+  const row = target?.closest?.('tr[data-dnd-agent]');
+  if (!row || row.dataset.dndSourceGroup !== group.name) return null;
+  const card = row.closest('details[data-group-key]');
+  if (card?.dataset.groupKey !== group.name) return null;
+  const member = assignableMembers(group).find((m) => m.agent_id === row.dataset.dndAgent);
+  return member ? { row, member } : null;
+}
+
+const ASSIGN_OVER = 'tb-assign-over';
+
+function clearAgentTarget(state) {
+  state.row?.classList.remove(ASSIGN_OVER);
+  state.row?.querySelector('td.name-cell')?.removeAttribute('data-tb-assign');
+  state.row = null;
+}
+
+function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
   const [dragging, setDragging] = useState('');
+  // While a task is dragged, this group's agent rows take it: drop to
+  // assign (taskboard assign --to). The listeners live only for the drag.
+  const agentDrop = useRef({ row: null, off: null });
+  const listenForAgents = () => {
+    if (!group || !canAssign(actions)) return;
+    const state = agentDrop.current;
+    const onOver = (event) => {
+      const hit = dragged.current && agentDropRow(event.target, group);
+      if (!hit) { clearAgentTarget(state); return; }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      if (state.row === hit.row) return;
+      clearAgentTarget(state);
+      state.row = hit.row;
+      hit.row.classList.add(ASSIGN_OVER);
+      const n = numbers.get(dragged.current.id);
+      const already = dragged.current.assignee?.agent_id === hit.member.agent_id;
+      hit.row.querySelector('td.name-cell')?.setAttribute('data-tb-assign',
+        already ? 'already assigned here' : `assign ${n ? `#${n}` : dragged.current.id} to ${hit.member.title || hit.member.agent_id}`);
+    };
+    const onDrop = (event) => {
+      const hit = dragged.current && agentDropRow(event.target, group);
+      if (!hit) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const task = dragged.current;
+      end();
+      if (task.assignee?.agent_id === hit.member.agent_id) return;
+      void actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, hit.member.agent_id))
+        .then((ok) => { if (ok) markLanded({ group: group.name, section: 'agents', ids: [hit.member.agent_id] }); });
+    };
+    document.addEventListener('dragover', onOver, true);
+    document.addEventListener('drop', onDrop, true);
+    state.off = () => {
+      document.removeEventListener('dragover', onOver, true);
+      document.removeEventListener('drop', onDrop, true);
+      clearAgentTarget(state);
+      state.off = null;
+    };
+  };
+  useEffect(() => () => agentDrop.current.off?.(), []);
   const accept = (event) => {
     if (!dragged.current) return false;
     event.preventDefault();
@@ -308,7 +403,8 @@ function useRowDrag(tasks, actions) {
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     return true;
   };
-  const clear = () => { dragged.current = null; setOver(null); setDragging(''); };
+  const clear = () => { dragged.current = null; setOver(null); setDragging(''); agentDrop.current.off?.(); };
+  const end = clear;
   return {
     over, dragging,
     start(event, task) {
@@ -319,6 +415,18 @@ function useRowDrag(tasks, actions) {
       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
       const row = event.currentTarget.closest?.('tr');
       if (row && event.dataTransfer?.setDragImage) event.dataTransfer.setDragImage(row, 12, 12);
+      listenForAgents();
+    },
+    // dropUnassign takes the dragged task back from its assignee.
+    overUnassign(event) {
+      if (!dragged.current?.assignee) return;
+      accept(event);
+    },
+    async dropUnassign(event) {
+      if (!dragged.current?.assignee || !accept(event)) return;
+      const task = dragged.current;
+      clear();
+      await actions.run(`${task.id}:assign`, 'Unassign', (api) => api.unassign(task.id));
     },
     end: clear,
     // leaveTable drops the marker once the pointer leaves the list.
@@ -512,11 +620,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [history, setHistory] = useState(false);
   const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
-  const drag = useRowDrag(tasks, actions);
+  const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
+  const drag = useRowDrag(tasks, actions, group, numbers);
   const queue = tasks.filter((task) => task.stage !== 'idea');
   const ideas = tasks.filter((task) => task.stage === 'idea');
   // Numbers run down the whole list, as the operator reads it.
-  const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
   const onForm = (id, mode) => setForms((current) => ({ ...current, [id]: mode }));
@@ -526,6 +634,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${importing && actions && html`<${ImportPanel} group=${group} actions=${actions} onClose=${onImportClose} />`}
+    ${canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
+      onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-n">#</th><th>${wizard ? 'Quest · top is next' : 'Task · operator order, top is next'}</th>
         <th>Ref</th><th>Who</th><th>State</th><th></th></tr></thead>

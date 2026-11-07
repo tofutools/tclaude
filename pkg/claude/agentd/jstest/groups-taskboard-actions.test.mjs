@@ -11,7 +11,7 @@ function board(group) {
     counts: { live: 4, needs_you: 1, next: 2, ideas: 1, blocked: 1, done_this_week: 1 },
     tasks: [
       row('tk_00000001', 'first'),
-      row('tk_00000002', 'second'),
+      row('tk_00000002', 'second', { assignee: { agent_id: 'agt_builder', name: 'builder' }, assigned_by: 'human:operator' }),
       row('tk_00000003', 'held', { status: 'blocked', block_reason: 'waiting' }),
       row('tk_00000004', 'an idea', { stage: 'idea' }),
     ],
@@ -24,7 +24,8 @@ function fakeApi() {
   const calls = [];
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
-  return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status') };
+  return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
+    assign: record('assign'), unassign: record('unassign') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -35,21 +36,26 @@ async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
     context: harness.signals.signal(context || { groups: [board(name)] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => { refreshes += 1; },
   };
-  const group = { name, members: [] };
+  const group = { name, members: [
+    { agent_id: 'agt_builder', title: 'builder', online: true },
+    { agent_id: 'agt_tester', title: 'tester', online: false },
+    { conv_id: 'conv-no-agent', title: 'plain' },
+  ] };
   const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
   const c = mounted.container;
   const rowOf = (id) => c.querySelector(`tr[data-task-id="${id}"]`);
   const button = (id, text) => [...rowOf(id).querySelectorAll('.tb-actions button')].find((b) => b.textContent.trim() === text);
   const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  return { harness, c, api, source, rowOf, button, click, refreshes: () => refreshes };
+  return { harness, c, api, source, group, rowOf, button, click, refreshes: () => refreshes };
 }
 
 test('row actions map to the CLI verbs and re-read the board', async (t) => {
   const { harness, c, api, rowOf, button, click, refreshes } = await mountBoard(t, 'tba-rows');
   assert.ok(c.querySelector('[data-fused-taskboard]'), 'blocked work opens the section');
-  assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
+  assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Assign ▾', 'Done', 'Block', 'Edit', 'Drop']);
+  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Unassign', 'Done', 'Block', 'Edit', 'Drop']);
   assert.deepEqual([...rowOf('tk_00000003').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Unblock', 'Edit', 'Drop']);
-  assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Edit', 'Drop']);
+  assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Assign ▾', 'Edit', 'Drop']);
 
   await click(button('tk_00000004', '✓ Next'));
   await click(button('tk_00000001', 'Done'));
@@ -259,4 +265,90 @@ test('a long import that fails part way returns the added results and the items 
   assert.equal(out.created, 50);
   assert.equal(out.failed.message, 'bad gateway');
   assert.deepEqual(out.failed.remaining, refs.slice(50));
+});
+
+test('Assign ▾ picks a member; Unassign takes the task back', async (t) => {
+  const { harness, c, api, button, click } = await mountBoard(t, 'tba-assign');
+  await click(button('tk_00000004', 'Assign ▾'));
+  const form = c.querySelector('[data-task-form="assign"]');
+  assert.deepEqual([...form.querySelectorAll('option')].map((o) => o.textContent), ['builder', 'tester (offline)'],
+    'members with a stable agent id, online first');
+  assert.match(form.textContent, /the idea joins the queue/);
+  const select = form.querySelector('select');
+  const [first, second] = select.querySelectorAll('option');
+  first.removeAttribute('selected');
+  first.selected = false;
+  second.selected = true;
+  second.setAttribute('selected', '');
+  await harness.act(async () => { harness.fireEvent(select, 'change'); });
+  await click([...c.querySelector('[data-task-form="assign"]').querySelectorAll('button')].find((b) => b.textContent.trim() === 'Assign'));
+  await click(button('tk_00000002', 'Unassign'));
+  assert.deepEqual(api.calls, [['assign', 'tk_00000004', 'agt_tester'], ['unassign', 'tk_00000002']]);
+});
+
+test('a task dragged onto an agent row of its own card is assigned; the unassign zone takes it back', async (t) => {
+  const name = 'tba-dragassign';
+  const { harness, c, api, rowOf } = await mountBoard(t, name);
+  // The group card's member rows, as groups-member-table.js draws them.
+  const card = document.createElement('details');
+  card.dataset.groupKey = name;
+  card.innerHTML = `<table><tbody>
+    <tr data-dnd-agent="agt_builder" data-dnd-source-group="${name}"><td class="name-cell">builder</td></tr>
+    <tr data-dnd-agent="conv-no-agent" data-dnd-source-group="${name}"><td class="name-cell">plain</td></tr>
+  </tbody></table><details data-group-key="sub"><table><tbody>
+    <tr data-dnd-agent="agt_sub" data-dnd-source-group="sub"><td class="name-cell">sub</td></tr></tbody></table></details>`;
+  document.body.appendChild(card);
+  t.after(() => card.remove());
+  const transfer = { setData() {}, setDragImage() {}, effectAllowed: '', dropEffect: '' };
+  const [builder, plain] = card.querySelectorAll('tr');
+  const sub = card.querySelector('[data-group-key="sub"] tr');
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000001').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer }); });
+  const overBuilder = harness.fireEvent(builder.querySelector('td'), 'dragover', { dataTransfer: transfer });
+  assert.equal(overBuilder.defaultPrevented, true, 'a member row takes the task');
+  assert.equal(builder.querySelector('td').dataset.tbAssign, 'assign #1 to builder');
+  assert.equal(harness.fireEvent(plain.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false, 'no stable agent id');
+  assert.equal(harness.fireEvent(sub.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false, "a subgroup's agent");
+  assert.equal(builder.classList.contains('tb-assign-over'), false, 'the marker moves off');
+  await harness.act(async () => { harness.fireEvent(builder.querySelector('td'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_builder']]);
+  // The drag is over: the agent rows no longer take drops.
+  assert.equal(harness.fireEvent(builder.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false);
+
+  // Dragging an assigned task shows the unassign zone.
+  api.calls.length = 0;
+  assert.equal(c.querySelector('.tb-unassign-drop'), null);
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000002').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer }); });
+  const zone = c.querySelector('.tb-unassign-drop');
+  assert.ok(zone);
+  await harness.act(async () => {
+    harness.fireEvent(zone, 'dragover', { dataTransfer: transfer });
+    harness.fireEvent(zone, 'drop', { dataTransfer: transfer });
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.deepEqual(api.calls, [['unassign', 'tk_00000002']]);
+});
+
+test("an agent's row shows the board tasks assigned to it", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AgentTaskIndicator } = await harness.importDashboardModule('js/taskboard-agent-indicator.js');
+  const entry = board('tba-indicator');
+  entry.tasks[3] = { ...entry.tasks[3], assignee: { agent_id: 'agt_builder' } };
+  const source = { context: harness.signals.signal({ groups: [entry] }), attach: () => () => {} };
+  const group = { name: 'tba-indicator' };
+  const mounted = await harness.mount(harness.html`<div>
+    <${AgentTaskIndicator} group=${group} member=${{ agent_id: 'agt_builder' }} source=${source} />
+    <${AgentTaskIndicator} group=${group} member=${{ agent_id: 'agt_tester' }} source=${source} />
+  </div>`);
+  const shown = mounted.container.querySelectorAll('.tb-agent-tasks');
+  assert.equal(shown.length, 1, 'nothing for an agent with no tasks');
+  assert.equal(shown[0].textContent.replace(/\s+/g, ' ').trim(), '☰ 2 tasks · second');
+});
+
+test('a board whose api cannot assign draws no assign controls', async (t) => {
+  const api = fakeApi();
+  api.can = { assign: false };
+  const { rowOf } = await mountBoard(t, 'tba-noassign', { api });
+  assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
+  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
+  assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Edit', 'Drop']);
 });

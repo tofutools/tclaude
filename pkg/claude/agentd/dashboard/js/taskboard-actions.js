@@ -10,6 +10,10 @@
 //   block / unblock   block <task> --reason … · unblock <task>
 //   done / drop       done <task> · drop <task> [--reason …]
 //   reopen            (route only: status open on a done or dropped task)
+//   Assign ▾ / drag   assign <task> --to <agent>
+//   onto an agent
+//   Unassign / drag   unassign <task>
+//   onto "unassign"
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
@@ -131,6 +135,14 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     status(id, status, reason = '') {
       return call('POST', taskPath(id, '/status'), reason ? { status, reason } : { status });
+    },
+    // assign gives the task to a member (an idea is promoted first); the
+    // assignee gets the brief in its inbox from the operator.
+    assign(id, agentId) {
+      return call('POST', taskPath(id, '/assign'), { to: agentId });
+    },
+    unassign(id) {
+      return call('POST', taskPath(id, '/unassign'), {});
     },
   };
 }

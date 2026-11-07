@@ -35,6 +35,7 @@ import { isPageNode } from './node-api.js';
 import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
 import { modClickText } from './keybindings.js';
 
+import { AgentTaskIndicator } from './taskboard-agent-indicator.js';
 const html = htm.bind(h);
 
 function ThemeText({ regular, wizard = regular }) {
@@ -1292,7 +1293,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     // metadata text instead of claiming a line of their own under the cell.
     case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
-    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
+    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} />${!ungrouped && html`<${AgentTaskIndicator} group=${group} member=${member} />`}</td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
     case 'last': return html`<td><span class="last-hook">${relTime(state.last_hook)}</span></td>`;
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
