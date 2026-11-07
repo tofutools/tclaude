@@ -54,7 +54,8 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	rules["GET /v1/taskboard/context"] = context
 
 	for _, pattern := range []string{"GET /v1/taskboard/tasks/{id}", "GET /v1/taskboard/tasks/{id}/events",
-		"GET /v1/taskboard/tasks/{id}/attachments"} {
+		"GET /v1/taskboard/tasks/{id}/attachments", "GET /v1/taskboard/tasks/{id}/activity",
+		"GET /v1/taskboard/tasks/{id}/comments"} {
 		r := read
 		r.serve = servePeerTaskboardTask
 		rules[pattern] = r
@@ -69,7 +70,12 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// transfer-in and an ask that carry files.
 	for _, pattern := range []string{"PATCH /v1/taskboard/tasks/{id}", "POST /v1/taskboard/tasks/{id}/move",
 		"POST /v1/taskboard/tasks/{id}/stage", "POST /v1/taskboard/tasks/{id}/status",
-		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}"} {
+		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}",
+		// Comments: a peer comments under taskboard.write (taskboard.own is
+		// a member's, on its own group's board), and edits or deletes only
+		// what its own author wrote.
+		"POST /v1/taskboard/tasks/{id}/comments", "PATCH /v1/taskboard/tasks/{id}/comments/{cid}",
+		"DELETE /v1/taskboard/tasks/{id}/comments/{cid}"} {
 		w := write
 		w.write = servePeerTaskboardTask
 		rules[pattern] = w
@@ -108,7 +114,48 @@ type taskboardPeerIDKey struct{}
 func peerTaskboardAsLocal(r *http.Request, v *peerView) *http.Request {
 	local := peerAsLocalRequest(r)
 	ctx := context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID))
+	ctx = context.WithValue(ctx, taskboardPeerPrincipalKey{}, peerPrincipal(v, v.peer.InstanceID))
 	return local.WithContext(context.WithValue(ctx, taskboardPeerIDKey{}, v.peer.InstanceID))
+}
+
+// taskboardPeerPrincipalKey carries peerPrincipal alongside the author.
+type taskboardPeerPrincipalKey struct{}
+
+// peerPrincipal names a linked node's actor by stable ids only:
+// "peer:<instance>" for its operator, "peer:<instance>/agent:<id>" for its
+// agent. A node's or agent's name may change or collide; authorship that
+// gates an edit (a task comment's) and an idempotency key key on this.
+func peerPrincipal(v *peerView, peer string) string {
+	if v != nil && v.agent != nil && v.agent.ID != "" {
+		return "peer:" + peer + "/agent:" + v.agent.ID
+	}
+	return "peer:" + peer
+}
+
+// taskboardCommentAuthor is who a comment's authorship and key belong to:
+// a linked node's actor by stable ids, a local caller as taskboardActor.
+func taskboardCommentAuthor(r *http.Request) string {
+	if a := peerGrantFromRequest(r); a != nil && a.principal != "" {
+		return a.principal
+	}
+	if p, _ := r.Context().Value(taskboardPeerPrincipalKey{}).(string); p != "" {
+		return p
+	}
+	return taskboardActor(r)
+}
+
+// peerPrincipalName reads a peerPrincipal for people, the node by its
+// current name; "" for any other actor.
+func peerPrincipalName(actor string) string {
+	rest, ok := strings.CutPrefix(actor, "peer:")
+	if !ok || strings.HasPrefix(rest, " ") || rest == "" {
+		return ""
+	}
+	node, agentID, isAgent := strings.Cut(rest, "/agent:")
+	if isAgent {
+		return "agent " + proto.SafeName(agentID, false) + " of " + peerRequesterLabel(node)
+	}
+	return "the operator of " + peerRequesterLabel(node)
 }
 
 // taskboardPeerNode names the linked node behind a request as this node
@@ -209,7 +256,8 @@ func servePeerTaskboardTask(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for group:%s", rule.requires, g.Name))
 		return
 	}
-	a := &peerGrantAuthority{peer: peer, group: g, gates: peerGrantGates(peer, g.ID), author: peerFollowUpAuthor(v, peer)}
+	a := &peerGrantAuthority{peer: peer, group: g, gates: peerGrantGates(peer, g.ID), author: peerFollowUpAuthor(v, peer),
+		principal: peerPrincipal(v, peer)}
 	for _, slug := range peerTaskboardImpliedGates(peer, g) {
 		a.gates[slug] = true
 	}
@@ -229,6 +277,7 @@ func servePeerTaskboardFile(w http.ResponseWriter, r *http.Request, v *peerView,
 // finish on, under the peer's grants as the route's own rule judges them.
 var peerTaskboardUploads = []string{
 	"POST /v1/taskboard/tasks/{id}/attachments",
+	"POST /v1/taskboard/tasks/{id}/comments",
 	"POST /v1/groups/{name}/taskboard/tasks",
 	"POST /v1/groups/{name}/taskboard/transfer-in",
 	"POST /v1/groups/{name}/taskboard/ask",

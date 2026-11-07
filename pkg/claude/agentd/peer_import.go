@@ -37,6 +37,7 @@ var peerUploadGates = map[string]bool{
 	// A task board's files, under the route's own peer rule
 	// (servePeerTaskboardUpload).
 	"POST /v1/taskboard/tasks/{id}/attachments":    true,
+	"POST /v1/taskboard/tasks/{id}/comments":       true,
 	"POST /v1/groups/{name}/taskboard/tasks":       true,
 	"POST /v1/groups/{name}/taskboard/transfer-in": true,
 	"POST /v1/groups/{name}/taskboard/ask":         true,

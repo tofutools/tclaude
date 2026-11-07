@@ -2,7 +2,7 @@
 name: taskboard
 description: >-
   Read and work a group's Task board via `tclaude agent taskboard`: see what
-  your group is doing now and next (ls, show, history), capture and order tasks
+  your group is doing now and next (ls, show, activity, comment), capture and order tasks
   (add, edit, move, promote, demote, block, drop, done), track your own work
   (add it assigned to yourself), take an unassigned task or have one assigned
   to you, and report done or failed on it (take, release, report). Use when a `[taskboard]` mail arrives in your inbox, when the
@@ -49,6 +49,11 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
 - A task can carry files (screenshots, logs, specs). `show` and the brief list
   them; `tclaude agent taskboard attachments tk_… --save <dir>` writes them out
   for you to read.
+- Talk about a task on the task itself: `tclaude agent taskboard comment add tk_… "markdown"`
+  (`--attach f`, `--file note.md`). `activity tk_…` shows the comments and every change,
+  oldest first. A `[taskboard] … comment by …` mail means someone commented on a task you hold
+  or created; answer with `comment add`. You can edit or remove only your own comments
+  (`comment edit|rm tk_… #id`).
 - You can take any open, unassigned task, an idea included. A task assigned to
   someone else is theirs: ask whoever leads the group to reassign it.
 

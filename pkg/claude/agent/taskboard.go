@@ -37,7 +37,8 @@ func taskboardCmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			taskboardLsCmd(),
 			taskboardShowCmd(),
-			taskboardHistoryCmd(),
+			taskboardActivityCmd(),
+			taskboardCommentCmd(),
 			taskboardAddCmd(),
 			taskboardAskCmd(),
 			taskboardEditCmd(),
@@ -103,21 +104,26 @@ func RunTaskboardCLI(args []string, stdout, stderr io.Writer) (rc int) {
 
 // taskboardTask is the daemon's wire shape for one task.
 type taskboardTask struct {
-	ID          string   `json:"id"`
-	Group       string   `json:"group"`
-	Title       string   `json:"title"`
-	Body        string   `json:"body,omitempty"`
-	Stage       string   `json:"stage"`
-	Status      string   `json:"status"`
-	BlockReason string   `json:"block_reason,omitempty"`
-	DependsOn   []string `json:"depends_on"`
-	Unmet       []string `json:"unmet,omitempty"`
-	Queued      bool     `json:"queued,omitempty"`
-	CreatedBy   string   `json:"created_by"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
-	ClosedAt    string   `json:"closed_at,omitempty"`
-	Assignee    *struct {
+	ID               string   `json:"id"`
+	Group            string   `json:"group"`
+	Title            string   `json:"title"`
+	Body             string   `json:"body,omitempty"`
+	Stage            string   `json:"stage"`
+	Status           string   `json:"status"`
+	BlockReason      string   `json:"block_reason,omitempty"`
+	DependsOn        []string `json:"depends_on"`
+	Unmet            []string `json:"unmet,omitempty"`
+	Queued           bool     `json:"queued,omitempty"`
+	CreatedBy        string   `json:"created_by"`
+	CreatedByName    string   `json:"created_by_name,omitempty"`
+	LastEditedBy     string   `json:"last_edited_by,omitempty"`
+	LastEditedByName string   `json:"last_edited_by_name,omitempty"`
+	LastEditedAt     string   `json:"last_edited_at,omitempty"`
+	CommentCount     int      `json:"comment_count"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+	ClosedAt         string   `json:"closed_at,omitempty"`
+	Assignee         *struct {
 		AgentID string `json:"agent_id"`
 		Name    string `json:"name,omitempty"`
 	} `json:"assignee,omitempty"`
@@ -552,65 +558,18 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  files:   %d (save them: tclaude agent taskboard attachments %s --save <dir>)\n", len(t.Attachments), t.ID)
 		printTaskboardAttachments(stdout, "    ", t.Attachments)
 	}
-	fmt.Fprintf(stdout, "  created: %s by %s\n", t.CreatedAt, t.CreatedBy)
+	fmt.Fprintf(stdout, "  created: %s by %s\n", t.CreatedAt, actorText(t.CreatedBy, t.CreatedByName))
+	if t.LastEditedBy != "" {
+		fmt.Fprintf(stdout, "  edited:  %s by %s\n", t.LastEditedAt, actorText(t.LastEditedBy, t.LastEditedByName))
+	}
+	if t.CommentCount > 0 {
+		fmt.Fprintf(stdout, "  comments: %d (tclaude agent taskboard activity %s)\n", t.CommentCount, t.ID)
+	}
 	if t.ClosedAt != "" {
 		fmt.Fprintf(stdout, "  closed:  %s\n", t.ClosedAt)
 	}
 	if t.Body != "" {
 		fmt.Fprintf(stdout, "\n%s\n", t.Body)
-	}
-	return rcOK
-}
-
-func taskboardHistoryCmd() *cobra.Command {
-	return boa.CmdT[taskboardShowParams]{
-		Use:         "history",
-		Short:       "Show a task's history",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *taskboardShowParams, _ *cobra.Command, _ []string) {
-			taskboardExit(runTaskboardHistory(p, cliStdout, cliStderr))
-		},
-	}.ToCobra()
-}
-
-func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
-		return rc
-	}
-	var resp struct {
-		ID     string `json:"id"`
-		Title  string `json:"title"`
-		Events []struct {
-			At         string `json:"at"`
-			Actor      string `json:"actor"`
-			Kind       string `json:"kind"`
-			Detail     string `json:"detail,omitempty"`
-			ActorName  string `json:"actor_name,omitempty"`
-			DetailText string `json:"detail_text,omitempty"`
-		} `json:"events"`
-	}
-	if err := remoteRequest(p.Peer, http.MethodGet, taskboardPath(p.Task, "/events"), nil, &resp); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
-	}
-	if p.JSON {
-		return writeJSONTo(stdout, resp)
-	}
-	printRemoteScheduleBanner(stdout, p.Peer, "task history")
-	fmt.Fprintf(stdout, "%s  %s\n", resp.ID, resp.Title)
-	for _, e := range resp.Events {
-		actor, detail := e.Actor, e.Detail
-		if e.ActorName != "" {
-			actor = e.ActorName
-		}
-		if e.DetailText != "" {
-			detail = e.DetailText
-		}
-		line := fmt.Sprintf("  %s  %-10s  %s", e.At, e.Kind, actor)
-		if detail != "" {
-			line += "  " + detail
-		}
-		fmt.Fprintln(stdout, line)
 	}
 	return rcOK
 }

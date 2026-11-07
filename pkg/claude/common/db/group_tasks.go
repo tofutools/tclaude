@@ -106,7 +106,8 @@ type GroupTask struct {
 // Live reports whether the task is on the live list (open or blocked).
 func (t *GroupTask) Live() bool { return t.Status == GroupTaskOpen || t.Status == GroupTaskBlocked }
 
-// GroupTaskEvent is one row of a task's history.
+// GroupTaskEvent is one entry of a task's activity stream: a change, or a
+// comment (group_task_comments.go).
 type GroupTaskEvent struct {
 	ID     int64
 	TaskID string
@@ -114,6 +115,18 @@ type GroupTaskEvent struct {
 	Actor  string
 	Kind   string
 	Detail string
+	// Changes are a field change's before and after values.
+	Changes []GroupTaskChange
+	// Body is a comment's Markdown; on a comment_edited entry, the body
+	// the comment had before that edit.
+	Body string
+	// CommentKind is what a comment is (GroupTaskComment*).
+	CommentKind string
+	ClientKey   string
+	// CommentID ties a comment_edited entry to its comment.
+	CommentID int64
+	EditedAt  time.Time
+	DeletedAt time.Time
 }
 
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
@@ -233,11 +246,16 @@ func groupTaskDepsTx(q taskTx, id string) ([]string, error) {
 }
 
 func addGroupTaskEventTx(q taskTx, taskID, actor, kind, detail string, at time.Time) error {
+	return addGroupTaskChangeTx(q, taskID, actor, kind, detail, nil, at)
+}
+
+// addGroupTaskChangeTx records a change entry with its field changes.
+func addGroupTaskChangeTx(q taskTx, taskID, actor, kind, detail string, changes []GroupTaskChange, at time.Time) error {
 	if len(detail) > GroupTaskEventDetailMax {
 		detail = truncateUTF8(detail, GroupTaskEventDetailMax)
 	}
-	_, err := q.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail) VALUES (?, ?, ?, ?, ?)`,
-		taskID, dbTime(at), actor, kind, detail)
+	_, err := q.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, changes) VALUES (?, ?, ?, ?, ?, ?)`,
+		taskID, dbTime(at), actor, kind, detail, encodeGroupTaskChanges(changes))
 	return err
 }
 
@@ -477,6 +495,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventBlocked, reason, now); err != nil {
 			return nil, err
 		}
+		if err := addGroupTaskCommentTx(tx, id, in.Actor, GroupTaskCommentBlock, reason, now); err != nil {
+			return nil, err
+		}
 	case GroupTaskDone:
 		if _, err := tx.Exec(`UPDATE group_tasks SET status = 'done', closed_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
 			return nil, err
@@ -485,7 +506,7 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 			return nil, err
 		}
 	}
-	if err := insertGroupTaskAttachmentsTx(tx, id, append([]GroupTaskAttachment(nil), in.Attachments...), in.Actor, now); err != nil {
+	if err := insertGroupTaskAttachmentsTx(tx, id, 0, append([]GroupTaskAttachment(nil), in.Attachments...), in.Actor, now); err != nil {
 		return nil, err
 	}
 	out, err := getGroupTaskTx(tx, id)
@@ -574,15 +595,7 @@ func ListGroupTaskEvents(taskID string) ([]*GroupTaskEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return queryRows(d, func(s rowScanner) (*GroupTaskEvent, error) {
-		var e GroupTaskEvent
-		var at dbTimestamp
-		if err := s.Scan(&e.ID, &e.TaskID, &at, &e.Actor, &e.Kind, &e.Detail); err != nil {
-			return nil, err
-		}
-		e.At = at.Time()
-		return &e, nil
-	}, `SELECT id, task_id, at, actor, kind, detail FROM group_task_events WHERE task_id = ? ORDER BY id`, taskID)
+	return queryRows(d, scanGroupTaskEvent, `SELECT `+groupTaskEventCols+` FROM group_task_events WHERE task_id = ? ORDER BY id`, taskID)
 }
 
 // GroupTaskEdit changes a task's text, ref and dependencies; a nil field is
@@ -632,11 +645,13 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		var changed []string
+		var changes []GroupTaskChange
 		set := func(col string, cur string, v *string) error {
 			if v == nil || *v == cur {
 				return nil
 			}
 			changed = append(changed, strings.TrimPrefix(col, "ref_"))
+			changes = append(changes, GroupTaskChange{Field: col, Before: cur, After: *v})
 			_, err := tx.Exec(`UPDATE group_tasks SET `+col+` = ? WHERE id = ?`, *v, id)
 			return err
 		}
@@ -653,8 +668,16 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 			}
 		}
 		if len(e.AddDeps) > 0 || len(e.RmDeps) > 0 {
+			before := strings.Join(t.DependsOn, " ")
 			if err := setGroupTaskDepsTx(tx, t, e.AddDeps, e.RmDeps); err != nil {
 				return err
+			}
+			deps, err := groupTaskDepsTx(tx, id)
+			if err != nil {
+				return err
+			}
+			if after := strings.Join(deps, " "); after != before {
+				changes = append(changes, GroupTaskChange{Field: "depends_on", Before: before, After: after})
 			}
 			for _, dep := range e.AddDeps {
 				changed = append(changed, "+after "+dep)
@@ -666,7 +689,7 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 		if len(changed) == 0 {
 			return nil
 		}
-		return addGroupTaskEventTx(tx, id, e.Actor, GroupTaskEventEdited, strings.Join(changed, ", "), now)
+		return addGroupTaskChangeTx(tx, id, e.Actor, GroupTaskEventEdited, strings.Join(changed, ", "), changes, now)
 	})
 }
 
@@ -709,9 +732,9 @@ func stageChangeEvent(tx *sql.Tx, t *GroupTask, stage, actor, detail string, now
 	case t.Stage == stage:
 		return nil
 	case stage == GroupTaskStageNext:
-		return addGroupTaskEventTx(tx, t.ID, actor, GroupTaskEventPromoted, detail, now)
+		return addGroupTaskChangeTx(tx, t.ID, actor, GroupTaskEventPromoted, detail, stageChange(t.Stage, stage), now)
 	default:
-		return addGroupTaskEventTx(tx, t.ID, actor, GroupTaskEventDemoted, detail, now)
+		return addGroupTaskChangeTx(tx, t.ID, actor, GroupTaskEventDemoted, detail, stageChange(t.Stage, stage), now)
 	}
 }
 
@@ -839,7 +862,23 @@ func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*G
 		default:
 			return taskConflict("invalid_arg", "unknown status %q", status)
 		}
-		return addGroupTaskEventTx(tx, id, actor, kind, detail, now)
+		var changes []GroupTaskChange
+		if t.Status != status {
+			changes = statusChange(t.Status, status)
+		}
+		if err := addGroupTaskChangeTx(tx, id, actor, kind, detail, changes, now); err != nil {
+			return err
+		}
+		// A reason is a typed comment, committed with its transition.
+		switch status {
+		case GroupTaskBlocked:
+			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentBlock, reason, now)
+		case GroupTaskDone:
+			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDone, reason, now)
+		case GroupTaskDropped:
+			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDrop, reason, now)
+		}
+		return nil
 	})
 }
 

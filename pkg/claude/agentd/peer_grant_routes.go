@@ -60,6 +60,9 @@ type peerGrantAuthority struct {
 	// author names who acts (peerFollowUpAuthor), for what the route
 	// records or tells this node's agents.
 	author string
+	// principal is who acts by stable ids (peerPrincipal), for what keys on
+	// authorship, such as a task comment's.
+	principal string
 }
 
 func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {

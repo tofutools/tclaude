@@ -71,7 +71,7 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 			if _, err := tx.Exec(`UPDATE group_tasks SET stage = 'next', rank = ? WHERE id = ?`, rank, id); err != nil {
 				return err
 			}
-			if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventPromoted, "on assign", now); err != nil {
+			if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventPromoted, "on assign", stageChange(t.Stage, GroupTaskStageNext), now); err != nil {
 				return err
 			}
 		}
@@ -86,7 +86,7 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 		if t.AssigneeID != "" {
 			detail += " (was " + t.AssigneeID + ")"
 		}
-		return addGroupTaskEventTx(tx, id, actor, kind, detail, now)
+		return addGroupTaskChangeTx(tx, id, actor, kind, detail, assigneeChange(t.AssigneeID, agentID), now)
 	})
 }
 
@@ -109,7 +109,7 @@ func UnassignGroupTask(id string, release bool, detail, actor, expectAssignee st
 		if release {
 			kind = GroupTaskEventReleased
 		}
-		return addGroupTaskEventTx(tx, id, actor, kind, firstNonEmptyString(detail, t.AssigneeID), now)
+		return addGroupTaskChangeTx(tx, id, actor, kind, firstNonEmptyString(detail, t.AssigneeID), assigneeChange(t.AssigneeID, ""), now)
 	})
 }
 
@@ -166,13 +166,17 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventReported, detail, now); err != nil {
 			return err
 		}
+		// The report's note is a typed comment.
+		if err := addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentReportNote, note, now); err != nil {
+			return err
+		}
 		if outcome == GroupTaskOutcomeSucceeded {
 			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'done', block_reason = '', closed_at = ?,
 				archived_at = NULL, outcome = ?, outcome_note = ? WHERE id = ?`,
 				dbTime(now), outcome, note, id); err != nil {
 				return err
 			}
-			return addGroupTaskEventTx(tx, id, actor, GroupTaskEventDone, "reported by assignee", now)
+			return addGroupTaskChangeTx(tx, id, actor, GroupTaskEventDone, "reported by assignee", statusChange(t.Status, GroupTaskDone), now)
 		}
 		failures := t.Failures + 1
 		if _, err := tx.Exec(`UPDATE group_tasks SET outcome = ?, outcome_note = ?, failures = ?,
@@ -180,7 +184,7 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 			outcome, note, failures, id); err != nil {
 			return err
 		}
-		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventUnassigned, "after a failed report", now); err != nil {
+		if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventUnassigned, "after a failed report", assigneeChange(t.AssigneeID, ""), now); err != nil {
 			return err
 		}
 		if failures >= GroupTaskFailureLimit && t.Status != GroupTaskBlocked {
@@ -189,7 +193,11 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 				return err
 			}
 			out.Blocked = true
-			return addGroupTaskEventTx(tx, id, actor, GroupTaskEventBlocked, reason, now)
+			if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventBlocked, reason,
+				statusChange(t.Status, GroupTaskBlocked), now); err != nil {
+				return err
+			}
+			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentBlock, reason, now)
 		}
 		return nil
 	})

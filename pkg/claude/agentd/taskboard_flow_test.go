@@ -168,7 +168,8 @@ func TestTaskboardMemberCapturesAndOrders(t *testing.T) {
 	for _, e := range hist.Events {
 		kinds = append(kinds, e.Kind)
 	}
-	assert.Equal(t, []string{"created", "promoted", "blocked"}, kinds)
+	// The block's reason is a typed comment after it (tcl-jipq70).
+	assert.Equal(t, []string{"created", "promoted", "blocked", "comment"}, kinds)
 
 	// The sweep archives a closed task out of --all.
 	agentd.SweepTaskboardForTest(time.Now().Add(15 * 24 * time.Hour))

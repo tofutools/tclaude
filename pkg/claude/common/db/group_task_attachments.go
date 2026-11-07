@@ -33,14 +33,16 @@ type GroupTaskAttachment struct {
 	ContentType string
 	AddedBy     string
 	AddedAt     time.Time
+	// CommentID is the comment the file came with; 0 for the task's own.
+	CommentID int64
 }
 
-const groupTaskAttachmentCols = `id, task_id, name, sha256, size_bytes, content_type, added_by, added_at`
+const groupTaskAttachmentCols = `id, task_id, name, sha256, size_bytes, content_type, added_by, added_at, COALESCE(comment_id, 0)`
 
 func scanGroupTaskAttachment(s rowScanner) (GroupTaskAttachment, error) {
 	var a GroupTaskAttachment
 	var at dbTimestamp
-	err := s.Scan(&a.ID, &a.TaskID, &a.Name, &a.SHA256, &a.SizeBytes, &a.ContentType, &a.AddedBy, &at)
+	err := s.Scan(&a.ID, &a.TaskID, &a.Name, &a.SHA256, &a.SizeBytes, &a.ContentType, &a.AddedBy, &at, &a.CommentID)
 	a.AddedAt = at.Time()
 	return a, err
 }
@@ -59,21 +61,38 @@ func uniqueAttachmentName(name string, taken map[string]bool) string {
 
 // insertGroupTaskAttachmentsTx adds files to task id inside tx, under the
 // cap, renaming a duplicate name, and records an attached event for each.
-// It fills in each row's ID, TaskID, final Name and AddedAt.
-func insertGroupTaskAttachmentsTx(tx taskTx, id string, atts []GroupTaskAttachment, actor string, now time.Time) error {
+// commentID, when not 0, makes them that comment's files: the cap is the
+// comment's, and the comment itself is their record. It fills in each
+// row's ID, TaskID, final Name and AddedAt.
+func insertGroupTaskAttachmentsTx(tx taskTx, id string, commentID int64, atts []GroupTaskAttachment, actor string, now time.Time) error {
 	if len(atts) == 0 {
 		return nil
 	}
-	existing, err := listGroupTaskAttachmentsTx(tx, id)
+	// Names are unique across the task, its comments' files included.
+	all, err := queryRows(tx, scanGroupTaskAttachment, `SELECT `+groupTaskAttachmentCols+`
+		FROM group_task_attachments WHERE task_id = ? ORDER BY id`, id)
 	if err != nil {
 		return err
 	}
-	if len(existing)+len(atts) > GroupTaskAttachmentsCap {
-		return taskConflict("attachment_cap", "a task holds at most %d files; %s has %d", GroupTaskAttachmentsCap, id, len(existing))
+	held := 0
+	for _, a := range all {
+		if a.CommentID == commentID {
+			held++
+		}
+	}
+	if held+len(atts) > GroupTaskAttachmentsCap {
+		if commentID != 0 {
+			return taskConflict("attachment_cap", "a comment holds at most %d files", GroupTaskAttachmentsCap)
+		}
+		return taskConflict("attachment_cap", "a task holds at most %d files; %s has %d", GroupTaskAttachmentsCap, id, held)
 	}
 	taken := map[string]bool{}
-	for _, a := range existing {
+	for _, a := range all {
 		taken[strings.ToLower(a.Name)] = true
+	}
+	var comment any
+	if commentID != 0 {
+		comment = commentID
 	}
 	for i := range atts {
 		a := &atts[i]
@@ -82,12 +101,16 @@ func insertGroupTaskAttachmentsTx(tx taskTx, id string, atts []GroupTaskAttachme
 		if a.AddedBy == "" {
 			a.AddedBy = actor
 		}
-		res, err := tx.Exec(`INSERT INTO group_task_attachments (task_id, name, sha256, size_bytes, content_type, added_by, added_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, id, a.Name, a.SHA256, a.SizeBytes, a.ContentType, a.AddedBy, dbTime(now))
+		res, err := tx.Exec(`INSERT INTO group_task_attachments (task_id, name, sha256, size_bytes, content_type, added_by, added_at, comment_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, a.Name, a.SHA256, a.SizeBytes, a.ContentType, a.AddedBy, dbTime(now), comment)
 		if err != nil {
 			return err
 		}
 		a.ID, _ = res.LastInsertId()
+		a.CommentID = commentID
+		if commentID != 0 {
+			continue
+		}
 		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventAttached, a.Name, now); err != nil {
 			return err
 		}
@@ -100,7 +123,7 @@ func insertGroupTaskAttachmentsTx(tx taskTx, id string, atts []GroupTaskAttachme
 func AddGroupTaskAttachments(id string, atts []GroupTaskAttachment, actor string) (*GroupTask, []GroupTaskAttachment, error) {
 	rows := append([]GroupTaskAttachment(nil), atts...)
 	t, err := withGroupTask(id, func(tx *sql.Tx, _ *GroupTask, now time.Time) error {
-		return insertGroupTaskAttachmentsTx(tx, id, rows, actor, now)
+		return insertGroupTaskAttachmentsTx(tx, id, 0, rows, actor, now)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -113,8 +136,9 @@ func AddGroupTaskAttachments(id string, atts []GroupTaskAttachment, actor string
 func RemoveGroupTaskAttachment(id string, attachmentID int64, actor string) (*GroupTask, *GroupTaskAttachment, error) {
 	var removed GroupTaskAttachment
 	t, err := withGroupTask(id, func(tx *sql.Tx, _ *GroupTask, now time.Time) error {
+		// A comment's file goes with its comment, not on its own.
 		a, err := scanGroupTaskAttachment(tx.QueryRow(`SELECT `+groupTaskAttachmentCols+`
-			FROM group_task_attachments WHERE task_id = ? AND id = ?`, id, attachmentID))
+			FROM group_task_attachments WHERE task_id = ? AND id = ? AND comment_id IS NULL`, id, attachmentID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrGroupTaskAttachmentNotFound
 		}
@@ -135,11 +159,30 @@ func RemoveGroupTaskAttachment(id string, attachmentID int64, actor string) (*Gr
 
 func listGroupTaskAttachmentsTx(q taskTx, id string) ([]GroupTaskAttachment, error) {
 	return queryRows(q, scanGroupTaskAttachment, `SELECT `+groupTaskAttachmentCols+`
-		FROM group_task_attachments WHERE task_id = ? ORDER BY id`, id)
+		FROM group_task_attachments WHERE task_id = ? AND comment_id IS NULL ORDER BY id`, id)
 }
 
-// ListGroupTaskAttachments lists task id's files in the order they were
-// added.
+// ListGroupTaskCommentAttachments maps each comment of task id that has
+// files to its files.
+func ListGroupTaskCommentAttachments(id string) (map[int64][]GroupTaskAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := queryRows(d, scanGroupTaskAttachment, `SELECT `+groupTaskAttachmentCols+`
+		FROM group_task_attachments WHERE task_id = ? AND comment_id IS NOT NULL ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64][]GroupTaskAttachment{}
+	for _, a := range rows {
+		out[a.CommentID] = append(out[a.CommentID], a)
+	}
+	return out, nil
+}
+
+// ListGroupTaskAttachments lists task id's own files (not its comments')
+// in the order they were added.
 func ListGroupTaskAttachments(id string) ([]GroupTaskAttachment, error) {
 	d, err := Open()
 	if err != nil {
@@ -167,7 +210,7 @@ func ListGroupTaskAttachmentsBatch(ids []string) (map[string][]GroupTaskAttachme
 			args[i] = id
 		}
 		rows, err := queryRows(d, scanGroupTaskAttachment, `SELECT `+groupTaskAttachmentCols+`
-			FROM group_task_attachments WHERE task_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`) ORDER BY id`, args...)
+			FROM group_task_attachments WHERE comment_id IS NULL AND task_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`) ORDER BY id`, args...)
 		if err != nil {
 			return nil, err
 		}
