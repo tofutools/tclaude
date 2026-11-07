@@ -34,6 +34,20 @@ A permission at Default that an umbrella covers says so: `drawing-boards.read` u
 The reach is given in counts. A Deny on the row, or on a step of the chain, removes the
 hint, because the deny wins.
 
+Under the slug filter, a row of filters narrows the list. Pick one option per filter;
+filters combine with each other and with the text:
+
+- **Set**: **here** shows what this editor sets to Grant or Deny, **here or inherited**
+  adds what the agent holds through a default, group, role, ownership or umbrella, and
+  **unsaved** shows what you changed since opening the dialog.
+- **Holds**: whether the row reads as held (its ✓), as the editor would save it.
+- **Kind**: **read** permissions only look and change nothing; **write** are the rest.
+  An export counts as a write.
+- **Only**: toggles for ⚠ risky permissions and 👑 those ownership can confer.
+
+So *write permissions it holds* is Kind write plus Holds yes. The count says how many
+rows the filters leave, and **Clear** drops them, keeping the text.
+
 Similar dialogs edit group permissions, which apply right away (an agent-level deny
 still wins), and role permissions, which only grant.
 

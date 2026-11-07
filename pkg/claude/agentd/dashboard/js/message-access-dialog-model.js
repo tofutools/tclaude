@@ -447,3 +447,61 @@ export function permissionRows(snapshot, descriptor, selection) {
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };
   });
 }
+
+// PERMISSION_FILTER_FACETS are the permission editor's composable filters.
+// Each facet picks one option; facets AND together, and with the text filter.
+// "any" (the first option) leaves a facet out of the match.
+export const PERMISSION_FILTER_FACETS = Object.freeze([
+  Object.freeze({
+    key: 'set', label: 'Set', options: Object.freeze([
+      ['any', 'any', 'However it is set'],
+      ['here', 'here', 'Set to Grant or Deny in this editor, not left at Default'],
+      ['here-or-inherited', 'here or inherited', 'Set in this editor, or held through a default, group, role, ownership or umbrella'],
+      ['unsaved', 'unsaved', 'Changed in this editor since it opened'],
+    ]),
+  }),
+  Object.freeze({
+    key: 'access', label: 'Holds', options: Object.freeze([
+      ['any', 'any', 'Held or not'],
+      ['yes', 'yes', 'Held now, as this editor would save it'],
+      ['no', 'no', 'Not held, as this editor would save it'],
+    ]),
+  }),
+  Object.freeze({
+    key: 'kind', label: 'Kind', options: Object.freeze([
+      ['any', 'any', 'Read and write slugs'],
+      ['read', 'read', 'Slugs that only look and change nothing'],
+      ['write', 'write', 'Slugs that change something'],
+    ]),
+  }),
+]);
+
+// PERMISSION_FILTER_FLAGS narrow to rows with a marker; on together they AND.
+export const PERMISSION_FILTER_FLAGS = Object.freeze([
+  Object.freeze({ key: 'risky', label: '⚠ risky', title: 'Only slugs marked risky', test: (row) => !!row.risky }),
+  Object.freeze({ key: 'owner', label: '👑 owner', title: 'Only slugs group ownership can confer', test: (row) => !!row.owner_implied }),
+]);
+
+export const EMPTY_PERMISSION_FILTER = Object.freeze({ set: 'any', access: 'any', kind: 'any', flags: Object.freeze([]) });
+
+export function permissionFilterActive(filter) {
+  return PERMISSION_FILTER_FACETS.some((facet) => (filter?.[facet.key] || 'any') !== 'any') || !!filter?.flags?.length;
+}
+
+// permissionRowMatches tests one editor row against the facets. state says
+// what the editor knows about the row beyond the catalogue: effect (the
+// draft's Default/Grant/Deny), baseline (what it opened with), held (the row
+// reads as held, umbrella cover included) and scopeChanged.
+export function permissionRowMatches(row, filter, { effect = 'default', baseline = 'default', held = false, scopeChanged = false } = {}) {
+  const set = filter?.set || 'any';
+  if (set === 'here' && effect === 'default') return false;
+  if (set === 'here-or-inherited' && effect === 'default' && !held) return false;
+  if (set === 'unsaved' && effect === baseline && !scopeChanged) return false;
+  const access = filter?.access || 'any';
+  if (access === 'yes' && !held) return false;
+  if (access === 'no' && held) return false;
+  const kind = filter?.kind || 'any';
+  if (kind === 'read' && !row.read_only) return false;
+  if (kind === 'write' && row.read_only) return false;
+  return (filter?.flags || []).every((key) => PERMISSION_FILTER_FLAGS.find((flag) => flag.key === key)?.test(row) ?? true);
+}

@@ -6329,6 +6329,11 @@ body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0;
 }
 .perm-edit-toolbar button:where(:not(.ui-btn)):hover { background: #2d333b; }
 #perm-edit-reset:disabled { opacity: .45; cursor: default; }
+.perm-edit-facets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: -4px; }
+.perm-facet { display: inline-flex; align-items: center; gap: 5px; }
+.perm-facet-label { font-size: 11px; color: var(--ui-muted-text); }
+.perm-edit-facets .spacer { flex: 1; }
+.perm-facet-count { font-size: 11px; white-space: nowrap; }
 .perm-edit-list {
   display: flex; flex-direction: column;
   border: 1px solid #2a3340; border-radius: 4px;

@@ -19,6 +19,7 @@ import {
   scopeCatalogueIndex, scopeValueLabel, umbrellaCover,
   scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
   sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
+  EMPTY_PERMISSION_FILTER, PERMISSION_FILTER_FACETS, PERMISSION_FILTER_FLAGS, permissionFilterActive, permissionRowMatches,
 } from './message-access-dialog-model.js';
 import { openMemberPRs } from './pr-review-model.js';
 import { PRChain } from './pr-chain.js';
@@ -516,6 +517,34 @@ function PermissionFilter({ value, onChange }) {
       onClick=${() => { onChange(''); inputRef.current?.focus(); }}>×</button>`}</div>`;
 }
 
+// PermissionFacets are the editor's composable filters, under the slug
+// filter: one segmented choice per facet and a toggle per flag. Facets AND
+// together and with the text, so "write slugs it holds" is Kind write plus
+// Holds yes. The count says how much the filters hide, and Clear drops them
+// all but leaves the text, which has its own ×.
+function PermissionFacets({ value, onChange, shown, total }) {
+  const pick = (key, option) => onChange({ ...value, [key]: option });
+  const toggle = (key) => onChange({
+    ...value, flags: value.flags.includes(key) ? value.flags.filter((item) => item !== key) : [...value.flags, key],
+  });
+  const active = permissionFilterActive(value);
+  return html`<div class="perm-edit-facets" id="perm-edit-facets" role="group" aria-label="Filter permissions">
+    ${PERMISSION_FILTER_FACETS.map((facet) => html`<span key=${facet.key} class="perm-facet" data-facet=${facet.key}>
+      <span class="perm-facet-label">${facet.label}</span>
+      <div class="ui-seg" role="group" aria-label=${facet.label}>${facet.options.map(([option, label, title]) => html`<${Button} size="sm" key=${option}
+        data-option=${option} pressed=${(value[facet.key] || 'any') === option} class=${(value[facet.key] || 'any') === option ? 'active' : ''}
+        title=${title} onClick=${() => pick(facet.key, option)}>${label}<//>`)}</div></span>`)}
+    <span class="perm-facet perm-facet-flags"><span class="perm-facet-label">Only</span>
+      <div class="ui-seg" role="group" aria-label="Only">${PERMISSION_FILTER_FLAGS.map((flag) => html`<${Button} size="sm" key=${flag.key}
+      data-flag=${flag.key} pressed=${value.flags.includes(flag.key)} class=${value.flags.includes(flag.key) ? 'active' : ''}
+      title=${`${flag.title}. Each is a toggle; on together they all apply`} onClick=${() => toggle(flag.key)}>${flag.label}<//>`)}</div></span>
+    <span class="spacer"></span>
+    <span class="perm-facet-count ui-hint" id="perm-edit-facet-count">${shown === total ? `${total} slugs` : `${shown} of ${total}`}</span>
+    ${active && html`<${Button} size="sm" variant="ghost" id="perm-edit-facets-clear" title="Drop every filter here; the text filter stays"
+      onClick=${() => onChange(EMPTY_PERMISSION_FILTER)}>Clear<//>`}
+  </div>`;
+}
+
 // ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
@@ -782,27 +811,37 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   // remount the drawer's boxes empty (see submit).
   const [draftEpoch, setDraftEpoch] = useState(0);
   const [filter, setFilter] = useState('');
+  const [facets, setFacets] = useState(EMPTY_PERMISSION_FILTER);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const rows = permissionRows(snapshot, descriptor, sudoMode
     ? ((snapshot?.permissions?.overrides || {})[descriptor.conv] || {}) : selection);
-  const matching = rows.filter((row) => !filter.trim() || [row.slug, row.description, row.descr]
-    .some((value) => String(value || '').toLowerCase().includes(filter.trim().toLowerCase())));
-  const visible = sudoMode ? rowsByArea(matching) : matching;
   const rowsBySlug = new Map(rows.map((row) => [row.slug, row]));
   const activeSudo = sudoMode ? (sudoByAgent(snapshot).get(descriptor.agentID) || []) : [];
   const currentEffect = (slug) => selection[slug] || 'default';
   const baselineEffect = (slug) => baseline[slug] || 'default';
   const scopeOf = (slug) => scopes[slug] || {};
   const scopeJSON = (scope) => JSON.stringify(scopeChips(scope));
+  const groupMode = descriptor.mode === 'group';
+  // Whether a row reads as held: the effect column's ✓, umbrella cover
+  // included. The Holds filter asks the same question so the two never disagree.
+  const rowHeld = (row, cover = umbrellaCover(row, rowsBySlug, currentEffect, scopeOf)) => row.granted
+    || (!sudoMode && !groupMode && !(stewardAccess && currentEffect(row.slug) !== 'default') && !!cover);
+  const needle = filter.trim().toLowerCase();
+  const matching = rows.filter((row) => (!needle || [row.slug, row.description, row.descr]
+    .some((value) => String(value || '').toLowerCase().includes(needle)))
+    && (!permissionFilterActive(facets) || permissionRowMatches(row, facets, {
+      effect: currentEffect(row.slug), baseline: baselineEffect(row.slug), held: rowHeld(row),
+      scopeChanged: scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}),
+    })));
+  const visible = sudoMode ? rowsByArea(matching) : matching;
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
   // Whether the reset button has anything to do: config-granted Steward slugs
   // are not this editor's to clear, and a buffered draft's unknown legacy slugs
   // have no row but are cleared too, so read the selection rather than the rows.
   const resettable = Object.entries(selection).some(([slug, effect]) => effect !== 'default' && !stewardAccess?.config.has(slug));
   const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
-  const groupMode = descriptor.mode === 'group';
   const grantOnly = descriptor.mode === 'buffer' && !!descriptor.grantOnly;
   const roleMode = grantOnly && descriptor.subject === 'role';
   const scopesEditable = scopeSupported(descriptor);
@@ -1031,6 +1070,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which stays with this agent and reaches no other, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Reads and Writes are set in Config.</p>`}
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><${PermissionFilter} value=${filter} onChange=${setFilter} /></div>
+    <${PermissionFacets} value=${facets} onChange=${setFacets} shown=${matching.length} total=${rows.length} />
     <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
       duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} steward=${!!stewardAccess} />`}
     ${visible.length ? visible.map((row, index) => {
@@ -1075,7 +1115,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
           // The umbrella is a source here as at the gate: a row it covers is
           // not "denied (no source)", only as narrow as the umbrella's scope.
           : cover ? `✓ via ${cover.slug}${cover.scope && scopeCountText(cover.scope) ? ' (scoped)' : ''}` : '✗ denied (no source)';
-    const effGranted = row.granted || (!sudoMode && !groupMode && !(stewardAccess && picked) && !!cover);
+    const effGranted = rowHeld(row, cover);
     return html`<${Fragment} key=${row.slug}>${sudoMode && row.area !== visible[index - 1]?.area
       ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
