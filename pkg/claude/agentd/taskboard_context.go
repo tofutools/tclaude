@@ -191,3 +191,26 @@ func taskboardContextTasks(group string, tasks []*db.GroupTask) ([]taskboardCont
 	}
 	return views, nil
 }
+
+// dashboardTaskboardRoutes are the board's write routes the Groups tab's
+// Task board section acts through (groups-taskboard.js). Each is the CLI's
+// own route, so every dashboard action has a CLI verb.
+var dashboardTaskboardRoutes = []struct {
+	pattern string
+	handler http.HandlerFunc
+}{
+	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
+	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
+	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit)},
+	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove)},
+	{"POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardWriteAccess, handleTaskboardStage)},
+	{"POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus)},
+	{"POST /v1/taskboard/tasks/{id}/assign", handleTaskboardTask(taskboardOwnGate, handleTaskboardAssign)},
+	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
+}
+
+func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
+	for _, route := range dashboardTaskboardRoutes {
+		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
+	}
+}
