@@ -413,7 +413,10 @@ The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off. A
 linked node's groups, in the fused view or on that node's page, show the
 boards that node lets you read. Their actions appear only where it granted
-you `taskboard.write` (see [Across linked nodes](#across-linked-nodes)).
+you `taskboard.write` (see [Across linked nodes](#across-linked-nodes)). Assigning,
+unassigning, and *Done* or *Drop* on a task assigned to someone else also need
+`taskboard.assign`. Without it, those actions don't appear in the list and
+those drags aren't accepted in the lanes.
 
 ## API
 

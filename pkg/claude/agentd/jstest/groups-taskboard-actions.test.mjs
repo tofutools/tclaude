@@ -375,6 +375,8 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   api.can = { assign: false };
   const { rowOf } = await mountBoard(t, 'tba-noassign', { api });
   assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
-  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
+  // Closing someone's task is the assignee's or an assigner's (the status
+  // route refuses it otherwise): no Done or Drop on an assigned row.
+  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Block', 'Edit']);
   assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Edit', 'Drop']);
 });

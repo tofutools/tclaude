@@ -18638,7 +18638,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .tb-board { margin: 0 0 6px; }
 .tb-table { width: 100%; table-layout: fixed; font-size: 12.5px; }
-.tb-col-n { width: 44px; }
+.tb-col-n { width: 52px; }
 .tb-col-ref { width: 130px; }
 .tb-col-who { width: 190px; }
 .tb-col-state { width: 170px; }

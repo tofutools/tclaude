@@ -170,7 +170,8 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
       if (!open) return null;
       return { kind: 'block', label: 'block (asks why)', reason: true, run: (api, reason) => api.status(task.id, 'blocked', reason) };
     case 'done':
-      if (!open && task.status !== 'blocked') return null;
+      // An assigned task is closed by its assignee or an assigner.
+      if ((!open && task.status !== 'blocked') || (task.assignee?.agent_id && !assign)) return null;
       return { kind: 'done', label: 'done', run: (api) => api.status(task.id, 'done') };
     default:
       return null;

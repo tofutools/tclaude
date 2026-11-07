@@ -99,6 +99,8 @@ test('laneColumn derives the five columns as the design says', async (t) => {
   assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'ideas')), null, 'striped');
   assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'done')), null);
   assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'progress'), { assign: false }), null, 'no assign grant');
+  assert.equal(kind(building, at('agt_builder', 'progress'), at('agt_builder', 'done'), { assign: false }), null, "no closing someone's task without assign");
+  assert.equal(kind(queued, at('', 'next'), at('', 'done'), { assign: false }), 'done', 'an unassigned task closes on write');
 });
 
 test('the lanes draw the board by role, with the Unassigned lane first and offline lane groups folded', async (t) => {
