@@ -631,6 +631,9 @@ test('Both\'s Resources section lists the group\'s drawing boards and pages with
   assert.equal(drawingBoard.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'drawing_board:sprint', 'and so does a drawing board row');
   assert.equal(feSection.querySelectorAll('thead').length, 1, 'the processes\' table and the resources\' table share one header row');
   assert.equal(shipRow.querySelector('.gr-kindcell').textContent, 'process', 'kind is a column, not a heading');
+  assert.deepEqual([...shipRow.children].map((td) => td.className.split(' ').find((c) => c.startsWith('gr-') || c.endsWith('namecell')) || ''),
+    ['gr-ctl', 'gq-saved-namecell', '', 'gr-timecell', 'gr-timecell', 'gr-kindcell', 'gr-lockcell', 'gr-meta'],
+    'a process row\'s cells follow the header: Last and Age right after State');
   const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
   assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'drawing boards follow the runs');
 

@@ -153,6 +153,17 @@ function laneGroups(lanes, group, by, snapshot) {
 // asks a block reason before it runs. A move to another lane AND another
 // column is the two writes in a row: the lane first (assign, unassign),
 // then the column (block, demote).
+// twoStep runs first, then second, and remembers a first write that landed:
+// a retry after the second was refused (the block form stays open) runs only
+// the second, rather than repeating an unassign the server would refuse.
+function twoStep(first, second) {
+  let firstDone = false;
+  return async (api, reason) => {
+    if (!firstDone) { await first(api); firstDone = true; }
+    return second(api, reason);
+  };
+}
+
 export function laneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
   const open = task.status === 'open';
@@ -162,14 +173,14 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     if (to.lane === UNASSIGNED) {
       if (!task.assignee?.agent_id || task.status === 'done') return null;
       const unassign = (api) => api.unassign(task.id);
+      // An open task in an agent's Blocked column is a stalled one: onto
+      // the Unassigned lane's Blocked it is blocked too, not only unassigned.
+      if (to.column === 'blocked' && open) {
+        return { kind: 'unassign+block', label: 'unassign · block (asks why)', reason: true, run: twoStep(unassign, block) };
+      }
       if (to.column === 'next' || to.column === from.column) return { kind: 'unassign', label: 'unassign', run: unassign };
       if (to.column === 'ideas' && open) {
-        return { kind: 'unassign+demote', label: 'unassign · demote to ideas',
-          run: async (api) => { await unassign(api); return api.stage(task.id, 'idea'); } };
-      }
-      if (to.column === 'blocked' && open) {
-        return { kind: 'unassign+block', label: 'unassign · block (asks why)', reason: true,
-          run: async (api, reason) => { await unassign(api); return block(api, reason); } };
+        return { kind: 'unassign+demote', label: 'unassign · demote to ideas', run: twoStep(unassign, (api) => api.stage(task.id, 'idea')) };
       }
       return null;
     }
@@ -180,8 +191,7 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     const give = (api) => api.assign(task.id, to.lane);
     if (to.column === 'progress' || to.column === 'next') return { kind: 'assign', label: `assign to ${name}`, agent: to.lane, run: give };
     if (to.column === 'blocked') {
-      return { kind: 'assign+block', label: `assign to ${name} · block (asks why)`, agent: to.lane, reason: true,
-        run: async (api, reason) => { await give(api); return block(api, reason); } };
+      return { kind: 'assign+block', label: `assign to ${name} · block (asks why)`, agent: to.lane, reason: true, run: twoStep(give, block) };
     }
     return null;
   }
