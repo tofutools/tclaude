@@ -184,8 +184,10 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // movedAway drops the original of a task moved to another node, noting
     // where it went: to is { node, group, task }.
-    movedAway(id, to) {
-      return call('POST', taskPath(id, '/moved-away'), { to });
+    // With check, it only asks the gates, before the task is created
+    // elsewhere.
+    movedAway(id, to, { check = false } = {}) {
+      return call('POST', taskPath(id, '/moved-away'), check ? { check: true } : { to });
     },
   };
 }

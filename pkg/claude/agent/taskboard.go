@@ -1156,10 +1156,25 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 			in["ref"] = t.Ref.Label
 		}
 	}
+	awayPath := taskboardPath(t.ID, "/moved-away")
+	if !p.Clone {
+		// Ask the drop's gates here first, so a refusal is known before the
+		// task exists on the peer.
+		if err := remoteRequestOpts("", http.MethodPost, awayPath, map[string]any{"check": true}, nil, DaemonOpts{AskHuman: ask}); err != nil {
+			fmt.Fprintf(stderr, "Error: %s cannot be dropped here, so it is not moved (nothing changed): %v\n", t.ID, err)
+			return MapDaemonErrorToRC(err)
+		}
+	}
 	var created taskboardTask
 	path := "/v1/groups/" + url.PathEscape(group) + "/taskboard/transfer-in"
 	if err := remoteRequestOpts(peer, http.MethodPost, path, in, &created, DaemonOpts{AskHuman: ask}); err != nil {
-		fmt.Fprintf(stderr, "Error: %s on %s did not take it, nothing changed: %v\n", group, peer, err)
+		fmt.Fprintf(stderr, "Error: %s on %s did not take it: %v\n", group, peer, err)
+		var de *DaemonError
+		if !errors.As(err, &de) || de.Status >= 500 {
+			fmt.Fprintf(stderr, "If the request timed out, %s may have the task already: check it (taskboard ls %s --peer %s) before retrying.\n", peer, group, peer)
+		} else {
+			fmt.Fprintln(stderr, "Nothing changed.")
+		}
 		return MapDaemonErrorToRC(err)
 	}
 	out := map[string]any{"task": t.ID, "created": created, "group": group, "peer": peer, "clone": p.Clone}
@@ -1173,8 +1188,21 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 	away := map[string]any{"to": map[string]any{"node": peer, "group": group, "task": created.ID}}
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		if err = remoteRequestOpts("", http.MethodPost, taskboardPath(t.ID, "/moved-away"), away, nil, DaemonOpts{AskHuman: ask}); err == nil {
+		err = remoteRequestOpts("", http.MethodPost, awayPath, away, nil, DaemonOpts{AskHuman: ask})
+		var de *DaemonError
+		if err == nil {
 			break
+		}
+		if errors.As(err, &de) {
+			// A retry that finds it closed means the first try landed and
+			// only its answer was lost.
+			if attempt > 0 && de.Status == http.StatusConflict {
+				err = nil
+				break
+			}
+			if de.Status < 500 {
+				break // a refusal: retrying will not change it
+			}
 		}
 	}
 	if err != nil {

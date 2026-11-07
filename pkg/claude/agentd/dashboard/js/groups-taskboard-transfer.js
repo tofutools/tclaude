@@ -249,6 +249,9 @@ export async function runCrossTransfer({ task, group, actions, to, node, nodeNam
   const target = await transferDeps.nodeApi(node);
   let warning = '';
   const out = await actions.run(`${task.id}:transfer`, clone ? 'Clone' : 'Move', async (api) => {
+    // A move asks the drop's gates first: a refusal known up front never
+    // leaves the task on both nodes.
+    if (!clone) await api.movedAway(task.id, null, { check: true });
     const created = await target.transferIn(to, {
       title: task.title, body: task.body || '', ref: task.ref?.url || task.ref?.label || '',
       refLabel: task.ref?.url ? (task.ref?.label || '') : '', stage, clone,
@@ -258,7 +261,14 @@ export async function runCrossTransfer({ task, group, actions, to, node, nodeNam
     const away = { node: toNode, group: to, task: created?.id || '' };
     let last;
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { await api.movedAway(task.id, away); return { created }; } catch (cause) { last = cause; }
+      try { await api.movedAway(task.id, away); return { created }; } catch (cause) {
+        last = cause;
+        // A retry that finds it closed: the first try landed, its answer
+        // was lost.
+        if (attempt > 0 && cause?.status === 409) return { created };
+        // A refusal does not change on a retry.
+        if (cause?.status >= 400 && cause?.status < 500) break;
+      }
     }
     warning = `Moved "${task.title}" to ${toNode}/${to} as ${created?.id || 'a new task'}, but the original `
       + `${task.id} could not be closed here (${last?.message || last}): both copies are live, drop this one by hand.`;

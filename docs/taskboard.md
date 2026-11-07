@@ -401,17 +401,24 @@ node the peer grant `taskboard.transfer` on that group:
 tclaude federation grant alice taskboard.transfer --scope group=crew   # on bob: alice may move tasks into crew
 ```
 
-A move happens in two steps, so a failure never leaves a silent duplicate:
+A move happens in two steps, so a failure never leaves a silent duplicate.
+First, the drop's permissions are checked here. If this node would refuse
+the drop, nothing is created anywhere. Then:
 
 1. The linked node creates the task (`transfer-in`), with the same title,
    brief and ref, in the ideas or in next. Its history notes where it came
    from (`moved from alice/web tk_…`), and the node name is the one the
-   linked node knows the caller by. If this step fails, nothing changes.
+   linked node knows the caller by. In a move between two linked nodes,
+   driven from a third, the source node is the caller's claim, marked with
+   who sent it (`moved from carol/web tk_… (via alice)`). If this step is
+   refused, nothing changes. If it times out, the target may have the task
+   already, so check it before you retry.
 2. Only then is the original dropped here, with the reason
    `moved to bob/crew`. Its assignee, if any, is told. This takes the same
-   source-side permission as a local move. If this step fails, it is retried
-   once. If it still fails, the command says so and names both copies, and
-   the original is left for you to drop.
+   source-side permission as a local move. If this step fails for a
+   transient reason, it is retried once. A retry that finds the original
+   already closed counts as done. If it still fails, the command says so
+   and names both copies, and the original is left for you to drop.
 
 The task's history, assignee and dependencies stay behind with the dropped
 original. A clone runs only the first step. Only an open or blocked task moves

@@ -139,7 +139,7 @@ func requireTaskboardTransfer(w http.ResponseWriter, r *http.Request, t *db.Grou
 		return requireTaskboard(w, r, g, true)
 	}
 	_, ok := requireGroupPermission(w, r, PermTaskboardManage, g)
-	return ok
+	return ok && requireTaskboardUnlocked(w, r, g)
 }
 
 func writeTaskboardTransfer(w http.ResponseWriter, g *db.AgentGroup, t *db.GroupTask, out taskboardTransferResult) {
@@ -172,6 +172,10 @@ type taskboardTransferOrigin struct {
 	Node  string `json:"node"`
 	Group string `json:"group"`
 	Task  string `json:"task"`
+	// via is the linked node that sent it, as this node knows it, when that
+	// is not the node the caller names (a move between two linked nodes,
+	// driven from a third). Set by this node only.
+	via string
 }
 
 func (o taskboardTransferOrigin) String() string {
@@ -181,6 +185,9 @@ func (o taskboardTransferOrigin) String() string {
 	}
 	if o.Task != "" {
 		where += " " + guideText(o.Task, 40)
+	}
+	if o.via != "" {
+		where += " (via " + o.via + ")"
 	}
 	return where
 }
@@ -226,9 +233,15 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		return
 	}
 	// A task coming in from a linked node names that node as this node
-	// knows it, not as the caller says.
+	// knows it. A different node the caller names (the source of a move
+	// between two linked nodes) is kept as its claim, marked with who sent it.
 	if node := taskboardPeerNode(r); node != "" {
-		body.Origin.Node = node
+		claimed := strings.TrimSpace(body.Origin.Node)
+		if claimed == "" || claimed == node {
+			body.Origin.Node = node
+		} else {
+			body.Origin.via = node
+		}
 	}
 	verb := "moved from "
 	if body.Clone {
@@ -251,11 +264,15 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		To taskboardTransferOrigin `json:"to"`
+		// Check runs the gates and answers without dropping: the client
+		// asks it before creating the task on the target, so a refusal it
+		// could foresee never leaves two copies.
+		Check bool `json:"check"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
 	}
-	if strings.TrimSpace(body.To.Group) == "" {
+	if strings.TrimSpace(body.To.Group) == "" && !body.Check {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "give where the task went: to {node, group, task}")
 		return
 	}
@@ -267,7 +284,11 @@ func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.Grou
 		if !requireTaskboard(w, r, g, true) {
 			return
 		}
-	} else if _, ok := requireGroupPermission(w, r, PermTaskboardManage, g); !ok {
+	} else if _, ok := requireGroupPermission(w, r, PermTaskboardManage, g); !ok || !requireTaskboardUnlocked(w, r, g) {
+		return
+	}
+	if body.Check {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "task": t.ID})
 		return
 	}
 	note := "moved to " + body.To.String()

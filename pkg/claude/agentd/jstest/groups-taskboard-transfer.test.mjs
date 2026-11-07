@@ -40,14 +40,23 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   const calls = [];
   const remote = [];
   let awayFails = 0;
+  let awayStatus = 0;
+  let checkRefuses = false;
   transfer.transferDeps.nodeApi = async (node) => ({
     transferIn: async (...args) => { remote.push([node, 'transferIn', ...args]); return { id: 'tk_000000aa' }; },
   });
   const api = {
     moveToGroup: async (...args) => { calls.push(args); return { task: { id: args[0] }, group: args[1], dropped_dependents: ['tk_00000002'] }; },
-    movedAway: async (...args) => {
+    movedAway: async (id, to, opts) => {
+      if (opts?.check) {
+        calls.push(['check', id]);
+        if (checkRefuses) throw Object.assign(new Error('requires taskboard.manage'), { status: 403 });
+        return { ok: true };
+      }
+      const args = [id, to];
       calls.push(['movedAway', ...args]);
       if (awayFails > 0) { awayFails--; throw new Error('node offline'); }
+      if (awayStatus) { const status = awayStatus; awayStatus = 0; throw Object.assign(new Error(`status ${status}`), { status }); }
       return { id: args[0], status: 'dropped' };
     },
     move: async () => ({}), assign: async () => ({}), status: async () => ({}), stage: async () => ({}),
@@ -74,7 +83,8 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   const section = (name) => c.querySelector(`[data-fused-taskboard="${name}"]`);
   const summary = (name) => c.querySelector(`details[data-group-key="${name}"] > summary`);
   return { harness, c, calls, remote, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; },
-    failAway: (n) => { awayFails = n; }, transfer };
+    failAway: (n) => { awayFails = n; }, refuseCheck: () => { checkRefuses = true; },
+    awayAnswers: (status) => { awayStatus = status; }, transfer };
 }
 
 test('a task dropped on another group\'s board moves there after the confirmation', async (t) => {
@@ -150,8 +160,8 @@ test('a drop on a group on another node creates it there first, then drops the o
   assert.match(confirms[0].body, /created there in Ideas.*only then closed here as dropped \("moved to other\/tbt-b"\)/);
   assert.deepEqual(remote, [['nd_other', 'transferIn', 'tbt-b', { title: 'tbt-a first', body: '', ref: '', refLabel: '',
     stage: 'idea', clone: false, origin: { node: '', group: 'tbt-a', task: 'tk_00000001' } }]], 'the target node creates it');
-  assert.deepEqual(calls, [['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
-    'then the source drops it, naming the new task');
+  assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
+    'the drop\'s gates first, then the source drops it, naming the new task');
   assert.match(toasts[0], /Moved "tbt-a first" to tbt-b on other/);
 });
 
@@ -168,7 +178,7 @@ test('a clone to another node only creates; a failed drop is retried once, then 
   data = dt();
   await start('tk_00000001', data);
   await drop(summary('tbt-b'), data);
-  assert.equal(calls.length, 2, 'one retry');
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2, 'one retry');
   assert.match(toasts.at(-1), /Moved/);
 
   failAway(2);
@@ -176,8 +186,36 @@ test('a clone to another node only creates; a failed drop is retried once, then 
   data = dt();
   await start('tk_00000001', data);
   await drop(summary('tbt-b'), data);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2);
   assert.match(toasts.at(-1), /could not be closed here \(node offline\): both copies are live, drop this one by hand/);
+});
+
+test('a drop the source would refuse is known before anything is created; a lost answer is not a duplicate', async (t) => {
+  const { calls, remote, toasts, dt, start, drop, summary, refuseCheck, awayAnswers, failAway } = await mountTwo(t, { otherNode: 'nd_other' });
+  // A first try that landed but whose answer was lost: the retry finds the
+  // task closed (409), and that is the move done.
+  failAway(1);
+  awayAnswers(409);
+  let data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2);
+  assert.match(toasts.at(-1), /^Moved/, 'a lost answer then 409 is a move done');
+
+  // A refusal on the drop is not retried.
+  awayAnswers(403);
+  calls.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 1, 'a 403 is not retried');
+
+  refuseCheck();
+  remote.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.deepEqual(remote, [], 'refused up front: nothing is created on the other node');
 });
 
 test('a done task does not move to another node, so no copy is left behind', async (t) => {

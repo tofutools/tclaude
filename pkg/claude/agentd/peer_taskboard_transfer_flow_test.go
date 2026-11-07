@@ -31,8 +31,9 @@ func TestPeerTaskboardTransferAcrossNodes(t *testing.T) {
 		rec := testharness.Serve(view, testharness.JSONRequest(t, method, path, body))
 		return rec.Code, rec.Body.String()
 	}
+	// The caller names no node: this node names the sender (bob).
 	in := map[string]any{"title": "from bob's board", "body": "the brief", "ref": "https://example.com/7", "stage": "next",
-		"origin": map[string]any{"node": "bob", "group": "web", "task": "tk_00000abc"}}
+		"origin": map[string]any{"group": "web", "task": "tk_00000abc"}}
 
 	// transfer-in: write alone is not enough; taskboard.transfer is.
 	h.grant(t, agentd.PermTaskboardWrite, "group=crew")
@@ -48,6 +49,16 @@ func TestPeerTaskboardTransferAcrossNodes(t *testing.T) {
 	assert.Equal(t, "https://example.com/7", landed.Ref.URL)
 	rec := fedHuman(t, fh.f, http.MethodGet, "/v1/taskboard/tasks/"+landed.ID+"/events", nil)
 	assert.Contains(t, rec.Body.String(), "moved from bob/web tk_00000abc", "its history names where it came from")
+	// A node the caller names that is not the sender (a move between two
+	// linked nodes, driven from bob) is kept as a claim, marked with who sent
+	// it.
+	in["origin"] = map[string]any{"node": "mallory", "group": "web", "task": "tk_00000abd"}
+	code, body = call("POST", "/v1/groups/crew/taskboard/transfer-in", in)
+	require.Equal(t, http.StatusCreated, code, body)
+	var claimed tbTask
+	require.NoError(t, json.Unmarshal([]byte(body), &claimed))
+	rec = fedHuman(t, fh.f, http.MethodGet, "/v1/taskboard/tasks/"+claimed.ID+"/events", nil)
+	assert.Contains(t, rec.Body.String(), "moved from mallory/web tk_00000abd (via bob)")
 	code, _ = call("POST", "/v1/groups/crew/taskboard/transfer-in", map[string]any{"title": "no origin"})
 	assert.Equal(t, http.StatusBadRequest, code)
 
@@ -60,7 +71,14 @@ func TestPeerTaskboardTransferAcrossNodes(t *testing.T) {
 	away := map[string]any{"to": map[string]any{"node": "bob", "group": "web", "task": "tk_00000def"}}
 	code, body = call("POST", "/v1/taskboard/tasks/"+leaving.ID+"/moved-away", away)
 	assert.Equal(t, http.StatusForbidden, code, body)
+	// The check asks the same gates before anything is created elsewhere.
+	code, body = call("POST", "/v1/taskboard/tasks/"+leaving.ID+"/moved-away", map[string]any{"check": true})
+	assert.Equal(t, http.StatusForbidden, code, body)
 	h.grant(t, agentd.PermTaskboardManage, "group=crew")
+	code, body = call("POST", "/v1/taskboard/tasks/"+leaving.ID+"/moved-away", map[string]any{"check": true})
+	require.Equal(t, http.StatusOK, code, body)
+	rec = fedHuman(t, fh.f, http.MethodGet, "/v1/taskboard/tasks/"+leaving.ID, nil)
+	assert.Contains(t, rec.Body.String(), `"status":"open"`, "a check drops nothing")
 	code, body = call("POST", "/v1/taskboard/tasks/"+leaving.ID+"/moved-away", away)
 	require.Equal(t, http.StatusOK, code, body)
 	var gone tbTask
