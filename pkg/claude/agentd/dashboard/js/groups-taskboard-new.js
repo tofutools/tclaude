@@ -32,9 +32,15 @@ function activeMembers(group) {
 }
 
 // askableMembers are the members "Ask an agent" may mail: online, and able
-// to change the board. Without the writer lock every member may; with it,
-// the context's writers list says who.
+// to add tasks to the board. The context's askable list says who (those
+// holding taskboard.write who pass the writer lock; a member that only
+// tracks its own work is not one). A node that does not send it yet falls
+// back to the writer lock: without it every member, with it its writers.
 export function askableMembers(group, entry) {
+  if (Array.isArray(entry?.askable)) {
+    const askable = new Set(entry.askable);
+    return activeMembers(group).filter((member) => member.online && askable.has(member.agent_id));
+  }
   const writers = entry?.locked ? new Set(entry.writers || []) : null;
   return activeMembers(group).filter((member) => member.online && (!writers || writers.has(member.agent_id)));
 }
@@ -51,7 +57,10 @@ export function defaultAskee(members) {
 export function askUnavailable(group, entry, wizard = false) {
   if (askableMembers(group, entry).length) return '';
   if (!activeMembers(group).some((member) => member.online)) return wizard ? 'No hero of this party is awake' : 'No member of this group is online';
-  return wizard ? 'No awake hero may write on this board' : 'No online member may change this board (writer lock)';
+  if (wizard) return 'No awake hero may write on this board';
+  return Array.isArray(entry?.askable) && !entry?.locked
+    ? 'No online member may add tasks to this board (it takes taskboard.write)'
+    : 'No online member may change this board (writer lock)';
 }
 
 // START_STATES are the board columns a new task can start in: the stage

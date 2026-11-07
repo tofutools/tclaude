@@ -3,11 +3,11 @@ name: taskboard
 description: >-
   Read and work a group's Task board via `tclaude agent taskboard`: see what
   your group is doing now and next (ls, show, history), capture and order tasks
-  (add, edit, move, promote, demote, block, drop, done), take a queued task or
-  have one assigned to you, and report done or failed on it (take, release,
-  report). Use when a `[taskboard]` mail arrives in your inbox, when the
+  (add, edit, move, promote, demote, block, drop, done), track your own work
+  (add it assigned to yourself), take an unassigned task or have one assigned
+  to you, and report done or failed on it (take, release, report). Use when a `[taskboard]` mail arrives in your inbox, when the
   operator or your lead says "put it on the board", "what's next for the group",
-  "take the next task", or when you finish or give up on a task you were
+  "take the next task", "track your work on the board", or when you finish or give up on a task you were
   assigned. Not the backlog: long-term work belongs in the external tracker
   (awb, Linear or similar). Not for Collab drawing boards (that is agent-drawing-board)
   or the task-reference link (agent-task).
@@ -23,7 +23,7 @@ The group's Task board is the short-term view of what is happening now and next 
 tclaude agent taskboard ls                 # your group's board: the queue (next), then ideas
 tclaude agent taskboard ls --mine          # the tasks assigned to you, in every group
 tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it
-tclaude agent taskboard take tk_1a2b3c4d   # take a queued, unassigned task yourself
+tclaude agent taskboard take tk_1a2b3c4d   # take an open, unassigned task yourself (an idea is promoted)
 # … do the work …
 tclaude agent taskboard report done --note "merged #4126"
 tclaude agent taskboard report failed --note "CI image lacks bubblewrap"
@@ -46,8 +46,25 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   get a `[taskboard] you went idle without reporting: …` nudge. Report, or carry
   on if you are still on it; starting a new turn clears it. Nothing fails or
   is taken from you.
-- You can only take a task from the queue (`next`), not an idea. If the right
-  next step is an idea, ask whoever leads the group to promote it.
+- You can take any open, unassigned task, an idea included. A task assigned to
+  someone else is theirs: ask whoever leads the group to reassign it.
+
+## Tracking your own work
+
+When you are asked to track your work on the board, put each piece of work you
+start on it, assigned to yourself, and report on it when it ends:
+
+```bash
+tclaude agent taskboard add <group> "fix the flaky retry test" --ref tcl-a1b2c3   # assigned to you, in progress
+tclaude agent taskboard block tk_… --reason "waiting on review"                  # your own task
+tclaude agent taskboard report done --task tk_… --note "merged #4200"
+```
+
+As a member you hold `taskboard.own` on your group's board: what you add is
+assigned to you, and you change only your own tasks. Adding an unassigned
+task (`--next`, an idea), importing, reordering and changing others' tasks
+need `taskboard.write`, which owners have. If you hold write, `add --mine`
+assigns the new task to you.
 
 ## Capturing and ordering
 
@@ -61,7 +78,8 @@ tclaude agent taskboard drop tk_… --reason "parked in awb"
 tclaude agent taskboard move-to-group tk_… <other-group>[@<peer>] [--clone] [--stage next]   # @peer: created there, then dropped here
 ```
 
-New tasks land in the ideas unless you pass `--next`. Keep the board short.
+With `taskboard.write`, new tasks land unassigned in the ideas unless you pass
+`--next` (or `--mine` / `--assignee`). Keep the board short.
 When something will not happen soon, make sure the tracker has it, then
 `drop` it.
 
@@ -69,17 +87,22 @@ When something will not happen soon, make sure the tracker has it, then
 
 A `[taskboard] task request from …: <group>` message (the dashboard's
 *+ New task › Ask an agent*, or `taskboard ask`) carries a request in prose.
-Turn it into one or more well-formed tasks with `taskboard add`: a one-line
+You are asked because you hold `taskboard.write` there. Turn it into one or more well-formed tasks with `taskboard add`: a one-line
 title, a short `--body` brief, a `--ref` where there is one, and `--next` only
 when it is clearly next. Create the tasks only; do not start the work. Then
 reply to the message with the task ids.
 
 ## Permissions
 
-- Members read and change their own group's board and take its tasks. If the
-  board is locked (`groups set-taskboard-writers`), only the listed writers,
-  owners and agents with an explicit grant may change it or take tasks. Reports
-  are never locked.
+- Members read their own group's board and track their own work on it
+  (`taskboard.own`): add tasks assigned to themselves, change and close their
+  own tasks, take unassigned ones, and comment on any. Everything else that
+  changes the board needs `taskboard.write`. Owners have it, and a group grant
+  of it gives every member of a group the broad rights. `self.taskboard` is a
+  deprecated alias of `taskboard.own`.
+- If the board is locked (`groups set-taskboard-writers`), only the listed
+  writers, owners and agents with an explicit grant may change it or take
+  tasks. Reports are never locked.
 - Assigning another agent, taking a task back from it, and closing a task
   assigned to someone else need `taskboard.assign`. Group owners have it for
   their groups.
