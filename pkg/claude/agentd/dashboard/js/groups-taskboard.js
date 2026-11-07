@@ -668,7 +668,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       </tbody>
     </table>` : html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Capture one below.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
-    ${view === 'list' && more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
+    ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${actions && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} line=${view === 'lanes'} />`}
     <${HistoryLine} entry=${entry} open=${history} wizard=${wizard} onToggle=${() => setHistory(!history)} />
     ${history && (entry.closed || []).length > 0 && html`<table class="ui-compact tb-table tb-closed">${COLUMNS}<tbody>

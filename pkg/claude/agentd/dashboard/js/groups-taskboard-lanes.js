@@ -34,6 +34,7 @@ const WEEK_MS = 7 * 24 * 3600 * 1000;
 // DONE_SHOWN is how many done cards a cell draws before "+ n more".
 const DONE_SHOWN = 3;
 export const UNASSIGNED = '';
+const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 
 // laneColumn is the column a task stands in, derived as the design's table
 // says; null for a task the lanes leave out (dropped, done before this week).
@@ -104,10 +105,14 @@ function laneGroups(lanes, group, by, snapshot) {
     if (!found) { found = { key, label, lanes: [] }; groups.push(found); }
     return found;
   };
+  // An assignee who left the group gets a lane group of its own, which never
+  // folds: what it holds (blocked or stalled too) stays in sight.
+  const former = lanes.filter((lane) => !lane.member);
+  lanes = lanes.filter((lane) => lane.member);
   if (by === 'role') {
     for (const lane of lanes) {
-      const role = lane.member?.role || '';
-      into(`role:${role}`, role || (lane.member ? 'no role' : 'former members')).lanes.push(lane);
+      const role = lane.member.role || '';
+      into(`role:${role}`, role || 'no role').lanes.push(lane);
     }
   } else if (by === 'subgroup') {
     // A subgroup's members fold under the subgroup; the rest stay under the
@@ -123,13 +128,15 @@ function laneGroups(lanes, group, by, snapshot) {
     for (const lane of lanes) into(lane.state === 'offline' ? 'offline' : 'agents', lane.state === 'offline' ? 'offline' : '').lanes.push(lane);
     groups.sort((a, b) => Number(a.key === 'offline') - Number(b.key === 'offline'));
   }
-  for (const g of groups) g.offline = g.lanes.length > 0 && g.lanes.every((lane) => lane.state === 'offline' || lane.state === 'not a member');
+  for (const g of groups) g.offline = g.lanes.length > 0 && g.lanes.every((lane) => lane.state === 'offline');
+  let out = groups;
   if (by === 'role') {
     // The owner's role leads, offline roles trail; otherwise as first seen.
     const rank = (g) => (g.offline ? 2 : g.lanes.some((lane) => lane.member?.owner) ? 0 : 1);
-    return groups.map((g, i) => [g, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([g]) => g);
+    out = groups.map((g, i) => [g, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([g]) => g);
   }
-  return groups;
+  if (former.length) out.push({ key: 'former', label: 'no longer members', lanes: former, offline: false });
+  return out;
 }
 
 // laneDrop says what dropping `task` from its cell onto another does: the
@@ -145,7 +152,8 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
       if (to.column !== 'next' && to.column !== from.column) return null;
       return { kind: 'unassign', label: 'unassign', run: (api) => api.unassign(task.id) };
     }
-    if (!open || (to.column !== 'progress' && to.column !== 'next')) return null;
+    // Only a member can be assigned (a former member's lane holds what it had).
+    if (!open || to.member === false || (to.column !== 'progress' && to.column !== 'next')) return null;
     return { kind: 'assign', label: `assign to ${to.name || to.lane}`, agent: to.lane, run: (api) => api.assign(task.id, to.lane) };
   }
   switch (to.column) {
@@ -199,6 +207,11 @@ function useLaneDrag(actions, group) {
   const assign = canAssign(actions);
   const clear = () => { dragged.current = null; setDragging(''); setOver(null); };
   const hit = (event, to) => {
+    // Only this board's task drag drives the cells: a text, link or file
+    // drag after a missed dragend (the card re-rendered away mid-drag) must
+    // not run the stale task's action.
+    const types = event.dataTransfer?.types;
+    if (types && !Array.from(types).includes(TASK_DRAG_TYPE)) return null;
     const from = dragged.current;
     const drop = from && laneDrop(from.task, from, to, { assign });
     if (!drop) return null;
@@ -213,7 +226,7 @@ function useLaneDrag(actions, group) {
       event.stopPropagation();
       dragged.current = { task, ...from };
       setDragging(task.id);
-      event.dataTransfer?.setData('application/x-tclaude-task', task.id);
+      event.dataTransfer?.setData(TASK_DRAG_TYPE, task.id);
       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
     },
     end: clear,
@@ -281,7 +294,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = 
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
     const stripe = striped(lane.id, column.key);
-    const target = { lane: lane.id, column: column.key, name: lane.name };
+    const target = { lane: lane.id, column: column.key, name: lane.name, member: lane.id === UNASSIGNED || !!lane.member };
     const over = drag.over?.key === key;
     const shown = column.key === 'done' && !doneOpen[lane.id] ? list.slice(0, DONE_SHOWN) : list;
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}`}
@@ -305,7 +318,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = 
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow">Lane</div>
-        ${LANE_COLUMNS.map((column) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${count(column.key)}</span></div>`)}
+        ${LANE_COLUMNS.map((column) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span></div>`)}
       </div>
       ${row(unassigned)}
       ${groups.map((lg) => {

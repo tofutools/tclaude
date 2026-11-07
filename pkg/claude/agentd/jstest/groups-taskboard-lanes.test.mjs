@@ -218,3 +218,30 @@ test("a linked node's group shows that node's board in lanes", async (t) => {
     boards=${() => ({ source: peerSource, api: null })} />`);
   assert.deepEqual([...mounted.container.querySelectorAll('.tb-cell[data-lane="unassigned"][data-column="next"] .tb-card')].map((el) => el.dataset.taskId), ['tk_000000p1']);
 });
+
+test('a former member keeps an unfolded lane for what it holds, and takes no assign', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { laneModel, laneDrop } = await harness.importDashboardModule('js/groups-taskboard-lanes.js');
+  const b = board('x');
+  b.tasks.push(row('tk_00000009', 'left behind', { status: 'blocked', block_reason: 'x', assignee: { agent_id: 'agt_gone', name: 'gone' } }));
+  const { groups, cells } = laneModel(b, { name: 'x', members: members() }, 'role');
+  const former = groups.at(-1);
+  assert.deepEqual([former.key, former.label, former.offline, former.lanes.map((l) => l.id)], ['former', 'no longer members', false, ['agt_gone']]);
+  assert.deepEqual(cells.get('agt_gone|blocked').map((task) => task.id), ['tk_00000009']);
+  const queued = b.tasks[0];
+  assert.equal(laneDrop(queued, { lane: '', column: 'next' }, { lane: 'agt_gone', column: 'progress', member: false }), null);
+});
+
+test('a drag that is not a task drag drives no cell; the Done header counts the week', async (t) => {
+  const { drag, cell, card, harness, api, c } = await mountLanes(t, 'tbl-types');
+  assert.match(c.querySelector('.tb-col-done').textContent, /1$/);
+  // A card drag whose dragend never came, then a text drag over a cell.
+  await harness.act(async () => { harness.fireEvent(card('tk_00000004'), 'dragstart', { dataTransfer: { setData() {} } }); });
+  const text = { types: ['text/plain'], dropEffect: '' };
+  assert.equal(harness.fireEvent(cell('unassigned', 'next'), 'dragover', { dataTransfer: text }).defaultPrevented, false);
+  await harness.act(async () => { harness.fireEvent(cell('unassigned', 'next'), 'drop', { dataTransfer: text }); });
+  assert.deepEqual(api.calls, []);
+  // A task drag still works.
+  const out = await drag('tk_00000004', 'unassigned', 'next');
+  assert.equal(out.taken, true);
+});
