@@ -345,6 +345,8 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /v1/taskboard/tasks/{id}/move",
 	"POST /v1/taskboard/tasks/{id}/stage",
 	"POST /v1/taskboard/tasks/{id}/status",
+	"POST /v1/taskboard/tasks/{id}/assign",
+	"POST /v1/taskboard/tasks/{id}/unassign",
 	// Cancelling a spawn waiting for this node's capacity (it can deny a
 	// peer's request); peers never see the queue (CapacityQueue is denied).
 	"DELETE /api/spawn-queue/{id}",

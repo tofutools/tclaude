@@ -200,11 +200,13 @@ var dashboardTaskboardRoutes = []struct {
 	handler http.HandlerFunc
 }{
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
-	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(false, handleTaskboardEvents)},
-	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(true, handleTaskboardEdit)},
-	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(true, handleTaskboardMove)},
-	{"POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(true, handleTaskboardStage)},
-	{"POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(true, handleTaskboardStatus)},
+	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
+	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit)},
+	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove)},
+	{"POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardWriteAccess, handleTaskboardStage)},
+	{"POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus)},
+	{"POST /v1/taskboard/tasks/{id}/assign", handleTaskboardTask(taskboardOwnGate, handleTaskboardAssign)},
+	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
 }
 
 func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
