@@ -16,9 +16,10 @@ import (
 // A task has at most one assignee, an active member of the task's group.
 // Assigning another agent (and unassigning it, and closing its task as done)
 // takes taskboard.assign, scoped by group and target_agent and conferred by
-// ownership of the group; taking an open task for yourself and releasing it
-// takes self.taskboard and is narrowed by the writer lock; reporting done or
-// failed on your own task takes self.taskboard and is never locked. The
+// ownership of the group; taking an open, unassigned task for yourself (an
+// idea is promoted on the way) and releasing it takes taskboard.own
+// (taskboard_own.go) and is narrowed by the writer lock; reporting done or
+// failed on your own task takes taskboard.own and is never locked. The
 // assignee gets an inbox brief from the assigner. An assignment never retires,
 // releases or otherwise touches the agent.
 
@@ -48,15 +49,12 @@ func callerAgentID(r *http.Request) (agentID, conv string) {
 }
 
 // requireTaskboardAssigneeAction gates an action on assignee's behalf: the
-// assignee itself needs self.taskboard (and, when lockApplies, a pass of the
+// assignee itself needs taskboard.own (and, when lockApplies, a pass of the
 // writer lock); anyone else needs taskboard.assign for the group and that
 // target agent.
 func requireTaskboardAssigneeAction(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, assignee string, lockApplies bool) bool {
 	if self, _ := callerAgentID(r); self != "" && self == assignee {
-		if _, ok := requirePermission(w, r, PermSelfTaskboard); !ok {
-			return false
-		}
-		return !lockApplies || requireTaskboardUnlocked(w, r, g)
+		return requireTaskboardOwn(w, r, g, lockApplies)
 	}
 	conv, _ := db.CurrentConvForAgent(assignee)
 	_, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
@@ -201,11 +199,11 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	take := self != "" && target == self
 	if take {
-		if !requireTaskboardAssigneeAction(w, r, g, self, true) {
-			return
-		}
 		if activeGroupMember(g, self) == "" {
 			writeError(w, http.StatusConflict, "not_member", "only an active member of "+g.Name+" takes its tasks")
+			return
+		}
+		if !requireTaskboardAssigneeAction(w, r, g, self, true) {
 			return
 		}
 	} else {
@@ -310,7 +308,12 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeError(w, http.StatusBadRequest, "invalid_arg", "only the assignee reports; close a task with done")
 		return
 	}
-	if _, ok := requirePermission(w, r, PermSelfTaskboard); !ok {
+	if t.AssigneeID == self && activeGroupMember(g, self) == "" {
+		setAuditDetail(r, "refused: not a member, "+t.ID)
+		writeError(w, http.StatusConflict, "not_member", "you are no longer an active member of "+g.Name)
+		return
+	}
+	if !requireTaskboardOwn(w, r, g, false) {
 		return
 	}
 	outcome := strings.TrimSpace(body.Outcome)
@@ -325,11 +328,6 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	note, err := validateTaskText("the note", strings.TrimSpace(body.Note), db.GroupTaskOutcomeNoteMax)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
-	}
-	if t.AssigneeID == self && activeGroupMember(g, self) == "" {
-		setAuditDetail(r, "refused: not a member, "+t.ID)
-		writeError(w, http.StatusConflict, "not_member", "you are no longer an active member of "+g.Name)
 		return
 	}
 	rep, err := db.ReportGroupTask(t.ID, self, outcome, note, taskboardActor(r))

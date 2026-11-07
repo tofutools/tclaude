@@ -65,6 +65,11 @@ type taskboardGroupContext struct {
 	// Ask an agent" picks from. Without the lock every member may.
 	Locked  bool     `json:"locked,omitempty"`
 	Writers []string `json:"writers,omitempty"`
+	// Askable lists the active members and owners (agent ids) "Ask an
+	// agent" may mail: those who write the board (taskboard.write, which a
+	// member holds only through a grant) and pass its lock. A member that
+	// only tracks its own work there (taskboard.own) is not one.
+	Askable []string `json:"askable"`
 }
 
 type taskboardContextView struct {
@@ -136,6 +141,9 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	// A nil request wants only the counts (the node summary).
 	if r != nil {
 		if err := taskboardContextWriters(r, g, &entry); err != nil {
+			return entry, err
+		}
+		if err := taskboardContextAskable(r, g, &entry); err != nil {
 			return entry, err
 		}
 	}
@@ -220,9 +228,9 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk)},
 	{"GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow)},
 	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
-	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit)},
+	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardOwnGate, handleTaskboardEdit)},
 	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove)},
-	{"POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardWriteAccess, handleTaskboardStage)},
+	{"POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardOwnGate, handleTaskboardStage)},
 	{"POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus)},
 	{"POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup)},
 	{"POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway)},
@@ -231,10 +239,10 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
 	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},
 	{"POST /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersSet)},
-	{"POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardWriteAccess, handleTaskboardAttach)},
+	{"POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardOwnGate, handleTaskboardAttach)},
 	{"GET /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachments)},
 	{"GET /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachmentGet)},
-	{"DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardDetach)},
+	{"DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardOwnGate, handleTaskboardDetach)},
 }
 
 func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
@@ -286,6 +294,41 @@ func taskboardContextWriters(r *http.Request, g *db.AgentGroup, entry *taskboard
 		}
 		if slices.Contains(lock.Writers, id) || taskboardMemberWrites(r, g, m.ConvID) {
 			add(id)
+		}
+	}
+	return nil
+}
+
+// taskboardContextAskable fills Askable: the active owners and members who
+// may be asked for tasks, as handleTaskboardAsk decides it.
+func taskboardContextAskable(r *http.Request, g *db.AgentGroup, entry *taskboardGroupContext) error {
+	entry.Askable = []string{}
+	seen := map[string]bool{}
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		return err
+	}
+	for _, o := range owners {
+		if conv := activeGroupOwner(g, o.AgentID); !seen[o.AgentID] && conv != "" && taskboardMemberWrites(r, g, conv) {
+			seen[o.AgentID] = true
+			entry.Askable = append(entry.Askable, o.AgentID)
+		}
+	}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		id, err := db.AgentIDForConv(m.ConvID)
+		if err != nil || id == "" || seen[id] {
+			continue
+		}
+		if state, err := db.AgentState(m.ConvID); err != nil || state == db.AgentStateRetired {
+			continue
+		}
+		if taskboardMemberWrites(r, g, m.ConvID) {
+			seen[id] = true
+			entry.Askable = append(entry.Askable, id)
 		}
 	}
 	return nil

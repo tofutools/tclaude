@@ -61,6 +61,8 @@ func newTaskboardImportFlow(t *testing.T, member string) *taskboardHarness {
 	h.f.HaveEnrolledAgent(member)
 	h.f.HaveGroup("crew")
 	h.f.HaveMember("crew", member)
+	// An import creates unassigned tasks: it takes taskboard.write.
+	h.groupWrites("crew")
 	return h
 }
 

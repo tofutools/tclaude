@@ -139,10 +139,15 @@ var taskboardCommentRoutes = []struct {
 	{"DELETE /v1/taskboard/tasks/{id}/comments/{cid}", handleTaskboardTask(taskboardOwnGate, handleTaskboardCommentDelete)},
 }
 
-// requireTaskboardCommenter gates commenting on g's board.
-// TODO(tcl-h4zc3i): requireTaskboardComment (taskboard.write, or
-// taskboard.own on one's own group) once taskboard.own lands.
+// requireTaskboardCommenter gates commenting on any task of g's board: the
+// operator, a taskboard.write holder, or an active member of g under
+// taskboard.own (commenting is not claiming, so any task of its own group's
+// board). An explicit deny of own (or its alias) refuses the member; a
+// linked node needs write. Both are narrowed by the writer lock.
 func requireTaskboardCommenter(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) bool {
+	if taskboardOwnOnly(r, g) {
+		return requireTaskboardOwn(w, r, g, true)
+	}
 	return requireTaskboard(w, r, g, true)
 }
 

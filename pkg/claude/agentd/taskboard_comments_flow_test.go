@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -89,7 +90,7 @@ func TestTaskboardCommentsLifecycle(t *testing.T) {
 	const outsider = "tb-outsider-4444"
 	h.agent(t, outsider)
 	created := h.task(h.call(h.peer, http.MethodPost, "/v1/groups/crew/taskboard/tasks",
-		map[string]any{"title": "wire the lanes", "stage": "next"}), http.StatusCreated)
+		map[string]any{"title": "wire the lanes"}), http.StatusCreated)
 	code, body := h.post(h.lead, created.ID, "assign", map[string]any{"to": h.worker})
 	require.Equal(t, http.StatusOK, code, body)
 	workerMail := len(tbInboxSubjects(t, h.worker))
@@ -202,7 +203,7 @@ func TestTaskboardCommentFiles(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, tbPNG, rec.Body.Bytes())
 	// Nor detachable on its own.
-	rec = h.call(h.worker, http.MethodDelete, fileURL, nil)
+	rec = h.call("", http.MethodDelete, fileURL, nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
 	rec = h.call(h.worker, http.MethodDelete, "/v1/taskboard/tasks/"+task.ID+"/comments/"+tbID(out.Comment.ID), nil)
@@ -217,10 +218,10 @@ func TestTaskboardCommentFiles(t *testing.T) {
 func TestTaskboardActivityRecordsChanges(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
 	task := h.add("old title", "")
-	rec := h.call(h.worker, http.MethodPatch, "/v1/taskboard/tasks/"+task.ID, map[string]any{"title": "new title"})
+	rec := h.call(h.lead, http.MethodPatch, "/v1/taskboard/tasks/"+task.ID, map[string]any{"title": "new title"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	before := len(h.activity("", task.ID))
-	rec = h.call(h.worker, http.MethodPatch, "/v1/taskboard/tasks/"+task.ID, map[string]any{"title": "new title"})
+	rec = h.call(h.lead, http.MethodPatch, "/v1/taskboard/tasks/"+task.ID, map[string]any{"title": "new title"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Len(t, h.activity("", task.ID), before, "a no-op edit records nothing")
 
@@ -237,7 +238,7 @@ func TestTaskboardActivityRecordsChanges(t *testing.T) {
 				titled = true
 				assert.Equal(t, "old title", c.Before)
 				assert.Equal(t, "new title", c.After)
-				assert.Equal(t, "agent:"+tbAgentID(t, h.worker), e.Actor)
+				assert.Equal(t, "agent:"+tbAgentID(t, h.lead), e.Actor)
 			}
 		}
 	}
@@ -257,7 +258,7 @@ func TestTaskboardActivityRecordsChanges(t *testing.T) {
 	var view tbActivityTask
 	rec = h.call("", http.MethodGet, "/v1/taskboard/tasks/"+task.ID, nil)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &view))
-	assert.Equal(t, "agent:"+tbAgentID(t, h.worker), view.LastEditedBy)
+	assert.Equal(t, "agent:"+tbAgentID(t, h.lead), view.LastEditedBy)
 	assert.NotEmpty(t, view.LastEditedAt)
 	// The history route answers the same stream.
 	rec = h.call("", http.MethodGet, "/v1/taskboard/tasks/"+task.ID+"/events", nil)
@@ -265,3 +266,40 @@ func TestTaskboardActivityRecordsChanges(t *testing.T) {
 }
 
 func tbID(id int64) string { return strconv.FormatInt(id, 10) }
+
+// A member holding only taskboard.own comments on any task of its group's
+// board, someone else's included (commenting is not claiming); an explicit
+// deny refuses it, and own never reaches another group's board.
+func TestTaskboardOwnOnlyMemberComments(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	theirs := h.add("the operator's task", "next")
+	code, body := h.post(h.lead, theirs.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	// The peer may not change the worker's task, but may comment on it.
+	rec := h.call(h.peer, http.MethodPatch, "/v1/taskboard/tasks/"+theirs.ID, map[string]any{"title": "renamed"})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	code, c := h.comment(h.peer, theirs.ID, map[string]any{"body": "I saw this fail too"})
+	require.Equal(t, http.StatusCreated, code)
+	assert.Equal(t, "agent:"+tbAgentID(t, h.peer), c.Author)
+	// An unassigned task too, and the author edits its own comment.
+	idea := h.add("an idea", "")
+	code, _ = h.comment(h.peer, idea.ID, map[string]any{"body": "worth doing"})
+	require.Equal(t, http.StatusCreated, code)
+	rec = h.call(h.peer, http.MethodPatch, "/v1/taskboard/tasks/"+theirs.ID+"/comments/"+tbID(c.ID), map[string]any{"body": "I saw this fail twice"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// An explicit deny wins.
+	require.NoError(t, db.SetAgentPermissionOverride(h.peer, agentd.PermTaskboardOwn, db.PermEffectDeny, "test"))
+	code, _ = h.comment(h.peer, theirs.ID, map[string]any{"body": "still here"})
+	assert.Equal(t, http.StatusForbidden, code)
+
+	// own does not reach a group the agent is not a member of.
+	const outsider = "tb-own-outsider-5555"
+	h.agent(t, outsider)
+	h.f.HaveGroup("elsewhere")
+	h.f.HaveMember("elsewhere", outsider)
+	require.NoError(t, db.SetAgentPermissionOverride(outsider, agentd.PermTaskboardOwn, db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(outsider, agentd.PermTaskboardRead, db.PermEffectGrant, "test"))
+	code, _ = h.comment(outsider, theirs.ID, map[string]any{"body": "from outside"})
+	assert.Equal(t, http.StatusForbidden, code)
+}

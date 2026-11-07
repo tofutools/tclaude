@@ -324,14 +324,17 @@ func taskboardAttachmentViews(atts []db.GroupTaskAttachment) []taskboardAttachme
 }
 
 func registerTaskboardAttachmentRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardWriteAccess, handleTaskboardAttach))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardOwnGate, handleTaskboardAttach))
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachments))
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachmentGet))
-	mux.HandleFunc("DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardDetach))
+	mux.HandleFunc("DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardOwnGate, handleTaskboardDetach))
 }
 
 // POST /v1/taskboard/tasks/{id}/attachments — multipart "file" parts.
 func handleTaskboardAttach(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	if !requireTaskboardTaskChange(w, r, g, t) {
+		return
+	}
 	if !isMultipart(r) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "send the files as multipart/form-data file parts")
 		return
@@ -427,6 +430,9 @@ func handleTaskboardAttachmentGet(w http.ResponseWriter, r *http.Request, t *db.
 
 // DELETE /v1/taskboard/tasks/{id}/attachments/{aid}
 func handleTaskboardDetach(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	if !requireTaskboardTaskChange(w, r, g, t) {
+		return
+	}
 	a, ok := taskboardAttachmentOf(w, r, t)
 	if !ok {
 		return
