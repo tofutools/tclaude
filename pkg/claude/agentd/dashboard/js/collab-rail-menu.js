@@ -44,7 +44,8 @@ function lifecycleAgent(item) {
   const selector = agent.agent_id || agent.conv_id;
   if (!selector) return null;
   return { agent, selector, conv: agent.conv_id || selector, label: agent.title || agent.conv_id || selector,
-    node: item.pane?.seed?.remote?.peer || item.row?.node || '' };
+    // A background row's node is { id, name, color }.
+    node: item.pane?.seed?.remote?.peer || item.row?.node?.id || '' };
 }
 
 // lifecycleEntries are an agent row's Stop or Resume, and Retire…: the

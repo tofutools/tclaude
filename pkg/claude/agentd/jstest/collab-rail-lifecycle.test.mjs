@@ -65,6 +65,19 @@ test('a peer\'s agent gets each only where the peer grants it, and is named by i
   assert.deepEqual(ctx.calls, [['resumeAgent', 'agt_ada', 'ada', 'inst_bob'], ['retireAgent', 'agt_ada', 'ada', 'inst_bob']]);
 });
 
+test('a peer\'s agent running with nothing attached here (a background row) is gated and named by its node too', async (t) => {
+  const { railRowActions } = await load(t);
+  const item = agentItem(ada(true), { row: { key: 'bg-ada', tmux_session: 'tclaude-ada', node: { id: 'inst_bob', name: 'bob', color: '#888' } } });
+  const seen = [];
+  const env = { peerView: (node) => { seen.push(node); return { agents: { agt_ada: ['groups.members.stop', 'groups.members.retire'] } }; } };
+  const ctx = fakeContext();
+  const { open, end } = railRowActions(item, env);
+  assert.deepEqual(ids({ open, end }), { open: ['open', 'stop'], end: ['retire'] });
+  assert.deepEqual([...new Set(seen)], ['inst_bob'], 'the grant check reads the row\'s node by its id');
+  await open[1].run(ctx);
+  assert.deepEqual(ctx.calls, [['stopAgent', 'agt_ada', 'ada', 'inst_bob']]);
+});
+
 test('a shell or a drawing board gets none of them', async (t) => {
   const { railRowActions } = await load(t);
   const shell = { key: 'shell:tclaude', kind: 'shell', title: 'Group shell' };
