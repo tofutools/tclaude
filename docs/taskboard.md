@@ -58,8 +58,11 @@ tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard history <task>
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
-                                    [--next] [--after tk_a,tk_b] [--top|--before tk_x]
-tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt-file f
+                                    [--next] [--after tk_a,tk_b] [--top|--before tk_x] [--attach f]…
+tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…   # or --prompt-file f
+tclaude agent taskboard attach <task> <file>…
+tclaude agent taskboard detach <task> <name|#id>…
+tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
@@ -107,6 +110,31 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   member must be an active member who may change the board, so a
   [writer lock](#the-writer-lock) limits who can be asked.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
+
+## Files on a task
+
+A task can carry files: a screenshot, a log, a spec. `add --attach` (repeatable)
+creates the task and its files in one step, and `attach` adds files to an
+existing task. `show` lists them, and so does the brief an assignee gets,
+with the command to fetch them.
+
+- A task holds at most 10 files, of at most 4 MiB each.
+- Files have the types mail attachments may have: images (PNG, JPEG, GIF,
+  WebP), text, markdown, CSV, JSON, YAML, diff/patch and PDF. HTML, SVG,
+  archives and executables are refused.
+- A second file with a name the task already has gets a numbered prefix
+  (`2-shot.png`).
+- The files are stored where agents cannot reach them. `attachments <task>
+  --save <dir>` writes them into a directory (it never overwrites a file).
+  `detach` removes one, by name or by the `#id` the list shows.
+- Attaching and detaching need `taskboard.write` on the task's group. Reading
+  the files needs `taskboard.read`. Both are recorded in the task's history
+  (`attached`, `detached`).
+- `ask --attach` sends the files with the request, as attachments of the
+  mail. The asked member is told to put them on the tasks it creates.
+- A clone or a move to another group, on this node or another, takes the
+  files with it. A clone shares the stored bytes. Bytes no task refers to
+  any more are removed by the hourly sweep.
 
 ## Importing from a tracker
 
@@ -420,7 +448,8 @@ the drop, nothing is created anywhere. Then:
    already closed counts as done. If it still fails, the command says so
    and names both copies, and the original is left for you to drop.
 
-The task's history, assignee and dependencies stay behind with the dropped
+The task's files go with it, in the same `transfer-in` request. The task's
+history, assignee and dependencies stay behind with the dropped
 original. A clone runs only the first step. Only an open or blocked task moves
 to another node; a done or dropped one can be cloned.
 
@@ -624,6 +653,21 @@ those drags aren't accepted in the lanes.
 | `ls --mine` | `GET /v1/taskboard/mine` |
 | `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
 | `groups set-taskboard-writers` | `GET` / `POST /v1/groups/{g}/taskboard/writers {"agents":[…]}\|{"members":true}` |
+| `attach` | `POST /v1/taskboard/tasks/{id}/attachments` (multipart `file` parts) → the task |
+| `attachments` | `GET /v1/taskboard/tasks/{id}/attachments` → `{id, group, attachments}` |
+| `attachments --save` | `GET /v1/taskboard/tasks/{id}/attachments/{aid}` (the bytes; `?format=json` → base64 `data`) |
+| `detach` | `DELETE /v1/taskboard/tasks/{id}/attachments/{aid}` → the task |
+
+`add --attach`, `ask --attach` and a move to another node with files send
+their usual JSON as the `task` part of a multipart request, with one `file`
+part per file. Each task carries `attachments` (`id`, `name`, `size`,
+`content_type`, `sha256`, `image`, `added_by`, `added_at`) when it has files.
+An image is served inline and anything else as a download. A peer view
+carries JSON only, so a linked node reads a file with `?format=json`. A file
+larger than one peer view request (32 KiB) reaches a linked node through the
+staged upload, `POST /api/peer-upload/{node}?path=…` from the dashboard or
+`POST /v1/federation/peer-upload/{node}?path=…` from the operator's CLI. It
+runs under the same grants as a direct request.
 
 The group listing also returns `locked`, and `writers` when the board is
 locked. Each task carries `assignee` (`agent_id`, `name`), `assigned_by`,

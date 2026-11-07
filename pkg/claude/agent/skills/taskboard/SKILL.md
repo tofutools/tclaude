@@ -46,13 +46,17 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   get a `[taskboard] you went idle without reporting: …` nudge. Report, or carry
   on if you are still on it; starting a new turn clears it. Nothing fails or
   is taken from you.
+- A task can carry files (screenshots, logs, specs). `show` and the brief list
+  them; `tclaude agent taskboard attachments tk_… --save <dir>` writes them out
+  for you to read.
 - You can only take a task from the queue (`next`), not an idea. If the right
   next step is an idea, ask whoever leads the group to promote it.
 
 ## Capturing and ordering
 
 ```bash
-tclaude agent taskboard add <group> "title" [--ref tcl-a1b2c3|LIN-12|URL] [--next] [--body-file brief.md]
+tclaude agent taskboard add <group> "title" [--ref tcl-a1b2c3|LIN-12|URL] [--next] [--body-file brief.md] [--attach shot.png]…
+tclaude agent taskboard attach tk_… <file>…   ;   detach tk_… <name>   # at most 10 files, 4 MiB each
 tclaude agent taskboard move tk_… --top | --before tk_… | --after tk_…
 tclaude agent taskboard promote tk_…   ;   tclaude agent taskboard demote tk_…
 tclaude agent taskboard block tk_… --reason "waiting on review"   ;   unblock tk_…
@@ -70,8 +74,10 @@ A `[taskboard] task request from …: <group>` message (the dashboard's
 *+ New task › Ask an agent*, or `taskboard ask`) carries a request in prose.
 Turn it into one or more well-formed tasks with `taskboard add`: a one-line
 title, a short `--body` brief, a `--ref` where there is one, and `--next` only
-when it is clearly next. Create the tasks only; do not start the work. Then
-reply to the message with the task ids.
+when it is clearly next. If the request came with files, save them
+(`tclaude agent inbox attachment <message id>`) and put each on its task with
+`--attach`. Create the tasks only; do not start the work. Then reply to the
+message with the task ids.
 
 ## Permissions
 

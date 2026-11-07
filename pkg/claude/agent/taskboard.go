@@ -634,7 +634,7 @@ type taskboardAddParams struct {
 	FromLinear string   `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
 	FromGitHub string   `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
 	LinesFile  string   `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin), skipping blank lines and '#' comments; a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
-	Attach     []string `long:"attach" short:"a" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each; images, text, data and PDF). The task and its files land together"`
+	Attach     []string `long:"attach" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each; images, text, data and PDF). The task and its files land together"`
 	Peer       string   `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON       bool     `long:"json" help:"Output JSON"`
