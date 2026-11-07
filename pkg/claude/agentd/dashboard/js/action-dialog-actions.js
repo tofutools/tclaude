@@ -401,7 +401,7 @@ export function createActionDialogActions({
       const note = payload.note ? `; ${payload.note}` : '';
       const changes = [];
       if (implementation) changes.push(`sandbox implementation → ${payload.sandbox_implementation}`);
-      if (typeof sandboxProfile === 'string') changes.push(`sandbox profile → ${payload.sandbox_profile || 'none'}`);
+      if (typeof sandboxProfile === 'string') changes.push(`sandbox profile → ${payload.sandbox_profile || 'default (global + group)'}`);
       const what = changes.join(', ') || `sandbox implementation → ${payload.sandbox_implementation}`;
       notify(payload.restart
         ? `${name}: ${what} (restarted)${note}`
