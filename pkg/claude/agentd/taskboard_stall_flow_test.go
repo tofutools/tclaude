@@ -91,7 +91,9 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 
 	lead := tbInboxSubjects(t, h.lead)
 	require.Len(t, lead, leadBefore+1)
-	assert.Contains(t, lead[len(lead)-1], "went idle on "+task.ID+" without reporting")
+	assert.Contains(t, lead[len(lead)-1], "went idle without reporting")
+	assert.True(t, strings.HasPrefix(lead[len(lead)-1], "[taskboard] "), lead[len(lead)-1])
+	assert.Contains(t, lead[len(lead)-1], ": crew · "+task.ID)
 	msgs, err := db.ListInboxForActor(h.worker, tbAgentID(t, h.worker), 50)
 	require.NoError(t, err)
 	require.Len(t, msgs, workerBefore+1)
@@ -197,7 +199,7 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	require.NoError(t, err)
 	var found bool
 	for _, m := range msgs {
-		found = found || strings.Contains(m.Subject, "went idle on "+task.ID+" without reporting")
+		found = found || (strings.Contains(m.Subject, "went idle without reporting (") && strings.HasSuffix(m.Subject, ": crew · "+task.ID+" \"operator's task\""))
 	}
 	assert.True(t, found, "the operator is told in Messages")
 
@@ -287,5 +289,5 @@ func TestTaskboardIdleReassignAndSelfTaken(t *testing.T) {
 	humanAfter, err := db.CountHumanMessages(db.HumanMessageFilter{})
 	require.NoError(t, err)
 	assert.Equal(t, humanBefore, humanAfter)
-	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), own.ID+" \"my own\" — you went idle without reporting")
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "you went idle without reporting: crew · "+own.ID+" \"my own\"")
 }

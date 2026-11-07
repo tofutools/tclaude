@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -173,7 +174,7 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 // ---- ls ----
 
 type taskboardLsParams struct {
-	Group string `pos:"true" optional:"true" help:"Group whose board to list (default: your group, when you are in exactly one)"`
+	Group string `pos:"true" optional:"true" help:"Group whose board to list (default: your group when you are in exactly one; otherwise every board you can read, briefly)"`
 	Stage string `long:"stage" optional:"true" help:"Only this stage: idea or next"`
 	All   bool   `long:"all" help:"Also list done and dropped tasks not yet archived"`
 	Mine  bool   `long:"mine" help:"Only the live tasks assigned to you, in every group"`
@@ -250,12 +251,21 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		path += "?" + q.Encode()
 	}
 	var resp struct {
-		Group   string          `json:"group"`
-		Tasks   []taskboardTask `json:"tasks"`
-		Locked  bool            `json:"locked"`
-		Writers []string        `json:"writers,omitempty"`
+		Group       string          `json:"group"`
+		Tasks       []taskboardTask `json:"tasks"`
+		Locked      bool            `json:"locked"`
+		Writers     []string        `json:"writers,omitempty"`
+		WriterNames []string        `json:"writer_names,omitempty"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
+		// No group: an agent in one group lists that board; anyone else (the
+		// operator, or an agent in several groups) gets every board it can
+		// read, briefly.
+		var de *DaemonError
+		if strings.TrimSpace(p.Group) == "" && strings.TrimSpace(p.Peer) == "" &&
+			errors.As(err, &de) && de.Code == "invalid_arg" {
+			return runTaskboardOverview(p.JSON, stdout, stderr)
+		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -269,18 +279,30 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "%s task board\n", resp.Group)
 	if resp.Locked {
-		fmt.Fprintf(stdout, "(locked to writers: %s)\n", strings.Join(append([]string{"owners"}, resp.Writers...), ", "))
+		writers := resp.WriterNames
+		if len(writers) == 0 {
+			writers = resp.Writers
+		}
+		fmt.Fprintf(stdout, "(locked to writers: %s)\n", strings.Join(append([]string{"owners"}, writers...), ", "))
 	}
+	printTaskboardRows(stdout, resp.Tasks)
+	return rcOK
+}
+
+// printTaskboardRows prints tasks under their section headings, numbered as
+// the dashboard's list numbers them: the live tasks one sequence, the queue
+// then the ideas; closed tasks unnumbered.
+func printTaskboardRows(stdout io.Writer, tasks []taskboardTask) {
 	section := ""
 	n := 0
-	for _, t := range resp.Tasks {
+	for _, t := range tasks {
+		closed := t.Status == "done" || t.Status == "dropped"
 		s := t.Stage
-		if t.Status == "done" || t.Status == "dropped" {
+		if closed {
 			s = "closed"
 		}
 		if s != section {
 			section = s
-			n = 0
 			switch s {
 			case "next":
 				fmt.Fprintln(stdout, "── next ──")
@@ -290,29 +312,76 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stdout, "── done / dropped ──")
 			}
 		}
-		n++
-		state := t.Status
-		if t.Queued {
-			state = "queued"
+		num := "    "
+		if !closed {
+			n++
+			num = fmt.Sprintf("%3d.", n)
 		}
-		if t.Stalled {
-			state = "stalled"
-		}
-		line := fmt.Sprintf("%3d. %s  %-7s  %s", n, t.ID, state, t.Title)
-		if ref := t.refText(); ref != "" {
-			line += "  [" + ref + "]"
-		}
-		if len(t.DependsOn) > 0 {
-			line += "  after " + strings.Join(t.DependsOn, ",")
-		}
-		if a := t.assigneeText(); a != "" {
-			line += "  @" + a
-		}
-		if t.BlockReason != "" {
-			line += "  — " + t.BlockReason
-		}
-		fmt.Fprintln(stdout, line)
+		fmt.Fprintln(stdout, num+" "+taskboardRowText(t))
 	}
+}
+
+// taskboardRowText is one task's line after its number.
+func taskboardRowText(t taskboardTask) string {
+	state := t.Status
+	if t.Queued {
+		state = "queued"
+	}
+	if t.Stalled {
+		state = "stalled"
+	}
+	line := fmt.Sprintf("%s  %-7s  %s", t.ID, state, t.Title)
+	if ref := t.refText(); ref != "" {
+		line += "  [" + ref + "]"
+	}
+	if len(t.DependsOn) > 0 {
+		line += "  after " + strings.Join(t.DependsOn, ",")
+	}
+	if a := t.assigneeText(); a != "" {
+		line += "  @" + a
+	}
+	if t.BlockReason != "" {
+		line += "  — " + t.BlockReason
+	}
+	return line
+}
+
+// taskboardOverviewRows is how many live rows the overview shows per board.
+const taskboardOverviewRows = 5
+
+// runTaskboardOverview is `ls` with no group for a caller with no single
+// group: every board it can read, its counts and its first live rows.
+func runTaskboardOverview(asJSON bool, stdout, stderr io.Writer) int {
+	var resp struct {
+		Groups []struct {
+			Group  string          `json:"group"`
+			Counts TaskboardCounts `json:"counts"`
+			Tasks  []taskboardTask `json:"tasks"`
+		} `json:"groups"`
+	}
+	if err := DaemonGet("/v1/taskboard/context", &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if asJSON {
+		return writeJSONTo(stdout, resp)
+	}
+	if len(resp.Groups) == 0 {
+		fmt.Fprintln(stdout, "no task boards you can read")
+		return rcOK
+	}
+	for i, g := range resp.Groups {
+		if i > 0 {
+			fmt.Fprintln(stdout)
+		}
+		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts))
+		rows := g.Tasks[:min(len(g.Tasks), taskboardOverviewRows)]
+		printTaskboardRows(stdout, rows)
+		if more := g.Counts.Live - len(rows); more > 0 {
+			fmt.Fprintf(stdout, "  … %d more: tclaude agent taskboard ls %s\n", more, g.Group)
+		}
+	}
+	fmt.Fprintln(stdout, "\nOne board in full: tclaude agent taskboard ls <group>")
 	return rcOK
 }
 
@@ -372,8 +441,9 @@ func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int
 	return rcOK
 }
 
-// taskboardCountsLine reads as the dashboard's folded section:
-// "9 · 1 needs you · 2 in progress · 6 next · 3 ideas · 12 done this week".
+// taskboardCountsLine reads as the dashboard's folded section, with what
+// needs you broken down: "9 · 2 needs you (1 stalled, 1 blocked) · 2 in
+// progress · 6 next · 3 ideas · 12 done this week".
 func taskboardCountsLine(c TaskboardCounts) string {
 	parts := []string{fmt.Sprintf("%d", c.Live)}
 	add := func(n int, label string) {
@@ -381,7 +451,20 @@ func taskboardCountsLine(c TaskboardCounts) string {
 			parts = append(parts, fmt.Sprintf("%d %s", n, label))
 		}
 	}
-	add(c.NeedsYou, "needs you")
+	if c.NeedsYou > 0 {
+		var why []string
+		if c.Stalled > 0 {
+			why = append(why, fmt.Sprintf("%d stalled", c.Stalled))
+		}
+		if c.Blocked > 0 {
+			why = append(why, fmt.Sprintf("%d blocked", c.Blocked))
+		}
+		label := "needs you"
+		if len(why) > 0 {
+			label += " (" + strings.Join(why, ", ") + ")"
+		}
+		add(c.NeedsYou, label)
+	}
 	add(c.InProgress, "in progress")
 	add(c.Next, "next")
 	if c.Ideas == 1 {
@@ -435,13 +518,17 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  stalled: its assignee has been idle since %s without reporting\n", t.IdleSince)
 	}
 	if t.Ref != nil {
-		fmt.Fprintf(stdout, "  ref:     %s %s %s\n", t.Ref.Kind, t.Ref.Label, t.Ref.URL)
+		fmt.Fprintf(stdout, "  ref:     %s\n", strings.Join(nonEmpty(t.Ref.Kind, t.Ref.Label, t.Ref.URL), " "))
 	}
 	if a := t.assigneeText(); a != "" {
 		fmt.Fprintf(stdout, "  assigned: %s (by %s)\n", a, t.AssignedBy)
 	}
 	if t.Outcome != "" {
-		fmt.Fprintf(stdout, "  last report: %s %s\n", t.Outcome, t.OutcomeNote)
+		report := t.Outcome
+		if t.OutcomeNote != "" {
+			report += " — " + t.OutcomeNote
+		}
+		fmt.Fprintf(stdout, "  last report: %s\n", report)
 	}
 	if t.Failures > 0 {
 		fmt.Fprintf(stdout, "  failures: %d\n", t.Failures)
@@ -482,10 +569,12 @@ func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
 		ID     string `json:"id"`
 		Title  string `json:"title"`
 		Events []struct {
-			At     string `json:"at"`
-			Actor  string `json:"actor"`
-			Kind   string `json:"kind"`
-			Detail string `json:"detail,omitempty"`
+			At         string `json:"at"`
+			Actor      string `json:"actor"`
+			Kind       string `json:"kind"`
+			Detail     string `json:"detail,omitempty"`
+			ActorName  string `json:"actor_name,omitempty"`
+			DetailText string `json:"detail_text,omitempty"`
 		} `json:"events"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, taskboardPath(p.Task, "/events"), nil, &resp); err != nil {
@@ -498,9 +587,16 @@ func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	printRemoteScheduleBanner(stdout, p.Peer, "task history")
 	fmt.Fprintf(stdout, "%s  %s\n", resp.ID, resp.Title)
 	for _, e := range resp.Events {
-		line := fmt.Sprintf("  %s  %-9s  %s", e.At, e.Kind, e.Actor)
-		if e.Detail != "" {
-			line += "  " + e.Detail
+		actor, detail := e.Actor, e.Detail
+		if e.ActorName != "" {
+			actor = e.ActorName
+		}
+		if e.DetailText != "" {
+			detail = e.DetailText
+		}
+		line := fmt.Sprintf("  %s  %-10s  %s", e.At, e.Kind, actor)
+		if detail != "" {
+			line += "  " + detail
 		}
 		fmt.Fprintln(stdout, line)
 	}
@@ -525,7 +621,7 @@ type taskboardAddParams struct {
 	FromAWB    string `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
 	FromLinear string `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
 	FromGitHub string `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
-	LinesFile  string `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin); a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
+	LinesFile  string `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin), skipping blank lines and '#' comments; a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
 	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON       bool   `long:"json" help:"Output JSON"`
@@ -634,7 +730,8 @@ func importRefs(list, prefix string) []string {
 	return out
 }
 
-// readImportLines reads --lines-file ('-' is stdin), one task per line.
+// readImportLines reads --lines-file ('-' is stdin), one task per line,
+// skipping blank lines and lines starting with '#'.
 func readImportLines(file string, stdin io.Reader) ([]string, error) {
 	var (
 		b   []byte
@@ -658,7 +755,9 @@ func readImportLines(file string, stdin io.Reader) ([]string, error) {
 	}
 	var lines []string
 	for line := range strings.SplitSeq(string(b), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
+		// Blank lines and '#' comments are skipped, so a list can be kept
+		// as a commented file.
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
 			lines = append(lines, line)
 		}
 	}
@@ -1221,4 +1320,15 @@ func firstNonEmptyStr(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// nonEmpty is the non-empty strings among parts, in order.
+func nonEmpty(parts ...string) []string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

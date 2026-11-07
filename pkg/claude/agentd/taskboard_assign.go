@@ -137,8 +137,11 @@ func mailTaskboard(r *http.Request, g *db.AgentGroup, toConv, subject, body stri
 	}
 }
 
-func taskboardSubject(g *db.AgentGroup, t *db.GroupTask, tail string) string {
-	return fmt.Sprintf("[taskboard] %s · %s %q — %s", g.Name, t.ID, t.Title, tail)
+// taskboardSubject leads with what happened, so a truncated inbox listing
+// still tells the notices apart: `[taskboard] assigned to you by lead: crew ·
+// tk_… "title"`.
+func taskboardSubject(g *db.AgentGroup, t *db.GroupTask, what string) string {
+	return fmt.Sprintf("[taskboard] %s: %s · %s %q", what, g.Name, t.ID, t.Title)
 }
 
 // taskboardBrief is the assignee's inbox brief: the task, its ref and

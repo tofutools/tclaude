@@ -78,11 +78,16 @@ tclaude agent taskboard report done|failed [--task <task>] [--note "…"]
 tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --show
 ```
 
-- If you leave out the group in `ls`, it lists your own group's board. This only
-  works when you are an active member of exactly one group.
+- If you leave out the group in `ls` and you are an active member of exactly
+  one group, it lists that group's board. Otherwise (the operator, or an agent
+  in several groups) it lists every board you can read: its counts and its
+  first five live tasks.
+- `ls` numbers the live tasks as the dashboard's list does: one sequence
+  through the queue and then the ideas. Done and dropped tasks are not
+  numbered.
 - `ls --all` also lists done and dropped tasks that are not archived yet.
 - `ls --summary` prints one line of counts for every group board you can
-  read, for example `crew: 9 · 1 needs you · 2 in progress · 6 next · 3 ideas`.
+  read, for example `crew: 9 · 2 needs you (1 stalled, 1 blocked) · 2 in progress · 6 next · 3 ideas`.
   These are the counts the dashboard section shows.
 - If `move --before` or `move --after` names a task in the other stage, the
   moved task is promoted or demoted in the same write.
@@ -126,7 +131,8 @@ unless you pass `--next`.
   repository and number, so `owner/repo#12` and the issue URL count as the same.
   An awb or Linear ref is matched by its id, and any other link by its whole URL.
 - **`owner/repo#n`** is looked up as an issue first, then as a pull request.
-- **Lines.** `--lines-file` adds one task per non-empty line. A line that is
+- **Lines.** `--lines-file` adds one task per line, skipping blank lines and
+  lines that start with `#`, so a list can be kept as a commented file. A line that is
   only an awb, Linear or GitHub id (or URL) becomes a task with that ref, and
   is looked up like the `--from-*` refs. Any other line is the title.
 - An import holds at most 50 items. It takes only `--next`, not `--body`,
@@ -142,7 +148,7 @@ task's group.
 
 - `assign --to <agent>` gives the task to a member. If the task is an idea, it
   is promoted to the end of the queue first. The assignee gets an inbox message
-  from you, `[taskboard] <group> · tk_… "title" — assigned to you by <you>`,
+  from you, `[taskboard] assigned to you by <you>: <group> · tk_… "title"`,
   with the brief, the ref and the exact report commands. It is ordinary inbox
   mail, delivered like any agent message. A short, paste-safe message is
   shown inline in the agent's pane.
@@ -190,8 +196,8 @@ A sweep every 30 seconds announces each stall once per assignment (an unblock
 or a reopen starts a new stretch, which may be announced again):
 
 - the history records a `stalled` event;
-- the assigner is told, `[taskboard] <group> · tk_… "title" — <agent> went idle
-  on tk_… without reporting (7m)`: an agent by inbox mail, the operator in
+- the assigner is told, `[taskboard] <agent> went idle without reporting (7m):
+  <group> · tk_… "title"`: an agent by inbox mail, the operator in
   Messages. A task the agent took for itself has no one else to tell;
 - the assignee gets an inbox nudge with its report commands. It is never sent
   as keys into the pane.

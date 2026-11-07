@@ -172,7 +172,7 @@ func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string) {
 	if who == "" {
 		who = t.AssigneeID
 	}
-	tail := fmt.Sprintf("%s went idle on %s without reporting (%s)", who, t.ID, idleFor)
+	tail := fmt.Sprintf("%s went idle without reporting (%s)", who, idleFor)
 	text := fmt.Sprintf("Task %s %q in %s: %s went idle %s ago without reporting.\n"+
 		"It stays assigned; nothing has failed. Ask %s how it is going, or take the task back with\n"+
 		"  tclaude agent taskboard unassign %s\n", t.ID, t.Title, g.Name, who, idleFor, who, t.ID)

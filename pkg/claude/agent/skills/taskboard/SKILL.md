@@ -31,7 +31,7 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
 ```
 
 - When a task is assigned to you, an inbox message from the assigner
-  (`[taskboard] <group> · tk_… "title" — assigned to you by …`) carries the brief
+  (`[taskboard] assigned to you by …: <group> · tk_… "title"`) carries the brief
   and the exact report commands. You don't need anything else.
 - `report` names the task with `--task`. You can leave it out when exactly one
   live task is assigned to you.
@@ -43,7 +43,7 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   take the next task.
 - If you sit idle on an assigned task without reporting (5 minutes by
   default), the task shows as stalled, whoever assigned it is told, and you
-  get a `[taskboard] … you went idle without reporting` nudge. Report, or carry
+  get a `[taskboard] you went idle without reporting: …` nudge. Report, or carry
   on if you are still on it; starting a new turn clears it. Nothing fails or
   is taken from you.
 - You can only take a task from the queue (`next`), not an idea. If the right
