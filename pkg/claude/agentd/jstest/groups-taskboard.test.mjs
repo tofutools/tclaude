@@ -221,3 +221,18 @@ test('a stalled assignment shows amber and says its agent went idle', async (t) 
   assert.equal(state.textContent, 'stalled');
   assert.match(state.closest('.tb-state-wrap').getAttribute('title'), /^stalled · with .* · idle, no report$/);
 });
+
+test('the list packs its columns left: Name is content-sized between a minimum and a maximum, never the column that takes the rest', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] || '';
+  const box = rule('.tb-title-box');
+  assert.match(box, /max-width:\s*30em/, 'a hard maximum: a longer title wraps within it');
+  assert.match(box, /min-width:\s*12em/);
+  assert.match(box, /width:\s*max-content/, 'otherwise as wide as the title');
+  assert.doesNotMatch(box, /nowrap|ellipsis/, 'a long title wraps, never ellipsizes');
+  const shrunk = css.match(/([^{}]*)\{\s*width:\s*1%;\s*\}/g)?.find((r) => r.includes('.tb-col-name')) || '';
+  assert.ok(shrunk.includes('.tb-col-name'), 'Name shrinks to its content like the other columns');
+  assert.ok(!shrunk.includes('.tb-col-files'), 'Files, the last, takes the spare width');
+  assert.doesNotMatch(rule('.gr-rtable .gr-col-name'), /%/, 'a Resources Name is not a share of the row either');
+});

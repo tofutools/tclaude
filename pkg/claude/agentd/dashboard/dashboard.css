@@ -18592,10 +18592,12 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 /* A group's Resources are tables in the agents table's look (ResourceTable
    in groups-resources.js), sized on their own: fixed column widths, so the
    processes' table above the runs and the other resources' table below them
-   line up with each other. */
+   line up with each other. The columns pack to the left: Name is a fixed
+   24em (a longer name wraps), never a share of the row, and Detail, the
+   last, takes whatever width is left over. */
 .gr-rtable { table-layout: fixed; width: 100%; margin: 2px 0 6px; }
 .gr-rtable .gr-col-ctl { width: 128px; }
-.gr-rtable .gr-col-name { width: 30%; }
+.gr-rtable .gr-col-name { width: 24em; }
 .gr-rtable .gr-col-state { width: 112px; }
 .gr-rtable .gr-col-last { width: 72px; }
 .gr-rtable .gr-col-age { width: 72px; }
@@ -18603,15 +18605,15 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-rtable .gr-col-kind { width: 104px; }
 .gr-rtable .gr-col-lock { width: 150px; }
 .gr-rtable td { vertical-align: middle; }
-.gr-rtable td.gr-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; justify-content: flex-start; }
+.gr-rtable td.gr-namecell { white-space: normal; overflow-wrap: anywhere; }
+.gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; height: auto; white-space: normal; text-align: left; justify-content: flex-start; }
 .gr-rtable td.gr-meta, .gr-rtable td.gr-kindcell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gr-rtable tr.gq-saved-chip.open td { background: rgba(31, 111, 235, 0.08); }
 .gr-rtable tr.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-rtable .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
 /* A drawing board's or page's name is click-to-rename, as an agent's is
    (.rowname-text gives it the agent name's hover frame); 👁 opens it. */
-.gr-rtable .gr-name-rename { display: inline-block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.gr-rtable .gr-name-rename { display: inline-block; max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere;
   vertical-align: middle; color: var(--ui-strong-text); font-weight: 600; font-size: 11.5px; line-height: 16px;
   margin-left: -5px; }
 .gr-rtable tr.gr-closed .gr-name-rename { color: var(--ui-muted-text); font-weight: 500; }
@@ -18685,10 +18687,12 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .tb-board { margin: 0 0 6px; }
 .tb-table { width: 100%; table-layout: auto; font-size: 12.5px; }
-/* Every column is as wide as its content (width: 1% shrinks it to that);
-   Name, with no width, takes the rest of the row. No column follows the
-   agents table's widths: the tables share an order and a look, not pixels. */
-.tb-col-ctl, .tb-col-state, .tb-col-last, .tb-col-age, .tb-col-who, .tb-col-ref, .tb-col-deps, .tb-col-files { width: 1%; }
+/* The columns pack to the left, as the Agents table's do: each is as wide as
+   its content (width: 1% shrinks it to that), Name between a minimum and a
+   maximum (.tb-title-box: a longer title wraps within it), and Files, the
+   last, takes whatever width is left over. Never Name. */
+.tb-col-ctl, .tb-col-name, .tb-col-state, .tb-col-last, .tb-col-age, .tb-col-who, .tb-col-ref, .tb-col-deps { width: 1%; }
+.tb-title-box { width: max-content; min-width: 12em; max-width: 30em; white-space: normal; overflow-wrap: anywhere; }
 /* A task row's own cells keep to one line; the full-width rows (the Ideas
    band, the history line, a row's form) wrap, so they never widen the table. */
 .tb-table tr.tb-row > td:not(.tb-title-cell) { white-space: nowrap; }

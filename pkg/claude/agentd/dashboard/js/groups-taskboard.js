@@ -412,12 +412,12 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
     <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle"
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
-    <td class="tb-title-cell">
+    <td class="tb-title-cell"><div class="tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
-    </td>
+    </div></td>
     <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
