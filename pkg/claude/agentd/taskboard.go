@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -57,12 +59,13 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList))
 	mux.HandleFunc("GET /v1/taskboard", handleTaskboardListOwnGroup)
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate))
-	mux.HandleFunc("GET /v1/taskboard/tasks/{id}", handleTaskboardTask(false, handleTaskboardShow))
-	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(false, handleTaskboardEvents))
-	mux.HandleFunc("PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(true, handleTaskboardEdit))
-	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(true, handleTaskboardMove))
-	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(true, handleTaskboardStage))
-	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(true, handleTaskboardStatus))
+	mux.HandleFunc("GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow))
+	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents))
+	mux.HandleFunc("PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardWriteAccess, handleTaskboardStage))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus))
+	registerTaskboardAssignRoutes(mux)
 }
 
 // agentReadsTaskboard reports, silently, whether the agent reads group's
@@ -90,8 +93,45 @@ func requireTaskboard(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 		_, ok := requireGroupPermission(w, r, PermTaskboardRead, g)
 		return ok
 	}
-	_, ok := requireGroupPermission(w, r, PermTaskboardWrite, g)
-	return ok
+	if _, ok := requireGroupPermission(w, r, PermTaskboardWrite, g); !ok {
+		return false
+	}
+	return requireTaskboardUnlocked(w, r, g)
+}
+
+// requireTaskboardUnlocked refuses a confirmed agent's change of a locked
+// board unless it is a listed writer, an owner of the group, or holds the
+// write or assign slug through an explicit grant (not through membership).
+// The operator and other callers are not narrowed by the lock.
+func requireTaskboardUnlocked(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) bool {
+	conv := confirmedAgentConv(r)
+	if conv == "" {
+		return true
+	}
+	lock, err := db.GetTaskboardLock(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return false
+	}
+	if !lock.Locked {
+		return true
+	}
+	if agentID, err := db.AgentIDForConv(conv); err == nil && agentID != "" && slices.Contains(lock.Writers, agentID) {
+		return true
+	}
+	if owner, err := db.IsAgentGroupOwner(g.ID, conv); err == nil && owner {
+		return true
+	}
+	ctx := ActionContext{Group: g.Name}
+	for _, slug := range []string{PermTaskboardWrite, PermTaskboardAssign} {
+		v := resolvePermissionVerdictForRequest(r, conv, slug)
+		if v.Resolution == permAllow && evalPermissionScope(v, conv, ctx).Satisfied {
+			return true
+		}
+	}
+	writeError(w, http.StatusForbidden, "taskboard_locked",
+		"the "+g.Name+" task board is locked to its listed writers (tclaude agent groups set-taskboard-writers)")
+	return false
 }
 
 // taskboardActor names the caller in a task's history.
@@ -110,7 +150,18 @@ func taskboardActor(r *http.Request) string {
 
 // handleTaskboardTask resolves {id} to a task and its group, answers 404 for
 // a task in a group the calling agent cannot read, and gates the access.
-func handleTaskboardTask(write bool, fn func(http.ResponseWriter, *http.Request, *db.GroupTask, *db.AgentGroup)) http.HandlerFunc {
+// taskboardAccess is what a task-id route's wrapper gates before the handler.
+type taskboardAccess int
+
+const (
+	taskboardReadAccess taskboardAccess = iota
+	taskboardWriteAccess
+	// taskboardOwnGate: the wrapper gates read (the 404 rule) and an active
+	// group; the handler gates the change itself.
+	taskboardOwnGate
+)
+
+func handleTaskboardTask(access taskboardAccess, fn func(http.ResponseWriter, *http.Request, *db.GroupTask, *db.AgentGroup)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !taskboardEnabled(w) {
 			return
@@ -145,6 +196,7 @@ func handleTaskboardTask(write bool, fn func(http.ResponseWriter, *http.Request,
 		// a missing task, so it cannot confirm that an id exists. An agent
 		// that reads the board but may not write it keeps the 403.
 		gate := &taskboardGateWriter{header: http.Header{}}
+		write := access == taskboardWriteAccess
 		if !requireTaskboard(gate, r, g, write) {
 			if conv == "" && !callerIsHuman(r) {
 				notFound()
@@ -153,9 +205,10 @@ func handleTaskboardTask(write bool, fn func(http.ResponseWriter, *http.Request,
 			gate.replay(w)
 			return
 		}
-		if write && !requireGroupActive(w, g) {
+		if access != taskboardReadAccess && !requireGroupActive(w, g) {
 			return
 		}
+		setAuditGroup(r, g.Name)
 		fn(w, r, t, g)
 	}
 }
@@ -225,10 +278,35 @@ type taskboardTaskView struct {
 	// queued.
 	Unmet     []string `json:"unmet,omitempty"`
 	Queued    bool     `json:"queued,omitempty"`
+	// Assignee is the task's one assignee; absent when unassigned.
+	Assignee    *taskboardAgentRef `json:"assignee,omitempty"`
+	AssignedBy  string             `json:"assigned_by,omitempty"`
+	AssignedAt  string             `json:"assigned_at,omitempty"`
+	Outcome     string             `json:"outcome,omitempty"`
+	OutcomeNote string             `json:"outcome_note,omitempty"`
+	Failures    int                `json:"failures,omitempty"`
 	CreatedBy string   `json:"created_by"`
 	CreatedAt string   `json:"created_at"`
 	UpdatedAt string   `json:"updated_at"`
 	ClosedAt  string   `json:"closed_at,omitempty"`
+}
+
+// taskboardAgentRef names an agent on the wire.
+type taskboardAgentRef struct {
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name,omitempty"`
+}
+
+// taskboardAgentName is an agent's display name, "" when unknown.
+func taskboardAgentName(agentID string) string {
+	conv, err := db.CurrentConvForAgent(agentID)
+	if err != nil || conv == "" {
+		return ""
+	}
+	if t := agent.CachedTitle(conv); t != "" && t != agent.UnknownTitle {
+		return t
+	}
+	return ""
 }
 
 type taskboardEventView struct {
@@ -273,6 +351,11 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			}
 		}
 		v.Queued = t.Status == db.GroupTaskOpen && len(v.Unmet) > 0
+		if t.AssigneeID != "" {
+			v.Assignee = &taskboardAgentRef{AgentID: t.AssigneeID, Name: taskboardAgentName(t.AssigneeID)}
+			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
+		}
+		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
 		out = append(out, v)
 	}
 	return out, nil
@@ -488,7 +571,16 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "tasks": views})
+	lock, err := db.GetTaskboardLock(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	out := map[string]any{"group": g.Name, "tasks": views, "locked": lock.Locked}
+	if lock.Locked {
+		out["writers"] = lock.Writers
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // GET /v1/taskboard — the board of the calling agent's group, when it is an
@@ -729,6 +821,15 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	// Closing an assigned task as done is the assignee's own (self.taskboard)
+	// or an assigner's (taskboard.assign); everything else is a write.
+	if body.Status == db.GroupTaskDone && t.AssigneeID != "" && t.Live() {
+		if !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, false) {
+			return
+		}
+	} else if !requireTaskboard(w, r, g, true) {
 		return
 	}
 	out, err := db.SetGroupTaskStatus(t.ID, body.Status, reason, taskboardActor(r))

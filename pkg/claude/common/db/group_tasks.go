@@ -689,6 +689,12 @@ func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
 				archived_at = NULL WHERE id = ?`, id); err != nil {
 				return err
 			}
+			// A task closed while assigned comes back without an assignee that
+			// has since been retired (the retire trigger only covers live tasks).
+			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL
+				WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
+				return err
+			}
 			if kind == GroupTaskEventReopened {
 				var live int
 				if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE group_id = ? AND status IN ('open','blocked')`,

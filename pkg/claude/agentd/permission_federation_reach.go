@@ -141,6 +141,7 @@ var slugFederationReach = map[string]FedReach{
 	PermTaskboardRead:                     {Kind: FedLocal, Why: peerTaskboardWhy},
 	PermTaskboardWrite:                    {Kind: FedLocal, Why: peerTaskboardWhy},
 	PermTaskboardManage:                   {Kind: FedLocal, Why: peerTaskboardWhy},
+	PermTaskboardAssign:                   {Kind: FedLocal, Why: peerTaskboardWhy},
 	PermSelfPR:                            {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTags:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfDirRepair:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
