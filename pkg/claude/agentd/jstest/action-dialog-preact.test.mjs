@@ -1046,22 +1046,56 @@ test('sandbox-impl dialog sends the default as no explicit profile, and keep as 
   assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
 });
 
-test('sandbox-impl dialog locks the profile picker when the agent has none to change', async (t) => {
+test('sandbox-impl dialog lets an agent that omits profiles take one back', async (t) => {
   const calls = [];
   const { harness, host, cleanup } = await mountDialogs(
     t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
     sandboxImplActions(calls, {
       loadSandboxImpl: async () => sandboxImplPosture({
         sandbox_profiles_omitted: true,
-        sandbox_profile_unchangeable: "this agent's launches omit sandbox profiles",
         sandbox_profile_options: ['strict'],
       }),
     }),
   );
   t.after(cleanup);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
-  assert.equal(host.querySelector('#sandbox-impl-profile').disabled, true);
-  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /omit sandbox profiles/);
+  const select = host.querySelector('#sandbox-impl-profile');
+  assert.equal(select.disabled, false, 'an omission is changeable');
+  assert.match(select.options[0].textContent, /keep current \(none\)/);
+  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /omit every tclaude sandbox profile/);
+  const none = [...select.options].find((option) => /none \(omit all/.test(option.textContent));
+  assert.match(none.textContent, /current/);
+
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  select.querySelector('option[value="strict"]').setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].sandboxProfile, 'strict');
+  assert.equal(calls[0][1].omitSandboxProfiles, undefined);
+});
+
+test('sandbox-impl dialog sends none as omitting every profile', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({ sandbox_profile: 'loose', sandbox_profile_options: ['loose'] }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const select = host.querySelector('#sandbox-impl-profile');
+  const none = [...select.options].find((option) => /none \(omit all/.test(option.textContent));
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  none.setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].omitSandboxProfiles, true);
+  assert.equal(calls[0][1].sandboxProfile, undefined, 'none is not sent as a profile name');
 });
 
 test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {

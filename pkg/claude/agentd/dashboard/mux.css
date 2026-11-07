@@ -106,6 +106,13 @@
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
 }
+/* A drawing board's or a page's name, retyped in its tab (double-click or F2,
+   tab-resource-rename.js). The Collab strip and an overlay's title bar share it. */
+.mux-tab-rename {
+  width: 150px; min-width: 0; padding: 1px 6px;
+  font: inherit; font-size: 12px; border-radius: 4px;
+  border: 1px solid var(--ui-focus, #58a6ff); background: #0d1117; color: #f0f6fc;
+}
 /* Match the Groups row's real/WHAT-IF badges. Keep figures intact while
    long terminal names truncate. The toggle flows after the last tab, so a
    wrapping strip carries it onto whichever row that tab lands on. */
@@ -492,6 +499,7 @@ body.wizard .mux-group-pill:hover {
   background: color-mix(in srgb, var(--mux-group-accent) 34%, #171024);
 }
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
+body.wizard .mux-tab-rename { background: #171024; color: #f3e6c0; border-color: var(--ui-wizard-gold); }
 body.wizard .mux-strip-gap.armed {
   background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }

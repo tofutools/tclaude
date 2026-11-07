@@ -148,6 +148,11 @@ pending permission request, a **🔑** opens the
   `Open in overlay`.
 - **Right-click a group** for `Expand group` or `Collapse group`, `Rename group…`,
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
+- **Rename a drawing board or a page** from its tab: double-click the tab or press
+  F2 on it, and its name becomes a field. Enter saves the new title, Escape or
+  clicking away keeps the old one. A terminal's, shell's or agent's tab has no
+  such field (rename an agent the agent way), and neither has a process tab:
+  its editor's own name field names the process.
 - **Move** a terminal between three places, one at a time: a tab, an overlay window
   and a separate browser window. Each place offers the other two. A tab has **Open in
   overlay** and **Open in separate window**, an overlay window has **Open in the Collab

@@ -680,6 +680,47 @@ test('Config edits the default Steward permissions with the slug list and drops 
   await mounted.unmount();
 });
 
+test('Config edits the Steward start directory by typing or with the directory picker', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { dir: '~/code' } }) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const dir = mounted.container.querySelector('#cfg-steward-dir');
+  assert.equal(dir.value, '~/code');
+  assert.equal(adapter.assembleConfig().steward.dir, '~/code');
+
+  // The picker hands back a path; the field takes it and the form turns dirty.
+  const picks = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    picks.push({ url: String(url), body: JSON.parse(init.body) });
+    return { ok: true, json: async () => ({ path: '/home/me/repo' }) };
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  await harness.act(async () => {
+    mounted.container.querySelector('#cfg-steward-dir-browse').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(picks.length, 1);
+  assert.equal(picks[0].url, '/api/pick-directory');
+  assert.equal(picks[0].body.start_dir, '~/code', 'the picker opens where the field points');
+  assert.equal(dir.value, '/home/me/repo');
+  assert.equal(state.view.value.dirty, true);
+  assert.equal(adapter.assembleConfig().steward.dir, '/home/me/repo');
+
+  dir.value = '  ';
+  assert.equal('steward' in adapter.assembleConfig(), false, 'a cleared directory is not written out');
+  await mounted.unmount();
+});
+
 test('Config follows a source choice made outside the form and keeps other edits', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter, { SOURCE_CHOICE_EVENT }] = await Promise.all([

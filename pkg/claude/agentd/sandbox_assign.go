@@ -110,6 +110,12 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		// follow the workspace and group assignments as always. Omitted, the
 		// explicit profile is left alone.
 		SandboxProfile *string `json:"sandbox_profile,omitempty"`
+		// OmitSandboxProfiles makes the agent's launches omit every tclaude
+		// sandbox-profile tier (global, group and explicit), as a spawn's
+		// omit_sandbox_profiles does. It is the way back from a
+		// sandbox_profile assignment; a sandbox_profile assignment is the
+		// way back from it. The two are mutually exclusive.
+		OmitSandboxProfiles bool `json:"omit_sandbox_profiles,omitempty"`
 		// Sandbox optionally pins the harness-builtin MODE recorded alongside
 		// it. Omitted, the agent's recorded mode is carried forward — unless the
 		// implementation being replaced FORCED that mode, in which case it is an
@@ -132,9 +138,14 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	requested := strings.TrimSpace(body.Implementation)
 	implChange := requested != ""
-	if !implChange && body.SandboxProfile == nil {
+	if body.OmitSandboxProfiles && body.SandboxProfile != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile",
+			"sandbox_profile and omit_sandbox_profiles are mutually exclusive")
+		return
+	}
+	if !implChange && body.SandboxProfile == nil && !body.OmitSandboxProfiles {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("give an implementation (%s, %s, %s, or %s), a sandbox_profile, or both",
+			fmt.Sprintf("give an implementation (%s, %s, %s, or %s), a sandbox_profile (or omit_sandbox_profiles), or both",
 				sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationTclaudeLayer,
 				sandboxpolicy.ImplementationResourceOnly, sandboxpolicy.ImplementationOff))
 		return
@@ -262,13 +273,22 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 	var planned *sandboxpolicy.Snapshot
 	var profileWrite *explicitProfileWrite
-	if profileRef != nil {
-		profileWrite, planned, err = planExplicitProfileAssignment(convID, agentID, *profileRef)
+	switch {
+	case body.OmitSandboxProfiles:
+		profileWrite, planned, err = planOmitProfilesAssignment(agentID)
 		if err != nil {
 			writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
 			return
 		}
-	} else {
+	case profileRef != nil:
+		var fail *spawnFailure
+		profileWrite, planned, fail = planExplicitProfileAssignment(
+			convID, agentID, *profileRef, h.Name, mode, string(implementation))
+		if fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+	default:
 		planned, _, err = resolveCurrentSandboxChainForConv(convID)
 		if err != nil {
 			writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
@@ -968,7 +988,6 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID string, re
 		out.SandboxProfileUnchangeable = "this agent has no recorded sandbox snapshot to change"
 	case stored.ProfilesOmitted:
 		out.SandboxProfilesOmitted = true
-		out.SandboxProfileUnchangeable = "this agent's launches omit sandbox profiles"
 	default:
 		out.SandboxProfile = stored.ExplicitProfile().Name
 		out.SandboxProfilePending = stored.ExplicitProfileReassigned != nil
@@ -1012,40 +1031,57 @@ type explicitProfileWrite struct {
 
 // planExplicitProfileAssignment plans replacing an agent's explicit-tier
 // profile with ref and returns the chain the next relaunch resolves under it,
-// for the launch gates. It writes nothing.
+// for the launch gates. It writes nothing. harnessName, mode and
+// implementation are the posture the next relaunch runs under.
 //
 // The change is recorded beside the stored policy rather than in it
 // (Snapshot.ExplicitProfileReassigned): the stored contents stay what the last
 // launch ran under, which is what a relaunch that cannot use the new chain
 // falls back to, and a relaunch policy that reuses stored contents sees a
 // different profile and re-reads, exactly as for a changed group assignment.
+//
+// An agent whose launches omit the sandbox profiles takes them back this way:
+// the omission is lifted, and the next relaunch resolves the global, group and
+// (pending) explicit tiers. Its stored contents are the empty ones it last
+// launched under, so a fallback to them is no wider than that launch.
 func planExplicitProfileAssignment(
 	convID, agentID string, ref sandboxpolicy.ExplicitProfileRef,
-) (*explicitProfileWrite, *sandboxpolicy.Snapshot, error) {
+	harnessName, mode, implementation string,
+) (*explicitProfileWrite, *sandboxpolicy.Snapshot, *spawnFailure) {
+	conflict := func(err error) *spawnFailure {
+		return &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+	}
 	stored, raw, err := db.AgentEffectiveSandboxConfigRaw(agentID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, conflict(err)
 	}
 	if stored == nil {
-		return nil, nil, errors.New("this agent has no recorded sandbox snapshot, so it has no sandbox profiles to change")
+		return nil, nil, conflict(errors.New("this agent has no recorded sandbox snapshot, so it has no sandbox profiles to change"))
 	}
-	if stored.ProfilesOmitted {
-		return nil, nil, errors.New("this agent's launches omit sandbox profiles, so it has no explicit profile to change")
+	wasOmitted := stored.ProfilesOmitted
+	if wasOmitted && sandboxProfilesDisabled(harnessName, mode, implementation) {
+		return nil, nil, &spawnFailure{http.StatusConflict, "sandbox_profiles_disabled",
+			fmt.Sprintf("the %s sandbox implementation cannot carry sandbox profiles; "+
+				"assign an implementation that can together with the profile", implementation)}
 	}
-	planned, err := resolveSandboxChainWith(convID, stored, ref.ID, ref.Name)
+	base := *stored
+	if wasOmitted {
+		base.ProfilesOmitted, base.ProfilesOmittedDerived = false, false
+	}
+	planned, err := resolveSandboxChainWith(convID, &base, ref.ID, ref.Name)
 	if err != nil {
-		return nil, nil, fmt.Errorf("the sandbox profiles cannot be resolved with %s: %w", explicitProfileLabel(ref), err)
+		return nil, nil, conflict(fmt.Errorf("the sandbox profiles cannot be resolved with %s: %w", explicitProfileLabel(ref), err))
 	}
 	// The relaunch lays the agent's group environment, explicit harness
 	// posture and deny overlay over the chain, and a chain they no longer fit
 	// would only fall back to the stored policy there. Judge it now.
 	policy, _ := relaunchPolicyFor(convID)
-	composed, err := composeRelaunchSandbox(convID, *planned, stored, false,
+	composed, err := composeRelaunchSandbox(convID, *planned, &base, false,
 		relaunchReuses(policy, groupEnvField))
 	if err != nil {
-		return nil, nil, fmt.Errorf("the agent's launch posture does not apply over %s: %w", explicitProfileLabel(ref), err)
+		return nil, nil, conflict(fmt.Errorf("the agent's launch posture does not apply over %s: %w", explicitProfileLabel(ref), err))
 	}
-	next := *stored
+	next := base
 	next.ExplicitProfileReassigned = ref.Clone()
 	var recorded sandboxpolicy.ExplicitProfileRef
 	for _, applied := range stored.Applied {
@@ -1053,14 +1089,42 @@ func planExplicitProfileAssignment(
 			recorded = sandboxpolicy.ExplicitProfileRef{ID: applied.ID, Name: applied.Name}
 		}
 	}
-	if recorded.ID == ref.ID && (ref.ID != 0 || recorded.Name == ref.Name) {
-		// Back to what the last launch ran under: nothing is pending.
+	if !wasOmitted && recorded.ID == ref.ID && (ref.ID != 0 || recorded.Name == ref.Name) {
+		// Back to what the last launch ran under: nothing is pending. An
+		// omitted agent keeps the reassignment as the marker of what its
+		// next launch changes.
 		next.ExplicitProfileReassigned = nil
 	}
 	return &explicitProfileWrite{
 		agentID: agentID, stored: stored, storedRaw: raw, next: next,
 		before: stored.ExplicitProfile(),
 	}, &composed, nil
+}
+
+// planOmitProfilesAssignment plans making every launch of the agent omit the
+// tclaude sandbox-profile tiers, as an operator's choice (not a derived one),
+// and returns the snapshot the next relaunch launches under. It writes
+// nothing. Unlike a profile reassignment, the omission replaces the stored
+// contents outright: there is no chain whose failure a relaunch could fall
+// back from.
+func planOmitProfilesAssignment(agentID string) (*explicitProfileWrite, *sandboxpolicy.Snapshot, error) {
+	stored, raw, err := db.AgentEffectiveSandboxConfigRaw(agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if stored == nil {
+		return nil, nil, errors.New("this agent has no recorded sandbox snapshot, so it has no sandbox profiles to omit")
+	}
+	if len(stored.DenyOverlay) > 0 {
+		return nil, nil, fmt.Errorf("this agent carries a sandbox deny overlay (%s), which needs the sandbox profiles omitting them would leave out",
+			strings.Join(stored.DenyOverlay, ", "))
+	}
+	next := sandboxpolicy.OmittedProfilesSnapshotKeepingLaunchEnvironment(stored)
+	next.ExplicitProfileReassigned = nil
+	return &explicitProfileWrite{
+		agentID: agentID, stored: stored, storedRaw: raw, next: next,
+		before: stored.ExplicitProfile(),
+	}, &next, nil
 }
 
 func (p *explicitProfileWrite) apply() *spawnFailure {
