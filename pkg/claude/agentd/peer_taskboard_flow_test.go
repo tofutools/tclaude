@@ -112,6 +112,30 @@ func TestPeerTaskboardReadAndWriteUnderGroupGrants(t *testing.T) {
 	code, _ = call("GET", "/v1/taskboard/tasks/"+otherTask.ID, nil)
 	assert.Equal(t, http.StatusOK, code)
 
+	// Assign: a member of the task's group, under taskboard.assign there.
+	const member = "tb-peer-member-1111"
+	fh.f.HaveConvWithTitle(member, "builder")
+	_, _, err = db.EnsureAgentForConv(member, "test")
+	require.NoError(t, err)
+	fh.f.HaveMember("crew", member)
+	code, body = call("POST", "/v1/taskboard/tasks/"+added.ID+"/assign", map[string]any{"to": member})
+	assert.Equal(t, http.StatusForbidden, code, "write does not assign: %s", body)
+	h.grant(t, agentd.PermTaskboardAssign, "group=crew")
+	code, body = call("POST", "/v1/taskboard/tasks/"+added.ID+"/assign", map[string]any{"to": member})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = call("POST", "/v1/taskboard/tasks/"+added.ID+"/unassign", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+
+	// The writer lock: read by a reader, set under taskboard.manage.
+	code, body = call("GET", "/v1/groups/crew/taskboard/writers", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = call("POST", "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{member}})
+	assert.Equal(t, http.StatusForbidden, code, body)
+	h.grant(t, agentd.PermTaskboardManage, "group=crew")
+	code, body = call("POST", "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{member}})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Contains(t, body, `"locked":true`)
+
 	// The peer's writes are audited on this node as the peer's.
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "federation.peer_view"})
 	require.NoError(t, err)
