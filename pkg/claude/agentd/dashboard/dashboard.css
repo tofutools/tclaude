@@ -18640,9 +18640,9 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-table { width: 100%; table-layout: fixed; font-size: 12.5px; }
 .tb-col-n { width: 44px; }
 .tb-col-ref { width: 130px; }
-.tb-col-who { width: 200px; }
-.tb-col-state { width: 180px; }
-.tb-col-actions { width: 230px; }
+.tb-col-who { width: 190px; }
+.tb-col-state { width: 170px; }
+.tb-col-actions { width: 310px; }
 .tb-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .tb-table .tb-n { white-space: nowrap; text-align: right; color: #6e7681; font-variant-numeric: tabular-nums; }
 .tb-title { color: #e6edf3; }
