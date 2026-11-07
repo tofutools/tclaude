@@ -205,7 +205,7 @@ Items only appear when they apply to that agent.
 |---|---|
 | Look | `view messages`, `terminals & windows…`, `summary…` (online agents), `export debug info` |
 | Change | `edit`, `make owner` / `revoke owner`, `permissions`, `+ sudo`, notify on/off, remote on/off, `⚡ enable fast mode` (Codex), `⏰ schedule…`, `💰 usage budget…` |
-| Restart | `reincarnate`, `↻ restart`, `⚠ restart without sandbox` / `🔒 restore sandbox + restart`, `🧩 sandbox implementation…` |
+| Restart | `reincarnate`, `↻ restart`, `⚠ restart without sandbox` / `🔒 restore sandbox + restart`, `🧩 sandbox implementation / profile…` |
 | Send elsewhere | `move to…`, `teleport to…`, `clone to…` (`clone…` without a fleet), `📸 snapshot…`, `⤓ export (PAF)…`, `morph…`, `⌂ recall home…` (when visiting) |
 | Remove | In a group: `remove`, `retire`. Ungrouped: `retire`, `delete`. |
 

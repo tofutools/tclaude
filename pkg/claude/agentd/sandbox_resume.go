@@ -68,16 +68,10 @@ func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*
 	if previous.ProfilesOmitted {
 		return previous, nil
 	}
-	var explicitProfileID int64
-	var explicitProfileName string
-	for _, applied := range previous.Applied {
-		switch applied.Scope {
-		case sandboxpolicy.ScopeExplicit:
-			explicitProfileID = applied.ID
-			explicitProfileName = applied.Name
-		}
-	}
-	return resolveSandboxChainWith(convID, previous, explicitProfileID, explicitProfileName)
+	// An operator's reassignment of the explicit profile (sandbox_assign.go)
+	// outranks the one the last launch recorded.
+	explicit := previous.ExplicitProfile()
+	return resolveSandboxChainWith(convID, previous, explicit.ID, explicit.Name)
 }
 
 // resolveDerivedOmissionChain re-resolves the sandbox-profile tiers of an
