@@ -39,6 +39,7 @@ import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
+import { TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
@@ -377,10 +378,9 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell">
-      ${n ? html`<span class="tb-n" title="Its place in the operator's order: top is next">${n}</span>` : ''}
-      <span class="tb-title">${task.title}</span>
+      <${TaskTitle} task=${task} api=${actions?.api} nameOf=${(actor) => actorLabel(actor, group, snapshot)} numbers=${numbers} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
+        chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} numbers=${numbers} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
-      <span class="tb-id" title=${task.id}>${task.id}</span>
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
     </td>
     <td><${StatePill} task=${task} numbers=${numbers} /></td>

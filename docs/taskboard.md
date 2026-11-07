@@ -626,7 +626,7 @@ the **Quest board**), below its Agents and Resources sections.
   *history* line. Each row starts with a cluster of controls: the ⋮⋮ drag
   handle, the one action the task's state calls for (✓ *Done*, ✓ *Next* on an
   idea, ↺ *Reopen* in history), ✎ *Edit*, and ⋯ for the rest. Then come
-  *Name* (the task's number in your order, its title and id), *State*,
+  *Name* (the task's title), *State*,
   *Last* (its last change) and *Age*, in line with the Agents table's
   columns of the same names. After those come *Who* holds it (the tooltip
   says who assigned it, and when), *Ref* (a chip that links to the tracker),
@@ -653,7 +653,7 @@ a CLI verb:
 | ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
 | ✓ *Done* | `done <task>` |
 | ⋯ *Drop…* (with an optional reason), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
-| ✎ *Edit* (or double-click a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
+| ✎ *Edit*, or a click on the task's title (in the list or on a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
@@ -681,8 +681,18 @@ a CLI verb:
     other online member who holds `taskboard.write` there and passes the
     writer lock. With no such member online, the item is off, and says why. Files go with the request.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
-- **✎ *Edit*** on a row (or a double-click on a lanes card) opens the edit
-  form. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,
+- **✎ *Edit*** on a row, or a click on a task's title (in the list or on a
+  lanes card; Enter on a focused title does the same), opens the edit form.
+  Renaming happens there. A press on the title never starts a drag.
+- **Hovering a title** shows the task's card, as a PR number's card does:
+  its title, its id with a ⧉ copy button, where it is (and why it is
+  blocked), who holds it, who made it and when, its last change, its ref and
+  dependencies, its files, and 💬 with the latest comment. Once the pointer
+  rests on the title (or at once for keyboard focus, or a tap on a touch
+  screen), the card reads the brief, shown as Markdown and clamped, and the
+  latest comment; on a linked node's board they are read from that node.
+  *more ↗* opens the edit form. The list and the cards show no number or id;
+  the card and the edit form's header carry the id. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,
   *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
   assignee (if you may assign), the dependencies (✕ takes one off, and
   *＋ dependency* adds one of the board's other live tasks) and the files.

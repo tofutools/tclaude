@@ -323,7 +323,10 @@ test('a list row drags as a whole, as an agent row does: the grab cursor, contro
   harness.fireEvent(harness.document, 'pointerup', {});
   assert.equal(row.draggable, true, 'the row drags again once the press ends');
   harness.fireEvent(row.querySelector('.tb-title'), 'pointerdown', {});
-  assert.equal(row.draggable, true, 'a press on the title starts a drag');
+  assert.equal(row.draggable, false, 'the title is a button (it opens the task): a press on it is a click');
+  harness.fireEvent(harness.document, 'pointerup', {});
+  harness.fireEvent(row.querySelector('.tb-t'), 'pointerdown', {});
+  assert.equal(row.draggable, true, 'a press on a plain cell starts a drag');
   harness.fireEvent(harness.document, 'pointerup', {});
 
   // A drag of a link in the row stays the browser's URL drag.

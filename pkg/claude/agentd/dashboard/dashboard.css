@@ -18711,8 +18711,29 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-files { color: #8b949e; }
 .tb-history-row .tb-history { margin: 0; }
 .tb-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
-.tb-table .tb-n { margin-right: 6px; color: #6e7681; font-size: 11px; font-variant-numeric: tabular-nums; }
 .tb-title { color: #e6edf3; }
+/* A task's title opens the task (groups-taskboard-card.js), in the List and
+   on a Lanes card; hovering it shows the task's card. */
+.tb-title-open { cursor: pointer; }
+.tb-title-open:hover, .tb-title-open:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.tb-task-hover { position: relative; }
+.tb-task-panel { width: 380px; }
+.tb-task-panel-id { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 11px; color: #8b949e; }
+.tb-task-copy { border: 0; padding: 0 4px; background: none; color: #8b949e; cursor: pointer; }
+.tb-task-copy:hover { color: #e6edf3; }
+.tb-task-where { text-transform: capitalize; color: #e6edf3; }
+.tb-task-where-blocked { color: #f85149; }
+.tb-task-panel-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0; font-size: 11.5px; color: #8b949e; }
+.tb-task-panel-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.tb-task-panel-brief { margin: 6px 0; font-size: 12.5px; }
+.tb-task-brief-clamp { max-height: 8.5em; overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.tb-task-panel-extra { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b949e; }
+.tb-task-panel-files { display: flex; align-items: center; gap: 6px; }
+.tb-card-thumb { width: 44px; height: 30px; object-fit: cover; border: 1px solid #30363d; border-radius: 3px; }
+.tb-task-panel-latest { color: #c9d1d9; margin-left: 6px; }
+.tb-task-more { border: 0; padding: 0; background: none; color: #58a6ff; cursor: pointer; }
+.tb-task-more:hover { text-decoration: underline; }
 .tb-id { margin-left: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: #6e7681; }
 .tb-dep { margin-left: 6px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; white-space: nowrap; }
 .tb-dep.unmet { border-color: #9e6a03; color: #e3b341; }
@@ -18849,7 +18870,6 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-card-done { cursor: default; opacity: 0.8; }
 .tb-card-done .tb-card-title { color: #7d8590; text-decoration: line-through; }
 .tb-card-title { color: #e6edf3; overflow-wrap: anywhere; }
-.tb-card-n { margin-right: 4px; color: #6e7681; font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .tb-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
 .tb-card-meta .tb-dep { margin-left: 0; }
 .tb-card-why { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
