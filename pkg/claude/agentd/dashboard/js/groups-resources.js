@@ -79,10 +79,11 @@ export function sortResourceRows(rows) {
 // line up with (folded, or none).
 export function agentColumns(table) {
   const section = table?.closest?.('[data-fused-section]');
-  const agents = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] table');
-  const head = agents?.querySelector('thead');
+  // The members table, by its Name header: a pending-spawns table may come
+  // first in the section.
+  const name = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] thead th[data-sort-col="title"]');
+  const head = name?.closest('thead');
   if (!head) return null;
-  const name = head.querySelector('th[data-sort-col="title"]');
   const state = head.querySelector('th[data-sort-col="state"]');
   const left = table.getBoundingClientRect().left;
   const nameLeft = name?.getBoundingClientRect().left;
@@ -101,7 +102,7 @@ function useAgentAlignment(ref) {
     if (!table) return;
     const cols = agentColumns(table);
     // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
-    table.style.setProperty('--gr-ctl-w', cols?.ctl >= 112 ? `${cols.ctl}px` : '');
+    table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
     table.style.setProperty('--gr-name-w', cols?.name ? `${cols.name}px` : '');
   };
   useLayoutEffect(apply);

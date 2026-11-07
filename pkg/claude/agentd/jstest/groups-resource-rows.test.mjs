@@ -225,7 +225,8 @@ test('Resources sorts by its headers, across kinds, and lines Name and State up 
   // agents' State.
   const doc = harness.document;
   const card = doc.body.appendChild(doc.createElement('div'));
-  card.innerHTML = '<div data-fused-section="agents"><table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th></tr></thead></table></div>'
+  card.innerHTML = '<div data-fused-section="agents"><table class="pending"><thead><tr><th data-sort-col="name"></th></tr></thead></table>'
+    + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th></tr></thead></table></div>'
     + '<div data-fused-section="processes"><table class="gr-rtable"></table></div>';
   const rect = (left) => () => ({ left, right: left, top: 0, bottom: 0, width: 0, height: 0 });
   const [title, state] = card.querySelectorAll('th[data-sort-col]');
@@ -233,7 +234,7 @@ test('Resources sorts by its headers, across kinds, and lines Name and State up 
   title.getBoundingClientRect = rect(280);
   state.getBoundingClientRect = rect(445);
   table.getBoundingClientRect = rect(70);
-  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165 });
+  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165 }, 'the members table, past a pending-spawns table before it');
   card.querySelector('[data-fused-section="agents"]').remove();
   assert.equal(mod.agentColumns(table), null, 'no agents table, nothing to line up with');
 });
