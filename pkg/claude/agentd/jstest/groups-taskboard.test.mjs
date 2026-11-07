@@ -85,8 +85,11 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.match(rows[0].querySelector('.tb-state').textContent, /^in progress · 41m$/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');
-  assert.equal(rows[2].querySelector('.tb-dep.unmet').textContent, 'after #2');
-  assert.equal(rows[2].querySelector('.tb-state').textContent, 'queued · waits on #2');
+  // Rows carry no number: a dependency is named by its title (clipped), and
+  // its whole title and id are the tooltip.
+  assert.equal(rows[2].querySelector('.tb-dep.unmet').textContent, 'after Engine: dynamic nodes');
+  assert.equal(rows[2].querySelector('.tb-dep.unmet').getAttribute('title'), 'Waits on “Engine: dynamic nodes” (tk_00000002)');
+  assert.equal(rows[2].querySelector('.tb-state').textContent, 'queued · waits on Engine: dynamic nod…');
   assert.equal(rows[3].querySelector('.tb-state').textContent, 'blocked');
   assert.match(section.querySelector('.tb-reason').textContent, /wait for the CSS move/);
   assert.match(rows[4].querySelector('.tb-state').textContent, /^idea · 5m ago$/);

@@ -102,7 +102,7 @@ async function copyId(id) {
 }
 
 // TaskCardPanel is the card itself.
-function TaskCardPanel({ task, api, read, nameOf, numbers, onOpen, panelID, headingID, panelRef, placement, chips }) {
+function TaskCardPanel({ task, api, read, nameOf, onOpen, panelID, headingID, panelRef, placement, chips }) {
   const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;`
       + (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
@@ -158,7 +158,7 @@ function TaskCardPanel({ task, api, read, nameOf, numbers, onOpen, panelID, head
 
 // TaskTitle is a task's title with its hover card; onOpen opens the edit
 // form (null where the viewer may not edit: the title is plain then).
-export function TaskTitle({ task, api, nameOf = null, numbers = null, onOpen = null, chips = null, class: extra = '' }) {
+export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = null, class: extra = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
@@ -192,7 +192,7 @@ export function TaskTitle({ task, api, nameOf = null, numbers = null, onOpen = n
       aria-expanded=${open ? 'true' : 'false'} aria-controls=${panelID}
       aria-label=${onOpen ? `${task.title}: opens the task` : task.title}
       onClick=${start} onKeyDown=${key}>${task.title}</span>
-    ${open && html`<${TaskCardPanel} task=${task} api=${api} read=${read} nameOf=${nameOf} numbers=${numbers} onOpen=${onOpen && openForm}
+    ${open && html`<${TaskCardPanel} task=${task} api=${api} read=${read} nameOf=${nameOf} onOpen=${onOpen && openForm}
         panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} chips=${chips} />
       ${placement && !placement.hidden && html`<span class="ci-bridge" aria-hidden="true" style=${
         `top:${placement.bridge.top}px;left:${placement.bridge.left}px;width:${placement.bridge.width}px;height:${placement.bridge.height}px`}></span>`}`}

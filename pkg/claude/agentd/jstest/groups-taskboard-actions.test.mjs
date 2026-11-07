@@ -277,7 +277,7 @@ test('a task dragged onto an agent row of its own card is assigned; the unassign
   await harness.act(async () => { harness.fireEvent(rowOf('tk_00000001').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer }); });
   const overBuilder = harness.fireEvent(builder.querySelector('td'), 'dragover', { dataTransfer: transfer });
   assert.equal(overBuilder.defaultPrevented, true, 'a member row takes the task');
-  assert.equal(builder.querySelector('td').dataset.tbAssign, 'assign #1 to builder');
+  assert.equal(builder.querySelector('td').dataset.tbAssign, 'assign “first” to builder');
   assert.equal(harness.fireEvent(plain.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false, 'no stable agent id');
   assert.equal(harness.fireEvent(sub.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false, "a subgroup's agent");
   assert.equal(builder.classList.contains('tb-assign-over'), false, 'the marker moves off');

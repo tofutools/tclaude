@@ -169,19 +169,18 @@ export async function runPlan(api, steps) {
 // DepChips are the draft's dependencies as chips (✕ takes one off) and a
 // picker of the board's other live tasks.
 function DepsEdit({ task, tasks, value, onChange, disabled }) {
-  const numbers = new Map(tasks.map((t, i) => [t.id, i + 1]));
   const title = (id) => tasks.find((t) => t.id === id)?.title || id;
   const free = tasks.filter((t) => t.id !== task.id && !value.includes(t.id));
   return html`<span class="tb-edit-deps">
     ${value.map((id) => html`<span key=${id} class="tb-edit-dep" data-dep=${id}>
-      ${numbers.get(id) && html`<span class="tb-new-dep-n">#${numbers.get(id)}</span>`} ${title(id)}
+      ${title(id)}
       <button data-ui-exempt type="button" class="tb-edit-dep-rm" disabled=${disabled} aria-label=${`No longer after ${title(id)}`}
         title="No longer wait for it" onClick=${() => onChange(value.filter((v) => v !== id))}>✕</button>
     </span>`)}
     ${free.length > 0 && html`<${Select} size="sm" class="tb-edit-dep-add" aria-label="Add a dependency" value="" disabled=${disabled}
       onChange=${(event) => { const id = event.currentTarget.value; if (id) onChange([...value, id]); }}>
       <option value="">＋ dependency</option>
-      ${free.map((t) => html`<option key=${t.id} value=${t.id}>#${numbers.get(t.id)} ${t.title}</option>`)}
+      ${free.map((t) => html`<option key=${t.id} value=${t.id}>${t.title}</option>`)}
     <//>`}
     ${!value.length && !free.length && html`<span class="ui-hint">No other live task to wait on.</span>`}
   </span>`;
@@ -251,7 +250,6 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ignore: (event) => !!event.target?.closest?.(COMMENT_AREA) });
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const tasks = entry?.tasks || [];
-  const n = tasks.findIndex((t) => t.id === task.id) + 1;
   const steps = editPlan(base, draft, { add: pending.map(({ file, name }) => ({ file, name })), remove: removed, bodyKnown: brief.state === 'ready' });
   const missing = missingOf(draft);
   // A comment being written counts too: closing the form would lose it.
@@ -303,7 +301,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   ].filter(Boolean).join(' · ');
   const reasonRow = draft.where === 'blocked' || draft.where === 'dropped';
   const hint = missing ? `needs ${missing}` : whereHint(draft, task);
-  return html`<${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}${n ? ` · #${n}` : ''}</span>`}
+  return html`<${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span>`}
     onClose=${onClose} busy=${busy} dirty=${dirty} confirmDiscard=${shellConfirmDiscard} initialFocusRef=${titleRef}
     onSubmitHotkey=${() => void save()} resizeKey="tclaude.dash.modalSize.taskboard-edit" error=${error || undefined}
     ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}

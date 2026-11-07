@@ -239,8 +239,8 @@ function DepsPick({ tasks, value, onChange, disabled }) {
   const picked = new Set(value);
   const toggle = (id) => onChange(picked.has(id) ? value.filter((v) => v !== id) : [...value, id]);
   return html`<div class="tb-new-deps" role="group" aria-label="Depends on">
-    ${tasks.map((task, i) => html`<${Check} key=${task.id} checked=${picked.has(task.id)} disabled=${disabled}
-      data-dep=${task.id} onChange=${() => toggle(task.id)}><span class="tb-new-dep-n">#${i + 1}</span> ${task.title} <span class="tb-id">${task.id}</span><//>`)}
+    ${tasks.map((task) => html`<${Check} key=${task.id} checked=${picked.has(task.id)} disabled=${disabled}
+      data-dep=${task.id} onChange=${() => toggle(task.id)}>${task.title} <span class="tb-id">${task.id}</span><//>`)}
   </div>`;
 }
 
