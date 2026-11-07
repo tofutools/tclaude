@@ -345,8 +345,9 @@ dependencies. Deleting a group deletes its board.
 Each group card on the Groups tab has a **Task board** section (in wizard mode,
 the **Quest board**), below its Agents and Resources sections.
 
-- The section head shows the number of live tasks, then the ＋▾ add button
-  and the List | Lanes switch. The group's summary line carries the breakdown,
+- The section line shows the number of live tasks. Open, the ＋▾ add button
+  and the List | Lanes switch sit on a row below it; folded, the ＋▾ moves up
+  onto the section line. The group's summary line carries the breakdown,
   for example `task board: 1 needs you · 1 in progress · 2 next · 1 idea`, so
   a folded group still shows what is on its board (the count's tooltip has it
   too). *Needs you* counts the blocked and the stalled tasks, and *in

@@ -61,7 +61,7 @@ async function mountBoard(t, name, { api = fakeApi(), entry = board(name), group
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
-  dashPrefs.setItem(`tclaude.dash.fused.${name}.taskboard`, 'open');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   let refreshes = 0;
   const source = {
     context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'),
