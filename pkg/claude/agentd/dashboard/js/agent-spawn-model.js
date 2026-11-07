@@ -1438,10 +1438,6 @@ export function groupHasContext(groups, groupName) {
   return text(findSpawnGroup(groups, groupName)?.default_context).trim() !== '';
 }
 
-// attachKey and formatAttachmentSize live in attachment-files.js, shared by
-// every dialog that takes files.
-export { attachKey, formatAttachmentSize } from './attachment-files.js';
-
 // The spawn form's record of where its values came from, flat, for a fill's undo
 // (form-fill.js): which fields are touched, set by the operator, or overrides
 // that survive a profile switch, and the draft's own cwdOrigin and wtRepoEdited.

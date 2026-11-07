@@ -14,6 +14,7 @@ import { AttachmentList } from './attachment-intake.js';
 import { formatAttachmentSize } from './attachment-files.js';
 import { TASK_FILE_MAX, TASK_FILE_MAX_BYTES } from './taskboard-actions.js';
 import { shortcutText } from './keybindings.js';
+import { downloadBlob } from './download.js';
 
 const html = htm.bind(h);
 
@@ -68,15 +69,9 @@ function useThumb(api, taskId, attachment) {
 // as a download.
 async function openFile(api, taskId, attachment) {
   const blob = await readFile(api, taskId, attachment);
+  if (blob.type === 'application/octet-stream') { downloadBlob(blob, attachment.name); return; }
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.rel = 'noopener';
-  if (blob.type !== 'application/octet-stream') a.target = '_blank';
-  else a.download = attachment.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  globalThis.open(url, '_blank', 'noopener');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 

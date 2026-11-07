@@ -26,7 +26,6 @@ import {
   WT_NEW,
   approvalControlsVisibleFor,
   applySpawnProfile,
-  attachKey,
   buildSpawnRequest,
   clearSpawnProfileFields,
   createSpawnDraft,
@@ -90,6 +89,7 @@ import {
 } from './resolved-defaults.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { AttachmentList, useAttachmentIntake } from './attachment-intake.js';
+import { attachKey } from './attachment-files.js';
 
 const html = htm.bind(h);
 // A harness change clears context trims, which no field shows, so a fill of it waits.
