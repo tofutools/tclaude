@@ -185,7 +185,7 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
     ${button}
     ${open && html`<${Menu} size="sm" class=${`gr-add-menu gr-new-menu tb-new-menu${cell ? ' tb-cell-menu' : ''}`} style=${fixed}>
       ${item('data-taskboard-new-form', choose('form'), wizard ? 'Scribe it myself' : 'Write it myself',
-        wizard ? 'Fill in the scroll: title, brief, ref, stage' : 'Fill in a form: title, brief, ref, stage')}
+        wizard ? 'Fill in the scroll: title, brief, ref, where it starts' : 'Fill in a form: title, brief, ref, where it starts')}
       ${item('data-taskboard-new-ask', choose('ask'), wizard ? 'Ask a hero' : 'Ask an agent',
         off || (wizard ? 'Tell it in your words; a hero scribes the quests' : 'Describe it; an agent writes the tasks'), !!off, off || undefined)}
       <${MenuSep} />
