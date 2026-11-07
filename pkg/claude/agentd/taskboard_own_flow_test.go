@@ -74,6 +74,14 @@ func TestTaskboardOwnTracksOwnWork(t *testing.T) {
 	others := h.add("the operator's", "next")
 	rec = h.call(h.worker, http.MethodPatch, "/v1/taskboard/tasks/"+others.ID, map[string]any{"title": "renamed"})
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	// Files: on its own task (in the create, or after), not on others'.
+	withFile := h.fileTask(h.upload(h.worker, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "with a log"}, [2]string{"ci.log", "boom"}), http.StatusCreated)
+	assert.Equal(t, []string{"ci.log"}, fileNames(withFile.Attachments))
+	h.fileTask(h.upload(h.worker, "/v1/taskboard/tasks/"+mine.ID+"/attachments", nil,
+		[2]string{"trace.txt", "stack"}), http.StatusCreated)
+	rec = h.upload(h.worker, "/v1/taskboard/tasks/"+others.ID+"/attachments", nil, [2]string{"x.txt", "x"})
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	code, body = h.post(h.worker, others.ID, "stage", map[string]any{"stage": "idea"})
 	assert.Equal(t, http.StatusForbidden, code, body)
 	code, body = h.post(h.worker, others.ID, "status", map[string]any{"status": "done"})

@@ -41,6 +41,9 @@ func taskboardCmd() *cobra.Command {
 			taskboardAddCmd(),
 			taskboardAskCmd(),
 			taskboardEditCmd(),
+			taskboardAttachCmd(),
+			taskboardDetachCmd(),
+			taskboardAttachmentsCmd(),
 			taskboardMoveCmd(),
 			taskboardMoveToGroupCmd(),
 			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
@@ -129,6 +132,7 @@ type taskboardTask struct {
 		URL   string `json:"url,omitempty"`
 		Label string `json:"label,omitempty"`
 	} `json:"ref,omitempty"`
+	Attachments []taskboardAttachment `json:"attachments,omitempty"`
 }
 
 func (t taskboardTask) refText() string {
@@ -544,6 +548,10 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout)
 	}
+	if len(t.Attachments) > 0 {
+		fmt.Fprintf(stdout, "  files:   %d (save them: tclaude agent taskboard attachments %s --save <dir>)\n", len(t.Attachments), t.ID)
+		printTaskboardAttachments(stdout, "    ", t.Attachments)
+	}
 	fmt.Fprintf(stdout, "  created: %s by %s\n", t.CreatedAt, t.CreatedBy)
 	if t.ClosedAt != "" {
 		fmt.Fprintf(stdout, "  closed:  %s\n", t.ClosedAt)
@@ -629,13 +637,14 @@ type taskboardAddParams struct {
 	Done     bool   `long:"done" help:"Log work already done: it is created done, in done this week (with --assignee, who did it; nobody is mailed)"`
 	// Import flags: one task per ref or line, titles looked up through the
 	// tracker proxies.
-	FromAWB    string `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
-	FromLinear string `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
-	FromGitHub string `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
-	LinesFile  string `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin), skipping blank lines and '#' comments; a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
-	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
-	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON       bool   `long:"json" help:"Output JSON"`
+	FromAWB    string   `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
+	FromLinear string   `long:"from-linear" optional:"true" help:"Import Linear issues: comma-separated ids (LIN-1,…), one task each"`
+	FromGitHub string   `long:"from-github" optional:"true" help:"Import GitHub issues or pull requests: comma-separated owner/repo#n or URLs, one task each"`
+	LinesFile  string   `long:"lines-file" optional:"true" help:"Add one task per line of this file ('-' for stdin), skipping blank lines and '#' comments; a line that is only an awb, Linear or GitHub id becomes a task with that ref"`
+	Attach     []string `long:"attach" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each; images, text, data and PDF). The task and its files land together"`
+	Peer       string   `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
+	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON       bool     `long:"json" help:"Output JSON"`
 }
 
 func taskboardAddCmd() *cobra.Command {
@@ -694,8 +703,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if p.Assignee != "" || p.Mine || p.Blocked != "" || p.Done {
-			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --mine, --blocked and --done are for one task")
+		if p.Assignee != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --mine, --blocked, --done and --attach are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -742,19 +751,40 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		req["status"] = "done"
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
-	return taskboardWrite(p.Peer, http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
+	if len(p.Attach) == 0 {
+		return taskboardWrite(p.Peer, http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	var t taskboardTask
+	if err := taskboardUploadFiles(p.Peer, path, req, p.Attach, &t, ask); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return writeJSONTo(stdout, t)
+	}
+	fmt.Fprintf(stdout, "added %s: %s  [%s, %s]\n", t.ID, t.Title, t.Stage, t.Status)
+	printTaskboardAttachments(stdout, "  ", t.Attachments)
+	return rcOK
 }
 
 // ---- ask ----
 
 type taskboardAskParams struct {
-	Group      string `pos:"true" help:"Group whose board the tasks go on"`
-	Prompt     string `pos:"true" optional:"true" help:"What you want, in your own words"`
-	To         string `long:"to" help:"Member to ask (name or id): an active member of the group who may change its board"`
-	PromptFile string `long:"prompt-file" optional:"true" help:"Read the request from this file ('-' for stdin)"`
-	Peer       string `long:"peer" optional:"true" help:"Ask a member on a linked node's board, under the grants it gave this node (taskboard.write)"`
-	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON       bool   `long:"json" help:"Output JSON"`
+	Group      string   `pos:"true" help:"Group whose board the tasks go on"`
+	Prompt     string   `pos:"true" optional:"true" help:"What you want, in your own words"`
+	To         string   `long:"to" help:"Member to ask (name or id): an active member of the group who may change its board"`
+	PromptFile string   `long:"prompt-file" optional:"true" help:"Read the request from this file ('-' for stdin)"`
+	Attach     []string `long:"attach" short:"a" optional:"true" help:"Send a file you can read with the request, as a mail attachment the member puts on its tasks (repeatable; at most 10, 4 MiB each)"`
+	Peer       string   `long:"peer" optional:"true" help:"Ask a member on a linked node's board, under the grants it gave this node (taskboard.write)"`
+	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON       bool     `long:"json" help:"Output JSON"`
 }
 
 func taskboardAskCmd() *cobra.Command {
@@ -808,7 +838,13 @@ func runTaskboardAsk(p *taskboardAskParams, stdin io.Reader, stdout, stderr io.W
 		MessageID int64  `json:"message_id"`
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/ask"
-	if err := remoteRequestOpts(p.Peer, http.MethodPost, path, map[string]any{"to": p.To, "prompt": prompt}, &out, DaemonOpts{AskHuman: ask}); err != nil {
+	req := map[string]any{"to": p.To, "prompt": prompt}
+	if len(p.Attach) > 0 {
+		err = taskboardUploadFiles(p.Peer, path, req, p.Attach, &out, ask)
+	} else {
+		err = remoteRequestOpts(p.Peer, http.MethodPost, path, req, &out, DaemonOpts{AskHuman: ask})
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -1199,9 +1235,25 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 			return MapDaemonErrorToRC(err)
 		}
 	}
+	// The task's files go with it, in the same request.
+	var files []taskboardFile
+	for _, a := range t.Attachments {
+		data, err := fetchTaskboardAttachment("", t.ID, a.ID)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: read file %s of %s (nothing changed): %v\n", a.Name, t.ID, err)
+			return MapDaemonErrorToRC(err)
+		}
+		files = append(files, taskboardFile{Name: a.Name, Data: data.Data})
+	}
 	var created taskboardTask
 	path := "/v1/groups/" + url.PathEscape(group) + "/taskboard/transfer-in"
-	if err := remoteRequestOpts(peer, http.MethodPost, path, in, &created, DaemonOpts{AskHuman: ask}); err != nil {
+	var err error
+	if len(files) > 0 {
+		err = taskboardUpload(peer, path, in, files, &created, ask)
+	} else {
+		err = remoteRequestOpts(peer, http.MethodPost, path, in, &created, DaemonOpts{AskHuman: ask})
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %s on %s did not take it: %v\n", group, peer, err)
 		var de *DaemonError
 		if !errors.As(err, &de) || de.Status >= 500 {
@@ -1220,7 +1272,6 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 		return rcOK
 	}
 	away := map[string]any{"to": map[string]any{"node": peer, "group": group, "task": created.ID}}
-	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		err = remoteRequestOpts("", http.MethodPost, awayPath, away, nil, DaemonOpts{AskHuman: ask})
 		var de *DaemonError

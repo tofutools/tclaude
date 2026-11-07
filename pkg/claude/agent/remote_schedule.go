@@ -47,6 +47,12 @@ func remoteRequestOpts(remote, method, path string, body, out any, opts DaemonOp
 		}
 		return err
 	}
+	return decodeRemoteAnswer(raw, out)
+}
+
+// decodeRemoteAnswer decodes a peer's answer, already parsed into raw, into
+// out with its strings stripped of control characters and put on one line.
+func decodeRemoteAnswer(raw, out any) error {
 	if out == nil || raw == nil {
 		return nil
 	}

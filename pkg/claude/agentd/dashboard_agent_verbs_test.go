@@ -25,6 +25,7 @@ func TestDashboardAgentVerbs_MethodErrorsAreUnchanged(t *testing.T) {
 		"sandbox-restart":   "POST only",
 		"fast-mode/enable":  "POST only",
 		"fast-mode/disable": "POST only",
+		"sandbox":           "GET or POST only",
 		"sandbox-impl":      "GET or POST only",
 		"clone":             "POST only",
 		"reincarnate":       "POST only",

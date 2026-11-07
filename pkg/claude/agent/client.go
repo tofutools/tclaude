@@ -590,6 +590,15 @@ func DaemonPostRaw(path, contentType string, body []byte, out any) error {
 // carry small metadata for binary endpoints; opts preserves the same ad-hoc
 // human approval behavior as JSON commands.
 func DaemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
+	return DaemonPostRawWithOptionsImpl(path, contentType, body, headers, out, opts)
+}
+
+// DaemonPostRawWithOptionsImpl is the seam for DaemonPostRawWithOptions, as
+// DaemonRequestImpl is for the JSON transport: CLI flow tests reassign it
+// (with t.Cleanup restoration) to serve the upload from a test mux.
+var DaemonPostRawWithOptionsImpl = daemonPostRawWithOptions
+
+func daemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
 	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
 	if err != nil {
 		return err

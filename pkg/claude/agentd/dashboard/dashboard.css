@@ -8158,7 +8158,7 @@ body.wizard #agent-spawn-role-add .filter-combobox-input { background: #140f28; 
    the card so the drop target is obvious. The class is toggled on the card by
    bindSpawnDragDrop; the inset shadow reads as a highlight without shifting
    layout (no border-box reflow). */
-.cron-create-modal.spawn-drag-over {
+.cron-create-modal.spawn-drag-over, .files-drag-over {
   outline: 2px dashed #58a6ff; outline-offset: -6px;
   box-shadow: inset 0 0 0 9999px rgba(88, 166, 255, 0.06);
 }
@@ -18670,13 +18670,39 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .tb-board { margin: 0 0 6px; }
 .tb-table { width: 100%; table-layout: fixed; font-size: 12.5px; }
-.tb-col-n { width: 52px; }
+/* The cluster, Name, State, Last and Age take the agents table's tracks
+   above (alignWithAgents in groups-taskboard.js sets the variables), as a
+   Resources table's do; the defaults match .gr-rtable's. */
+.tb-col-ctl { width: var(--tb-ctl-w, 128px); }
+.tb-col-name { width: var(--tb-name-w, 30%); }
+.tb-col-state { width: var(--tb-state-w, 112px); }
+.tb-col-last { width: var(--tb-last-w, 72px); }
+.tb-col-age { width: var(--tb-age-w, 72px); }
+.tb-col-who { width: 180px; }
 .tb-col-ref { width: 130px; }
-.tb-col-who { width: 190px; }
-.tb-col-state { width: 170px; }
-.tb-col-actions { width: 310px; }
+.tb-col-deps { width: 110px; }
+/* Files has no width of its own: it takes the rest of the row, as a
+   Resources table's Detail does, so the tracks above stay as set. */
+.tb-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-table .tb-t { color: #7d8590; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.tb-none { color: #484f58; }
+.tb-deps-cell { white-space: nowrap; }
+.tb-deps-cell .tb-dep:first-child { margin-left: 0; }
+.tb-table .tb-ic { white-space: nowrap; overflow: visible; }
+.tb-ic .tb-handle, .tb-ic .row-actions { vertical-align: middle; }
+.tb-handle-off { visibility: hidden; }
+.tb-row-actions { align-items: center; }
+.tb-act-slot { display: inline-block; width: 22px; }
+.tb-row-actions .gr-add-menu { left: 0; right: auto; min-width: 180px; max-height: 60vh; overflow-y: auto; }
+.tb-row-actions .tb-act-ok:not(:disabled) { color: #3fb950; }
+.tb-row-actions .tb-act-go:not(:disabled) { color: #fff; background: #1f6feb; border-color: #1f6feb; opacity: 1; }
+.tb-row-idea .tb-row-actions { opacity: 1; }
+.tb-who { max-width: 100%; }
+.tb-who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tb-files { color: #8b949e; }
+.tb-history-row .tb-history { margin: 0; }
 .tb-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
-.tb-table .tb-n { white-space: nowrap; text-align: right; color: #6e7681; font-variant-numeric: tabular-nums; }
+.tb-table .tb-n { margin-right: 6px; color: #6e7681; font-size: 11px; font-variant-numeric: tabular-nums; }
 .tb-title { color: #e6edf3; }
 .tb-id { margin-left: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: #6e7681; }
 .tb-dep { margin-left: 6px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; white-space: nowrap; }
@@ -18687,8 +18713,7 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-unassigned { color: #6e7681; }
 .tb-who { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .tb-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #3fb950; color: #3fb950; font-size: 10px; font-weight: 700; }
-.tb-by { padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; font-size: 10.5px; color: #8b949e; }
-.tb-state { white-space: nowrap; }
+.tb-state { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
 .ui-tag.tb-state-in-progress { border-color: #238636; color: #3fb950; }
 .ui-tag.tb-state-blocked { border-color: #da3633; color: #f85149; }
 .ui-tag.tb-state-stalled { border-color: #9e6a03; color: #d29922; }
@@ -18696,7 +18721,8 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-row-done .tb-title, .tb-row-dropped .tb-title { color: #7d8590; }
 .tb-row-dropped .tb-title { text-decoration: line-through; }
 .tb-reason { margin-top: 2px; color: #f85149; font-size: 11.5px; }
-.tb-closed { margin-top: 4px; opacity: 0.85; }
+.tb-row.tb-closed > td { opacity: 0.85; }
+.tb-closed-table { margin-top: 4px; }
 .tb-history, .tb-more { margin: 6px 8px 0; font-size: 11.5px; color: #7d8590; }
 .tb-history-note { color: #6e7681; }
 .tb-history .tb-history-toggle { font-size: 11.5px; }
@@ -18707,14 +18733,10 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-table tr.tb-drop-before > td { box-shadow: inset 0 2px 0 #58a6ff; }
 .tb-table tr.tb-drop-after > td { box-shadow: inset 0 -2px 0 #58a6ff; }
 .tb-table tr.tb-drop-into > td { background: rgba(88, 166, 255, 0.08); box-shadow: inset 0 0 0 1px #58a6ff; }
-.tb-actions { text-align: right; white-space: nowrap; }
-.tb-actions .ui-btn { margin-left: 4px; }
-.tb-row .tb-actions > * { opacity: 0; transition: opacity 0.1s; }
-.tb-row:hover .tb-actions > *, .tb-row:focus-within .tb-actions > *, .tb-row-idea .tb-actions > .tb-act-promote { opacity: 1; }
-@media (hover: none) { .tb-row .tb-actions > * { opacity: 1; } }
+.tb-row:focus-within .row-actions { opacity: 1; }
+@media (hover: none) { .tb-row .row-actions { opacity: 1; } }
 .tb-form { display: flex; align-items: center; gap: 6px; }
-.tb-form .tb-form-title, .tb-form .tb-form-reason { flex: 2; min-width: 0; }
-.tb-form .tb-form-ref { flex: 1; min-width: 0; }
+.tb-form .tb-form-reason { flex: 2; min-width: 0; }
 .tb-import { margin: 0 8px 8px; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
 /* "+ New task" (groups-taskboard-new.js): the Resources ＋ menu's
    icon-only button, and the New task / Ask an agent dialogs. */
@@ -18724,7 +18746,7 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-new-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .tb-new-field > .ui-input, .tb-new-field > .ui-textarea, .tb-new-field > .ui-select { width: 100%; box-sizing: border-box; }
 .tb-new-field > .ui-textarea { resize: vertical; }
-.tb-new-stage { display: inline-flex; gap: 14px; padding-top: 5px; }
+.tb-new-stage { display: inline-flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 5px; }
 .tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .tb-new-deps { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; padding: 4px 6px;
   border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
@@ -18747,7 +18769,6 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 }
 .tb-agent-tasks { margin-top: 2px; font-size: 11px; color: #7d8590; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .tb-agent-tasks.blocked { color: #e3b341; }
-.tb-form .tb-form-assignee { min-width: 180px; }
 /* Swim lanes (groups-taskboard-lanes.js): a lane head column and the five stage columns. */
 .tb-lanes-wrap { margin: 0 8px; }
 /* Stored column widths can need more room than a narrow card has: the grid
@@ -18823,3 +18844,29 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-cell-more { align-self: flex-start; font-size: 11px; }
 .tb-lanes-block { margin-bottom: 6px; }
 .tb-lanes-by-label { margin: 0 4px 0 2px; }
+
+/* A task's files (groups-taskboard-files.js): the edit form's tiles, and the
+   picker the New task form and Ask an agent share with it. */
+.tb-files-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tb-files-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tb-files { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.tb-file { position: relative; display: flex; flex-direction: column; min-width: 0; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; background: #0d1117; }
+.tb-file-new { border-style: dashed; }
+.tb-file-removed { opacity: 0.45; }
+.tb-file-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.tb-file-open:disabled { cursor: default; }
+.tb-file-thumb { display: flex; align-items: center; justify-content: center; width: 100%; height: 64px; object-fit: cover; background: #161b22; }
+.tb-file-ext { color: #6e7681; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; }
+.tb-file-name { padding: 4px 7px 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-file-size { padding: 0 7px 5px; color: #6e7681; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-file-rm { position: absolute; top: 4px; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  padding: 0; border: 1px solid #30363d; border-radius: 4px; background: rgba(13, 17, 23, 0.85); color: #8b949e; font-size: 11px; cursor: pointer; }
+.tb-file-rm:hover:not(:disabled) { color: #e6edf3; }
+/* The edit form (groups-taskboard-edit.js). */
+.tb-edit-meta { font-size: 12px; }
+.tb-edit-reason { margin-top: 6px; }
+.tb-edit-deps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tb-edit-dep { display: inline-flex; align-items: center; gap: 4px; padding: 1px 3px 1px 8px; border: 1px solid #30363d; border-radius: 12px; font-size: 12px; }
+.tb-edit-dep-rm { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: #6e7681; cursor: pointer; }
+.tb-edit-dep-rm:hover:not(:disabled) { color: #e6edf3; background: #30363d; }

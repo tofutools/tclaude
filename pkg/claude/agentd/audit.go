@@ -1202,6 +1202,7 @@ var auditedAgentVerbs = map[string]bool{
 	// find, and the /v1 route reserves it to a non-owner-conferred slug for the
 	// same reason.
 	"sandbox-impl": true,
+	"sandbox":      true,
 }
 
 func describeAgentVerb(c *auditCtx) {

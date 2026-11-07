@@ -17,9 +17,9 @@ import (
 //     blocked or done); an unassigned task (an idea, or in next) needs write;
 //   - edits, promotes/demotes, blocks, unblocks, reopens, closes and reports
 //     on the tasks assigned to it;
+//   - attaches files to and detaches them from the tasks assigned to it;
 //   - takes any open, unassigned task (an idea is promoted on the way) and
-//     releases its own; an assigned task is taskboard.assign's;
-//   - comments on any task of the board (requireTaskboardComment).
+//     releases its own; an assigned task is taskboard.assign's.
 //
 // It is narrowed by the writer lock, as write is, except a report; an explicit
 // taskboard.own grant scoped to the group passes the lock, as an explicit
@@ -75,12 +75,12 @@ func requireTaskboardOwn(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	conv := confirmedAgentConv(r)
 	if conv != "" {
 		if id, err := db.AgentIDForConv(conv); err != nil || id == "" || activeGroupMember(g, id) == "" {
-			writeError(w, http.StatusForbidden, "permission_denied",
+			writeError(w, http.StatusForbidden, "permission",
 				PermTaskboardOwn+" covers only the board of a group you are an active member of; "+g.Name+" is not one")
 			return false
 		}
 		if taskboardSlugDenied(r, conv, PermSelfTaskboard) {
-			writeError(w, http.StatusForbidden, "permission_denied",
+			writeError(w, http.StatusForbidden, "permission",
 				PermSelfTaskboard+" (the deprecated alias of "+PermTaskboardOwn+") is denied to you")
 			return false
 		}
@@ -97,17 +97,6 @@ func requireTaskboardOwn(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 func requireTaskboardTaskChange(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, t *db.GroupTask) bool {
 	if self, conv := callerAgentID(r); self != "" && t.AssigneeID == self &&
 		!agentWritesTaskboard(r, conv, g) && agentOwnsTaskboard(r, conv, g) {
-		return requireTaskboardOwn(w, r, g, true)
-	}
-	return requireTaskboard(w, r, g, true)
-}
-
-// requireTaskboardComment gates a comment on a task of g's board: the
-// operator, a taskboard.write holder, or a taskboard.own holder on its own
-// group's board (any task in it). Both are narrowed by the writer lock. A
-// refusal writes the 403.
-func requireTaskboardComment(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) bool {
-	if taskboardOwnOnly(r, g) {
 		return requireTaskboardOwn(w, r, g, true)
 	}
 	return requireTaskboard(w, r, g, true)

@@ -129,9 +129,9 @@ implementation. It has three states:
   is confined; the dashboard's **Diagnostics › Doctor** view asks the operator to choose.
 
 ```bash
-tclaude agent sandbox-impl default show
-tclaude agent sandbox-impl default set tclaude-layer   # or: harness
-tclaude agent sandbox-impl default clear              # back to undecided
+tclaude agent sandbox default show
+tclaude agent sandbox default set tclaude-layer   # or: harness
+tclaude agent sandbox default clear              # back to undecided
 ```
 
 `set` and `clear` need `sandbox-profiles.manage`. The install default applies to
@@ -152,10 +152,12 @@ get it back.
 ### Reassigning an existing agent
 
 ```bash
-tclaude agent sandbox-impl set <agent> resource-only --restart
+tclaude agent sandbox set <agent> resource-only --restart
 ```
 
-`tclaude agent sandbox-impl show|set` takes a positional selector (there is no
+`tclaude agent sandbox show|set` (formerly `sandbox-impl`, which still works
+but is deprecated, as is its `/v1/agent/{selector}/sandbox-impl` route in
+favour of `/v1/agent/{selector}/sandbox`) takes a positional selector (there is no
 self form and no `--target`). A stopped agent is assigned and left stopped
 (wake it to apply). A running agent is refused unless `--restart` is given:
 then, once every check below has passed, the agent — which must be fully
@@ -194,7 +196,7 @@ Assigning tclaude's sandbox again moves only the current conversation back.
 This move asks first. Before anything stops or moves, the dashboard shows how many
 conversations will be exposed, that agents outside tclaude's sandbox can read them
 once moved, and that todo lists are deleted, and you confirm it there. On the
-command line `sandbox-impl set` refuses with the same facts unless you pass
+command line `sandbox set` refuses with the same facts unless you pass
 `--yes`. An agent that asks with `--ask-human` gets you a popup with the same
 facts. Nothing asks when the agent has no private state. Private conversation
 storage is something only OpenCode has here: other harnesses keep conversations
@@ -213,9 +215,9 @@ implementation you want instead.
 ### Changing an existing agent's sandbox profile
 
 ```bash
-tclaude agent sandbox-impl set <agent> --sandbox-profile strict --restart
-tclaude agent sandbox-impl set <agent> --no-sandbox-profile
-tclaude agent sandbox-impl set <agent> tclaude-layer --sandbox-profile strict
+tclaude agent sandbox set <agent> --sandbox-profile strict --restart
+tclaude agent sandbox set <agent> --no-sandbox-profile
+tclaude agent sandbox set <agent> tclaude-layer --sandbox-profile strict
 ```
 
 The same assignment replaces the agent's **explicit** sandbox profile (the
@@ -255,7 +257,7 @@ profile, so it resolves like a spawn that names none: the global profile,
 then the group's (`--no-sandbox-profile` on the command line). **None** omits every tclaude sandbox profile
 (`--omit-sandbox-profiles`).
 
-A peer with restricted trust cannot change a profile: its sandbox-impl
+A peer with restricted trust cannot change a profile: its sandbox
 requests carry only an implementation.
 
 ### Imported agents

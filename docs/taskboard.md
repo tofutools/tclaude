@@ -59,8 +59,11 @@ tclaude agent taskboard history <task>
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
-                                    [--assignee <agent>|--mine] [--blocked "reason"|--done]
-tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt-file f
+                                    [--assignee <agent>|--mine] [--blocked "reason"|--done] [--attach f]…
+tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…   # or --prompt-file f
+tclaude agent taskboard attach <task> <file>…
+tclaude agent taskboard detach <task> <name|#id>…
+tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
@@ -133,6 +136,40 @@ These start states are for `taskboard.write` holders. A member that holds only
 each one is assigned to it as it is created. A plain `add` starts in progress,
 `--blocked` starts blocked and held by you, and `--done` logs work you did. An
 unassigned task (`--next`, or an idea) and an import need `taskboard.write`.
+
+## Files on a task
+
+A task can carry files: a screenshot, a log, a spec. `add --attach` (repeatable)
+creates the task and its files in one step, and `attach` adds files to an
+existing task. `show` lists them, and so does the brief an assignee gets,
+with the command to fetch them.
+
+- A task holds at most 10 files, of at most 4 MiB each.
+- Files have the types mail attachments may have: images (PNG, JPEG, GIF,
+  WebP), text, markdown, CSV, JSON, YAML, diff/patch and PDF. HTML, SVG,
+  archives and executables are refused.
+- A second file with a name the task already has gets a numbered prefix
+  (`2-shot.png`).
+- The files are stored where agents cannot reach them. `attachments <task>
+  --save <dir>` writes them into a directory (it never overwrites a file).
+  `detach` removes one, by name or by the `#id` the list shows.
+- Attaching and detaching need `taskboard.write` on the task's group, or
+  `taskboard.own` on a task assigned to you. Reading the files needs
+  `taskboard.read`. Both are recorded in the task's history
+  (`attached`, `detached`).
+- `ask --attach` sends the files with the request, as attachments of the
+  mail. The asked member is told to put them on the tasks it creates.
+- A clone or a move to another group, on this node or another, takes the
+  files with it. A clone shares the stored bytes. Bytes no task refers to
+  any more are removed by the hourly sweep.
+- In the dashboard, the *Write it myself* form, *Ask an agent* and the edit
+  form take files as the spawn dialog does: 📎 *Choose files…*, a drop of
+  files anywhere on the dialog, or Ctrl+V (Cmd+V on macOS) of copied files or
+  a screenshot. A file over the limits or of a refused type is left out, and
+  a note names it. The edit form shows a task's files as tiles (an image
+  with its thumbnail); click one to open it, and ✕ removes it on *Save*.
+  This works for a linked node's board too: the files go through this
+  node's staged upload.
 
 ## Importing from a tracker
 
@@ -507,7 +544,8 @@ the drop, nothing is created anywhere. Then:
    already closed counts as done. If it still fails, the command says so
    and names both copies, and the original is left for you to drop.
 
-The task's history, assignee and dependencies stay behind with the dropped
+The task's files go with it, in the same `transfer-in` request. The task's
+history, assignee and dependencies stay behind with the dropped
 original. A clone runs only the first step. Only an open or blocked task moves
 to another node; a done or dropped one can be cloned.
 
@@ -548,12 +586,19 @@ the **Quest board**), below its Agents and Resources sections.
   too). *Needs you* counts the blocked and the stalled tasks, and *in
   progress* counts the other assigned tasks. *Next* and *ideas* count the
   unassigned open tasks in each stage.
-- **Open**, the section lists the queue in your order and then the Ideas band.
-  Each row shows its number, title and id, a ref chip that links to the
-  tracker, who holds the task, and its state. A blocked task shows its reason
-  on the line below, and a dependency shows as `after #n` (amber until it is
-  done). The *history* line counts the tasks done this week and the dropped
-  ones. Click *history* to list the recently closed tasks.
+- **Open**, the *List* view is a table like the Agents and Resources tables
+  above it. It lists the queue in your order, then the Ideas band, then the
+  *history* line. Each row starts with a cluster of controls: the ⋮⋮ drag
+  handle, the one action the task's state calls for (✓ *Done*, ✓ *Next* on an
+  idea, ↺ *Reopen* in history), ✎ *Edit*, and ⋯ for the rest. Then come
+  *Name* (the task's number in your order, its title and id), *State*,
+  *Last* (its last change) and *Age*, in line with the Agents table's
+  columns of the same names. After those come *Who* holds it (the tooltip
+  says who assigned it, and when), *Ref* (a chip that links to the tracker),
+  *Deps* (`after #n`, amber until that task is done) and *Files*. A blocked
+  task shows its reason under its title. The *history* line counts the tasks
+  done this week and the dropped ones. Click *history* to list the recently
+  closed tasks in the same table.
 - The section opens on its own when something needs you. If you fold or open
   it yourself, the dashboard remembers that per group.
 
@@ -569,15 +614,16 @@ a CLI verb:
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
-| *✓ Next* on an idea | `promote <task>` |
-| *Block* (with a reason) / *Unblock* | `block <task> --reason …` / `unblock <task>` |
-| *Done* | `done <task>` |
-| *Drop* (with an optional reason) | `drop <task> [--reason …]` |
-| *Edit* | `edit <task> --title … --ref …` |
-| *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
-| *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
-| *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
-| Drag a task onto another group's Task board or header row (Ctrl/Cmd clones) | `move-to-group <task> <group> [--clone] [--stage next]` |
+| ✓ *Next* on an idea | `promote <task>` |
+| ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
+| ✓ *Done* | `done <task>` |
+| ⋯ *Drop…* (with an optional reason) | `drop <task> [--reason …]` |
+| ✎ *Edit* (or double-click a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
+| Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
+| ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
+| ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
+| ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
+| Drag a task onto another group's Task board or header row (Ctrl/Cmd clones), or ⋯ *Move to group ›* / *Clone to group ›* | `move-to-group <task> <group> [--clone] [--stage next]` |
 
 - **＋ ▾** (*New task*; in wizard mode, *New quest*) in the section head is
   the one way in, in both views. It opens a menu:
@@ -591,13 +637,25 @@ a CLI verb:
     optional, is who did it). A bare awb or Linear ref gets its
     link, as with `--resolve-ref`. If you paste a list into the title, the
     form adds one task per line instead. A title that is only an awb, Linear
-    or GitHub id becomes that ref, titled from the tracker. Enter or
-    Ctrl+Enter adds the task, and Esc or *Cancel* closes the form.
+    or GitHub id becomes that ref, titled from the tracker. Files go with the
+    task (see [Files on a task](#files-on-a-task)). Enter or Ctrl+Enter adds
+    the task, and Esc or *Cancel* closes the form.
   - *Ask an agent* sends a request in your own words to a member, as `ask`
     does. It picks the group's owner when one is online. You can pick any
     other online member who holds `taskboard.write` there and passes the
-    writer lock. With no such member online, the item is off, and says why.
+    writer lock. With no such member online, the item is off, and says why. Files go with the request.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
+- **✎ *Edit*** on a row (or a double-click on a lanes card) opens the edit
+  form. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,
+  *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
+  assignee (if you may assign), the dependencies (✕ takes one off, and
+  *＋ dependency* adds one of the board's other live tasks) and the files.
+  Picking an assignee for an idea or a queued task makes it *In progress*;
+  picking *Idea* or *Next* takes the assignee off. *Save* writes only what
+  changed, each through the route its CLI verb uses. If one write is refused
+  (say, a close that needs `taskboard.assign`), the rest still land, and the
+  form stays open and names what was not saved. A done or dropped task
+  reopens when you pick another place for it.
 - In the lanes view, a cell's **+** opens the same menu, anchored at the
   **+** (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it
@@ -724,6 +782,21 @@ those drags aren't accepted in the lanes.
 | `ls --mine` | `GET /v1/taskboard/mine` |
 | `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
 | `groups set-taskboard-writers` | `GET` / `POST /v1/groups/{g}/taskboard/writers {"agents":[…]}\|{"members":true}` |
+| `attach` | `POST /v1/taskboard/tasks/{id}/attachments` (multipart `file` parts) → the task |
+| `attachments` | `GET /v1/taskboard/tasks/{id}/attachments` → `{id, group, attachments}` |
+| `attachments --save` | `GET /v1/taskboard/tasks/{id}/attachments/{aid}` (the bytes; `?format=json` → base64 `data`) |
+| `detach` | `DELETE /v1/taskboard/tasks/{id}/attachments/{aid}` → the task |
+
+`add --attach`, `ask --attach` and a move to another node with files send
+their usual JSON as the `task` part of a multipart request, with one `file`
+part per file. Each task carries `attachments` (`id`, `name`, `size`,
+`content_type`, `sha256`, `image`, `added_by`, `added_at`) when it has files.
+An image is served inline and anything else as a download. A peer view
+carries JSON only, so a linked node reads a file with `?format=json`. A file
+larger than one peer view request (32 KiB) reaches a linked node through the
+staged upload, `POST /api/peer-upload/{node}?path=…` from the dashboard or
+`POST /v1/federation/peer-upload/{node}?path=…` from the operator's CLI. It
+runs under the same grants as a direct request.
 
 The group listing also returns `locked`, and `writers` when the board is
 locked. Each task carries `assignee` (`agent_id`, `name`), `assigned_by`,

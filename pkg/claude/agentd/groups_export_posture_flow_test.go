@@ -115,7 +115,7 @@ func TestGroupImport_RefusesAPostureThisNodeCannotMeet(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &failure))
 	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code)
 	assert.Contains(t, failure.Error, "no bwrap")
-	assert.Contains(t, failure.Error, "sandbox-impl default set harness")
+	assert.Contains(t, failure.Error, "sandbox default set harness")
 	g, err := db.GetAgentGroupByName("crew-walled")
 	require.NoError(t, err)
 	assert.Nil(t, g)

@@ -44,28 +44,52 @@ async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
   const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
   const c = mounted.container;
   const rowOf = (id) => c.querySelector(`tr[data-task-id="${id}"]`);
-  const button = (id, text) => [...rowOf(id).querySelectorAll('.tb-actions button')].find((b) => b.textContent.trim() === text);
   const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  return { harness, c, api, source, group, rowOf, button, click, refreshes: () => refreshes };
+  // A row's icon cluster, by aria-label: ✓ Done or Next, ↺ Reopen, ✎ Edit.
+  const cluster = (id) => [...rowOf(id).querySelectorAll('.tb-row-actions > button')].map((b) => b.getAttribute('aria-label'));
+  const button = (id, label) => [...rowOf(id).querySelectorAll('.tb-row-actions button')].find((b) => b.getAttribute('aria-label') === label);
+  const more = (id) => rowOf(id).querySelector('.tb-act-more');
+  const menuItems = () => [...c.querySelectorAll('.gr-add-menu [role="menuitem"]')];
+  // menu opens a row's ⋯ and reads its items, then closes it.
+  const menu = async (id) => {
+    await click(more(id));
+    const items = menuItems().map((b) => b.textContent.trim());
+    await click(more(id));
+    return items;
+  };
+  // pick opens a row's ⋯ and picks the path's items in turn.
+  const pick = async (id, ...path) => {
+    await click(more(id));
+    for (const label of path) {
+      const item = menuItems().find((b) => b.textContent.trim().replace(/ ›$/, '') === label);
+      assert.ok(item, `menu item ${label}: ${menuItems().map((b) => b.textContent.trim()).join(', ')}`);
+      await click(item);
+    }
+  };
+  return { harness, c, api, source, group, rowOf, button, cluster, menu, pick, click, refreshes: () => refreshes };
 }
 
 test('row actions map to the CLI verbs and re-read the board', async (t) => {
-  const { harness, c, api, rowOf, button, click, refreshes } = await mountBoard(t, 'tba-rows');
+  const { harness, c, api, rowOf, button, cluster, menu, pick, click, refreshes } = await mountBoard(t, 'tba-rows');
   assert.ok(c.querySelector('[data-fused-taskboard]'), 'blocked work opens the section');
-  assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Assign ▾', 'Done', 'Block', 'Edit', 'Drop']);
-  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Unassign', 'Done', 'Block', 'Edit', 'Drop']);
-  assert.deepEqual([...rowOf('tk_00000003').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Unblock', 'Edit', 'Drop']);
-  assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Assign ▾', 'Edit', 'Drop']);
+  // The cluster: the state's one action and Edit; the rest is in ⋯.
+  assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
+  assert.deepEqual(cluster('tk_00000003'), ['Done', 'Edit']);
+  assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
+  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…']);
 
-  await click(button('tk_00000004', '✓ Next'));
+  await click(button('tk_00000004', 'Next'));
   await click(button('tk_00000001', 'Done'));
-  await click(button('tk_00000003', 'Unblock'));
+  await pick('tk_00000003', 'Unblock');
   assert.deepEqual(api.calls, [['stage', 'tk_00000004', 'next'], ['status', 'tk_00000001', 'done'], ['status', 'tk_00000003', 'open']]);
   assert.equal(refreshes(), 3);
 
   // Block asks for a reason inline; it cannot be empty.
   api.calls.length = 0;
-  await click(button('tk_00000002', 'Block'));
+  await pick('tk_00000002', 'Block…');
   const form = c.querySelector('[data-task-form="block"]');
   const submit = [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block');
   assert.equal(submit.disabled, true);
@@ -74,24 +98,29 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'blocked', 'waiting on CI']]);
   assert.equal(c.querySelector('[data-task-form]'), null, 'the form closes on success');
 
-  // Edit changes only what changed; an emptied ref clears it.
+  // ✎ opens the edit form; it saves only what changed.
   api.calls.length = 0;
   await click(button('tk_00000001', 'Edit'));
-  const edit = c.querySelector('[data-task-form="edit"]');
-  await harness.input(edit.querySelector('.tb-form-title'), 'first, renamed');
-  await harness.act(async () => { harness.fireEvent(c.querySelector('.tb-form-title'), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
+  const edit = harness.document.querySelector('#taskboard-edit-modal');
+  assert.ok(edit, 'the edit form opens');
+  await harness.input(edit.querySelector('.tb-edit-title'), 'first, renamed');
+  await harness.act(async () => { harness.fireEvent(edit.querySelector('.tb-edit-title'), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['edit', 'tk_00000001', { title: 'first, renamed' }]]);
+  assert.equal(harness.document.querySelector('#taskboard-edit-modal'), null, 'a full Save closes it');
 
   // Drop takes an optional reason.
   api.calls.length = 0;
-  await click(button('tk_00000002', 'Drop'));
+  await pick('tk_00000002', 'Drop…');
   await click([...c.querySelector('[data-task-form="drop"]').querySelectorAll('button')].find((b) => b.textContent.trim() === 'Drop'));
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'dropped', '']]);
 
-  // A closed task reopens from history.
+  // A closed task reopens from history, a row of the same table.
   api.calls.length = 0;
   await click(c.querySelector('.tb-history-toggle'));
-  await click([...c.querySelectorAll('.tb-closed button')].find((b) => b.textContent.trim() === 'Reopen'));
+  const closed = rowOf('tk_00000005');
+  assert.ok(closed.matches('.tb-closed') && closed.closest('table') === rowOf('tk_00000001').closest('table'), 'history rows share the list\'s table');
+  assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit', 'Nothing more for finished'], 'a closed task has nothing more here: no group to clone to');
+  await click(button('tk_00000005', 'Reopen'));
   assert.deepEqual(api.calls, [['status', 'tk_00000005', 'open']]);
 });
 
@@ -209,22 +238,15 @@ test('a long import that fails part way returns the added results and the items 
   assert.deepEqual(out.failed.remaining, refs.slice(50));
 });
 
-test('Assign ▾ picks a member; Unassign takes the task back', async (t) => {
-  const { harness, c, api, button, click } = await mountBoard(t, 'tba-assign');
-  await click(button('tk_00000004', 'Assign ▾'));
-  const form = c.querySelector('[data-task-form="assign"]');
-  assert.deepEqual([...form.querySelectorAll('option')].map((o) => o.textContent), ['builder', 'tester (offline)'],
+test('Assign › lists the members; Unassign takes the task back', async (t) => {
+  const { c, api, click, pick } = await mountBoard(t, 'tba-assign');
+  await click(c.querySelector('tr[data-task-id="tk_00000004"] .tb-act-more'));
+  await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Assign ›'));
+  assert.deepEqual([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].map((b) => b.textContent.trim()), ['‹ Back', 'builder', 'tester (offline)'],
     'members with a stable agent id, online first');
-  assert.match(form.textContent, /the idea joins the queue/);
-  const select = form.querySelector('select');
-  const [first, second] = select.querySelectorAll('option');
-  first.removeAttribute('selected');
-  first.selected = false;
-  second.selected = true;
-  second.setAttribute('selected', '');
-  await harness.act(async () => { harness.fireEvent(select, 'change'); });
-  await click([...c.querySelector('[data-task-form="assign"]').querySelectorAll('button')].find((b) => b.textContent.trim() === 'Assign'));
-  await click(button('tk_00000002', 'Unassign'));
+  await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'tester (offline)'));
+  assert.equal(c.querySelector('.gr-add-menu'), null, 'picking closes the menu');
+  await pick('tk_00000002', 'Unassign');
   assert.deepEqual(api.calls, [['assign', 'tk_00000004', 'agt_tester'], ['unassign', 'tk_00000002']]);
 });
 
@@ -319,10 +341,13 @@ test("an agent's row shows the board tasks assigned to it", async (t) => {
 test('a board whose api cannot assign draws no assign controls', async (t) => {
   const api = fakeApi();
   api.can = { assign: false };
-  const { rowOf } = await mountBoard(t, 'tba-noassign', { api });
-  assert.deepEqual([...rowOf('tk_00000001').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Done', 'Block', 'Edit', 'Drop']);
+  const { cluster, menu } = await mountBoard(t, 'tba-noassign', { api });
+  assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
+  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…']);
   // Closing someone's task is the assignee's or an assigner's (the status
   // route refuses it otherwise): no Done or Drop on an assigned row.
-  assert.deepEqual([...rowOf('tk_00000002').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['Block', 'Edit']);
-  assert.deepEqual([...rowOf('tk_00000004').querySelectorAll('.tb-actions button')].map((b) => b.textContent.trim()), ['✓ Next', 'Edit', 'Drop']);
+  assert.deepEqual(cluster('tk_00000002'), ['Edit']);
+  assert.deepEqual(await menu('tk_00000002'), ['Block…']);
+  assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
+  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…']);
 });

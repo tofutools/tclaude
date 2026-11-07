@@ -245,10 +245,13 @@ function cardHint(task) {
   return null;
 }
 
-function Card({ task, n, numbers, drag }) {
+// A card opens the edit form on a double-click (onEdit), as ✎ does in the
+// list.
+function Card({ task, n, numbers, drag, onEdit = null }) {
   const done = task.status === 'done';
   return html`<div class=${`ui-card tb-card${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
-      data-task-id=${task.id} draggable=${drag ? 'true' : undefined} title=${task.id}
+      data-task-id=${task.id} draggable=${drag ? 'true' : undefined} title=${onEdit ? `${task.id} · double-click to edit` : task.id}
+      onDblClick=${onEdit ? (event) => { event.preventDefault(); onEdit(task.id); } : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
     <div class="tb-card-title">${n ? html`<span class="tb-card-n">${n}</span>` : null}${task.title}</div>
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} numbers=${numbers} />${cardHint(task)}</div>`}
@@ -506,7 +509,7 @@ function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
     onChoose=${(choice) => onNewTask(choice, initial)} />`;
 }
 
-export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null }) {
+export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null }) {
   const tasks = entry.tasks || [];
   const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
   const [, bumpLayout] = useState(0);
@@ -532,7 +535,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
       ${shown.map((task) => html`<${Card} key=${task.id} task=${task} n=${numbers.get(task.id)} numbers=${numbers}
-        drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null} />`)}
+        drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
+        onEdit=${actions ? onEdit : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
         onClick=${() => setDoneOpen({ ...doneOpen, [lane.id]: true })}>+ ${list.length - shown.length} more<//>`}
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} group=${group} entry=${entry} />`}

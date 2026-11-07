@@ -75,6 +75,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
 	registerTaskboardAssignRoutes(mux)
+	registerTaskboardAttachmentRoutes(mux)
 }
 
 // agentReadsTaskboard reports, silently, whether the agent reads group's
@@ -319,10 +320,12 @@ type taskboardTaskView struct {
 	// Derived on read: a new turn or a report clears it.
 	Stalled   bool   `json:"stalled,omitempty"`
 	IdleSince string `json:"idle_since,omitempty"`
-	CreatedBy string `json:"created_by"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	ClosedAt  string `json:"closed_at,omitempty"`
+	// Attachments are the task's files, in the order they were added.
+	Attachments []taskboardAttachmentView `json:"attachments,omitempty"`
+	CreatedBy   string                    `json:"created_by"`
+	CreatedAt   string                    `json:"created_at"`
+	UpdatedAt   string                    `json:"updated_at"`
+	ClosedAt    string                    `json:"closed_at,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -370,6 +373,14 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		ids = append(ids, t.ID)
+	}
+	files, err := db.ListGroupTaskAttachmentsBatch(ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]taskboardTaskView, 0, len(tasks))
 	staller := newTaskboardStaller(time.Now())
 	for _, t := range tasks {
@@ -395,6 +406,9 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 		}
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
+		if atts := files[t.ID]; len(atts) > 0 {
+			v.Attachments = taskboardAttachmentViews(atts)
+		}
 		if since, ok := staller.stalled(t); ok {
 			v.Stalled, v.IdleSince = true, rfc3339(since)
 		}
@@ -700,7 +714,10 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// Mine assigns the task to the calling agent (`add --mine`).
 		Mine bool `json:"mine"`
 	}
-	if !decodeTaskboardBody(w, r, &body) {
+	// A multipart create carries its files beside the JSON (a "task" part);
+	// the task and its files land in one transaction.
+	files, ok := decodeTaskboardRequest(w, r, &body)
+	if !ok {
 		return
 	}
 	// An agent that owns the board but does not write it creates its own
@@ -722,9 +739,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
-				"an import (refs or lines) takes only stage; title, body, ref, after and position are for one task")
+				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
 		}
 		if body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
@@ -807,9 +824,13 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		refURL = resolveTaskboardRefLink(r, kind, refURL, refLabel)
 	}
 	actor := taskboardActor(r)
+	atts, ok := storeTaskUploadsOrFail(w, files, actor)
+	if !ok {
+		return
+	}
 	t, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
-		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor})
+		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Attachments: atts})
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
@@ -1056,4 +1077,6 @@ func sweepTaskboard(now time.Time) {
 	if archived > 0 || purged > 0 {
 		slog.Info("taskboard sweep", "archived", archived, "purged", purged)
 	}
+	// A purged task took its files' rows with it; their blobs go here.
+	collectTaskBlobs(now)
 }

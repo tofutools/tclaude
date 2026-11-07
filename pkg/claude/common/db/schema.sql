@@ -2444,3 +2444,18 @@ CREATE TABLE group_taskboard_locks (
 			set_by     TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		) STRICT;
+
+CREATE TABLE group_task_attachments (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id      TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			name         TEXT NOT NULL,
+			sha256       TEXT NOT NULL,
+			size_bytes   INTEGER NOT NULL,
+			content_type TEXT NOT NULL,
+			added_by     TEXT NOT NULL,
+			added_at     INTEGER NOT NULL
+		) STRICT;
+
+CREATE UNIQUE INDEX idx_group_task_attachments_name ON group_task_attachments(task_id, name COLLATE NOCASE);
+
+CREATE INDEX idx_group_task_attachments_sha ON group_task_attachments(sha256);
