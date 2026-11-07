@@ -286,11 +286,12 @@ table.ui-compact :is(th, td) { padding: 4px 8px; }
    - col.ui-col-track: a fixed track (--ui-track), only for tables that must
      line up with each other (one list drawn as two tables).
    - .ui-fit: a cell's content, sized to it between --ui-fit-min and
-     --ui-fit-max; it wraps past the maximum. */
+     --ui-fit-max; it wraps past the maximum. It is a block, whatever the
+     element, so its bounds apply to a <span> too. */
 table.ui-table-auto { table-layout: auto; width: 100%; }
 table.ui-table-auto > colgroup > col.ui-col-fit { width: 1%; }
 table.ui-table-auto > colgroup > col.ui-col-track { width: var(--ui-track); }
-.ui-fit { width: max-content; min-width: var(--ui-fit-min, 0); max-width: var(--ui-fit-max, 30em); white-space: normal; overflow-wrap: anywhere; }
+.ui-fit { display: block; width: max-content; min-width: var(--ui-fit-min, 0); max-width: var(--ui-fit-max, 30em); white-space: normal; overflow-wrap: anywhere; }
 
 /* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
    tabs under the top nav (operator pick C: pills for section sub-nav, the

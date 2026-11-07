@@ -18593,11 +18593,12 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
    in the agents table's look (ResourceTable in groups-resources.js). The
    processes' table above the runs and the other resources' table below them
    must line up with each other, so their columns are fixed tracks
-   (.ui-col-track), Name 24em (a longer name wraps); they pack to the left,
+   (.ui-col-track), Name 24em or 28% of a narrower row, so Detail stays in
+   view with the side dock open (a longer name wraps); they pack to the left,
    and Detail, the last, takes the spare width. */
 .gr-rtable { margin: 2px 0 6px; }
 .gr-rtable .gr-col-ctl { --ui-track: 128px; }
-.gr-rtable .gr-col-name { --ui-track: 24em; }
+.gr-rtable .gr-col-name { --ui-track: min(24em, 28%); }
 .gr-rtable .gr-col-state { --ui-track: 112px; }
 .gr-rtable .gr-col-last { --ui-track: 72px; }
 .gr-rtable .gr-col-age { --ui-track: 72px; }
