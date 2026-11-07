@@ -75,11 +75,21 @@ export const IMPORT_BATCH = 50;
 export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
   const call = (method, path, payload) => request(fetchImpl, method, path, payload);
   // importBatches sends a long import in batches of IMPORT_BATCH, one after
-  // another, and merges the replies; the results stay in input order.
+  // another, and merges the replies; the results stay in input order. When a
+  // later batch fails, the batches already added stand: the merged result
+  // carries `failed` with the error and the items not sent, so the caller
+  // never sends the added ones again. A failing first batch throws.
   const importBatches = async (group, key, items, stage) => {
     const merged = { created: 0, results: [] };
     for (let i = 0; i < items.length; i += IMPORT_BATCH) {
-      const out = await call('POST', boardPath(group), { [key]: items.slice(i, i + IMPORT_BATCH), stage });
+      let out;
+      try {
+        out = await call('POST', boardPath(group), { [key]: items.slice(i, i + IMPORT_BATCH), stage });
+      } catch (cause) {
+        if (i === 0) throw cause;
+        merged.failed = { message: cause?.message || String(cause), remaining: items.slice(i) };
+        return merged;
+      }
       merged.created += out?.created || 0;
       merged.results.push(...(out?.results || []));
     }

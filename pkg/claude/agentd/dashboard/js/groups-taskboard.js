@@ -106,21 +106,22 @@ function StatePill({ task, numbers }) {
   return html`<span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`}>${text}</span>`;
 }
 
-// useBoardActions runs a write and then re-reads the board; a refusal is a
-// toast naming the action, and the result is false.
+// useBoardActions runs a write and then re-reads the board, also after a
+// refusal (a write may have half-landed); a refusal is a toast naming the
+// action, and the result is false.
 function useBoardActions(source, api) {
   const [busy, setBusy] = useState('');
   const run = async (key, label, fn) => {
     setBusy(key);
     try {
       const out = await fn(api);
-      await source.refresh?.();
       return out ?? true;
     } catch (cause) {
       shellToast(`${label}: ${cause?.message || cause}`, true);
       return false;
     } finally {
       setBusy('');
+      await Promise.resolve(source.refresh?.()).catch(() => {});
     }
   };
   return { busy, run, api };
@@ -178,7 +179,7 @@ function RowForm({ task, mode, actions, onClose }) {
     if (ok) onClose();
   };
   const keys = (event) => {
-    if (event.key === 'Enter') { event.preventDefault(); void submit(); }
+    if (event.key === 'Enter') { event.preventDefault(); if (!actions.busy) void submit(); }
     if (event.key === 'Escape') { event.preventDefault(); onClose(); }
   };
   const busy = actions.busy === `${task.id}:form`;
@@ -256,6 +257,11 @@ function useRowDrag(tasks, actions) {
       if (row && event.dataTransfer?.setDragImage) event.dataTransfer.setDragImage(row, 12, 12);
     },
     end: clear,
+    // leaveTable drops the marker once the pointer leaves the list.
+    leaveTable(event) {
+      if (!dragged.current || event.currentTarget.contains(event.relatedTarget)) return;
+      setOver(null);
+    },
     overRow(event, task) {
       if (!accept(event) || dragged.current.id === task.id) return;
       const rect = event.currentTarget.getBoundingClientRect();
@@ -313,17 +319,37 @@ function CaptureBox({ group, actions, wizard }) {
   const [next, setNext] = useState(false);
   const [note, setNote] = useState('');
   const added = useRef(0);
-  const add = async (value) => {
+  const sending = useRef(false);
+  // putBack returns lines that did not land to the box, ahead of whatever
+  // was typed meanwhile.
+  const putBack = (lines) => setText((typed) => [lines.join('\n'), typed].filter(Boolean).join('\n'));
+  // add takes the lines out of the box as it sends them, so the operator
+  // keeps typing the next one; one capture is in flight at a time.
+  const add = async (value, { fromBox = true } = {}) => {
     const lines = captureLines(value);
-    if (!lines.length) return;
+    if (!lines.length || sending.current) return;
+    sending.current = true;
+    if (fromBox) setText('');
     if (lines.length > 1 || isTrackerLine(lines[0])) setNote('looking up titles…');
-    const out = await actions.run('capture', 'Capture', (api) => api.capture(group.name, value, { next }));
-    if (!out) { setNote(''); return; }
-    added.current += out.created || 0;
-    const where = next ? 'queued' : (wizard ? 'visions' : 'ideas');
-    const more = importSummary(out);
-    setNote(`burst: ${added.current} ${where} added${more ? ` · ${more}` : ''}`);
-    setText('');
+    try {
+      const out = await actions.run('capture', 'Capture', (api) => api.capture(group.name, lines.join('\n'), { next }));
+      if (!out) {
+        setNote('');
+        putBack(lines);
+        return;
+      }
+      added.current += out.created || 0;
+      const where = next ? 'queued' : (wizard ? 'visions' : 'ideas');
+      const more = importSummary(out);
+      let failed = '';
+      if (out.failed) {
+        putBack(out.failed.remaining);
+        failed = ` · stopped: ${out.failed.message}; ${out.failed.remaining.length} not sent, back in the box`;
+      }
+      setNote(`burst: ${added.current} ${where} added${more ? ` · ${more}` : ''}${failed}`);
+    } finally {
+      sending.current = false;
+    }
   };
   const onKeyDown = (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -338,7 +364,7 @@ function CaptureBox({ group, actions, wizard }) {
     const pasted = event.clipboardData?.getData('text') || '';
     if (captureLines(pasted).length < 2) return;
     event.preventDefault();
-    void add(pasted);
+    void add(pasted, { fromBox: false });
   };
   return html`<div class="tb-capture" data-taskboard-capture=${group.name}>
     <div class="tb-capture-head">
@@ -367,14 +393,17 @@ function ImportPanel({ group, actions, onClose }) {
   const [note, setNote] = useState('');
   const refs = importRefs(kind, ids);
   const submit = async () => {
-    if (!refs.length) return;
+    if (!refs.length || actions.busy) return;
     setNote(`looking up ${refs.length} title${refs.length === 1 ? '' : 's'}…`);
     const out = await actions.run('import', 'Import', (api) => api.importRefs(group.name, refs, { next }));
     if (!out) { setNote(''); return; }
     const more = importSummary(out);
-    if (!more) { onClose(); return; }
-    setNote(`${out.created || 0} added · ${more}`);
-    setIds('');
+    if (!more && !out.failed) { onClose(); return; }
+    // Only the refs that were not sent stay in the box, so Import again
+    // never adds the landed ones twice.
+    setIds(out.failed ? out.failed.remaining.join(', ') : '');
+    setNote(`${out.created || 0} added${more ? ` · ${more}` : ''}${out.failed
+      ? ` · stopped: ${out.failed.message}; ${out.failed.remaining.length} not sent, left in the box` : ''}`);
   };
   return html`<div class="tb-import" data-taskboard-import=${group.name}>
     <span class="ui-eyebrow">Import from a tracker · one task per id, titled from the tracker</span>
@@ -433,7 +462,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${importing && actions && html`<${ImportPanel} group=${group} actions=${actions} onClose=${onImportClose} />`}
-    ${tasks.length ? html`<table class="ui-compact tb-table">${COLUMNS}
+    ${tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-n">#</th><th>${wizard ? 'Quest · top is next' : 'Task · operator order, top is next'}</th>
         <th>Ref</th><th>Who</th><th>State</th><th></th></tr></thead>
       <tbody>
@@ -473,14 +502,20 @@ export function TaskboardSection({ group, snapshot, source = taskboardContext, a
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   const [importing, setImporting] = useState(false);
+  // Once the section has opened on its own (something needed the
+  // operator), it stays open for this page, so clearing the last blocked
+  // task never folds it under a form or the capture box in use. The
+  // operator's own fold or open is remembered and wins as before.
+  const autoOpened = useRef(false);
   if (!entry || !localGroup(group)) return null;
   const wizard = isWizardActive();
   const counts = entry.counts || {};
+  if ((counts.needs_you || 0) > 0) autoOpened.current = true;
   const head = api && html`<${ViewSelector} group=${group.name} />
     <${Button} size="sm" class="tb-import-open" pressed=${importing} title="taskboard add --from-awb / --from-linear / --from-github"
       onClick=${() => setImporting(!importing)}>+ from awb/Linear…<//>`;
   return html`<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${(counts.needs_you || 0) > 0}
+      summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
       actions=${head} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
       importing=${importing} onImportClose=${() => setImporting(false)} />

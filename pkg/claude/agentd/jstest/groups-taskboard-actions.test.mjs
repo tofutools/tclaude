@@ -27,22 +27,21 @@ function fakeApi() {
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status') };
 }
 
-async function mountBoard(t, name) {
+async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   let refreshes = 0;
   const source = {
-    context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),
+    context: harness.signals.signal(context || { groups: [board(name)] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => { refreshes += 1; },
   };
-  const api = fakeApi();
   const group = { name, members: [] };
   const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
   const c = mounted.container;
   const rowOf = (id) => c.querySelector(`tr[data-task-id="${id}"]`);
   const button = (id, text) => [...rowOf(id).querySelectorAll('.tb-actions button')].find((b) => b.textContent.trim() === text);
   const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  return { harness, c, api, rowOf, button, click, refreshes: () => refreshes };
+  return { harness, c, api, source, rowOf, button, click, refreshes: () => refreshes };
 }
 
 test('row actions map to the CLI verbs and re-read the board', async (t) => {
@@ -116,7 +115,7 @@ test('the capture box adds on Enter, keeps the text area for the next line, and 
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.equal(c.querySelector('.tb-capture .ui-eyebrow').textContent, 'Capture · lands in the queue');
-  assert.deepEqual(api.calls, [['capture', 'tba-capture', 'one\ntcl-fb0bfz\n', { next: true }]]);
+  assert.deepEqual(api.calls, [['capture', 'tba-capture', 'one\ntcl-fb0bfz', { next: true }]]);
 });
 
 test('dragging a row reorders it; dropping a queued task on the Ideas band demotes it', async (t) => {
@@ -196,4 +195,68 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
 
   const refusing = createTaskboardApi({ fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'cap', message: 'board is full' }) }) });
   await assert.rejects(refusing.status('tk_00000001', 'done'), (err) => err.message === 'board is full' && err.status === 409);
+});
+
+test('a capture in flight: Enter again sends nothing twice, and the next line typed meanwhile is kept', async (t) => {
+  const api = fakeApi();
+  let release;
+  api.capture = (...args) => { api.calls.push(['capture', ...args]); return new Promise((resolve) => { release = () => resolve({ created: 2, results: [] }); }); };
+  const { harness, c } = await mountBoard(t, 'tba-inflight', { api });
+  const box = () => c.querySelector('.tb-capture-input');
+  await harness.input(box(), 'a\nb');
+  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); });
+  assert.equal(box().value, '', 'the sent lines leave the box at once');
+  assert.match(c.querySelector('.tb-capture-note').textContent, /looking up titles/);
+  await harness.input(box(), 'typed meanwhile');
+  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); });
+  assert.equal(api.calls.length, 1, 'one capture at a time');
+  await harness.act(async () => { release(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(box().value, 'typed meanwhile');
+});
+
+test('a failed capture puts its lines back; a batch that fails part way keeps the added ones out', async (t) => {
+  const api = fakeApi();
+  let mode = 'refuse';
+  api.capture = async (...args) => {
+    api.calls.push(['capture', ...args]);
+    if (mode === 'refuse') throw new Error('board is full');
+    return { created: 50, results: [], failed: { message: 'network down', remaining: ['line 51', 'line 52'] } };
+  };
+  const { harness, c } = await mountBoard(t, 'tba-failed', { api });
+  const box = () => c.querySelector('.tb-capture-input');
+  await harness.input(box(), 'lost?');
+  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(box().value, 'lost?', 'a refused capture comes back');
+  mode = 'partial';
+  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(box().value, 'line 51\nline 52', 'only the lines not sent come back');
+  assert.match(c.querySelector('.tb-capture-note').textContent, /50 ideas added · stopped: network down; 2 not sent/);
+});
+
+test('a section that opened on its own stays open when the last blocked task clears', async (t) => {
+  const name = 'tba-latch';
+  const { harness, c, source } = await mountBoard(t, name);
+  assert.ok(c.querySelector('.tb-table'), 'opened: something is blocked');
+  const cleared = board(name);
+  cleared.counts = { ...cleared.counts, needs_you: 0, blocked: 0 };
+  cleared.tasks = cleared.tasks.filter((task) => task.status !== 'blocked');
+  await harness.act(async () => { source.context.value = { groups: [cleared] }; });
+  assert.ok(c.querySelector('.tb-table'), 'still open');
+});
+
+test('a long import that fails part way returns the added results and the items not sent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTaskboardApi } = await harness.importDashboardModule('js/taskboard-actions.js');
+  let n = 0;
+  const api = createTaskboardApi({ fetchImpl: async (path, init) => {
+    n += 1;
+    if (n === 2) return { ok: false, status: 502, json: async () => ({ message: 'bad gateway' }) };
+    const body = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ created: body.refs.length, results: body.refs.map((input) => ({ input, task: {} })) }) };
+  } });
+  const refs = Array.from({ length: 70 }, (_, i) => `awb:tcl-x${i}`);
+  const out = await api.importRefs('crew', refs);
+  assert.equal(out.created, 50);
+  assert.equal(out.failed.message, 'bad gateway');
+  assert.deepEqual(out.failed.remaining, refs.slice(50));
 });
