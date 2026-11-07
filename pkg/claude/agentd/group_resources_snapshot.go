@@ -107,16 +107,28 @@ func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struc
 	if len(shells) == 0 {
 		return nil
 	}
-	convs, err := db.ListAgentConvIDs()
-	if err != nil {
-		slog.Warn("group resources: agent shells unavailable", "error", err)
-		return nil
-	}
+	// Only a current member of an active group has a group to list its
+	// shell under, so only those conversations are hashed (classifyShells),
+	// not every conversation ever: this runs on every snapshot poll.
+	convs := map[string]struct{}{}
 	byName := map[string]*db.AgentGroup{}
 	names := make([]string, 0, len(active))
 	for _, g := range active {
 		byName[g.Name] = g
 		names = append(names, g.Name)
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			slog.Warn("group resources: group members unavailable", "group", g.Name, "error", err)
+			continue
+		}
+		for _, m := range members {
+			if m.ConvID != "" {
+				convs[m.ConvID] = struct{}{}
+			}
+		}
+	}
+	if len(convs) == 0 {
+		return nil
 	}
 	spawnGroups, err := db.AgentSpawnGroupIDs()
 	if err != nil {
@@ -143,8 +155,9 @@ func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struc
 	return out
 }
 
-// agentHomeGroup is the active group an agent is listed under: the one it was
-// spawned into while it is still a member, else its first by name.
+// agentHomeGroup is the active group an agent's shell lists under: the one it
+// was spawned into while it is still a member, else its first by name
+// (ListGroupsForAgent's order).
 func agentHomeGroup(agentID string, active map[int64]*db.AgentGroup, spawnGroups map[string]int64) *db.AgentGroup {
 	groups, err := db.ListGroupsForAgent(agentID)
 	if err != nil {
