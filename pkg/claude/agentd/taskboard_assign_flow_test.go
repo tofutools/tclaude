@@ -89,8 +89,8 @@ func TestTaskboardAssignBriefAndReport(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, h.lead, msgs[0].FromConv, "the brief is from the assigner")
-	assert.Contains(t, msgs[0].Subject, "[taskboard] crew · "+idea.ID)
-	assert.Contains(t, msgs[0].Subject, "assigned to you by")
+	assert.True(t, strings.HasPrefix(msgs[0].Subject, "[taskboard] assigned to you by "), "the verb leads: %s", msgs[0].Subject)
+	assert.Contains(t, msgs[0].Subject, ": crew · "+idea.ID)
 	assert.Contains(t, msgs[0].Body, "the brief for ship the lanes")
 	assert.Contains(t, msgs[0].Body, "tclaude agent taskboard report done --task "+idea.ID)
 
