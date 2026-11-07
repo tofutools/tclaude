@@ -460,11 +460,16 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	}
 	fromTitle := titleFor(m.FromConv)
 	if m.FromConv == "" {
-		// Senderless mail is the operator's when marked so, otherwise
-		// tclaude's own, as the daemon path labels it.
-		fromTitle = "tclaude (system)"
-		if db.IsOperatorAgentMessage(m.ID) {
+		// Senderless mail is a remote sender's when it came from a peer, the
+		// operator's when marked so, otherwise tclaude's own, as the daemon
+		// path labels it.
+		switch in, _ := db.FederationInboundForMessage(m.ID); {
+		case in != nil:
+			fromTitle = in.FromName + "@" + in.FromInstance + " (remote)"
+		case db.IsOperatorAgentMessage(m.ID):
 			fromTitle = "human operator"
+		default:
+			fromTitle = "tclaude (system)"
 		}
 	}
 

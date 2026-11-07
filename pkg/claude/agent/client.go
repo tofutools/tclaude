@@ -217,12 +217,12 @@ func waitForDaemon(stderr io.Writer, available func() bool, policy daemonRetryPo
 	return false
 }
 
-// DaemonError represents a non-2xx response from the daemon. Callers can
-// inspect Code to map back to CLI exit codes.
 // daemonAskHumanHint is the ask-human hint agentd puts in a permission
 // denial, phrased for API callers (agentd/identity.go askHumanHint).
 const daemonAskHumanHint = "X-Tclaude-Ask-Human: <duration>"
 
+// DaemonError represents a non-2xx response from the daemon. Callers can
+// inspect Code to map back to CLI exit codes.
 type DaemonError struct {
 	Status int
 	Code   string
