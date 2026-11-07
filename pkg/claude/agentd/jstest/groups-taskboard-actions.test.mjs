@@ -326,6 +326,21 @@ test('a task dragged onto an agent row of its own card is assigned; the unassign
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.deepEqual(api.calls, [['unassign', 'tk_00000002']]);
+  assert.equal(c.querySelector('.tb-unassign-drop'), null, 'the zone goes with the drag');
+
+  // A blocked task is not offered to an agent: the assign would be refused.
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000003').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer }); });
+  assert.equal(harness.fireEvent(builder.querySelector('td'), 'dragover', { dataTransfer: transfer }).defaultPrevented, false, 'blocked');
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000003').querySelector('.tb-handle'), 'dragend', {}); });
+
+  // A drag whose dragend never came leaves no listeners behind: the next
+  // drop assigns once.
+  api.calls.length = 0;
+  for (let i = 0; i < 2; i++) {
+    await harness.act(async () => { harness.fireEvent(rowOf('tk_00000001').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer }); });
+  }
+  await harness.act(async () => { harness.fireEvent(builder.querySelector('td'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_builder']]);
 });
 
 test("an agent's row shows the board tasks assigned to it", async (t) => {

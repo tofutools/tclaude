@@ -240,7 +240,10 @@ export function assignableMembers(group) {
 
 function RowForm({ task, mode, actions, onClose, group }) {
   const members = mode === 'assign' ? assignableMembers(group) : [];
-  const [to, setTo] = useState(members[0]?.agent_id || '');
+  const [picked, setTo] = useState(members[0]?.agent_id || '');
+  // The pick falls back to the first member while it is not (or no longer)
+  // one of them: members can arrive after the form opens, or leave.
+  const to = members.some((m) => m.agent_id === picked) ? picked : (members[0]?.agent_id || '');
   const [title, setTitle] = useState(task.title);
   const [ref, setRef] = useState(task.ref?.url || task.ref?.label || '');
   const [reason, setReason] = useState('');
@@ -358,10 +361,15 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
   // assign (taskboard assign --to). The listeners live only for the drag.
   const agentDrop = useRef({ row: null, off: null });
   const listenForAgents = () => {
+    // A drag whose dragend never arrived (the source row re-rendered away)
+    // must not leave its listeners behind to assign a second time.
+    agentDrop.current.off?.();
     if (!group || !canAssign(actions)) return;
     const state = agentDrop.current;
+    // Only an open task can be assigned (a blocked one is refused).
+    const target = (event) => dragged.current?.status === 'open' && agentDropRow(event.target, group);
     const onOver = (event) => {
-      const hit = dragged.current && agentDropRow(event.target, group);
+      const hit = target(event);
       if (!hit) { clearAgentTarget(state); return; }
       event.preventDefault();
       event.stopPropagation();
@@ -376,7 +384,7 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
         already ? 'already assigned here' : `assign ${n ? `#${n}` : dragged.current.id} to ${hit.member.title || hit.member.agent_id}`);
     };
     const onDrop = (event) => {
-      const hit = dragged.current && agentDropRow(event.target, group);
+      const hit = target(event);
       if (!hit) return;
       event.preventDefault();
       event.stopPropagation();
