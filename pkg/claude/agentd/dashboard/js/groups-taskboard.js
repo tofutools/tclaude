@@ -31,6 +31,7 @@ import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
+import { TaskboardLanes } from './groups-taskboard-lanes.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -121,7 +122,7 @@ const STATE_LABELS = {
   blocked: 'blocked', stalled: 'stalled', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
 };
 
-function RefChip({ task }) {
+export function RefChip({ task }) {
   const ref = task.ref;
   if (!ref) return html`<span class="tb-ref-none">—</span>`;
   const label = ref.label || ref.url || ref.kind;
@@ -133,7 +134,7 @@ function RefChip({ task }) {
   return html`<span class="ui-tag ui-tag-accent tb-ref" title=${title}>🔗 ${label}</span>`;
 }
 
-function DepChips({ task, numbers }) {
+export function DepChips({ task, numbers }) {
   const unmet = new Set(task.unmet || []);
   return (task.depends_on || []).map((dep) => {
     const n = numbers.get(dep);
@@ -495,9 +496,11 @@ function importSummary(out) {
 // line; a line that is only an awb, Linear or GitHub id becomes a task with
 // that ref, titled from the tracker. Everything lands at the end of the ideas
 // (or the queue, with "capture as next"); drag to prioritise.
-function CaptureBox({ group, actions, wizard }) {
+function CaptureBox({ group, actions, wizard, line = false }) {
   const [text, setText] = useState('');
-  const [next, setNext] = useState(false);
+  const [nextPick, setNext] = useState(false);
+  // The lanes' one-line box always lands in Ideas · Unassigned.
+  const next = nextPick && !line;
   const [note, setNote] = useState('');
   const added = useRef(0);
   const sending = useRef(false);
@@ -547,6 +550,16 @@ function CaptureBox({ group, actions, wizard }) {
     event.preventDefault();
     void add(pasted, { fromBox: false });
   };
+  if (line) {
+    return html`<div class="tb-capture tb-capture-line" data-taskboard-capture=${group.name}>
+      <${Input} size="sm" class="tb-capture-input" aria-label=${wizard ? 'Capture a quest' : 'Capture a task'} value=${text}
+        placeholder="+ capture… (Enter adds to Ideas · unassigned; paste a list for a burst; awb/Linear ids become refs)"
+        onInput=${(event) => setText(event.currentTarget.value)} onKeyDown=${onKeyDown} onPaste=${onPaste} />
+      ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
+      <${Button} size="sm" variant="primary" busy=${actions.busy === 'capture'} disabled=${!captureLines(text).length || !!actions.busy}
+        onClick=${() => void add(text)}>Add<//>
+    </div>`;
+  }
   return html`<div class="tb-capture" data-taskboard-capture=${group.name}>
     <div class="tb-capture-head">
       <span class="ui-eyebrow">Capture · lands in ${next ? 'the queue' : 'ideas'}</span>
@@ -625,7 +638,7 @@ function HistoryLine({ entry, open, onToggle, wizard }) {
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, importing = false, onImportClose = () => {} }) {
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, importing = false, onImportClose = () => {}, view = 'list', lanesBy = 'role' }) {
   const [history, setHistory] = useState(false);
   const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
@@ -643,9 +656,9 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${importing && actions && html`<${ImportPanel} group=${group} actions=${actions} onClose=${onImportClose} />`}
-    ${canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
+    ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
-    ${tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} wizard=${wizard} />` : tasks.length ? html`<table class="ui-compact tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-n">#</th><th>${wizard ? 'Quest · top is next' : 'Task · operator order, top is next'}</th>
         <th>Ref</th><th>Who</th><th>State</th><th></th></tr></thead>
       <tbody>
@@ -655,8 +668,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       </tbody>
     </table>` : html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Capture one below.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
-    ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
-    ${actions && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} />`}
+    ${view === 'list' && more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
+    ${actions && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} line=${view === 'lanes'} />`}
     <${HistoryLine} entry=${entry} open=${history} wizard=${wizard} onToggle=${() => setHistory(!history)} />
     ${history && (entry.closed || []).length > 0 && html`<table class="ui-compact tb-table tb-closed">${COLUMNS}<tbody>
       ${(entry.closed || []).map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} form=${null} ...${rowProps} />`)}
@@ -666,15 +679,40 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
 
 const VIEW_PREF = (group) => `tclaude.dash.groups.taskboard.view.${group}`;
 
-// ViewSelector is the section's List | Lanes switch, remembered per group.
-// Lanes arrive with a later slice; until then the switch shows the way.
-function ViewSelector({ group }) {
-  const view = dashPrefs.getItem(VIEW_PREF(group)) === 'lanes' ? 'lanes' : 'list';
+const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
+const LANES_BY = ['agent', 'role', 'subgroup'];
+
+export function taskboardView(group) {
+  return dashPrefs.getItem(VIEW_PREF(group)) === 'lanes' ? 'lanes' : 'list';
+}
+
+export function taskboardLanesBy(group) {
+  const by = dashPrefs.getItem(LANES_BY_PREF(group));
+  return LANES_BY.includes(by) ? by : 'role';
+}
+
+// useViewPrefs reads the section's List | Lanes choice and the lanes' "by",
+// remembered per group and per viewer in dashPrefs like the section folds.
+function useViewPrefs(group) {
+  const [, bump] = useState(0);
+  const set = (key, value) => { dashPrefs.setItem(key, value); bump((n) => n + 1); };
+  return {
+    view: taskboardView(group),
+    by: taskboardLanesBy(group),
+    setView: (value) => set(VIEW_PREF(group), value),
+    setBy: (value) => set(LANES_BY_PREF(group), value),
+  };
+}
+
+// ViewSelector is the section's List | Lanes switch and, in Lanes, the
+// "lanes by" agent | role | subgroup switch.
+function ViewSelector({ prefs }) {
   return html`<${Seg} class="tb-view" aria-label="Task board view">
-    <${Button} size="sm" pressed=${view === 'list'}
-      onClick=${() => dashPrefs.setItem(VIEW_PREF(group), 'list')}>☰ List<//>
-    <${Button} size="sm" disabled title="Swim lanes come in a later slice">⇶ Lanes<//>
-  <//>`;
+    <${Button} size="sm" pressed=${prefs.view === 'list'} onClick=${() => prefs.setView('list')}>☰ List<//>
+    <${Button} size="sm" pressed=${prefs.view === 'lanes'} onClick=${() => prefs.setView('lanes')}>⇶ Lanes<//>
+  <//>${prefs.view === 'lanes' && html`<span class="ui-hint tb-lanes-by-label">lanes by</span><${Seg} class="tb-view" aria-label="Lanes by">
+    ${LANES_BY.map((by) => html`<${Button} key=${by} size="sm" pressed=${prefs.by === by} onClick=${() => prefs.setBy(by)}>${by}<//>`)}
+  <//>`}`;
 }
 
 // TaskboardSection is the group card's Task board: folded, one line of
@@ -686,6 +724,7 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   const [importing, setImporting] = useState(false);
+  const prefs = useViewPrefs(group.name);
   // Once the section has opened on its own (something needed the
   // operator), it stays open for this page, so clearing the last blocked
   // task never folds it under a form or the capture box in use. The
@@ -695,14 +734,14 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const wizard = isWizardActive();
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
-  const head = api && html`<${ViewSelector} group=${group.name} />
-    <${Button} size="sm" class="tb-import-open" pressed=${importing} title="taskboard add --from-awb / --from-linear / --from-github"
-      onClick=${() => setImporting(!importing)}>+ from awb/Linear…<//>`;
+  const head = html`<${ViewSelector} prefs=${prefs} />
+    ${api && html`<${Button} size="sm" class="tb-import-open" pressed=${importing} title="taskboard add --from-awb / --from-linear / --from-github"
+      onClick=${() => setImporting(!importing)}>+ from awb/Linear…<//>`}`;
   return html`<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
       actions=${head} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
-      importing=${importing} onImportClose=${() => setImporting(false)} />
+      importing=${importing} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by} />
   <//>`;
 }
 

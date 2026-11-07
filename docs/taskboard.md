@@ -364,6 +364,8 @@ a CLI verb:
 | *Drop* (with an optional reason) | `drop <task> [--reason …]` |
 | *Edit* | `edit <task> --title … --ref …` |
 | *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
+| *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
+| *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
 
 - **The capture box** stays focused after each Enter, so you can add a burst of
   ideas in a row. Shift+Enter starts a new line. A line that is only an awb,
@@ -374,8 +376,41 @@ a CLI verb:
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
-- The *List | Lanes* switch in the section head is for the swim-lanes view of
-  a later slice. Until then only *List* works.
+- Each agent's row in the Agents section shows the tasks assigned to it
+  (`☰ 2 tasks · first title`), in amber when one of them is blocked.
+
+### Swim lanes
+
+The *☰ List | ⇶ Lanes* switch in the section head picks the view. In *Lanes*,
+*lanes by agent | role | subgroup* picks how the lanes are grouped. The
+dashboard remembers both per group, for you only.
+
+The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
+*Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
+needs you* also holds stalled tasks.
+
+The *Unassigned* lane comes first, then one lane per agent, grouped by role
+(the owner's role first), by subgroup, or not grouped. Each lane head shows the
+agent's state and how many tasks it holds. A lane group whose agents are all
+offline folds; click *show offline lanes* to see it. Striped cells cannot hold a
+card: an agent's *Ideas* (an idea is unassigned) and the Unassigned lane's *In
+progress*.
+
+Dragging a card is one action, the same as its CLI verb:
+
+| Drag | CLI |
+|---|---|
+| Ideas → Next, in the same lane | `promote <task>` |
+| Next → Ideas | `demote <task>` |
+| Onto *Blocked* (asks the reason) | `block <task> --reason …` |
+| Blocked → Next or In progress | `unblock <task>` |
+| Onto *Done* | `done <task>` |
+| Done → Next or In progress | reopen (`POST /v1/taskboard/tasks/{id}/status {"status":"open"}`) |
+| Onto an agent's lane (Next or In progress) | `assign <task> --to <agent>` (an idea is promoted) |
+| Onto the Unassigned lane's *Next* | `unassign <task>` |
+
+The capture box under the grid is one line, and it lands in Ideas ·
+Unassigned. Order within the queue is set in the *List* view.
 
 The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off. A
