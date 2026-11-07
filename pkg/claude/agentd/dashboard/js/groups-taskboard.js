@@ -111,16 +111,18 @@ export function ownBoardGroup(group) {
 
 // boardOf picks the source and write client for group: this node's own, or
 // the linked node's it lives on (api null where its grants allow no writes).
+// readApi is the same client unfiltered, for reads (a task card's brief and
+// comments), which taskboard.read allows without taskboard.write.
 function boardOf(group, source, api, boards) {
   const node = group?.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   if (node) {
     const board = boards(node);
-    return { source: board.source, api: peerApi(board.api, nodeSnapshot(node)?.peer_view, group.name) };
+    return { source: board.source, api: peerApi(board.api, nodeSnapshot(node)?.peer_view, group.name), readApi: board.api };
   }
   if (onPeerPage()) {
-    return { source, api: peerApi(api, dashboardState.snapshot.value?.peer_view, group.name) };
+    return { source, api: peerApi(api, dashboardState.snapshot.value?.peer_view, group.name), readApi: api };
   }
-  return { source, api };
+  return { source, api, readApi: api };
 }
 
 // agentLabel names an agent from the snapshot: the group's own members
@@ -133,7 +135,7 @@ function agentLabel(agentId, group, snapshot) {
   return member?.title || agentId.slice(0, 12);
 }
 
-function actorLabel(actor, group, snapshot) {
+export function actorLabel(actor, group, snapshot) {
   if (actor === 'human:operator') return 'operator';
   const id = actorAgentId(actor);
   return id ? agentLabel(id, group, snapshot) : actor || '';
@@ -360,7 +362,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form, onForm }) {
+function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, readApi, drag, form, onForm }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -378,7 +380,7 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell">
-      <${TaskTitle} task=${task} api=${actions?.api} nameOf=${(actor) => actorLabel(actor, group, snapshot)} numbers=${numbers} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
+      <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} numbers=${numbers} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} numbers=${numbers} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
@@ -655,7 +657,7 @@ function HistoryLine({ entry, open, onToggle, wizard, row = false }) {
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null, onLayout = null }) {
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null, onLayout = null }) {
   const [history, setHistory] = useState(false);
   const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
@@ -670,7 +672,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [editing, setEditing] = useState('');
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setForms((current) => ({ ...current, [id]: mode })));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
-  const rowProps = { numbers, group, snapshot, tasks, actions, drag: actions ? drag : null, onForm };
+  const rowProps = { numbers, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
   const tableRef = useRef(null);
   useAgentColumns(tableRef, alignWithAgents);
   const ideasBand = (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
@@ -700,7 +702,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
-    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
+    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
       onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
@@ -765,7 +767,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section's fold and hooks keep the name the view shows (name@node for a
   // linked node's group), which is unique across nodes.
   const group = ownBoardGroup(shown);
-  const { source, api } = boardOf(group, ownSource, ownApi, boards);
+  const { source, api, readApi } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   const [importing, setImporting] = useState(false);
@@ -802,7 +804,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
       closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
-    <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
+    <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       importing=${importing} importInitial=${importInitial} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
       onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;

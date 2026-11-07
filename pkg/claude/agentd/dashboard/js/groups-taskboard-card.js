@@ -54,11 +54,13 @@ export function latestComment(entries = []) {
 
 function useTaskDetails(api, task, active) {
   const key = detailsKey(task);
-  const [state, setState] = useState(() => details.get(key) || null);
+  // state is keyed, so a task that changed since the last read shows
+  // "reading…" rather than the old brief.
+  const [state, setState] = useState(() => ({ key, value: details.get(key) || null }));
   useEffect(() => {
     if (!active) return undefined;
     const known = details.get(key);
-    if (known) { setState(known); return undefined; }
+    if (known) { setState({ key, value: known }); return undefined; }
     let live = true;
     const reads = [
       typeof api?.task === 'function' ? api.task(task.id).then((full) => full?.body || '', () => null) : Promise.resolve(null),
@@ -67,12 +69,13 @@ function useTaskDetails(api, task, active) {
     ];
     Promise.all(reads).then(([body, latest]) => {
       const next = { body, latest };
-      if (body !== null) details.set(key, next);
-      if (live) setState(next);
+      // Only a complete read is kept; a failed one is tried again next time.
+      if (body !== null && (latest !== null || !(task.comment_count > 0))) details.set(key, next);
+      if (live) setState({ key, value: next });
     });
     return () => { live = false; };
   }, [active, key]);
-  return state;
+  return state.key === key ? state.value : (details.get(key) || null);
 }
 
 const STATUS_WORD = { open: 'open', blocked: 'blocked', done: 'done', dropped: 'dropped' };
