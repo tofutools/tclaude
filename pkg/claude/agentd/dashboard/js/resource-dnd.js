@@ -1,15 +1,33 @@
 // resource-dnd.js -- dragging a board or a page row of a group's Resources
 // (groups-resources.js, [data-dnd-resource]) onto another group's box in the
 // Groups tab moves it there (tcl-eq8pq9); a board dropped on Ungrouped
-// leaves every group. The move is the ⋯ → Move to group one
-// (resource-moves.js), so the drag offers only what that menu would. It
-// rides its own MIME type, which the member drag (dnd.js) ignores.
+// leaves every group. The move is the ⚙ → Move to group one
+// (resource-moves.js), so the drag offers only what that menu would. A row
+// with a 🗑 (a board, a page, a running shell) shows the shared #dnd-trash
+// bin while it is dragged, and a drop there is that 🗑: the row registered
+// its remover (registerResourceRemover), which confirms first. It rides its
+// own MIME type, which the member drag (dnd.js) ignores.
 
 import { RESOURCE_DRAG_MIME, canMoveResource, moveResource } from './resource-moves.js';
 import { clearDropBox, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext, processRunApi } from './process-context.js';
 import { defaultNotify } from './groups-quickstart.js';
+
+// removers maps a resource key (<kind>:<id>) to its row's 🗑, while the row
+// is mounted.
+const removers = new Map();
+
+// registerResourceRemover routes a trash-bin drop of key's row to remove; it
+// returns the unregister.
+export function registerResourceRemover(key, remove) {
+  removers.set(key, remove);
+  return () => { if (removers.get(key) === remove) removers.delete(key); };
+}
+
+const trashOf = (e) => e.target.closest?.('#dnd-trash') || null;
+const binOf = (doc) => doc.getElementById?.('dnd-trash') || null;
+const removerOf = (resource) => (resource ? removers.get(`${resource.kind}:${resource.id}`) : null);
 
 // A box takes a resource when it is one of this node's real groups or the
 // Ungrouped box; another node's (the fused view's group@node) does not.
@@ -69,6 +87,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     e.dataTransfer?.setData(RESOURCE_DRAG_MIME, JSON.stringify(dragged));
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
     row.classList.add('dnd-source-row');
+    if (removerOf(dragged)) binOf(doc)?.classList.add('show');
     // dragend goes to the source, which a re-render may have detached.
     row.addEventListener('dragend', end, { once: true });
   };
@@ -80,6 +99,14 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     return to !== null && canMoveResource(dragged, to, snapshot()) ? { box, to } : null;
   };
   const dragover = (e) => {
+    const trash = dragged && ours(e) && removerOf(dragged) ? trashOf(e) : null;
+    if (dragged) binOf(doc)?.classList.toggle('dnd-drop-over', !!trash);
+    if (trash) {
+      mark(null);
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      return;
+    }
     const hit = target(e);
     mark(hit?.box || null);
     if (!hit) return;
@@ -87,6 +114,14 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   };
   const drop = (e) => {
+    const remove = dragged && ours(e) && trashOf(e) ? removerOf(dragged) : null;
+    if (remove) {
+      e.preventDefault();
+      e.stopPropagation();
+      end();
+      void remove();
+      return;
+    }
     const hit = target(e);
     const resource = dragged;
     mark(null);
@@ -97,6 +132,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     void moveResource(resource, hit.to, { api, notify, refresh });
   };
   const end = () => {
+    if (dragged) binOf(doc)?.classList.remove('show', 'dnd-drop-over');
     dragged = null;
     mark(null);
     restore();

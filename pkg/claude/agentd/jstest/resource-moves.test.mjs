@@ -206,3 +206,44 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(moved, [['plan', 'ops']], 'no second move');
 });
+
+test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is that 🗑; one without is not offered the bin', async (t) => {
+  const harness = await createPreactHarness(t);
+  const dnd = await harness.importDashboardModule('js/resource-dnd.js');
+  const doc = harness.document;
+  const bin = doc.body.appendChild(doc.createElement('div'));
+  bin.id = 'dnd-trash';
+  const rowOf = (resource) => {
+    const row = doc.body.appendChild(doc.createElement('div'));
+    row.setAttribute('data-dnd-resource', JSON.stringify(resource));
+    row.draggable = true;
+    return row;
+  };
+  const shell = rowOf({ kind: 'shell', id: 'term:ag_1:start:', label: 'worker shell', group: 'crew' });
+  const board = rowOf({ kind: 'board', id: 'plan', label: 'Plan', group: 'crew' });
+  const removed = [];
+  t.after(dnd.registerResourceRemover('shell:term:ag_1:start:', async () => removed.push('shell')));
+  const unbind = dnd.bindResourceDnd(doc, { api: {}, notify: () => {}, snapshot: () => SNAP, refresh: () => {} });
+  t.after(unbind);
+  const transfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
+  const fire = (type, target) => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  fire('dragstart', board);
+  assert.equal(bin.classList.contains('show'), false, 'a row with no remover registered gets no bin');
+  assert.equal(fire('dragover', bin).defaultPrevented, false);
+  fire('dragend', board);
+
+  fire('dragstart', shell);
+  assert.ok(bin.classList.contains('show'), 'the bin shows for a row with a 🗑');
+  assert.equal(fire('dragover', bin).defaultPrevented, true);
+  assert.ok(bin.classList.contains('dnd-drop-over'));
+  fire('drop', bin);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(removed, ['shell']);
+  assert.equal(bin.classList.contains('show'), false, 'the bin hides after the drop');
+});

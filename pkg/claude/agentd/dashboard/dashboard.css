@@ -18563,6 +18563,37 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-pill.gr-pill-background { color: #3fb950; border-color: #238636; }
 .gr-pill.gr-pill-closed { color: var(--ui-muted-text); }
 .gr-row .gr-primary, .gr-row .gr-action { min-width: 0; }
+/* The group's own Resources (ResourceRow) read as a table, like the agents
+   table: actions first in one order, then name, state and detail, each a
+   column shared by every row of the section (subgrid). */
+.gr-resources.gr-table { display: grid; grid-template-columns: max-content minmax(0, max-content) max-content minmax(0, 1fr); column-gap: 12px; row-gap: 6px; }
+.gr-table > .gr-kind { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; row-gap: 2px; }
+.gr-table .gr-kind-label { grid-column: 1 / -1; }
+.gr-table .gr-trow { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 0 12px; padding-left: 4px; }
+.gr-trow .gr-acts, .gq-saved-chip .gr-acts { gap: 6px; }
+.gr-trow:hover .row-actions, .gr-trow:focus-within .row-actions,
+.gq-saved-chip:hover .row-actions, .gq-saved-chip:focus-within .row-actions { opacity: 1; }
+/* A resource's light: the state pill's colour, as an agent's light is its
+   on/off. A process's light is a button that starts a run. */
+.gr-light { display: inline-block; width: 1.4em; text-align: center; font-size: 12px; line-height: 1; padding: 2px 0; }
+.gr-light-btn { background: none; border: none; margin: 0; font: inherit; font-size: 12px; cursor: pointer; border-radius: 4px; }
+.gr-light-btn:hover { background: #1f2937; }
+.gr-light-btn:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.gr-light-open-tab, .gr-light-floating { color: #58a6ff; }
+.gr-light-minimized { color: #d29922; }
+.gr-light-running { color: #a371f7; }
+.gr-light-background { color: #3fb950; }
+.gr-light-closed { color: #484f58; }
+.gr-acts .ui-btn.cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
+.gr-acts .ui-btn.cog-btn:hover:not(:disabled) { color: #ffb52e; }
+.gr-acts .ui-btn.cog-btn:disabled { opacity: 0.35; }
+.gr-trow .gr-namecell { display: flex; align-items: center; min-width: 0; max-width: 28em; }
+.gr-trow .gr-namecell .gr-name.ui-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-trow > .gr-pill { justify-self: start; }
+.gq-saved-row { display: grid; grid-template-columns: max-content minmax(0, max-content) max-content minmax(0, 1fr); row-gap: 2px; }
+.gq-saved-row > .gq-saved-chip { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 0 12px; }
+.gq-saved-chip .gq-saved-namecell { display: flex; align-items: center; min-width: 0; max-width: 28em; }
+.gq-saved-chip > .gr-pill { justify-self: start; }
 .gr-new-menu .gr-new-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .gr-new-menu .gr-new-name { font-weight: 600; }
 .gr-new-menu .gr-new-line { color: var(--ui-muted-text); font-size: 11px; white-space: normal; text-align: left; }

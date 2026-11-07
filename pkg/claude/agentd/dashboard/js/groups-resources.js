@@ -25,7 +25,9 @@ import { dashboardState } from './snapshot-store.js';
 import { revealResourceOverlay } from './resource-places.js';
 import { ResourcePill, resourceView } from './resource-pill.js';
 import { openGroupWebTermPane, openShellResource } from './terminals-tab.js';
-import { killBackgroundTerminal } from './background-terminals.js';
+import { killShell } from './background-terminals.js';
+import { EyeIcon, TrashIcon } from './row-icons.js';
+import { registerResourceRemover } from './resource-dnd.js';
 
 export { LockChip };
 
@@ -55,13 +57,15 @@ function primaryLabel(kind, view) {
 // RowMenu is a row's ⋯: what is rarely wanted, and what cannot be undone
 // behind a confirm. An item with children opens them in its place (Move to
 // group lists the groups), with a way back.
-export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more' }) {
+export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more', keepSlot = false }) {
   const [open, setOpen] = useState(false);
   const [sub, setSub] = useState(null);
   const ref = useRef(null);
   const close = () => { setOpen(false); setSub(null); };
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') close(); });
-  if (!items.length) return null;
+  if (!items.length) {
+    return keepSlot ? html`<${Button} size="sm" icon=${true} class=${buttonClass} disabled aria-label=${`Nothing more for ${label}`}>${glyph}<//>` : null;
+  }
   const shown = sub ? [{ label: '‹ Back', attrs: { 'data-menu-back': '' }, back: true }, ...sub.children] : items;
   const pick = (item) => {
     if (item.back) return setSub(null);
@@ -70,7 +74,7 @@ export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass =
     void item.run();
   };
   return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant="link" class=${`gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    <${Button} size="sm" variant=${keepSlot ? undefined : 'link'} icon=${keepSlot} class=${keepSlot ? buttonClass : `gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${title || `More for ${label}`} aria-label=${title || `More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>${glyph}<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu">
       ${shown.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} ...${item.attrs || {}}
@@ -120,23 +124,12 @@ function renameAndMove({ startRename, groups, move, attrs }) {
   return items;
 }
 
-// resourceMenu is a board's or page's edit items, the ⋯ of its Groups row
-// and the ⚙ of its Collab panel row (tcl-usrm7h): Rename…, Move to group ›
-// (resource-moves.js' targets) and Delete…. resource is { kind, id, label,
-// closed, owner } with owner the page's agent ('' for a group's own page);
-// groupId is the group it is listed in (0 for none); startRename shows the
-// row's name field.
-export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source, notify, confirm, startRename }) {
+// resourceRemover deletes a board or a page behind a confirm: its row's 🗑,
+// a drop on the trash bin, and the menus' Delete….
+export function resourceRemover(resource, { api, source, notify, confirm }) {
   const { kind, id, label } = resource;
-  const act = rowAction(label, source, notify);
   const page = kind === 'page';
-  const move = act('move', (name) => (page ? api.moveGroupPage(id, name) : api.moveBoard(id, name)), (name) => `Moved ${label} to ${name}`);
-  // An agent's page moves to a group its agent is in; a group's own blank
-  // page only while closed.
-  const groups = !page ? moveTargets(snapshotValue, groupId)
-    : !resource.owner ? (resource.closed ? moveTargets(snapshotValue, groupId) : [])
-      : moveTargets(snapshotValue, groupId, resource.owner);
-  const remove = async () => {
+  return async () => {
     const ok = await confirm(page
       ? {
         title: `Delete page ${label}?`,
@@ -155,6 +148,25 @@ export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source
       notify(`Could not delete ${label}: ${cause.message}`, true);
     }
   };
+}
+
+// resourceMenu is a board's or page's edit items, the ⋯ of its Groups row
+// and the ⚙ of its Collab panel row (tcl-usrm7h): Rename…, Move to group ›
+// (resource-moves.js' targets) and Delete…. resource is { kind, id, label,
+// closed, owner } with owner the page's agent ('' for a group's own page);
+// groupId is the group it is listed in (0 for none); startRename shows the
+// row's name field.
+export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source, notify, confirm, startRename }) {
+  const { kind, id, label } = resource;
+  const act = rowAction(label, source, notify);
+  const page = kind === 'page';
+  const move = act('move', (name) => (page ? api.moveGroupPage(id, name) : api.moveBoard(id, name)), (name) => `Moved ${label} to ${name}`);
+  // An agent's page moves to a group its agent is in; a group's own blank
+  // page only while closed.
+  const groups = !page ? moveTargets(snapshotValue, groupId)
+    : !resource.owner ? (resource.closed ? moveTargets(snapshotValue, groupId) : [])
+      : moveTargets(snapshotValue, groupId, resource.owner);
+  const remove = resourceRemover(resource, { api, source, notify, confirm });
   return [...renameAndMove({ startRename, groups, move, attrs: id }),
     { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-board-delete']: id }, run: remove }];
 }
@@ -165,25 +177,34 @@ export function renameResource(resource, { api, source, notify }) {
   return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
-// ResourceRow is one resource: glyph and name (the primary action too), what
-// it is, its state pill, the primary action, the kind's own action, ⋯, and
-// the agent lock at the row's end where the kind has one.
-// drag, for a board or a page, makes the row a drag source (resource-dnd.js):
-// dropped on another group's box, the resource moves there.
-function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, action, menu, lock, renaming = null, drag = null }) {
+// ResourceRow is one resource, laid out like a row of the agents table: a
+// light for its state, then 👁 (open, focus or attach it), 🗑 (delete it, or
+// kill a shell) and ⚙ (its other actions), the same buttons in the same
+// places on every row, then the agent lock, its name, state pill and detail,
+// each a column the whole section shares. remove is { title, attrs, run } or
+// null (the 🗑 stays, disabled, so the buttons line up); a row that has one
+// is also deleted by a drop on the trash bin (resource-dnd.js).
+function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, remove = null, menu, lock, renaming = null, drag = null }) {
   const dragAttrs = drag && !renaming ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind, label, closed: !!closed, ...drag }) } : {};
-  return html`<div class=${closed ? 'gr-row gr-closed' : 'gr-row'} ...${attrs} ...${dragAttrs}>
-    ${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
+  useEffect(() => (remove && drag ? registerResourceRemover(`${kind}:${drag.id}`, remove.run) : undefined), [kind, drag?.id, remove?.run]);
+  return html`<div class=${closed ? 'gr-row gr-trow gr-closed' : 'gr-row gr-trow'} ...${attrs} ...${dragAttrs}>
+    <span class="agent-ctl gr-acts">
+      <span class=${`gr-light gr-light-${view}`} data-resource-light=${view} title=${view} aria-hidden="true">●</span>
+      <span class="row-actions">
+        <${Button} size="sm" icon=${true} class="icon-btn gr-primary" data-resource-primary=${primary.label}
+          title=${`${primary.label} ${label}`} aria-label=${`${primary.label} ${label}`} onClick=${primary.run}><${EyeIcon} /><//>
+        <${Button} size="sm" icon=${true} class="icon-btn warn gr-remove" disabled=${!remove} title=${remove?.title || `${label} cannot be deleted here`}
+          aria-label=${remove?.title || `Nothing to delete for ${label}`} ...${remove?.attrs || {}} onClick=${() => remove?.run()}><${TrashIcon} /><//>
+        <${RowMenu} label=${label} items=${menu} glyph=${html`<span class="cog-glyph">⚙︎</span>`} buttonClass="cog-btn gr-cog" keepSlot=${true}
+          title=${`Options for ${label}`} />
+      </span>
+      ${lock}
+    </span>
+    <span class="gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
-      onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}
-    <span class="gq-dim gr-meta">${meta}</span>
-    <span class="gr-spacer"></span>
+      onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</span>
     <${ResourcePill} view=${view} kind=${kind} />
-    <${Button} size="sm" class="gr-primary" data-resource-primary=${primary.label} onClick=${primary.run}>${primary.label}<//>
-    ${action && html`<${Button} size="sm" class="gr-action" title=${action.title} aria-label=${action.title} ...${action.attrs || {}}
-      onClick=${action.run}>${action.glyph}<//>`}
-    <${RowMenu} label=${label} items=${menu} />
-    ${lock}
+    <span class="gq-dim gr-meta">${meta}</span>
   </div>`;
 }
 
@@ -221,9 +242,9 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
     drag=${draggable && { id: page.id, group: groupName, owner: page.groupOwned ? '' : page.owner || '' }}
     closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
-    action=${view !== 'closed' && { glyph: '↻', title: `Reload ${label} in every view`, attrs: { 'data-page-reload': page.id }, run: reload }}
+    remove=${{ title: `Delete page ${label}`, attrs: { 'data-page-trash': page.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
-    menu=${resourceMenu(resource, ctx)}
+    menu=${[...(view !== 'closed' ? [{ label: 'Reload in every view', attrs: { 'data-page-reload': page.id }, run: reload }] : []), ...resourceMenu(resource, ctx)]}
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
@@ -237,12 +258,13 @@ function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId,
     drag=${draggable && { id: board.id, group: groupName }}
     meta=${board.editing > 0 ? `board · ${board.editing} editing` : 'board'} view=${view}
     primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
+    remove=${{ title: `Delete board ${label}`, attrs: { 'data-board-trash': board.id }, run: resourceRemover(resource, ctx) }}
     renaming=${renaming && { value: label, onSave: renameResource(resource, ctx), onDone: () => setRenaming(false) }}
     menu=${resourceMenu(resource, ctx)}
     lock=${html`<${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
-function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
+function ShellRow({ group, shell, notify, confirm, snapshotValue, draggable = true }) {
   const view = resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state);
   // A group's own shell is named for its group; an agent's for its agent.
   const agentShell = !!shell.agent;
@@ -251,15 +273,16 @@ function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
   const kill = async () => {
     const ok = await confirm({ title: `Kill ${label}?`, body: 'Whatever runs in the shell stops. Opening it again starts a fresh one.', okLabel: 'Kill' });
     if (!ok) return;
-    const error = await killBackgroundTerminal({ kind: agentShell ? 'shell' : 'group_shell', tmux_session: shell.session });
+    const error = await killShell(shell.session);
     notify(error ? `Could not kill ${label}: ${error}` : `Killed ${label}`, !!error);
   };
-  return html`<${ResourceRow} attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
-    label=${agentShell ? shell.title : 'Group shell'}
+  const killable = view !== 'closed' && !!shell.session;
+  return html`<${ResourceRow} kind="shell" attrs=${{ 'data-resource-shell': agentShell ? shell.id : group.name }} closed=${view === 'closed'} glyph="▭"
+    label=${agentShell ? shell.title : 'Group shell'} drag=${draggable && killable && { id: shell.id, group: group.name }}
     meta=${shell.detail ? `terminal · ${shell.detail}` : 'terminal'} view=${view}
     primary=${{ label: primaryLabel('shell', view), run: open }}
-    action=${view === 'background' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': agentShell ? shell.id : group.name }, run: kill }}
-    menu=${[]} lock=${null} />`;
+    remove=${killable && { title: `Kill ${label}`, attrs: { 'data-shell-kill': agentShell ? shell.id : group.name }, run: kill }}
+    menu=${[{ label: 'Kill…', danger: true, attrs: { 'data-shell-kill-menu': shell.id }, run: kill }].filter(() => killable)} lock=${null} />`;
 }
 
 // groupShellsOf is the group's shells in the snapshot's group_resources: its
@@ -279,7 +302,7 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
   // A row drags onto this node's group boxes (resource-dnd.js), which the
   // fused fleet view does not have.
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
-  return html`<div class="gr-resources" data-group-resources=${group.name}>
+  return html`<div class="gr-resources gr-table" data-group-resources=${group.name}>
     ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
       <span class="ui-eyebrow gr-kind-label">Boards</span>
       ${boards.map((board) => html`<${BoardRow} key=${board.id} board=${board} ...${props} />`)}
