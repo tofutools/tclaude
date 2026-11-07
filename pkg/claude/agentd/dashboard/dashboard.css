@@ -18601,7 +18601,9 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-rtable .gr-col-state { --ui-track: 112px; }
 .gr-rtable .gr-col-last { --ui-track: 72px; }
 .gr-rtable .gr-col-age { --ui-track: 72px; }
-.gr-rtable td.gr-timecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A time wraps ("5m / ago"), as in the agents table, so it never widens its
+   72px track past the other Resources table's. */
+.gr-rtable td.gr-timecell { white-space: normal; }
 .gr-rtable .gr-col-kind { --ui-track: 104px; }
 .gr-rtable .gr-col-lock { --ui-track: 150px; }
 .gr-rtable td { vertical-align: middle; }
