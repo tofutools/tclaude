@@ -3,6 +3,7 @@
 // moves it there after the Groups view's confirmation; Ctrl/Cmd clones.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const row = (group, id, title, extra = {}) => ({ id, group, title, stage: 'next', status: 'open', depends_on: [], ...extra });
@@ -300,4 +301,47 @@ test('a drag that is not a task drag is left alone, even by a listener a missed 
   await drop(summary('tbt-b'), agentDrag);
   assert.equal(confirms.length, 0);
   assert.deepEqual(calls, []);
+});
+
+test('a list row drags as a whole, as an agent row does: the grab cursor, controls still click, and a drop on another group moves it', async (t) => {
+  const { harness, c, calls, confirms, dt, over, drop, section } = await mountTwo(t);
+  const row = c.querySelector('tr[data-task-id="tk_00000001"]');
+  assert.equal(row.draggable, true, 'the whole row is the drag source, not only its ⋮⋮');
+  assert.equal(row.getAttribute('data-dnd-task'), 'tk_00000001');
+  assert.equal(row.querySelector('.tb-handle').draggable, false, 'the ⋮⋮ is the row\'s grip, not a second source');
+  const closedRows = [...c.querySelectorAll('tr.tb-closed')];
+  assert.ok(closedRows.every((r) => !r.draggable), 'a closed task does not drag');
+  // The same cursor rule as agent and resource rows.
+  const css = readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  assert.match(css, /\.dnd-draggable, tr\[data-dnd-resource\]\[draggable="true"\], tr\[data-dnd-task\]\[draggable="true"\] \{\s*cursor: grab;/);
+
+  // The shared guard (row-drag.js): a press on a control is a click.
+  const { bindTaskRowDrag } = await harness.importDashboardModule('js/row-drag.js');
+  t.after(bindTaskRowDrag(harness.document));
+  harness.fireEvent(row.querySelector('.tb-act-more'), 'pointerdown', {});
+  assert.equal(row.draggable, false, 'a press on ⋯ does not start a drag');
+  harness.fireEvent(harness.document, 'pointerup', {});
+  assert.equal(row.draggable, true, 'the row drags again once the press ends');
+  harness.fireEvent(row.querySelector('.tb-title'), 'pointerdown', {});
+  assert.equal(row.draggable, true, 'a press on the title starts a drag');
+  harness.fireEvent(harness.document, 'pointerup', {});
+
+  // A drag from the row itself, dropped on another group's board.
+  const data = dt();
+  await harness.act(async () => { harness.fireEvent(row, 'dragstart', { dataTransfer: data }); });
+  const target = section('tbt-b').querySelector('.gf-section-head');
+  assert.equal(over(target, data).defaultPrevented, true);
+  await drop(target, data);
+  assert.equal(confirms[0].title, 'Move task to another group?');
+  assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: false, stage: 'idea' }]]);
+});
+
+test('a list row dragged as a whole onto a group on another node goes there', async (t) => {
+  const { harness, c, calls, remote, dt, drop, summary } = await mountTwo(t, { otherNode: 'nd_other' });
+  const data = dt();
+  await harness.act(async () => { harness.fireEvent(c.querySelector('tr[data-task-id="tk_00000001"]'), 'dragstart', { dataTransfer: data }); });
+  await drop(summary('tbt-b'), data);
+  assert.deepEqual(remote.map((call) => call.slice(0, 3)), [['nd_other', 'transferIn', 'tbt-b']], 'the other node creates it');
+  assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
+    'then the source drops it');
 });

@@ -17,6 +17,7 @@ import { dashboardState } from './snapshot-store.js';
 import { processContext, processRunApi } from './process-context.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { shellConfirm } from './shell-state.js';
+import { bindRowDragGuard } from './row-drag.js';
 
 // removers maps a resource key (<kind>:<id>) to its row's 🗑, while the row
 // is mounted.
@@ -79,16 +80,9 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     if (box) markDropBox(box, copy ? 'clone' : 'move');
   };
   // A press on a control in the row (its buttons, the rename field) is a
-  // click, not a drag: the row stops being draggable until the press ends.
-  let suppressed = null;
-  const restore = () => { if (suppressed) suppressed.draggable = true; suppressed = null; };
-  const down = (e) => {
-    const row = e.target.closest?.('[data-dnd-resource]');
-    if (!row || !e.target.closest('button, a, input, select, textarea, label, [contenteditable], [role="button"]')) return;
-    restore();
-    row.draggable = false;
-    suppressed = row;
-  };
+  // click, not a drag (row-drag.js, shared with agent and task rows).
+  const rowGuard = bindRowDragGuard(doc, '[data-dnd-resource]');
+  const restore = rowGuard.restore;
   // Every drag starts clean: a resource drag whose row a re-render detached
   // never told the document it ended, and must not take a later drag's drop.
   const start = (e) => {
@@ -166,8 +160,10 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     restore();
     doc.querySelectorAll?.('[data-dnd-resource].dnd-source-row').forEach((row) => row.classList.remove('dnd-source-row'));
   };
-  const listeners = [['pointerdown', down], ['pointerup', restore], ['pointercancel', restore],
-    ['dragstart', start], ['dragover', dragover], ['drop', drop], ['dragend', end]];
+  const listeners = [['dragstart', start], ['dragover', dragover], ['drop', drop], ['dragend', end]];
   for (const [type, fn] of listeners) doc.addEventListener(type, fn);
-  return () => { for (const [type, fn] of listeners) doc.removeEventListener(type, fn); };
+  return () => {
+    rowGuard.unbind();
+    for (const [type, fn] of listeners) doc.removeEventListener(type, fn);
+  };
 }

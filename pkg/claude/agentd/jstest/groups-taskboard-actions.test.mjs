@@ -152,6 +152,14 @@ test('dragging a row reorders it; dropping a queued task on the Ideas band demot
     ['move', 'tk_00000002', { after: 'tk_00000004' }],
     ['stage', 'tk_00000001', 'idea'],
   ], 'an idea dropped on the band it already heads stays put');
+  // The row drags as a whole too, not only from its ⋮⋮.
+  api.calls.length = 0;
+  await harness.act(async () => {
+    harness.fireEvent(rowOf('tk_00000004'), 'dragstart', { dataTransfer: transfer });
+    harness.fireEvent(rowOf('tk_00000002'), 'dragover', { dataTransfer: transfer, clientY: 10 });
+  });
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000002'), 'drop', { dataTransfer: transfer, clientY: 10 }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['move', 'tk_00000004', { after: 'tk_00000002' }]], 'a row dragged by its body reorders');
   // A drop with no row drag in flight is ignored (an agent row, a file).
   api.calls.length = 0;
   await harness.act(async () => { harness.fireEvent(rowOf('tk_00000001'), 'drop', { dataTransfer: transfer }); });

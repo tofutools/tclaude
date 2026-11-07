@@ -347,17 +347,23 @@ function RowForm({ task, mode, actions, onClose }) {
   </td></tr>`;
 }
 
+const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another group to move it (Ctrl/Cmd: clone)';
 function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form, onForm }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
   const deps = task.depends_on || [];
   const files = task.attachments?.length || 0;
+  // The whole row drags, as an agent row does (⋮⋮ is its grip); a press on
+  // a button, link or field in it is a click, not a drag (row-drag.js
+  // bindTaskRowDrag).
+  const draggable = !!actions && !closed && !!drag;
   const row = html`<tr class=${`tb-row tb-row-${state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
+      draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? DRAG_TITLE : undefined}
+      onDragStart=${draggable ? (event) => drag.start(event, task) : undefined} onDragEnd=${draggable ? drag.end : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
-    <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle" draggable="true"
-        title="Drag to reorder, onto an agent to assign, or onto another group to move it (Ctrl/Cmd: clone)"
-        aria-hidden="true" onDragStart=${(event) => drag.start(event, task)} onDragEnd=${drag.end}>⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
+    <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle"
+        aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell">
       ${n ? html`<span class="tb-n" title="Its place in the operator's order: top is next">${n}</span>` : ''}

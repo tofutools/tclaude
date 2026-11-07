@@ -42,6 +42,7 @@ import { bindRowActions } from './row-actions.js';
 import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
 import { bindResourceDnd } from './resource-dnd.js';
+import { bindTaskRowDrag } from './row-drag.js';
 import { startPeerDrawingBoards } from './peer-drawing-boards.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindGroupsDragAutoScroll } from './groups-drag-autoscroll.js';
@@ -359,6 +360,9 @@ async function settleInitialLayout() {
   // A drawing board or page row dragged onto another group's box moves it there
   // (resource-dnd.js, its own MIME type).
   pageCleanups.push(bindResourceDnd());
+  // A task row in a task board's List drags as a whole, as agent and
+  // resource rows do (row-drag.js); groups-taskboard.js owns the drag itself.
+  pageCleanups.push(bindTaskRowDrag());
   // A peer's page reads the drawing boards it shares (peer-drawing-boards.js, tcl-ug8bb8).
   if (globalThis.__tclaudeRemoteNode?.id) pageCleanups.push(startPeerDrawingBoards());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled

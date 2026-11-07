@@ -5802,10 +5802,12 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    user can track its origin and we outline every other group's box as a
    valid drop target. The source's own box stays un-highlighted
    (move-onto-self is a no-op). */
-.dnd-draggable {
+/* Every draggable table row (an agent, a resource, a task in the List)
+   shows the same grab cursor; row-drag.js keeps their controls clickable. */
+.dnd-draggable, tr[data-dnd-resource][draggable="true"], tr[data-dnd-task][draggable="true"] {
   cursor: grab;
 }
-.dnd-draggable:active { cursor: grabbing; }
+.dnd-draggable:active, tr[data-dnd-resource][draggable="true"]:active, tr[data-dnd-task][draggable="true"]:active { cursor: grabbing; }
 .dnd-source-row {
   opacity: 0.45;
   background: #161b22;
@@ -18599,7 +18601,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
   vertical-align: middle; color: var(--ui-strong-text); font-weight: 600; font-size: 11.5px; line-height: 16px;
   margin-left: -5px; }
 .gr-rtable tr.gr-closed .gr-name-rename { color: var(--ui-muted-text); font-weight: 500; }
-.gr-rtable tr[draggable="true"] { cursor: grab; }
 .gr-rtable .gq-saved-name { font-size: 13px; font-weight: 600; color: var(--ui-strong-text); }
 .gr-rtable td.gq-saved-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .gr-rtable .gr-acts { gap: 6px; }
