@@ -1506,3 +1506,28 @@ test('a modal open above the page freezes the revealed panel until the next move
     assert.equal(s.revealed(), false);
   });
 });
+
+// Over another popover (the footer's open-PRs list in the lower right), the
+// pointer is using that popover, not heading for the panel: no fling or snap
+// on it peeks the panel, even where it reaches into the edge zone.
+test('a fling or a snap over another popover does not peek the panel; off it, one does', async (t) => {
+  const s = await shell(t);
+  const popover = s.doc.body.appendChild(s.doc.createElement('div'));
+  popover.className = 'open-prs-popover ui-popover';
+  popover.setAttribute('role', 'dialog');
+  const row = popover.appendChild(s.doc.createElement('a'));
+  s.flick({ ...FLING, target: row });
+  assert.equal(s.peeking() || s.revealed(), false, 'a fling across the popover peeks nothing');
+  s.timers.advance(200);
+  s.move(row, 60);
+  s.timers.advance(500);
+  for (const x of [420, 860, 990]) { s.timers.advance(16); s.move(row, x); }
+  assert.equal(s.peeking() || s.revealed(), false, 'nor does a snap that lands on it in the edge zone');
+  s.timers.advance(REST);
+  s.flick(FLING);
+  assert.equal(s.peeking(), true, 'off the popover a fling peeks as before');
+  s.move(row, WIDTH - 4);
+  assert.equal(s.revealed(), false, 'moving onto the popover opens nothing');
+  s.timers.advance(REST * 4);
+  assert.equal(s.peeking(), false, 'and the peek runs out from there');
+});
