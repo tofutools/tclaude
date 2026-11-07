@@ -270,35 +270,68 @@ test('a diagonal drag runs both writes through the real handlers, the lane first
   assert.deepEqual(api.calls, []);
 });
 
-test('a cell + opens the New task form filled from the cell: the stage from the column, the assignee from the lane', async (t) => {
+test('a cell + opens the add menu; its choice starts from the cell: the column, and the lane\'s agent as the assignee', async (t) => {
   const { api, c, cell, harness } = await mountLanes(t, 'tbl-add');
   const plus = (lane, column) => cell(lane, column).querySelector('.tb-cell-add');
-  assert.ok(plus('unassigned', 'ideas') && plus('unassigned', 'next') && plus('agt_builder', 'next') && plus('agt_builder', 'progress'));
+  for (const column of ['ideas', 'next', 'blocked', 'done']) assert.ok(plus('unassigned', column), `unassigned · ${column}`);
+  for (const column of ['next', 'progress', 'blocked', 'done']) assert.ok(plus('agt_builder', column), `builder · ${column}`);
   assert.equal(plus('unassigned', 'progress'), null, 'striped');
   assert.equal(plus('agt_builder', 'ideas'), null, 'striped');
-  assert.equal(plus('unassigned', 'blocked'), null, 'a new task does not land blocked');
-  assert.equal(plus('agt_builder', 'done'), null);
   assert.match(plus('agt_builder', 'progress').getAttribute('aria-label'), /builder · In progress/);
+  assert.equal(plus('agt_builder', 'progress').getAttribute('aria-haspopup'), 'menu');
   assert.ok(cell('agt_builder', 'progress').classList.contains('tb-cell-addable'), 'the cell keeps room for its +');
-  assert.equal(c.querySelector('.tb-cell-add-title'), null, 'no inline quick-add');
 
-  const addIn = async (lane, column, title) => {
+  // The + opens the same menu as the section's ＋▾, anchored at it.
+  await harness.act(async () => { harness.fireEvent(plus('agt_builder', 'blocked'), 'click'); });
+  const menu = cell('agt_builder', 'blocked').querySelector('.tb-cell-menu');
+  assert.ok(menu, 'the add menu opens at the +');
+  assert.ok(menu.querySelector('[data-taskboard-new-form]') && menu.querySelector('[data-taskboard-new-ask]') && menu.querySelector('[data-taskboard-new-import]'));
+  assert.equal(c.querySelector('#taskboard-new-modal'), null, 'not the form directly');
+
+  const write = async (lane, column, title, extra = async () => {}) => {
     await harness.act(async () => { harness.fireEvent(plus(lane, column), 'click'); });
+    await harness.act(async () => { harness.fireEvent(cell(lane, column).querySelector('[data-taskboard-new-form]'), 'click'); });
     const modal = c.querySelector('#taskboard-new-modal');
     assert.ok(modal, `the form opens from ${lane} · ${column}`);
+    assert.equal(modal.querySelector('input[name="tb-new-stage"]:checked')?.getAttribute('value'),
+      { ideas: 'idea', next: lane === 'unassigned' ? 'next' : 'progress', progress: 'progress', blocked: 'blocked', done: 'done' }[column], 'the cell\'s column is picked');
     await harness.input(modal.querySelector('.tb-new-title'), title);
+    await extra(modal);
     await harness.act(async () => { harness.fireEvent(modal.querySelector('#taskboard-new-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
     assert.equal(c.querySelector('#taskboard-new-modal'), null, 'the form closes after it adds');
   };
-  await addIn('unassigned', 'ideas', 'an idea from the cell');
-  await addIn('unassigned', 'next', 'queued from the cell');
-  await addIn('agt_builder', 'progress', 'for builder');
+  api.calls.length = 0;
+  await write('unassigned', 'ideas', 'an idea from the cell');
+  await write('unassigned', 'next', 'queued from the cell');
+  await write('agt_builder', 'progress', 'for builder');
+  await write('agt_builder', 'blocked', 'stuck for builder', (modal) => harness.input(modal.querySelector('.tb-new-reason'), 'waiting on CI'));
+  await write('unassigned', 'done', 'logged');
+  const base = { body: '', ref: '', after: [], resolveRef: false };
   assert.deepEqual(api.calls, [
-    ['create', 'tbl-add', { title: 'an idea from the cell', body: '', ref: '', stage: 'idea', after: [], resolveRef: false }],
-    ['create', 'tbl-add', { title: 'queued from the cell', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
-    ['create', 'tbl-add', { title: 'for builder', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
-    ['assign', 'tk_00000099', 'agt_builder'],
-  ], 'each form carries its cell\'s stage and assignee');
+    ['create', 'tbl-add', { title: 'an idea from the cell', ...base, stage: 'idea', status: '', to: '' }],
+    ['create', 'tbl-add', { title: 'queued from the cell', ...base, stage: 'next', status: '', to: '' }],
+    ['create', 'tbl-add', { title: 'for builder', ...base, stage: 'next', status: '', to: 'agt_builder' }],
+    ['create', 'tbl-add', { title: 'stuck for builder', ...base, stage: 'next', status: 'blocked', blockReason: 'waiting on CI', to: 'agt_builder' }],
+    ['create', 'tbl-add', { title: 'logged', ...base, stage: 'idea', status: 'done', to: '' }],
+  ], 'each form carries its cell\'s start state and assignee, in one create');
+});
+
+test('a cell + carries its start state into Ask an agent and the import', async (t) => {
+  const { c, cell, harness } = await mountLanes(t, 'tbl-add-ask');
+  const plus = (lane, column) => cell(lane, column).querySelector('.tb-cell-add');
+  await harness.act(async () => { harness.fireEvent(plus('agt_builder', 'next'), 'click'); });
+  await harness.act(async () => { harness.fireEvent(cell('agt_builder', 'next').querySelector('[data-taskboard-new-ask]'), 'click'); });
+  const ask = c.querySelector('#taskboard-ask-modal');
+  assert.ok(ask, 'Ask an agent opens');
+  assert.match(ask.querySelector('.tb-ask-prompt').value, /Land the tasks in Next for builder/);
+  assert.equal(ask.querySelector('#taskboard-ask-submit').disabled, true, 'the opening line alone is not a request');
+  await harness.act(async () => { harness.fireEvent(ask.querySelector('.ui-dialog-close, [data-dialog-cancel], button.ui-btn-ghost') || ask, 'keydown', { key: 'Escape' }); });
+
+  await harness.act(async () => { harness.fireEvent(plus('unassigned', 'next'), 'click'); });
+  await harness.act(async () => { harness.fireEvent(cell('unassigned', 'next').querySelector('[data-taskboard-new-import]'), 'click'); });
+  const panel = c.querySelector('[data-taskboard-import]');
+  assert.ok(panel, 'the import opens');
+  assert.ok(panel.querySelector('input[type="checkbox"]').checked || panel.querySelector('input[type="checkbox"]').hasAttribute('checked'), 'a Next cell imports into the queue');
 });
 
 test('without the assign grant, agent lanes have no +', async (t) => {
@@ -384,11 +417,13 @@ test('on a linked node\'s group in the fused view, a cell + and lane drags write
   const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
 
   await click(cell('agt_tester', 'next').querySelector('.tb-cell-add'));
+  await click(cell('agt_tester', 'next').querySelector('[data-taskboard-new-form]'));
   const form = c.querySelector('#taskboard-new-modal');
-  assert.ok(form, 'the cell + opens the form');
+  assert.ok(form, 'the cell + opens the menu, and its first choice the form');
   await harness.input(form.querySelector('.tb-new-title'), 'peer task');
   await click(form.querySelector('#taskboard-new-submit'));
-  assert.deepEqual(api.calls.map(([verb, arg]) => [verb, arg]), [['create', 'tbl-fused'], ['assign', 'tk_00000099']]);
+  assert.deepEqual(api.calls.map(([verb, arg, payload]) => [verb, arg, payload?.to]), [['create', 'tbl-fused', 'agt_tester']],
+    'one create on that node, with the lane\'s agent');
 
   api.calls.length = 0;
   const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
