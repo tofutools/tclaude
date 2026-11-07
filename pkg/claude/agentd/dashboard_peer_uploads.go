@@ -53,6 +53,7 @@ var peerUploadRoutes = map[string]bool{
 	"POST /api/groups/import/inspect": true,
 	// A task board's files (peer_taskboard.go, peerTaskboardUploads).
 	"POST /v1/taskboard/tasks/{id}/attachments":    true,
+	"POST /v1/taskboard/tasks/{id}/comments":       true,
 	"POST /v1/groups/{name}/taskboard/tasks":       true,
 	"POST /v1/groups/{name}/taskboard/transfer-in": true,
 	"POST /v1/groups/{name}/taskboard/ask":         true,

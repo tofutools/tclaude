@@ -2434,9 +2434,14 @@ CREATE TABLE group_task_events (
 			actor   TEXT NOT NULL,
 			kind    TEXT NOT NULL,
 			detail  TEXT NOT NULL DEFAULT ''
-		) STRICT;
+		, body TEXT NOT NULL DEFAULT '', comment_kind TEXT NOT NULL DEFAULT '', client_key TEXT, comment_id INTEGER, edited_at INTEGER, deleted_at INTEGER, changes TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_group_task_events_task ON group_task_events(task_id, id);
+
+CREATE UNIQUE INDEX idx_group_task_events_key ON group_task_events(task_id, actor, client_key)
+			WHERE client_key IS NOT NULL;
+
+CREATE INDEX idx_group_task_events_kind ON group_task_events(task_id, kind);
 
 CREATE TABLE group_taskboard_locks (
 			group_id   INTEGER PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
@@ -2454,8 +2459,11 @@ CREATE TABLE group_task_attachments (
 			content_type TEXT NOT NULL,
 			added_by     TEXT NOT NULL,
 			added_at     INTEGER NOT NULL
-		) STRICT;
+		, comment_id INTEGER REFERENCES group_task_events(id) ON DELETE CASCADE) STRICT;
 
 CREATE UNIQUE INDEX idx_group_task_attachments_name ON group_task_attachments(task_id, name COLLATE NOCASE);
 
 CREATE INDEX idx_group_task_attachments_sha ON group_task_attachments(sha256);
+
+CREATE INDEX idx_group_task_attachments_comment ON group_task_attachments(comment_id)
+			WHERE comment_id IS NOT NULL;

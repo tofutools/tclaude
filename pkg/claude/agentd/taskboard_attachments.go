@@ -223,14 +223,15 @@ func parseTaskboardMultipart(r *http.Request) (task []byte, files []taskboardUpl
 			return nil, nil, fmt.Errorf("invalid multipart body: %w", err)
 		}
 		switch part.FormName() {
-		case "task":
+		case "task", "comment":
+			// The JSON part: a task's fields, or a comment's.
 			if task != nil {
-				err = errors.New("give one task part")
+				err = errors.New("give one JSON part")
 				break
 			}
 			task, err = io.ReadAll(io.LimitReader(part, 64<<10+1))
 			if err == nil && len(task) > 64<<10 {
-				err = errors.New("the task part is at most 64 KiB")
+				err = errors.New("the JSON part is at most 64 KiB")
 			}
 		case "file":
 			if len(files) >= db.GroupTaskAttachmentsCap {
@@ -431,6 +432,11 @@ func handleTaskboardDetach(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		return
 	}
 	out, _, err := db.RemoveGroupTaskAttachment(t.ID, a.ID, taskboardActor(r))
+	if errors.Is(err, db.ErrGroupTaskAttachmentNotFound) {
+		// A comment's file goes with its comment.
+		writeError(w, http.StatusNotFound, "not_found", "no such file on the task (a comment's file goes with its comment)")
+		return
+	}
 	if err != nil {
 		writeTaskboardError(w, err)
 		return

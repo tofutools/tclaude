@@ -55,7 +55,11 @@ remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--mine] [--json]
 tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
-tclaude agent taskboard history <task>
+tclaude agent taskboard activity <task>    # comments and changes, oldest first; history is an alias
+tclaude agent taskboard comment add <task> "markdown" [--file f|-] [--key k] [--attach f]…
+tclaude agent taskboard comment edit <task> <#id> "markdown" [--file f|-]
+tclaude agent taskboard comment rm <task> <#id>
+tclaude agent taskboard comment ls <task> [--save <dir>]
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
@@ -153,6 +157,37 @@ with the command to fetch them.
 - A clone or a move to another group, on this node or another, takes the
   files with it. A clone shares the stored bytes. Bytes no task refers to
   any more are removed by the hourly sweep.
+
+## Comments and activity
+
+Each task has one append-only activity stream, oldest first. `activity <task>`
+shows it (`history` is an alias), and `show` gives the header: created by,
+last edited by, assigned to, and the comment count.
+
+- **Changes** carry a `changes` list of `{field, before, after}`: `title`,
+  `body`, `ref_*`, `depends_on`, `stage`, `status`, `assignee` and `group`.
+  An action on a resource (`attached`, `detached`, `assigned`, `unassigned`,
+  `taken`, `released`, `reported`, `regrouped`, `cloned`, `imported`,
+  `archived`) also names itself as `action`. A failed or no-op operation
+  records nothing, and every entry names its actor.
+- **Comments** are Markdown, up to 16 KiB, from agents and the operator. A
+  comment may carry up to 10 files, as a task's own may. They belong to the
+  comment, not the task's own list, and `comment ls --save <dir>` writes them
+  out, one directory per comment.
+- **Reasons** for a block, a close, a drop, and a report's note are typed
+  comments in the same stream (`block_reason`, `done_reason`, `drop_reason`,
+  `report_note`).
+- **Keys.** A comment takes an idempotent client key, unique per task and
+  author. Sending the same key and body again returns the first comment; the
+  same key with another body is refused (`key_conflict`). The CLI makes a
+  fresh key per call unless `--key` names one.
+- **Editing and deleting** is for a comment's author only. An edit keeps the
+  earlier body as a `comment_edited` entry. A delete leaves a tombstone,
+  blanks the earlier bodies, and removes the comment's files.
+- **Mail.** A comment by someone else mails the task's assignee. It also
+  mails the agent that created the task, when an agent did.
+- Commenting needs `taskboard.write`, or `taskboard.own` on your own group's
+  board. Reading the stream needs `taskboard.read`.
 
 ## Importing from a tracker
 
@@ -293,7 +328,7 @@ The operator passes every gate. For agents:
 
 | Slug | What it allows | Who has it without a grant |
 |---|---|---|
-| `taskboard.read` | `ls`, `show`, `history` | Members and owners of the group |
+| `taskboard.read` | `ls`, `show`, `activity`, `comment ls` | Members and owners of the group |
 | `taskboard.write` | Everything that changes a task. Implies read. | Members and owners of the group |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
 | `taskboard.manage` | The writer lock, and moving a task you do not hold to another group | Owners of the group |
@@ -362,8 +397,8 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 
 | Peer grant | What the linked node may do on the group's board |
 |---|---|
-| `taskboard.read` | List it, show a task and its history, see it in the fused view, and count it in the node summary |
-| `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them |
+| `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
+| `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock |
 | `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
@@ -386,7 +421,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
   grant here, so each ref keeps its id as its title.
 
 From the CLI, add `--peer <node>` to any verb: `ls <group>`, `ls --summary`,
-`show`, `history`, `add` (including imports), `ask`, `edit`, `move`, `promote`,
+`show`, `activity` (`history`), `comment add|edit|rm|ls`, `add` (including imports), `ask`, `edit`, `move`, `promote`,
 `demote`, `block`, `unblock`, `drop`, `done`, `assign`, `unassign`, and
 `groups set-taskboard-writers`. `take`, `release` and `report` act on
 yourself, so they have no `--peer`.
@@ -675,7 +710,11 @@ those drags aren't accepted in the lanes.
 |---|---|
 | `ls <group>` | `GET /v1/groups/{g}/taskboard[?stage=&all=1]` |
 | `ls` (own group) | `GET /v1/taskboard` |
-| `show` / `history` | `GET /v1/taskboard/tasks/{id}` / `…/events` |
+| `show` | `GET /v1/taskboard/tasks/{id}` |
+| `activity` / `history` | `GET /v1/taskboard/tasks/{id}/activity` → `{id, group, title, entries}` (`…/events` answers the same) |
+| `comment add` | `POST /v1/taskboard/tasks/{id}/comments {"body","key"?}` (multipart: a `comment` JSON part and `file` parts) → 201 `{id, group, comment}`, 200 on a repeated key |
+| `comment edit` / `rm` | `PATCH` `{"body"}` / `DELETE /v1/taskboard/tasks/{id}/comments/{cid}` → `{id, group, comment}`; 403 `not_author` for anyone else |
+| `comment ls` | `GET /v1/taskboard/tasks/{id}/comments` → `{id, group, comments}`; a comment's file is read through `…/attachments/{aid}` |
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
@@ -706,6 +745,14 @@ larger than one peer view request (32 KiB) reaches a linked node through the
 staged upload, `POST /api/peer-upload/{node}?path=…` from the dashboard or
 `POST /v1/federation/peer-upload/{node}?path=…` from the operator's CLI. It
 runs under the same grants as a direct request.
+
+An activity entry carries `id`, `at`, `actor`, `actor_name`, `kind`, and
+`detail` / `detail_text`, `changes`, `action`, and `comment` when they apply. A
+comment carries `id`, `kind`, `body` (its current body, empty once deleted),
+`key`, `author`, `author_name`, `at`, `edited_at`, `deleted_at` and
+`attachments`. A `comment_edited` entry carries `comment_id` and
+`previous_body`. Each task carries `comment_count`, `created_by_name`,
+`last_edited_by`, `last_edited_by_name` and `last_edited_at`.
 
 The group listing also returns `locked`, and `writers` when the board is
 locked. Each task carries `assignee` (`agent_id`, `name`), `assigned_by`,

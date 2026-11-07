@@ -241,6 +241,9 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 	for _, route := range dashboardTaskboardRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
+	for _, route := range taskboardCommentRoutes {
+		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
+	}
 }
 
 // taskboardContextWriters fills Locked and Writers: with the lock set, the

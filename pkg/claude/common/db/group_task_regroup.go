@@ -136,7 +136,8 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		if res.Unassigned != "" {
 			detail += ", unassigned " + res.Unassigned + " (not in " + in.ToGroup + ")"
 		}
-		return addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventRegrouped, detail, now)
+		return addGroupTaskChangeTx(tx, id, in.Actor, GroupTaskEventRegrouped, detail,
+			[]GroupTaskChange{{Field: "group", Before: in.FromGroup, After: in.ToGroup}}, now)
 	})
 	if err != nil {
 		return nil, err

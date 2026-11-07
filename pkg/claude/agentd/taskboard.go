@@ -73,6 +73,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
 	registerTaskboardAssignRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)
+	registerTaskboardCommentRoutes(mux)
 }
 
 // agentReadsTaskboard reports, silently, whether the agent reads group's
@@ -319,10 +320,18 @@ type taskboardTaskView struct {
 	IdleSince string `json:"idle_since,omitempty"`
 	// Attachments are the task's files, in the order they were added.
 	Attachments []taskboardAttachmentView `json:"attachments,omitempty"`
-	CreatedBy   string                    `json:"created_by"`
-	CreatedAt   string                    `json:"created_at"`
-	UpdatedAt   string                    `json:"updated_at"`
-	ClosedAt    string                    `json:"closed_at,omitempty"`
+	// CommentCount counts the comments not deleted; LastEditedBy (with
+	// LastEditedByName for an agent) and LastEditedAt are the latest edit
+	// of the task's text, ref or dependencies (tcl-jipq70).
+	CommentCount     int    `json:"comment_count"`
+	LastEditedBy     string `json:"last_edited_by,omitempty"`
+	LastEditedByName string `json:"last_edited_by_name,omitempty"`
+	LastEditedAt     string `json:"last_edited_at,omitempty"`
+	CreatedBy        string `json:"created_by"`
+	CreatedByName    string `json:"created_by_name,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	ClosedAt         string `json:"closed_at,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -344,6 +353,7 @@ func taskboardAgentName(agentID string) string {
 }
 
 type taskboardEventView struct {
+	ID     int64  `json:"id,omitempty"`
 	At     string `json:"at"`
 	Actor  string `json:"actor"`
 	Kind   string `json:"kind"`
@@ -352,6 +362,15 @@ type taskboardEventView struct {
 	// named (taskboardLabeler); DetailText is absent when it says the same.
 	ActorName  string `json:"actor_name,omitempty"`
 	DetailText string `json:"detail_text,omitempty"`
+	// Changes are a change entry's fields, before and after; Action names
+	// an action on a resource (attached, assigned, …); Comment is a
+	// comment's current state, and a comment_edited entry names the
+	// comment and the body it replaced (tcl-jipq70).
+	Changes      []taskboardChangeView `json:"changes,omitempty"`
+	Action       string                `json:"action,omitempty"`
+	Comment      *taskboardCommentView `json:"comment,omitempty"`
+	CommentID    int64                 `json:"comment_id,omitempty"`
+	PreviousBody string                `json:"previous_body,omitempty"`
 }
 
 func rfc3339(t time.Time) string {
@@ -377,6 +396,22 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	files, err := db.ListGroupTaskAttachmentsBatch(ids)
 	if err != nil {
 		return nil, err
+	}
+	activity, err := db.GroupTaskActivitySummaries(ids)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	actorName := func(actor string) string {
+		id, ok := strings.CutPrefix(actor, "agent:")
+		if !ok {
+			return ""
+		}
+		if n, seen := names[id]; seen {
+			return n
+		}
+		names[id] = taskboardAgentName(id)
+		return names[id]
 	}
 	out := make([]taskboardTaskView, 0, len(tasks))
 	staller := newTaskboardStaller(time.Now())
@@ -409,6 +444,10 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		if since, ok := staller.stalled(t); ok {
 			v.Stalled, v.IdleSince = true, rfc3339(since)
 		}
+		a := activity[t.ID]
+		v.CommentCount = a.Comments
+		v.LastEditedBy, v.LastEditedAt = a.LastEditedBy, rfc3339(a.LastEditedAt)
+		v.LastEditedByName, v.CreatedByName = actorName(a.LastEditedBy), actorName(t.CreatedBy)
 		out = append(out, v)
 	}
 	return out, nil
@@ -814,26 +853,10 @@ func handleTaskboardShow(w http.ResponseWriter, _ *http.Request, t *db.GroupTask
 	writeTaskboardTask(w, http.StatusOK, g, t)
 }
 
-func handleTaskboardEvents(w http.ResponseWriter, _ *http.Request, t *db.GroupTask, g *db.AgentGroup) {
-	events, err := db.ListGroupTaskEvents(t.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db", err.Error())
-		return
-	}
-	out := make([]taskboardEventView, 0, len(events))
-	labels := newTaskboardLabeler(g)
-	for _, e := range events {
-		labels.learnEvent(e.Actor, e.Kind, e.Detail)
-	}
-	for _, e := range events {
-		v := taskboardEventView{At: rfc3339(e.At), Actor: e.Actor, Kind: e.Kind, Detail: e.Detail,
-			ActorName: labels.actor(e.Actor)}
-		if text := labels.detail(e.Kind, e.Detail); text != e.Detail {
-			v.DetailText = text
-		}
-		out = append(out, v)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": t.ID, "group": g.Name, "title": t.Title, "events": out})
+// GET /v1/taskboard/tasks/{id}/events: the activity stream, as "events"
+// (taskboard_comments.go).
+func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	handleTaskboardActivity(w, r, t, g)
 }
 
 // PATCH /v1/taskboard/tasks/{id} {title?, body?, ref?, ref_label?,

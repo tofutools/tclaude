@@ -100,7 +100,7 @@ func TestGroupTaskBoardOrderAndLifecycle(t *testing.T) {
 	for _, e := range events {
 		kinds = append(kinds, e.Kind)
 	}
-	assert.Equal(t, []string{"created", "done", "reopened", "blocked"}, kinds)
+	assert.Equal(t, []string{"created", "done", "reopened", "blocked", "comment"}, kinds)
 
 	// The sweep archives, then purges.
 	_, err = SetGroupTaskStatus(c.ID, GroupTaskDropped, "parked in awb", "human:operator")

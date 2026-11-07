@@ -54,7 +54,8 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	rules["GET /v1/taskboard/context"] = context
 
 	for _, pattern := range []string{"GET /v1/taskboard/tasks/{id}", "GET /v1/taskboard/tasks/{id}/events",
-		"GET /v1/taskboard/tasks/{id}/attachments"} {
+		"GET /v1/taskboard/tasks/{id}/attachments", "GET /v1/taskboard/tasks/{id}/activity",
+		"GET /v1/taskboard/tasks/{id}/comments"} {
 		r := read
 		r.serve = servePeerTaskboardTask
 		rules[pattern] = r
@@ -69,7 +70,12 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// transfer-in and an ask that carry files.
 	for _, pattern := range []string{"PATCH /v1/taskboard/tasks/{id}", "POST /v1/taskboard/tasks/{id}/move",
 		"POST /v1/taskboard/tasks/{id}/stage", "POST /v1/taskboard/tasks/{id}/status",
-		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}"} {
+		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}",
+		// Comments: a peer comments under taskboard.write (taskboard.own is
+		// a member's, on its own group's board), and edits or deletes only
+		// what its own author wrote.
+		"POST /v1/taskboard/tasks/{id}/comments", "PATCH /v1/taskboard/tasks/{id}/comments/{cid}",
+		"DELETE /v1/taskboard/tasks/{id}/comments/{cid}"} {
 		w := write
 		w.write = servePeerTaskboardTask
 		rules[pattern] = w
@@ -229,6 +235,7 @@ func servePeerTaskboardFile(w http.ResponseWriter, r *http.Request, v *peerView,
 // finish on, under the peer's grants as the route's own rule judges them.
 var peerTaskboardUploads = []string{
 	"POST /v1/taskboard/tasks/{id}/attachments",
+	"POST /v1/taskboard/tasks/{id}/comments",
 	"POST /v1/groups/{name}/taskboard/tasks",
 	"POST /v1/groups/{name}/taskboard/transfer-in",
 	"POST /v1/groups/{name}/taskboard/ask",
