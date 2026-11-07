@@ -204,3 +204,78 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	assert.Zero(t, tbStalledEvents(t, other.ID))
 	assert.False(t, h.stallView(other.ID).Stalled)
 }
+
+// Time spent blocked is not idling on the task: an unblock restarts the clock.
+func TestTaskboardIdleClockRestartsOnUnblock(t *testing.T) {
+	h := newTaskboardStallFlow(t, "1h")
+	task := h.add("waits on a decision", "next")
+	code, body := h.post(h.lead, task.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+
+	// The worker was assigned three hours ago and has been idle since then.
+	long := time.Now().Add(-3 * time.Hour)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE group_tasks SET assigned_at = ? WHERE id = ?`, long.UnixNano(), task.ID)
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE group_task_events SET at = ? WHERE task_id = ?`, long.UnixNano(), task.ID)
+	require.NoError(t, err)
+	h.f.SetSessionStatus(h.worker, session.StatusIdle)
+	rows, err := db.FindSessionsByConvID(h.worker)
+	require.NoError(t, err)
+	for _, r := range rows {
+		r.LastHook = long
+		require.NoError(t, db.SaveSession(r))
+	}
+
+	// It was blocked all that time and has just been unblocked.
+	code, body = h.post("", task.ID, "status", map[string]any{"status": "blocked", "reason": "which API?"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", task.ID, "status", map[string]any{"status": "open"})
+	require.Equal(t, http.StatusOK, code, body)
+
+	agentd.SweepTaskboardIdleForTest(time.Now())
+	assert.Zero(t, tbStalledEvents(t, task.ID), "not stalled right after the unblock")
+	assert.False(t, h.stallView(task.ID).Stalled)
+
+	agentd.SweepTaskboardIdleForTest(time.Now().Add(2 * time.Hour))
+	assert.Equal(t, 1, tbStalledEvents(t, task.ID), "stalled once idle past the grace since the unblock")
+}
+
+// A new assignment is announced again; a task the agent took for itself only
+// nudges the agent.
+func TestTaskboardIdleReassignAndSelfTaken(t *testing.T) {
+	h := newTaskboardStallFlow(t, "1ms")
+	h.f.SetSessionStatus(h.worker, session.StatusIdle)
+	task := h.add("handed around", "next")
+	code, body := h.post(h.lead, task.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	time.Sleep(5 * time.Millisecond)
+	agentd.SweepTaskboardIdleForTest(time.Now())
+	require.Equal(t, 1, tbStalledEvents(t, task.ID))
+
+	// Away to the peer and back: a fresh assignment, announced again.
+	code, body = h.post(h.lead, task.ID, "assign", map[string]any{"to": h.peer})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post(h.lead, task.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	time.Sleep(5 * time.Millisecond)
+	agentd.SweepTaskboardIdleForTest(time.Now())
+	assert.Equal(t, 2, tbStalledEvents(t, task.ID))
+
+	// Taken by the worker itself: no one else to tell, the worker is nudged.
+	own := h.add("my own", "next")
+	code, body = h.post(h.worker, own.ID, "assign", map[string]any{"to": ""})
+	require.Equal(t, http.StatusOK, code, body)
+	leadBefore := len(tbInboxSubjects(t, h.lead))
+	humanBefore, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	time.Sleep(5 * time.Millisecond)
+	agentd.SweepTaskboardIdleForTest(time.Now())
+	assert.Equal(t, 1, tbStalledEvents(t, own.ID))
+	assert.Len(t, tbInboxSubjects(t, h.lead), leadBefore)
+	humanAfter, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, humanBefore, humanAfter)
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), own.ID+" \"my own\" — you went idle without reporting")
+}

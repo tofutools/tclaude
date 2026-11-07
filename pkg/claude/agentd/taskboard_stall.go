@@ -15,7 +15,8 @@ import (
 //
 // An open task is stalled when its assignee has sat idle, with nothing running
 // in the background, for taskboard.idle_grace (default 5 min, 0 off) since the
-// later of its last activity and the assignment. Stalled is derived on every
+// later of its last activity and the start of its current stretch of work on
+// the task (the assignment, or an unblock or reopen). Stalled is derived on every
 // read, never stored, so a new turn clears it; a report ends the assignment
 // and with it the stall. A 30 s sweep announces each stall once per
 // assignment: a "stalled" event, a message to the assigner (inbox for an
@@ -101,6 +102,14 @@ func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
 	}
 	if since.IsZero() || s.now.Sub(since) < s.grace {
 		return time.Time{}, false
+	}
+	// Time spent blocked or closed is not idling on the task: the clock
+	// restarts when it comes back to open. Read only for a candidate.
+	if work, err := db.GroupTaskWorkSince(t.ID); err == nil && work.After(since) {
+		since = work
+		if s.now.Sub(since) < s.grace {
+			return time.Time{}, false
+		}
 	}
 	return since, true
 }

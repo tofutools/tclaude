@@ -57,9 +57,36 @@ func ListOpenAssignedGroupTasks() ([]AssignedGroupTask, error) {
 	return out, nil
 }
 
+// groupTaskStallBoundaryKinds are the events that start a fresh stretch of
+// work on a task: an assignment, or the task coming back to open from blocked
+// or closed. The idle clock starts at the latest one, and each such stretch
+// is announced at most once.
+const groupTaskStallBoundaryKinds = `'assigned','taken','unblocked','reopened'`
+
+// GroupTaskWorkSince is when the task's current stretch of work began: the
+// time of its latest assignment, unblock or reopen event, zero when none.
+func GroupTaskWorkSince(id string) (time.Time, error) {
+	d, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var at dbTimestamp
+	err = d.QueryRow(`SELECT at FROM group_task_events
+		WHERE task_id = ? AND kind IN (`+groupTaskStallBoundaryKinds+`)
+		ORDER BY id DESC LIMIT 1`, id).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return at.Time(), nil
+}
+
 // MarkGroupTaskStalled writes the task's "stalled" event when it is still
 // open and assigned to assignee as of assignedAt and no stalled event has been
-// written since that assignment began. It reports whether it wrote one: the
+// written since its current stretch of work began (an assignment, unblock or
+// reopen). It reports whether it wrote one: the
 // sweep mails only then, so a stall is announced once per assignment. The
 // event is history, not an edit: updated_at is left alone.
 func MarkGroupTaskStalled(id, assignee string, assignedAt time.Time, detail string) (bool, error) {
@@ -81,7 +108,7 @@ func MarkGroupTaskStalled(id, assignee string, assignedAt time.Time, detail stri
 	}
 	var kind string
 	err = tx.QueryRow(`SELECT kind FROM group_task_events
-		WHERE task_id = ? AND kind IN ('assigned','taken','stalled')
+		WHERE task_id = ? AND kind IN (`+groupTaskStallBoundaryKinds+`,'stalled')
 		ORDER BY id DESC LIMIT 1`, id).Scan(&kind)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err

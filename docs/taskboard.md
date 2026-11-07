@@ -181,11 +181,14 @@ assigned whom.
 An open task is **stalled** when its assignee has sat idle for
 `taskboard.idle_grace` (default 5 minutes) without reporting: its session is
 idle, with no subagents, background shells or monitors running, and has been
-since the later of its last activity and the assignment. Stalled is worked out
+since the later of its last activity and the start of its current stretch of
+work: the assignment, or the task being unblocked or reopened. Time spent
+blocked or closed does not count. Stalled is worked out
 on every read. It is not a status, and it clears as soon as the agent starts a
 new turn or reports.
 
-A sweep every 30 seconds announces each stall once per assignment:
+A sweep every 30 seconds announces each stall once per assignment (an unblock
+or a reopen starts a new stretch, which may be announced again):
 
 - the history records a `stalled` event;
 - the assigner is told, `[taskboard] <group> · tk_… "title" — <agent> went idle
