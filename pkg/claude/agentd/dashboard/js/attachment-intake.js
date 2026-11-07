@@ -6,7 +6,7 @@
 // it, and hands out the handlers to put on the dialog's root.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { attachKey, checkAttachment, formatAttachmentSize, pastedName } from './attachment-files.js';
 
@@ -51,15 +51,24 @@ export function clipboardFiles(transfer) {
 //                   uploaded copies)
 //   limits          { maxFiles, maxBytes, accept(file, name) -> '' | why }, or null
 //   onReject(text)  says which files were left out, and why
+//   revoke          revoke the thumbnails' object URLs when the dialog goes
+//                   (default); a dialog that does it itself passes false
 //
 // It returns add(files), remove(id), dragOver (a drag of files is over the
 // dialog) and handlers ({ onPaste, onDragEnter, onDragOver, onDragLeave,
 // onDrop }) for the dialog's root.
-export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {} }) {
+export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {}, revoke = true }) {
   const sequence = useRef(0);
   const pasteState = useRef({ at: 0, keys: new Set() });
   const dragDepth = useRef(0);
   const [dragOver, setDragOver] = useState(false);
+  // The thumbnails' object URLs go with the dialog.
+  const shown = useRef(attachments);
+  shown.current = attachments;
+  useEffect(() => () => {
+    if (!revoke) return;
+    for (const attachment of shown.current) if (attachment.url) URL.revokeObjectURL(attachment.url);
+  }, []);
 
   const add = (files) => {
     if (busy()) return;

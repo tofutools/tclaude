@@ -3,14 +3,15 @@
 // tcl-kp5ngc). Modelled on the Resources section's ＋ menu
 // (groups-resources.js AddResource):
 //
-//   Write it myself     the New task form: title, brief, ref, stage, deps
-//                       and (with can.assign) an assignee. Each field is a
-//                       `taskboard add` flag; the assignee is `assign --to`.
+//   Write it myself     the New task form: title, brief, ref, stage, deps,
+//                       files and (with can.assign) an assignee. Each field
+//                       is a `taskboard add` flag (files: --attach).
 //                       A pasted list is one task per line and a title that
 //                       is only a tracker id is that ref, titled from the
 //                       tracker, as the old capture box did.
 //   Ask an agent        a prose request mailed to a member who may change the
-//                       board (`taskboard ask <group> --to <agent> "…"`).
+//                       board, files with it (`taskboard ask <group> --to
+//                       <agent> "…" --attach …`).
 //   From awb/Linear/…   the import panel (`add --from-awb` and kin).
 
 import { h } from 'preact';
@@ -20,7 +21,9 @@ import { useDismissablePopover } from './hover-popover.js';
 import { Button, Check, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
-import { captureLines, isTrackerLine } from './taskboard-actions.js';
+import { captureLines, isTrackerLine, taskFileLimits } from './taskboard-actions.js';
+import { useAttachmentIntake } from './attachment-intake.js';
+import { FilesField } from './groups-taskboard-files.js';
 
 const html = htm.bind(h);
 
@@ -110,7 +113,7 @@ export function newTaskPlan(draft) {
 // submitNewTask runs the plan. It resolves to { created, task, warning }:
 // a refusal before anything landed throws; one after (the assign, say)
 // is the warning, since the task is on the board by then.
-export async function submitNewTask(api, groupName, draft) {
+export async function submitNewTask(api, groupName, draft, files = []) {
   const plan = newTaskPlan(draft);
   if (plan.kind === 'lines') {
     const out = await api.capture(groupName, plan.text, { next: plan.next });
@@ -127,6 +130,14 @@ export async function submitNewTask(api, groupName, draft) {
     const result = out?.results?.[0];
     if (!result?.task?.id) throw new Error(result?.error || 'the ref was not added');
     task = result.task;
+    // An import takes no files: they follow the task.
+    if (files.length) {
+      try {
+        await api.attach(task.id, files);
+      } catch (cause) {
+        return { created: 1, task, warning: `added as ${task.id}, but its files were not attached: ${cause?.message || cause}` };
+      }
+    }
     if (plan.body || plan.after.length) {
       try {
         task = await api.edit(task.id, { body: plan.body || undefined, addDeps: plan.after.length ? plan.after : undefined }) || task;
@@ -135,7 +146,7 @@ export async function submitNewTask(api, groupName, draft) {
       }
     }
   } else {
-    return { created: 1, task: await api.create(groupName, plan.task), warning: '' };
+    return { created: 1, task: await api.create(groupName, files.length ? { ...plan.task, files } : plan.task), warning: '' };
   }
   return { created: 1, task, warning: '' };
 }
@@ -234,6 +245,9 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const [error, setError] = useState('');
   const sending = useRef(false);
   const titleRef = useRef(null);
+  const [files, setFiles] = useState([]);
+  const intake = useAttachmentIntake({ setAttachments: setFiles, attachments: files, busy: () => sending.current,
+    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true) });
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const listMode = !!draft.list;
   const lines = captureLines(draft.list);
@@ -243,14 +257,14 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const missing = listMode ? '' : draft.start === 'progress' && !draft.to ? 'pick who it is in progress with'
     : draft.start === 'blocked' && !draft.reason.trim() ? 'say why it is blocked' : '';
   const ready = (listMode ? lines.length > 0 : draft.title.trim().length > 0) && !missing;
-  const dirty = Object.keys(EMPTY_DRAFT).some((key) => JSON.stringify(draft[key]) !== JSON.stringify({ ...EMPTY_DRAFT, ...initial }[key]));
+  const dirty = files.length > 0 || Object.keys(EMPTY_DRAFT).some((key) => JSON.stringify(draft[key]) !== JSON.stringify({ ...EMPTY_DRAFT, ...initial }[key]));
   const submit = async () => {
     if (!ready || sending.current) return;
     sending.current = true;
     setBusy(true);
     setError('');
     try {
-      const out = await submitNewTask(api, group.name, draft);
+      const out = await submitNewTask(api, group.name, draft, listMode ? [] : files.map((f) => f.file));
       if (out.warning) shellToast(out.warning, true);
       else if (out.task) shellToast(`Added ${out.task.id} to ${group.name}`);
       else shellToast(`Added ${out.created} to ${group.name}`);
@@ -278,6 +292,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const row = (label, field, hint = null) => html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${label}</span>
     <span class="tb-new-field">${field}${hint && html`<span class="ui-hint tb-new-hint">${hint}</span>`}</span></div>`;
   return html`<${Dialog} id="taskboard-new-modal" title=${heading} onClose=${onClose} busy=${busy}
+    ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}
     dirty=${dirty} confirmDiscard=${shellConfirmDiscard} initialFocusRef=${titleRef} onSubmitHotkey=${() => void submit()}
     resizeKey="tclaude.dash.modalSize.taskboard-new" error=${error}
     cancel="Cancel"
@@ -285,7 +300,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     footer=${html`<${Button} variant="primary" id="taskboard-new-submit" busy=${busy} disabled=${!ready || busy} onClick=${() => void submit()}>${submitLabel}<//>`}>
     <div class="modal-meta">${listMode
       ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.${
-        draft.body.trim() || draft.ref.trim() || draft.after.length || draft.to ? ' A list takes no brief, ref, dependencies or assignee: they are not used.' : ''}`
+        draft.body.trim() || draft.ref.trim() || draft.after.length || draft.to || files.length ? ' A list takes no brief, ref, dependencies, assignee or files: they are not used.' : ''}`
       : wizard ? 'The quest lands among the visions unless you start it elsewhere.' : 'The task lands in the ideas unless you start it in another column.'}</div>
     ${listMode
       ? row('Tasks', html`<${Textarea} class="tb-new-list" rows="6" aria-label="Tasks, one per line" value=${draft.list} disabled=${busy}
@@ -309,6 +324,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Input} class="tb-new-reason" aria-label="Block reason" required maxLength=${400}
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
     ${!listMode && row('After', html`<${DepsPick} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
+    ${!listMode && row('Files', html`<${FilesField} intake=${intake} attachments=${files} busy=${busy} />`)}
     ${!listMode && canAssign && row('Assignee', members.length
       ? html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
           <option value="">— unassigned —</option>
@@ -350,6 +366,9 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
   const [error, setError] = useState('');
   const sending = useRef(false);
   const promptRef = useRef(null);
+  const [files, setFiles] = useState([]);
+  const intake = useAttachmentIntake({ setAttachments: setFiles, attachments: files, busy: () => sending.current,
+    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true) });
   const picked = members.find((member) => member.agent_id === to) || null;
   // The cell's opening line alone is not a request.
   const ready = !!picked && prompt.trim().length > 0 && prompt.trim() !== opening.trim();
@@ -359,7 +378,8 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
     setBusy(true);
     setError('');
     try {
-      await api.ask(group.name, picked.agent_id, prompt.trim());
+      if (files.length) await api.ask(group.name, picked.agent_id, prompt.trim(), files.map((f) => f.file));
+      else await api.ask(group.name, picked.agent_id, prompt.trim());
       shellToast(`Asked ${picked.title || picked.agent_id}; it replies when the ${wizard ? 'quests' : 'tasks'} are on the board`);
       onClose();
     } catch (cause) {
@@ -371,10 +391,11 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
   };
   const noun = wizard ? 'quests' : 'tasks';
   return html`<${Dialog} id="taskboard-ask-modal" title=${wizard ? `Ask a hero · ${group.name}` : `Ask an agent · ${group.name}`}
-    onClose=${onClose} busy=${busy} dirty=${prompt.trim().length > 0 && prompt !== opening} confirmDiscard=${shellConfirmDiscard}
+    onClose=${onClose} busy=${busy} dirty=${files.length > 0 || (prompt.trim().length > 0 && prompt !== opening)} confirmDiscard
+    ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}=${shellConfirmDiscard}
     initialFocusRef=${promptRef} onSubmitHotkey=${() => void submit()} resizeKey="tclaude.dash.modalSize.taskboard-ask" error=${error}
     cancel="Cancel"
-    footerStart=${html`<span class="ui-hint tb-new-cli"><code>tclaude agent taskboard ask ${group.name} --to … "…"</code></span>`}
+    footerStart=${html`<span class="ui-hint tb-new-cli"><code>tclaude agent taskboard ask ${group.name} --to … "…"${files.length ? ' --attach …' : ''}</code></span>`}
     footer=${html`<${Button} variant="primary" id="taskboard-ask-submit" busy=${busy} disabled=${!ready || busy} onClick=${() => void submit()}>${busy ? 'Sending…' : 'Ask'}<//>`}>
     <div class="modal-meta">Describe what you want in your own words. The agent turns it into well-formed ${noun} on this board
       with <code>tclaude agent taskboard add</code>, replies when done, and does not start the work.</div>
@@ -389,6 +410,10 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
         placeholder=${`e.g. "the three follow-ups from today's review of the lanes view, with their awb ids"`}
         onInput=${(event) => setPrompt(event.currentTarget.value)} />
       <span class="ui-hint tb-new-hint">sent to its inbox, never typed into its pane · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> sends</span>
+    </span></div>
+    <div class="cron-create-row tb-new-row"><span class="cron-create-label">Files</span><span class="tb-new-field">
+      <${FilesField} intake=${intake} attachments=${files} busy=${busy} />
+      ${files.length > 0 && html`<span class="ui-hint tb-new-hint">sent with the request; the agent puts them on the tasks it writes</span>`}
     </span></div>
   <//>`;
 }

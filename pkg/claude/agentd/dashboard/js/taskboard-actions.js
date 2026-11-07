@@ -23,12 +23,15 @@
 //   clones)
 //   … on another     transfer-in on that node, then moved-away here
 //   node             (move-to-group <task> <group>@<peer>)
+//   files            add --attach … · ask --attach … · attach <task> … ·
+//                    detach <task> <name|#id>
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
 
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { randomUUID } from './insecure-origin.js';
+import { nodeUpload } from './node-api.js';
 
 export class TaskboardRequestError extends Error {
   constructor(message, { status = 0, code = '' } = {}) {
@@ -45,13 +48,27 @@ async function request(fetchImpl, method, path, payload) {
     init.body = body;
     init.headers = idempotentRequestHeaders(method, path, body, randomUUID());
   }
-  const response = await fetchImpl(path, init);
+  return answer(await fetchImpl(path, init));
+}
+
+// answer reads a route's JSON reply, throwing its refusal.
+async function answer(response) {
   const out = await response.json().catch(() => null);
   if (!response.ok) {
     throw new TaskboardRequestError(out?.message || out?.error || `${response.status} ${response.statusText || ''}`.trim(),
       { status: response.status, code: out?.error || out?.code || '' });
   }
   return out;
+}
+
+// taskForm is a request with files, as the CLI's --attach sends it: a "task"
+// part with the JSON body (none for a bare attach) and one "file" part per
+// file.
+export function taskForm(task, files) {
+  const form = new FormData();
+  if (task) form.append('task', new Blob([JSON.stringify(task)], { type: 'application/json' }));
+  for (const file of files) form.append('file', file.file || file, file.name || file.file?.name || 'file');
+  return form;
 }
 
 const taskPath = (id, suffix = '') => `/v1/taskboard/tasks/${encodeURIComponent(id)}${suffix}`;
@@ -85,8 +102,34 @@ export function importRefs(kind, text) {
 // IMPORT_BATCH is the most items one import request takes.
 export const IMPORT_BATCH = 50;
 
-export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
+// TASK_FILE_LIMITS are a task's file limits (docs/taskboard.md "Files on a
+// task"): 10 files of 4 MiB each, of the types mail attachments may have.
+export const TASK_FILE_MAX = 10;
+export const TASK_FILE_MAX_BYTES = 4 << 20;
+const TASK_FILE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.txt', '.log', '.md', '.csv', '.json',
+  '.yaml', '.yml', '.diff', '.patch', '.pdf']);
+
+// taskFileRefusal is why the server would refuse a file's name, or ''.
+export function taskFileRefusal(_file, name) {
+  const dot = String(name || '').lastIndexOf('.');
+  const ext = dot > 0 ? String(name).slice(dot).toLowerCase() : '';
+  return TASK_FILE_TYPES.has(ext) ? '' : 'type not allowed: images, text, markdown, csv, json, yaml, diff/patch or pdf';
+}
+
+// taskFileLimits are the intake's limits (attachment-intake.js) for a task
+// that already holds `held` files.
+export function taskFileLimits(held = 0) {
+  return { maxFiles: Math.max(0, TASK_FILE_MAX - held), maxBytes: TASK_FILE_MAX_BYTES, accept: taskFileRefusal };
+}
+
+// createTaskboardApi is the board's write client. upload posts a request
+// with files: to this node directly, and to another node (the page's own on
+// a peer's page) through this node's staged upload (node-api.js nodeUpload),
+// since a peer view request carries 32 KiB. A node's board passes its own.
+export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), upload = null } = {}) {
   const call = (method, path, payload) => request(fetchImpl, method, path, payload);
+  const send = upload || ((path, init) => nodeUpload('', path, init, { fetchImpl }));
+  const post = async (path, task, files) => answer(await send(path, { body: taskForm(task, files) }));
   // importBatches sends a long import in batches of IMPORT_BATCH, one after
   // another, and merges the replies; the results stay in input order. When a
   // later batch fails, the batches already added stand: the merged result
@@ -133,7 +176,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     // create adds one task in its start state, in one call: status open
     // (the default), blocked (blockReason) or done, and `to` its assignee
     // (in progress, or who did it).
-    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '' }) {
+    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', files = [] }) {
       const payload = { title };
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
@@ -143,17 +186,34 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
       if (status && status !== 'open') payload.status = status;
       if (status === 'blocked') payload.block_reason = blockReason;
       if (to) payload.to = to;
+      if (files.length) return post(boardPath(group), payload, files);
       return call('POST', boardPath(group), payload);
     },
-    // ask mails a member a prose request to turn into tasks on the board.
-    ask(group, to, prompt) {
-      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/ask`, { to, prompt });
+    // ask mails a member a prose request to turn into tasks on the board;
+    // files go with the mail.
+    ask(group, to, prompt, files = []) {
+      const path = `/v1/groups/${encodeURIComponent(group)}/taskboard/ask`;
+      if (files.length) return post(path, { to, prompt }, files);
+      return call('POST', path, { to, prompt });
     },
-    edit(id, { title, body, ref, clearRef = false, addDeps }) {
+    // attach adds files to a task (`attach`); detach removes one by id.
+    attach(id, files) {
+      return post(taskPath(id, '/attachments'), null, files);
+    },
+    detach(id, attachmentId) {
+      return call('DELETE', taskPath(id, `/attachments/${encodeURIComponent(attachmentId)}`));
+    },
+    // fileData reads one file as { name, content_type, data (base64) }: the
+    // form a peer view carries, so it works for any node's board.
+    fileData(id, attachmentId) {
+      return call('GET', taskPath(id, `/attachments/${encodeURIComponent(attachmentId)}?format=json`));
+    },
+    edit(id, { title, body, ref, clearRef = false, addDeps, rmDeps }) {
       const payload = {};
       if (title !== undefined) payload.title = title;
       if (body !== undefined) payload.body = body;
       if (addDeps !== undefined) payload.add_deps = addDeps;
+      if (rmDeps !== undefined) payload.rm_deps = rmDeps;
       if (clearRef) payload.clear_ref = true;
       else if (ref !== undefined) payload.ref = ref;
       return call('PATCH', taskPath(id), payload);

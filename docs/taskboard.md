@@ -153,6 +153,14 @@ with the command to fetch them.
 - A clone or a move to another group, on this node or another, takes the
   files with it. A clone shares the stored bytes. Bytes no task refers to
   any more are removed by the hourly sweep.
+- In the dashboard, the *Write it myself* form, *Ask an agent* and the edit
+  form take files as the spawn dialog does: 📎 *Choose files…*, a drop of
+  files anywhere on the dialog, or Ctrl+V (Cmd+V on macOS) of copied files or
+  a screenshot. A file over the limits or of a refused type is left out, and
+  a note names it. The edit form shows a task's files as tiles (an image
+  with its thumbnail); click one to open it, and ✕ removes it on *Save*.
+  This works for a linked node's board too: the files go through this
+  node's staged upload.
 
 ## Importing from a tracker
 
@@ -540,7 +548,8 @@ a CLI verb:
 | ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
 | ✓ *Done* | `done <task>` |
 | ⋯ *Drop…* (with an optional reason) | `drop <task> [--reason …]` |
-| ✎ *Edit* | `edit <task> --title … --ref …` |
+| ✎ *Edit* (or double-click a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
+| Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
@@ -558,13 +567,25 @@ a CLI verb:
     optional, is who did it). A bare awb or Linear ref gets its
     link, as with `--resolve-ref`. If you paste a list into the title, the
     form adds one task per line instead. A title that is only an awb, Linear
-    or GitHub id becomes that ref, titled from the tracker. Enter or
-    Ctrl+Enter adds the task, and Esc or *Cancel* closes the form.
+    or GitHub id becomes that ref, titled from the tracker. Files go with the
+    task (see [Files on a task](#files-on-a-task)). Enter or Ctrl+Enter adds
+    the task, and Esc or *Cancel* closes the form.
   - *Ask an agent* sends a request in your own words to a member, as `ask`
     does. It picks the group's owner when one is online. You can pick any
     other online member who may change the board. With no such member
-    online, the item is off, and says why.
+    online, the item is off, and says why. Files go with the request.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
+- **✎ *Edit*** on a row (or a double-click on a lanes card) opens the edit
+  form. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,
+  *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
+  assignee (if you may assign), the dependencies (✕ takes one off, and
+  *＋ dependency* adds one of the board's other live tasks) and the files.
+  Picking an assignee for an idea or a queued task makes it *In progress*;
+  picking *Idea* or *Next* takes the assignee off. *Save* writes only what
+  changed, each through the route its CLI verb uses. If one write is refused
+  (say, a close that needs `taskboard.assign`), the rest still land, and the
+  form stays open and names what was not saved. A done or dropped task
+  reopens when you pick another place for it.
 - In the lanes view, a cell's **+** opens the same menu, anchored at the
   **+** (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it

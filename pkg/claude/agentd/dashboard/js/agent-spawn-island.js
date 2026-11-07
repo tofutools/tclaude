@@ -893,6 +893,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // board's forms.
   const intake = useAttachmentIntake({
     setAttachments, attachments, busy: () => busyRef.current, onChange: invalidateAttachmentUploads,
+    // The dialog revokes its previews itself when it closes.
+    revoke: false,
   });
   const { add: addAttachments, remove: removeAttachment, dragOver } = intake;
 
