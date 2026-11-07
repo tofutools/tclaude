@@ -246,7 +246,7 @@ function useLaneDrag(actions, group) {
       clear();
       if (drop.reason) { setBlocking(task); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
-      if (ok && drop.kind === 'assign') markLanded({ group: group.name, section: 'agents', ids: [drop.agent] });
+      if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
 }
