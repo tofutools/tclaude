@@ -144,7 +144,7 @@ func TestHumanAction_DrawingBoardPRAndTabResolve(t *testing.T) {
 	for _, tc := range []struct {
 		action, label, field, want string
 	}{
-		{"drawing_board:" + drawingBoard.ID, "Open drawing board “Launch plan”", "drawing_board", drawingBoard.ID},
+		{"drawing_board:" + drawingBoard.ID, "Open drawing board “Launch plan”", "drawingBoard", drawingBoard.ID},
 		{"pr:" + prURL, "Open PR #42", "url", prURL},
 		{"tab:processes", "Go to Processes", "path", "/automations/processes"},
 	} {

@@ -337,7 +337,7 @@ func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
 		createProfile(t, f, map[string]any{"name": "boss-kit", "is_owner": true}).Code, "create owner profile")
 
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
-		"name": "drawing_board",
+		"name": "drawing-board",
 		"agents": []map[string]any{
 			{"name": "chair", "spawn_profile": "boss-kit"},
 			{"name": "guest"},

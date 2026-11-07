@@ -120,7 +120,7 @@ export async function copyResource(resource, to, { api, notify, refresh = () => 
   }
 }
 
-const KIND_NOUN = Object.freeze({ drawingBoard: 'drawing board', page: 'page', process: 'process' });
+const KIND_NOUN = Object.freeze({ drawing_board: 'drawing board', page: 'page', process: 'process' });
 
 // dropConfirm is the confirm a drag's drop asks before it moves or copies
 // resource into the group named to, as an agent's drop does (dnd-ops.js):
