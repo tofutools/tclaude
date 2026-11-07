@@ -178,6 +178,10 @@ type NewGroupTask struct {
 	// Origin, when set, is added to the first event's detail (a clone names
 	// the task it was cloned from).
 	Origin string
+	// Attachments are files the task starts with, written in the same
+	// transaction (a create with files, a clone, a task moved in from
+	// another node). Their blobs must already be stored.
+	Attachments []GroupTaskAttachment
 	// The task's start state, set in the same transaction as the create:
 	// Status open (the default), blocked (BlockReason says why) or done
 	// (work logged after the fact: closed now). AssigneeID, when set, is who
@@ -480,6 +484,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventDone, "logged as done", now); err != nil {
 			return nil, err
 		}
+	}
+	if err := insertGroupTaskAttachmentsTx(tx, id, append([]GroupTaskAttachment(nil), in.Attachments...), in.Actor, now); err != nil {
+		return nil, err
 	}
 	out, err := getGroupTaskTx(tx, id)
 	if err != nil {

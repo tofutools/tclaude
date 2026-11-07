@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,13 +53,23 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	context.serve = servePeerTaskboardContext
 	rules["GET /v1/taskboard/context"] = context
 
-	for _, pattern := range []string{"GET /v1/taskboard/tasks/{id}", "GET /v1/taskboard/tasks/{id}/events"} {
+	for _, pattern := range []string{"GET /v1/taskboard/tasks/{id}", "GET /v1/taskboard/tasks/{id}/events",
+		"GET /v1/taskboard/tasks/{id}/attachments"} {
 		r := read
 		r.serve = servePeerTaskboardTask
 		rules[pattern] = r
 	}
+	// A task's file: a peer view carries JSON only, so it is always the
+	// base64 form.
+	file := read
+	file.serve = servePeerTaskboardFile
+	rules["GET /v1/taskboard/tasks/{id}/attachments/{aid}"] = file
+	// Attaching files: sent directly when small, staged through
+	// /api/peer-uploads otherwise (peerUploadRoutes), as are a create, a
+	// transfer-in and an ask that carry files.
 	for _, pattern := range []string{"PATCH /v1/taskboard/tasks/{id}", "POST /v1/taskboard/tasks/{id}/move",
-		"POST /v1/taskboard/tasks/{id}/stage", "POST /v1/taskboard/tasks/{id}/status"} {
+		"POST /v1/taskboard/tasks/{id}/stage", "POST /v1/taskboard/tasks/{id}/status",
+		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}"} {
 		w := write
 		w.write = servePeerTaskboardTask
 		rules[pattern] = w
@@ -204,6 +215,38 @@ func servePeerTaskboardTask(w http.ResponseWriter, r *http.Request, v *peerView,
 	}
 	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerGrantKey{}, a)
 	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
+}
+
+// servePeerTaskboardFile serves a task's file to a peer as base64 JSON.
+func servePeerTaskboardFile(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	sub := r.Clone(r.Context())
+	sub.URL.RawQuery = "format=json"
+	sub.RequestURI = sub.URL.RequestURI()
+	servePeerTaskboardTask(w, sub, v, rule)
+}
+
+// peerTaskboardUploads are the board's routes a peer's staged upload may
+// finish on, under the peer's grants as the route's own rule judges them.
+var peerTaskboardUploads = []string{
+	"POST /v1/taskboard/tasks/{id}/attachments",
+	"POST /v1/groups/{name}/taskboard/tasks",
+	"POST /v1/groups/{name}/taskboard/transfer-in",
+	"POST /v1/groups/{name}/taskboard/ask",
+}
+
+// servePeerTaskboardUpload runs a restricted peer's staged upload on one of
+// peerTaskboardUploads through that route's peer rule, so the board's gates
+// apply as for a direct request. It reports false when sub is not one.
+func servePeerTaskboardUpload(w http.ResponseWriter, sub *http.Request, v *peerView, pattern string) bool {
+	if !slices.Contains(peerTaskboardUploads, pattern) {
+		return false
+	}
+	rule := peerViewRules()[pattern]
+	// The rule reads the route's path values: match sub to set them.
+	mux := http.NewServeMux()
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { rule.write(w, r, v, rule) })
+	mux.ServeHTTP(w, sub)
+	return true
 }
 
 // servePeerTaskboardContext is the dashboard's board context for a peer: the

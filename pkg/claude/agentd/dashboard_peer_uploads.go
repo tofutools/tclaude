@@ -51,6 +51,17 @@ var peerUploadRoutes = map[string]bool{
 	"/api/spawn-attachments":          true,
 	"POST /api/groups/import":         true,
 	"POST /api/groups/import/inspect": true,
+	// A task board's files (peer_taskboard.go, peerTaskboardUploads).
+	"POST /v1/taskboard/tasks/{id}/attachments":    true,
+	"POST /v1/groups/{name}/taskboard/tasks":       true,
+	"POST /v1/groups/{name}/taskboard/transfer-in": true,
+	"POST /v1/groups/{name}/taskboard/ask":         true,
+}
+
+// peerUploadPath reports whether p may name an upload route: a dashboard
+// API path or a /v1 route (peerUploadRoutes decides which).
+func peerUploadPath(p string) bool {
+	return strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1/")
 }
 
 const (
@@ -248,7 +259,7 @@ func finishPeerUpload(w http.ResponseWriter, r *http.Request, owner string, serv
 	}
 	defer func() { _ = os.Remove(u.file) }()
 	target, err := url.ParseRequestURI(body.Path)
-	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !strings.HasPrefix(target.Path, "/api/") {
+	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !peerUploadPath(target.Path) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
 		return
 	}
@@ -296,7 +307,9 @@ var peerUploadExchange = func(ctx context.Context, peer *db.FederationPeer, req 
 	if !validPeerViewReply(reply) {
 		return http.StatusBadGateway, errors.New("peer returned an invalid response")
 	}
-	if reply.Status != http.StatusOK {
+	// A route may answer 201 (a task created with its files): any 2xx is
+	// its success.
+	if reply.Status < 200 || reply.Status > 299 {
 		return reply.Status, &peerDownloadRefused{body: reply.Body}
 	}
 	if out != nil && json.Unmarshal(reply.Body, out) != nil {
@@ -320,8 +333,30 @@ func handleDashboardPeerUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_trusted", "linked trusted peer required")
 		return
 	}
+	sendPeerUpload(w, r, peer)
+}
+
+// handleFederationPeerUpload is handleDashboardPeerUpload for the CLI
+// (POST /v1/federation/peer-upload/{node}?path=P): the operator's, by the
+// peer's label or instance id. A task board's files reach a linked node
+// through it (`tclaude agent taskboard attach … --peer`).
+func handleFederationPeerUpload(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "upload to a linked node") {
+		return
+	}
+	peer, err := resolveFederationPeerOpt(r.PathValue("node"), false)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	sendPeerUpload(w, r, peer)
+}
+
+// sendPeerUpload sends r's body to peer's upload route in chunks and
+// answers that route's reply.
+func sendPeerUpload(w http.ResponseWriter, r *http.Request, peer *db.FederationPeer) {
 	target := r.URL.Query().Get("path")
-	if !strings.HasPrefix(target, "/api/") || len(target) > 4096 || len(r.Header.Get("Content-Type")) > peerUploadContentType {
+	if !peerUploadPath(target) || len(target) > 4096 || len(r.Header.Get("Content-Type")) > peerUploadContentType {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
 		return
 	}
