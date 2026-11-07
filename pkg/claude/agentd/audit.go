@@ -286,6 +286,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "assign"}, verb: "taskboard.assign"},
 	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "unassign"}, verb: "taskboard.unassign"},
 	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "report"}, verb: "taskboard.report"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "move-to-group"}, verb: "taskboard.move-to-group"},
 
 	// Membership + ownership.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "members"}, verb: "member.add", describe: describeMemberTarget},

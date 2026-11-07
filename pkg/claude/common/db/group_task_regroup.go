@@ -11,8 +11,20 @@ import (
 // the task and its history; a clone is a CreateGroupTask in the other group
 // with an Origin note.
 
-// GroupTaskEventRegrouped records a task moved from one group to another.
-const GroupTaskEventRegrouped = "regrouped"
+// GroupTaskEventRegrouped records a task moved from one group to another;
+// GroupTaskEventCloned, on the source task, a clone made of it in another.
+const (
+	GroupTaskEventRegrouped = "regrouped"
+	GroupTaskEventCloned    = "cloned"
+)
+
+// NoteGroupTaskCloned records on task id that a clone of it was made.
+func NoteGroupTaskCloned(id, actor, detail string) error {
+	_, err := withGroupTask(id, func(tx *sql.Tx, _ *GroupTask, now time.Time) error {
+		return addGroupTaskEventTx(tx, id, actor, GroupTaskEventCloned, detail, now)
+	})
+	return err
+}
 
 // GroupTaskRegroup is a move of a task to another group.
 type GroupTaskRegroup struct {

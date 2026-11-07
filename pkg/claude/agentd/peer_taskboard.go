@@ -106,7 +106,7 @@ func servePeerTaskboardGroup(w http.ResponseWriter, r *http.Request, v *peerView
 
 // peerTaskboardSlugs are the board's peer grants; any of them in a group
 // lets the peer read that group's board.
-var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage}
+var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardTransfer}
 
 // peerTaskboardImpliedGates: a peer that writes, assigns on or manages a
 // group's board also reads it, so the board's read gate opens to those

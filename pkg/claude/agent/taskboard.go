@@ -40,6 +40,7 @@ func taskboardCmd() *cobra.Command {
 			taskboardAskCmd(),
 			taskboardEditCmd(),
 			taskboardMoveCmd(),
+			taskboardMoveToGroupCmd(),
 			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
 			taskboardStageCmd("demote", "idea", "Demote a queued task to the top of the ideas"),
 			taskboardBlockCmd(),
@@ -1038,6 +1039,84 @@ func runTaskboardMove(p *taskboardMoveParams, stdout, stderr io.Writer) int {
 	}
 	req := map[string]any{"top": p.Top, "bottom": p.Bottom, "before": p.Before, "after": p.After}
 	return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/move"), req, p.AskHuman, p.JSON, "moved", stdout, stderr)
+}
+
+// ---- move-to-group ----
+
+type taskboardMoveToGroupParams struct {
+	Task     string `pos:"true" help:"Task id (tk_…)"`
+	Group    string `pos:"true" help:"Group to move the task to, on this node"`
+	Clone    bool   `long:"clone" help:"Clone it instead: a new task with the same title, brief and ref; the original stays"`
+	Stage    string `long:"stage" optional:"true" help:"Where it lands: idea (the default) or next"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON     bool   `long:"json" help:"Output JSON"`
+}
+
+// taskboardTransfer is POST /v1/taskboard/tasks/{id}/move-to-group's answer.
+type taskboardTransfer struct {
+	Task              taskboardTask `json:"task"`
+	Group             string        `json:"group"`
+	From              string        `json:"from"`
+	Clone             bool          `json:"clone"`
+	DroppedDeps       []string      `json:"dropped_deps,omitempty"`
+	DroppedDependents []string      `json:"dropped_dependents,omitempty"`
+	Unassigned        string        `json:"unassigned,omitempty"`
+}
+
+func taskboardMoveToGroupCmd() *cobra.Command {
+	return boa.CmdT[taskboardMoveToGroupParams]{
+		Use:   "move-to-group",
+		Short: "Move or clone a task to another group's board",
+		Long: "Move a task to another group's board on this node, or with --clone copy its title, brief and ref there.\n\n" +
+			"A move keeps the task and its history. Its dependencies are dropped (they never cross groups), an assignee " +
+			"who is not a member of the new group is unassigned, and anything but a done task lands open. A clone has no " +
+			"assignee and no dependencies.\n\n" +
+			"Needs taskboard.transfer on the target group (its owners have it). A move also needs taskboard.write on the " +
+			"source when you hold the task, taskboard.manage there otherwise; a clone needs taskboard.read on the source.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardMoveToGroupParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardMoveToGroupParams, _ *cobra.Command, _ []string) {
+			taskboardExit(runTaskboardMoveToGroup(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runTaskboardMoveToGroup(p *taskboardMoveToGroupParams, stdout, stderr io.Writer) int {
+	if p.Stage != "" && p.Stage != "idea" && p.Stage != "next" {
+		fmt.Fprintln(stderr, "Error: --stage is idea or next")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	req := map[string]any{"group": p.Group, "clone": p.Clone, "stage": p.Stage}
+	var out taskboardTransfer
+	if err := remoteRequestOpts("", http.MethodPost, taskboardPath(p.Task, "/move-to-group"), req, &out, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return writeJSONTo(stdout, out)
+	}
+	if out.Clone {
+		fmt.Fprintf(stdout, "cloned %s to %s as %s: %s  [%s]\n", p.Task, out.Group, out.Task.ID, out.Task.Title, out.Task.Stage)
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "moved %s from %s to %s: %s  [%s, %s]\n", out.Task.ID, out.From, out.Group, out.Task.Title, out.Task.Stage, out.Task.Status)
+	if dropped := append(append([]string{}, out.DroppedDeps...), out.DroppedDependents...); len(dropped) > 0 {
+		fmt.Fprintf(stdout, "  dependencies dropped: %s\n", strings.Join(dropped, " "))
+	}
+	if out.Unassigned != "" {
+		fmt.Fprintf(stdout, "  unassigned %s (not a member of %s)\n", out.Unassigned, out.Group)
+	}
+	return rcOK
 }
 
 type taskboardTaskParams struct {

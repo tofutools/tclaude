@@ -787,6 +787,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Assign a task on a group's task board to another agent, take it back, and close a task assigned to someone else (tclaude agent taskboard assign/unassign/done). The assignee must be an active member of the task's group. Scope with group=<name> and target_agent=<agent|@descendants>. Conferred by ownership of the group, not by membership; never default-granted. Taking and releasing your own task is self.taskboard.",
 	},
 	{
+		Slug: PermTaskboardTransfer, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Move or clone a task from another group's board into this group's board (tclaude agent taskboard move-to-group). Scope with group=<name>, the target group. A move also needs taskboard.write on the source group when the caller holds the task, taskboard.manage there otherwise; a clone needs taskboard.read on the source. Conferred by ownership of the target group, not by membership; never default-granted. The operator's dashboard drag needs no grant.",
+	},
+	{
 		Slug: PermTaskboardManage, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
 		Description: "Manage a group's task board as a whole: its writer lock (tclaude agent groups set-taskboard-writers). Scope with group=<name>. Conferred by ownership of the group, not by membership; never default-granted.",
 	},

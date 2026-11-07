@@ -175,6 +175,9 @@ type NewGroupTask struct {
 	// Imported records the task's first event as imported (a ref import)
 	// rather than created.
 	Imported bool
+	// Origin, when set, is added to the first event's detail (a clone names
+	// the task it was cloned from).
+	Origin string
 }
 
 type taskTx interface {
@@ -405,6 +408,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	detail := "in " + stage
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
+	}
+	if in.Origin != "" {
+		detail += ", " + in.Origin
 	}
 	kind := GroupTaskEventCreated
 	if in.Imported {
