@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -46,6 +47,22 @@ type groupResource struct {
 	// Locked is the lock against agent changes (group_resource_locks.go), for
 	// the Collab panel's and tab strip's lock icon.
 	Locked bool `json:"locked,omitempty"`
+	// CreatedAt and LastAt are the Resources table's Age and Last (RFC3339,
+	// empty when unknown): a drawing board's creation and last save, a page's
+	// first show (or saved row) and last show or close, a pinned process's
+	// pin and its latest active run's update, a shell's tmux session start
+	// and last activity.
+	CreatedAt string `json:"created_at,omitempty"`
+	LastAt    string `json:"last_at,omitempty"`
+}
+
+// resourceTime renders a resource timestamp for the snapshot: RFC3339 in
+// UTC, "" for the zero time.
+func resourceTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // groupResourcesSnapshot lists the resources of every active group, and the
@@ -86,6 +103,7 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 		out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateRunning, Session: session, Detail: g.DefaultCwd})
 	}
 	out = append(out, agentShellResources(active, alive)...)
+	addShellTimes(out)
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))
 	})
@@ -194,12 +212,31 @@ func agentShellTitle(agent, which string) string {
 // groupPageResources are the live pages shared in a group (running) and the
 // saved ones no stage serves (closed).
 func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
+	rows, err := db.ListGroupPages()
+	if err != nil {
+		slog.Warn("group resources: saved pages unavailable", "error", err)
+	}
+	saved := make(map[string]*db.GroupPage, len(rows))
+	for _, row := range rows {
+		saved[row.ID] = row
+	}
 	var out []groupResource
 	live := map[string]bool{}
 	for _, p := range livePages.list("") {
 		livePages.mu.Lock()
 		r := groupResource{Kind: resourceKindPage, ID: p.id, GroupID: p.groupID, Title: p.title, State: resourceStateRunning, Owner: p.owner, Locked: p.agentsLocked}
+		created, last := p.shownAt, p.updated
 		livePages.mu.Unlock()
+		if last.IsZero() {
+			last = created
+		}
+		// A page saved with its group is as old as its row: a reopen shows
+		// it afresh, but it is no younger for that. The row is written just
+		// after the first show, so the earlier of the two is its age.
+		if row := saved[r.ID]; row != nil && !row.CreatedAt.IsZero() && (created.IsZero() || row.CreatedAt.Before(created)) {
+			created = row.CreatedAt
+		}
+		r.CreatedAt, r.LastAt = resourceTime(created), resourceTime(last)
 		live[r.ID] = true
 		if active[r.GroupID] == nil || !pageOwnerInGroup(r.Owner, r.GroupID) {
 			continue
@@ -209,19 +246,18 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 		}
 		out = append(out, r)
 	}
-	rows, err := db.ListGroupPages()
-	if err != nil {
-		slog.Warn("group resources: saved pages unavailable", "error", err)
-		return out
-	}
 	for _, row := range rows {
 		// A saved page lists even after its shower left the group, so the
 		// operator can still delete it (a reopen there answers not_member).
 		if live[row.ID] || active[row.GroupID] == nil {
 			continue
 		}
+		last := row.ClosedAt
+		if last.IsZero() {
+			last = row.UpdatedAt
+		}
 		r := groupResource{Kind: resourceKindPage, ID: row.ID, GroupID: row.GroupID, Title: row.Title, State: resourceStateClosed,
-			Owner: row.Owner, Detail: row.ClosedReason, Locked: row.AgentsLocked}
+			Owner: row.Owner, Detail: row.ClosedReason, Locked: row.AgentsLocked, CreatedAt: resourceTime(row.CreatedAt), LastAt: resourceTime(last)}
 		if isGroupPageOwner(r.Owner) {
 			r.Owner = ""
 		}
@@ -252,7 +288,8 @@ func groupDrawingBoardResources(active map[int64]*db.AgentGroup) []groupResource
 		if active[groupID] == nil {
 			groupID = 0
 		}
-		r := groupResource{Kind: resourceKindDrawingBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed}
+		r := groupResource{Kind: resourceKindDrawingBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed,
+			CreatedAt: resourceTime(b.CreatedAt), LastAt: resourceTime(b.UpdatedAt)}
 		if r.Title == "" {
 			r.Title = b.ID
 		}
@@ -274,9 +311,14 @@ func groupProcessResources(active map[int64]*db.AgentGroup) []groupResource {
 	if err != nil {
 		slog.Warn("group resources: process pins unavailable", "error", err)
 	}
+	pinnedAt, err := db.ListAllProcessGroupPinTimes()
+	if err != nil {
+		slog.Warn("group resources: process pin times unavailable", "error", err)
+	}
 	var out []groupResource
 	for groupID := range active {
 		running := map[string]int{}
+		lastRun := map[string]time.Time{}
 		var order []string
 		runs, err := db.ListActiveGroupProcessRunSummaries(groupID, db.MaxProcessRunReadPage)
 		if err != nil {
@@ -291,6 +333,9 @@ func groupProcessResources(active map[int64]*db.AgentGroup) []groupResource {
 				order = append(order, id)
 			}
 			running[id]++
+			if run.UpdatedAt.After(lastRun[id]) {
+				lastRun[id] = run.UpdatedAt
+			}
 		}
 		seen := map[string]bool{}
 		add := func(id string, pinned bool) {
@@ -298,7 +343,11 @@ func groupProcessResources(active map[int64]*db.AgentGroup) []groupResource {
 				return
 			}
 			seen[id] = true
-			r := groupResource{Kind: resourceKindProcess, ID: id, GroupID: groupID, Title: id, State: resourceStateClosed, Pinned: pinned}
+			r := groupResource{Kind: resourceKindProcess, ID: id, GroupID: groupID, Title: id, State: resourceStateClosed, Pinned: pinned,
+				LastAt: resourceTime(lastRun[id])}
+			if pinned {
+				r.CreatedAt = resourceTime(pinnedAt[groupID][id])
+			}
 			if n := running[id]; n > 0 {
 				r.State, r.Detail = resourceStateRunning, pluralCount(n, "running")
 			}

@@ -57,13 +57,13 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   assert.equal(primary(drawingBoard), 'Focus');
   assert.equal(drawingBoard.tagName, 'TR', 'a resource is a table row, like an agent');
   const cells = (el) => [...el.children].map((td) => td.textContent.trim());
-  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.childNodes[0]?.textContent || ''), ['', 'Name', 'State', 'Kind', 'Lock', 'Detail'],
-    'Name, then State, in the agents table\'s order');
-  assert.deepEqual([...container.querySelectorAll('thead th[data-sort-table="resources"]')].map((th) => th.dataset.sortCol), ['name', 'state', 'kind', 'lock', 'detail'],
+  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.childNodes[0]?.textContent || ''), ['', 'Name', 'State', 'Last', 'Age', 'Kind', 'Lock', 'Detail'],
+    'Name, State, Last and Age, in the agents table\'s order');
+  assert.deepEqual([...container.querySelectorAll('thead th[data-sort-table="resources"]')].map((th) => th.dataset.sortCol), ['name', 'state', 'last', 'age', 'kind', 'lock', 'detail'],
     'every titled header sorts, as an agent header does');
   assert.equal(cells(drawingBoard)[1], '▦Plan');
-  assert.equal(cells(drawingBoard)[3], 'drawing board', 'a drawing board is a drawing board');
-  assert.equal(drawingBoard.children[4].querySelector('[data-resource-lock]').dataset.resourceLock, 'drawing_board:plan', 'the lock has its own column');
+  assert.equal(cells(drawingBoard)[5], 'drawing board', 'a drawing board is a drawing board');
+  assert.equal(drawingBoard.children[6].querySelector('[data-resource-lock]').dataset.resourceLock, 'drawing_board:plan', 'the lock has its own column');
   assert.ok(drawingBoard.firstElementChild.querySelector('.gr-light'), 'the light opens the row, like an agent\'s');
   assert.deepEqual([...drawingBoard.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
     ['eye', 'trash', 'cog'], 'the same buttons in the same order on every row');
@@ -204,7 +204,7 @@ test('＋ hands each process item its scope, and processesOnly lists just those 
   assert.deepEqual(scopes, ['agent', 'group']);
 });
 
-test('Resources sorts by its headers, across kinds, and lines Name and State up with the agents table', async (t) => {
+test('Resources sorts by its headers, across kinds, and lines Name, State, Last and Age up with the agents table', async (t) => {
   const harness = await createPreactHarness(t);
   const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
   const group = { id: 7, name: 'crew' };
@@ -221,22 +221,30 @@ test('Resources sorts by its headers, across kinds, and lines Name and State up 
   assert.deepEqual(names(container), ['Alpha', 'Group shell', 'Middle', 'Zeta'], 'sorted by name across every kind');
   assert.ok(container.querySelector('th[data-sort-col="name"]').classList.contains('sort-active'));
 
-  // Alignment: the controls column reaches the agents' Name, and Name the
-  // agents' State.
+  // Alignment: the controls column reaches the agents' Name, Name the
+  // agents' State, State their Last (past a Process column between them),
+  // Last their Age, and Age is as wide as theirs.
   const doc = harness.document;
   const card = doc.body.appendChild(doc.createElement('div'));
   card.innerHTML = '<div data-fused-section="agents"><table class="pending"><thead><tr><th data-sort-col="name"></th></tr></thead></table>'
-    + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th></tr></thead></table></div>'
+    + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th><th></th><th data-sort-col="last"></th><th data-sort-col="age"></th><th data-sort-col="cwd"></th></tr></thead></table></div>'
     + '<div data-fused-section="processes"><table class="gr-rtable"></table></div>';
-  const rect = (left) => () => ({ left, right: left, top: 0, bottom: 0, width: 0, height: 0 });
+  const rect = (left, width = 0) => () => ({ left, right: left + width, top: 0, bottom: 0, width, height: 0 });
   const title = card.querySelector('th[data-sort-col="title"]');
   const state = card.querySelector('th[data-sort-col="state"]');
   card.querySelector('th[data-sort-col="name"]').getBoundingClientRect = rect(70);
   const table = card.querySelector('.gr-rtable');
   title.getBoundingClientRect = rect(280);
   state.getBoundingClientRect = rect(445);
+  const last = card.querySelector('th[data-sort-col="last"]');
+  const age = card.querySelector('th[data-sort-col="age"]');
+  last.getBoundingClientRect = rect(640, 80);
+  age.getBoundingClientRect = rect(720, 90);
   table.getBoundingClientRect = rect(70);
-  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165 }, 'the members table, past a pending-spawns table before it');
+  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165, state: 195, last: 80, age: 90 }, 'the members table, past a pending-spawns table before it');
+  last.remove();
+  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165, state: 0, last: 0, age: 90 },
+    'with Last hidden, State keeps its fallback width rather than reach to Age');
   card.querySelector('[data-fused-section="agents"]').remove();
   assert.equal(mod.agentColumns(table), null, 'no agents table, nothing to line up with');
 });
@@ -277,4 +285,39 @@ test('a click on a drawing board\'s or page\'s name renames it, as an agent\'s d
   assert.equal(calls.length, 0, 'Escape renames nothing');
   const again = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
   assert.equal(again.ownerDocument.activeElement, again, 'focus returns to the name');
+});
+
+// Last and Age come from the snapshot's group_resources (last_at,
+// created_at), render as the agents table's do, and sort as instants.
+test('Resources: Last and Age render from the snapshot and sort chronologically', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
+  const group = { id: 7, name: 'crew' };
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const old = ago(3 * 86400000);
+  // Written in +01:00, Mid's text reads later than Young's though it is
+  // older: it must sort by its instant, not its text.
+  const mid = new Date(Date.now() - 30 * 60000);
+  const midOffset = new Date(mid.getTime() + 3600000).toISOString().replace(/\.\d+Z$/, '+01:00');
+  const snapshot = { value: { group_resources: [
+    { kind: 'drawing_board', id: 'old', group_id: 7, title: 'Old', state: 'closed', created_at: old, last_at: ago(5 * 60000) },
+    { kind: 'drawing_board', id: 'young', group_id: 7, title: 'Young', state: 'closed', created_at: ago(30000), last_at: ago(30000) },
+    { kind: 'page', id: 'pg', group_id: 7, title: 'Mid', state: 'running', created_at: midOffset },
+    { kind: 'shell', id: 'crew', group_id: 7, title: 'Group shell', state: 'running', session: 's' },
+  ] } };
+  const drawingBoards = [{ id: 'young', title: 'Young' }, { id: 'old', title: 'Old' }];
+  const pages = [{ id: 'pg', name: 'mid', title: 'Mid', owner: 'agt_x', kind: 'port', state: 'open' }];
+  sort.cycleSort('resources', 'age');
+  t.after(() => { sort.cycleSort('resources', 'age'); sort.cycleSort('resources', 'age'); });
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group} drawingBoards=${drawingBoards} pages=${pages}
+    api=${{ setResourceLock: async () => ({}) }} snapshot=${snapshot} nameOf=${() => ''} />`);
+  const timeCells = (sel) => [...container.querySelector(sel).querySelectorAll('td.gr-timecell')];
+  const [last, age] = timeCells('[data-resource-drawing-board="old"]');
+  assert.equal(last.textContent.trim(), '5m ago');
+  assert.equal(age.textContent.trim(), '3d ago');
+  assert.equal(age.querySelector('.last-hook').title, old, 'Age carries the raw timestamp, as an agent\'s does');
+  assert.deepEqual(timeCells('[data-resource-page="pg"]').map((td) => td.textContent.trim()), ['', '30m ago'], 'no last: blank');
+  assert.deepEqual(timeCells('[data-resource-shell="crew"]').map((td) => td.textContent.trim()), ['', ''], 'no times: blank');
+  const names = () => [...container.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('.gr-name').textContent.slice(1));
+  assert.deepEqual(names(), ['Old', 'Mid', 'Young', 'Group shell'], 'sorted by Age, oldest first, by instant not text; no age sorts last');
 });

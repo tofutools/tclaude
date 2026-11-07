@@ -18553,11 +18553,15 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
    groups-resources.js): fixed column widths, so the processes' table above
    the runs and the other resources' table below them line up. */
 .gr-rtable { table-layout: fixed; width: 100%; margin: 2px 0 6px; }
-/* The controls and Name columns take the agents table's widths above them
-   (useAgentAlignment sets the variables), so Name and State line up. */
+/* The controls, Name, State, Last and Age columns take the agents table's
+   widths above them (useAgentAlignment sets the variables), so Name, State,
+   Last and Age line up. */
 .gr-rtable .gr-col-ctl { width: var(--gr-ctl-w, 128px); }
 .gr-rtable .gr-col-name { width: var(--gr-name-w, 30%); }
-.gr-rtable .gr-col-state { width: 112px; }
+.gr-rtable .gr-col-state { width: var(--gr-state-w, 112px); }
+.gr-rtable .gr-col-last { width: var(--gr-last-w, 72px); }
+.gr-rtable .gr-col-age { width: var(--gr-age-w, 72px); }
+.gr-rtable td.gr-timecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gr-rtable .gr-col-kind { width: 104px; }
 .gr-rtable .gr-col-lock { width: 150px; }
 .gr-rtable td { vertical-align: middle; }
