@@ -148,7 +148,7 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.ok(cell('agt_builder', 'ideas').classList.contains('tb-cell-striped'));
   assert.match(c.querySelector('[data-lane-agent="agt_lead"]').textContent, /idle · owner/);
   assert.match(c.querySelector('[data-lane-agent="agt_lead"]').textContent, /holds 1/);
-  assert.match(c.querySelector('.tb-card[data-task-id="tk_00000006"]').textContent, /idle 9m, no report/);
+  assert.match(c.querySelector('.tb-card[data-task-id="tk_00000006"]').textContent, /idle, no report/);
 
   const fold = c.querySelector('.tb-lane-fold');
   await harness.act(async () => { harness.fireEvent(fold, 'click'); });

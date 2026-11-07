@@ -197,21 +197,37 @@ function Who({ task, group, snapshot }) {
   </span>`;
 }
 
-function StatePill({ task, byId }) {
+// STATE_MEANING is what a state means, for a pill whose tooltip has nothing
+// more to say.
+const STATE_MEANING = {
+  open: 'next in the queue', idea: 'captured, not yet in the queue', queued: 'waits on other tasks',
+  'in-progress': 'an agent holds it', stalled: 'its agent went idle without reporting', blocked: 'waits on something outside the board',
+  done: 'finished', dropped: 'dropped without being done',
+};
+
+// StatePill is a task's state as one word, as the Agents table's state pill
+// is: the pill says what the state is, and its tooltip (title and
+// aria-label on a focusable wrap) has what else there is to know: who holds
+// it, why it is blocked, what it waits on, or else what the state means.
+// No times: the Last and Age columns carry them.
+function StatePill({ task, byId, assignee = '' }) {
   const state = taskRowState(task);
-  let text = STATE_LABELS[state];
-  if (state === 'in-progress' && task.assigned_at) text = `in progress · ${relTime(task.assigned_at).replace(/ ago$/, '')}`;
-  if (state === 'stalled' && task.idle_since) text = `stalled · idle ${relTime(task.idle_since).replace(/ ago$/, '')}`;
+  const word = STATE_LABELS[state];
+  const details = [];
+  if (state === 'in-progress' || state === 'stalled') {
+    const who = task.assignee?.name || assignee || task.assignee?.agent_id || '';
+    if (who) details.push(`with ${who}`);
+    if (state === 'stalled') details.push('idle, no report');
+  }
   if (state === 'queued') {
-    const waits = (task.unmet || []).map((dep) => taskLabel(dep, byId, 20));
-    if (waits.length) text = `queued · waits on ${waits.join(', ')}`;
+    const waits = (task.unmet || []).map((dep) => byId?.get(dep)?.title || dep);
+    if (waits.length) details.push(`waits on ${waits.map((w) => `“${w}”`).join(', ')}`);
   }
-  if (state === 'idea' && task.created_at) text = `idea · ${relTime(task.created_at)}`;
-  if (state === 'done' || state === 'dropped') {
-    const when = relTime(task.closed_at);
-    if (when) text = `${text} · ${when}`;
-  }
-  return html`<span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`}>${text}</span>`;
+  if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason}”`);
+  const title = `${word} · ${details.length ? details.join(' · ') : STATE_MEANING[state]}`;
+  return html`<span class="tb-state-wrap" tabindex="0" title=${title} aria-label=${`state: ${title}`}>
+    <span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`} aria-hidden="true">${word}</span>
+  </span>`;
 }
 
 // useBoardActions runs a write and then re-reads the board, also after a
@@ -401,7 +417,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
     </td>
-    <td><${StatePill} task=${task} byId=${byId} /></td>
+    <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
