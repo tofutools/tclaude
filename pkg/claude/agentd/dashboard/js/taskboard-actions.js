@@ -196,6 +196,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (files.length) return post(path, { to, prompt }, files);
       return call('POST', path, { to, prompt });
     },
+    // task reads one task in full (`show`): the board's context leaves the
+    // brief out.
+    task(id) {
+      return call('GET', taskPath(id));
+    },
     // attach adds files to a task (`attach`); detach removes one by id.
     attach(id, files) {
       return post(taskPath(id, '/attachments'), null, files);

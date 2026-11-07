@@ -204,3 +204,30 @@ test('a screenshot pasted into the New task form goes with the add', async (t) =
   assert.equal(fields.files.length, 1);
   assert.equal(fields.files[0], shot);
 });
+
+test('the board context has no brief: the form reads the task in full', async (t) => {
+  // From the context: no body.
+  const listed = task({ body: undefined });
+  const api = fakeApi();
+  api.task = async (id) => { api.calls.push(['task', id]); return { ...listed, body: 'the real brief' }; };
+  const { harness, dialog, save } = await mountEdit(t, listed, { api });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(dialog.querySelector('.tb-edit-body').value, 'the real brief', 'the brief is read in full');
+  await harness.input(dialog.querySelector('.tb-edit-title'), 'Release 2.4 notes');
+  await save();
+  assert.deepEqual(api.calls, [['task', 'tk_00000001'], ['edit', 'tk_00000001', { title: 'Release 2.4 notes' }]],
+    'an unchanged brief is not sent');
+});
+
+test('a brief the form could not read is left as it is', async (t) => {
+  const listed = task({ body: undefined });
+  const failing = fakeApi();
+  failing.task = async () => { throw new Error('offline'); };
+  const other = await mountEdit(t, listed, { api: failing });
+  await other.harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(other.dialog.querySelector('.tb-edit-body').disabled, true);
+  assert.match(other.dialog.textContent, /the brief could not be read/);
+  await other.harness.input(other.dialog.querySelector('.tb-edit-title'), 'renamed');
+  await other.save();
+  assert.deepEqual(failing.calls, [['edit', 'tk_00000001', { title: 'renamed' }]], 'the brief is left as it is');
+});

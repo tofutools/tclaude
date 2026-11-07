@@ -15,7 +15,7 @@
 // the form then stays open and names what was not saved.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Input, Select, Textarea } from './ui-components.js';
@@ -89,12 +89,14 @@ export function missingOf(draft) {
 // the task must be (to be queued, or to take a new assignee), the assignee
 // taken off, the stage, the new assignee, and last the block or the close,
 // so a task assigned and closed in one Save is closed by its assignee.
-export function editPlan(task, draft, { add = [], remove = [] } = {}) {
+export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true } = {}) {
   const steps = [];
   const change = {};
   const names = [];
   if (draft.title.trim() !== task.title) { change.title = draft.title.trim(); names.push('title'); }
-  if (draft.body.trim() !== (task.body || '').trim()) { change.body = draft.body.trim(); names.push('brief'); }
+  // The brief is compared only once the task has been read in full (the
+  // board's context leaves it out): never overwrite one the form has not seen.
+  if (bodyKnown && draft.body.trim() !== (task.body || '').trim()) { change.body = draft.body.trim(); names.push('brief'); }
   const ref = draft.ref.trim();
   if (ref !== (task.ref?.url || task.ref?.label || '')) {
     if (ref) change.ref = ref;
@@ -208,8 +210,26 @@ function whereHint(draft, task) {
 // onSaved runs after a Save (also a partial one), to read the board again.
 export function EditTaskDialog({ group, entry, task, api, canAssign = false, canClose = true, members = [], wizard = false,
   nameOf = (actor) => actor, onClose, onSaved = () => {} }) {
-  const start = draftOf(task);
+  // The board's context carries no brief: the form reads the task in full,
+  // and the brief field waits for it.
+  const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
+  const base = brief.state === 'ready' ? { ...task, body: brief.body } : task;
+  const start = draftOf(base);
   const [draft, setDraft] = useState(start);
+  useEffect(() => {
+    if (brief.state !== 'loading' || typeof api?.task !== 'function') {
+      if (brief.state === 'loading') setBrief({ state: 'failed', body: '' });
+      return undefined;
+    }
+    let live = true;
+    api.task(task.id).then((full) => {
+      if (!live) return;
+      const body = full?.body || '';
+      setBrief({ state: 'ready', body });
+      setDraft((current) => ({ ...current, body }));
+    }).catch(() => { if (live) setBrief({ state: 'failed', body: '' }); });
+    return () => { live = false; };
+  }, [task.id]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState([]);
@@ -222,7 +242,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const tasks = entry?.tasks || [];
   const n = tasks.findIndex((t) => t.id === task.id) + 1;
-  const steps = editPlan(task, draft, { add: pending.map((p) => p.file), remove: removed });
+  const steps = editPlan(base, draft, { add: pending.map((p) => p.file), remove: removed, bodyKnown: brief.state === 'ready' });
   const missing = missingOf(draft);
   const dirty = steps.length > 0;
   const save = async () => {
@@ -271,8 +291,9 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('Title', html`<${Input} class="tb-edit-title" aria-label="Title" required maxLength=${200} value=${draft.title} disabled=${busy}
       domRef=${titleRef} onInput=${(event) => set('title')(event.currentTarget.value)}
       onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void save(); } }} />`)}
-    ${row('Brief', html`<${Textarea} class="tb-edit-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
-      placeholder="what the assignee needs to know" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}
+    ${row('Brief', html`<${Textarea} class="tb-edit-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy || brief.state !== 'ready'}
+      placeholder=${brief.state === 'loading' ? 'reading the brief…' : 'what the assignee needs to know'} onInput=${(event) => set('body')(event.currentTarget.value)} />`,
+      brief.state === 'failed' ? 'the brief could not be read, so Save leaves it as it is' : null)}
     ${row('Ref', html`<${Input} class="tb-edit-ref" aria-label="Ref" value=${draft.ref} disabled=${busy}
       placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
       draft.ref.trim() && draft.ref.trim() !== start.ref ? 'a bare awb or Linear id is linked through its tracker' : null)}
