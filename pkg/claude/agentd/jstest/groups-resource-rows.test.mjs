@@ -40,7 +40,7 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
     api=${api} notify=${notify} confirm=${confirm} snapshot=${snapshot} nameOf=${() => 'builder'} />`);
   const row = (sel) => container.querySelector(sel);
   const state = (el) => el.querySelector('[data-resource-state]').dataset.resourceState;
-  const primary = (el) => el.querySelector('.gr-primary').textContent;
+  const primary = (el) => el.querySelector('.gr-primary').dataset.resourcePrimary;
 
   const live = row('[data-resource-page="pg_live"]');
   assert.equal(state(live), 'background', 'a live page open nowhere here runs in the background');
@@ -55,18 +55,26 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   const board = row('[data-resource-board="plan"]');
   assert.equal(state(board), 'open-tab', 'a board in the Collab strip is open here');
   assert.equal(primary(board), 'Focus');
-  assert.equal(board.lastElementChild.dataset.resourceLock, 'board:plan', 'the lock stays at the row end');
+  assert.equal(board.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'board:plan', 'the lock ends the row\'s actions');
+  assert.ok(board.firstElementChild.classList.contains('gr-acts'), 'the actions come first, like the agents table');
+  assert.deepEqual([...board.querySelector('.gr-acts').children].map((el) => el.className.split(' ').find((c) => c.startsWith('gr-light') || c === 'row-actions') || el.dataset.resourceLock),
+    ['gr-light', 'row-actions', 'board:plan'], 'like the agents table: the light, the buttons, then the lock');
+  assert.deepEqual([...board.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
+    ['eye', 'trash', 'cog'], 'the same buttons in the same order on every row');
+  const shellRow = row('[data-resource-shell="crew"]');
+  assert.deepEqual([...shellRow.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
+    ['eye', 'trash', 'cog'], 'a shell has the same buttons');
   const shell = row('[data-resource-shell="crew"]');
   assert.equal(state(shell), 'background');
   assert.equal(primary(shell), 'Attach');
 
+  await harness.act(() => harness.fireEvent(live.querySelector('.gr-cog'), 'click'));
   await harness.act(async () => { harness.fireEvent(live.querySelector('[data-page-reload]'), 'click'); await wait(); });
   assert.deepEqual(calls.at(-1), ['reload', 'pg_live']);
   await harness.act(async () => { harness.fireEvent(shut.querySelector('.gr-primary'), 'click'); await wait(); });
   assert.deepEqual(calls.at(-1), ['reopen', 'pg_shut']);
 
-  await harness.act(() => harness.fireEvent(live.querySelector('.gr-more'), 'click'));
-  await harness.act(async () => { harness.fireEvent(live.querySelector('[data-page-delete]'), 'click'); await wait(); await wait(); });
+  await harness.act(async () => { harness.fireEvent(live.querySelector('[data-page-trash]'), 'click'); await wait(); await wait(); });
   assert.deepEqual(confirms, ['Delete page App?']);
   assert.deepEqual(calls.at(-1), ['delete', 'pg_live']);
 
@@ -75,10 +83,16 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   assert.equal(state(row('[data-resource-board="plan"]')), 'closed');
   assert.equal(primary(row('[data-resource-board="plan"]')), 'Open');
 
-  // A shell open here is attached: no kill, only Focus.
+  // A shell open here can still be killed: × ends its session, attached or not.
   await harness.act(() => { places.stripPaneKeys.value = ['groupterm:crew']; });
   assert.equal(state(row('[data-resource-shell="crew"]')), 'open-tab');
-  assert.equal(row('[data-shell-kill]'), null, 'an attached shell is not killed from here');
+  const posted = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { posted.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({}) }; };
+  t.after(() => { globalThis.fetch = realFetch; });
+  await harness.act(async () => { harness.fireEvent(row('[data-shell-kill="crew"]'), 'click'); await wait(); await wait(); });
+  assert.equal(confirms.at(-1), 'Kill crew shell?');
+  assert.deepEqual(posted.find(([url]) => url === '/api/shells/kill'), ['/api/shells/kill', { tmux_session: 'tclaude-groupterm-abc' }]);
 });
 
 test('a process pill reads its own group\'s entry: one template pinned in two groups', async (t) => {
@@ -138,7 +152,7 @@ test('⋯ renames a row in place and moves it to another group', async (t) => {
   const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group}
     boards=${[{ id: 'plan', title: 'Plan' }]} pages=${[{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' }]}
     api=${api} notify=${(msg) => notes.push(msg)} confirm=${async () => true} snapshot=${snapshot} />`);
-  const menuOf = (row) => harness.act(async () => { harness.fireEvent(row.querySelector('.gr-more'), 'click'); await wait(); });
+  const menuOf = (row) => harness.act(async () => { harness.fireEvent(row.querySelector('.gr-cog'), 'click'); await wait(); });
   const pick = (sel) => harness.act(async () => { harness.fireEvent(container.querySelector(sel), 'click'); await wait(); await wait(); });
 
   const page = container.querySelector('[data-resource-page="pg_live"]');

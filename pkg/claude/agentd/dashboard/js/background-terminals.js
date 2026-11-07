@@ -329,3 +329,27 @@ export async function attachAllBackgroundTerminals(rows, snapshotValue, {
   }
   return opened;
 }
+
+// killShell ends one of this node's tclaude shells (a group's, or one in an
+// agent's directory) whether or not a client is attached: the Resources
+// row's ×. A pane showing it sees its session end. Resolves to '' on success
+// or the server's error text.
+export async function killShell(tmuxSession, {
+  fetchImpl = globalThis.__tclaudeRemoteNode?.localFetch || ((...args) => fetch(...args)),
+} = {}) {
+  try {
+    const response = await fetchImpl('/api/shells/kill', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tmux_session: tmuxSession }),
+    });
+    if (response.ok) return '';
+    const body = await response.json().catch(() => null);
+    return body?.error || `kill failed (${response.status})`;
+  } catch (error) {
+    return String(error?.message || error);
+  } finally {
+    refreshBackgroundTerminals();
+  }
+}
