@@ -74,6 +74,8 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermGroupsMembersProcess:            "member_process",
 	PermProcessRunsStart:                "process_runs_start",
 	PermProcessAdvance:                  "process_advance",
+	PermTaskboardRead:                   "taskboard_read",
+	PermTaskboardWrite:                  "taskboard_write",
 	PermGroupsMessagesSchedule:          "messages_schedule",
 	PermGroupsMembersSchedule:           "member_schedule",
 	PermGroupsTriggersRead:              "triggers_read",

@@ -34,7 +34,9 @@ const (
 	PermSelfTaskboard   = "self.taskboard"
 )
 
-const peerTaskboardWhy = "the federation read path of a group's task board is a later slice; until then a peer does not reach it"
+// peerTaskboardManageWhy: the board's writer lock and retention have no route
+// yet; a peer grant for them arrives with the slice that adds them.
+const peerTaskboardManageWhy = "the board's writer lock and retention have no route yet; a peer grant for them arrives with that slice"
 
 const (
 	maxTaskTitleBytes = 200
@@ -95,8 +97,12 @@ func requireTaskboard(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 	return ok
 }
 
-// taskboardActor names the caller in a task's history.
+// taskboardActor names the caller in a task's history. A linked node's
+// change is recorded as its own, never as this node's operator's.
 func taskboardActor(r *http.Request) string {
+	if a := peerGrantFromRequest(r); a != nil {
+		return "peer: " + a.author
+	}
 	if conv := confirmedAgentConv(r); conv != "" {
 		if id, err := db.AgentIDForConv(conv); err == nil && id != "" {
 			return "agent:" + id

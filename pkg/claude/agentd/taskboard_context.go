@@ -220,7 +220,9 @@ var dashboardTaskboardRoutes = []struct {
 	pattern string
 	handler http.HandlerFunc
 }{
+	{"GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList)},
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
+	{"GET /v1/taskboard/tasks/{id}", handleTaskboardTask(false, handleTaskboardShow)},
 	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(false, handleTaskboardEvents)},
 	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(true, handleTaskboardEdit)},
 	{"POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(true, handleTaskboardMove)},

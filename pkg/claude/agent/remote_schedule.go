@@ -30,12 +30,18 @@ func remotePath(remote, path string) string {
 // values, and put on one line before it is decoded into out; its errors
 // are stripped too.
 func remoteRequest(remote, method, path string, body, out any) error {
+	return remoteRequestOpts(remote, method, path, body, out, DaemonOpts{})
+}
+
+// remoteRequestOpts is remoteRequest with daemon options (--ask-human, a
+// longer timeout).
+func remoteRequestOpts(remote, method, path string, body, out any, opts DaemonOpts) error {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
-		return DaemonRequest(method, path, body, out, DaemonOpts{})
+		return DaemonRequest(method, path, body, out, opts)
 	}
 	var raw any
-	if err := DaemonRequest(method, remotePath(remote, path), body, &raw, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(method, remotePath(remote, path), body, &raw, opts); err != nil {
 		if clean := proto.StripControls(err.Error()); clean != err.Error() {
 			return fmt.Errorf("%s", clean)
 		}

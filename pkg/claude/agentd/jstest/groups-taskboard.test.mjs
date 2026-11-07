@@ -117,7 +117,7 @@ test('a quiet board starts folded; the wizard calls it the Quest board', async (
   document.body.classList.remove('wizard');
 });
 
-test('the feature off, a hidden group or a peer group draws nothing', async (t) => {
+test('the feature off or a hidden group draws nothing', async (t) => {
   const harness = await createPreactHarness(t);
   const off = await mountSection(harness, { group: crew('tb-off'), context: { error: 'feature_disabled' }, status: 404, withChip: true });
   assert.equal(off.container.querySelector('[data-fused-taskboard]'), null);
@@ -128,10 +128,35 @@ test('the feature off, a hidden group or a peer group draws nothing', async (t) 
   assert.equal(hidden.container.querySelector('[data-fused-taskboard]'), null);
   assert.equal(hidden.container.querySelector('[data-taskboard-chip]'), null);
 
+});
+
+test('a linked node\'s group reads its board from that node, read-only without taskboard.write', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection, TaskboardSummaryChip, peerWrites }, { createTaskboardContextSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/taskboard-context.js'),
+  ]);
+  const local = fetchWith({ groups: [] });
+  const remote = fetchWith({ groups: [board('tb-peer')] });
+  const asked = [];
+  const boards = (node) => { asked.push(node); return { source: remoteSource, api: { capture: async () => ({}) } }; };
+  const remoteSource = createTaskboardContextSource({ fetchImpl: remote.fetchImpl });
   const peer = { ...crew('tb-peer'), fleet_node: { id: 'inst_forge', name: 'forge', local: false } };
-  const remote = await mountSection(harness, { group: peer, context: { groups: [board('tb-peer')] }, withChip: true });
-  assert.equal(remote.container.querySelector('[data-fused-taskboard]'), null);
-  assert.equal(remote.container.querySelector('[data-taskboard-chip]'), null);
+  const mounted = await harness.mount(harness.html`<div>
+    <${TaskboardSummaryChip} group=${peer} source=${createTaskboardContextSource({ fetchImpl: local.fetchImpl })} boards=${boards} />
+    <${TaskboardSection} group=${peer} snapshot=${{ groups: [peer] }} boards=${boards} />
+  </div>`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(asked.every((node) => node === 'inst_forge') && asked.length > 0, 'the board is read from the group\'s node');
+  assert.deepEqual(local.calls, [], 'this node\'s context is not read for a peer group');
+  assert.ok(mounted.container.querySelector('[data-fused-taskboard="tb-peer"]'), 'the peer group draws its board');
+  assert.ok(mounted.container.querySelector('[data-taskboard-chip="tb-peer"]'));
+  assert.equal(mounted.container.querySelector('.tb-import-open'), null, 'no peer view with taskboard.write: read-only');
+
+  assert.equal(peerWrites(null, 'crew'), false);
+  assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.read'] } }, 'crew'), false);
+  assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.write'] } }, 'crew'), true);
+  assert.equal(peerWrites({ level: 'unrestricted' }, 'crew'), true);
 });
 
 test('while the feature is off the source looks again only now and then', async (t) => {

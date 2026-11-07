@@ -326,6 +326,10 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			out["health"] = resources.Status
 		}
 	}
+	// The task boards it reads, summed, for the fleet map card.
+	if counts := peerSummaryTaskboardCounts(v); counts != nil {
+		out["taskboard"] = counts
+	}
 	// Revalidate every request so trust and grants cannot remain usable in a
 	// browser cache after revocation. The ETag is over the authorized response.
 	w.Header().Set("Cache-Control", "private, no-cache")

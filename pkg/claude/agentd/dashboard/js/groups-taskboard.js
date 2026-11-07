@@ -13,8 +13,10 @@
 //
 // Data comes from GET /v1/taskboard/context (taskboard-context.js). While
 // features.taskboard is off, or for a group this viewer cannot read, nothing
-// is drawn. A peer's group draws nothing either: the federation read path is
-// a later slice.
+// is drawn. A linked node's group (the fused view, or a peer's page) is read
+// from that node through its peer view, under the taskboard.read /
+// taskboard.write grants it gave this node; its actions show only under
+// taskboard.write (or unrestricted trust).
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
@@ -23,17 +25,56 @@ import { relTime } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
-import { captureLines, importRefs, isTrackerLine, taskboardApi } from './taskboard-actions.js';
+import { captureLines, createTaskboardApi, importRefs, isTrackerLine, taskboardApi } from './taskboard-actions.js';
+import { nodeFetch, nodeSnapshot, onPeerPage } from './node-api.js';
+import { dashboardState } from './snapshot-store.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import {
-  actorAgentId, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText, useTaskboardEntry,
+  actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
+  useTaskboardEntry,
 } from './taskboard-context.js';
 
 const html = htm.bind(h);
 
-function localGroup(group) {
-  return !group?.fleet_node || !!group.fleet_node.local;
+// A linked node's boards are read and changed through that node's peer
+// view: one context source (with its own snapshot-poll subscription) and one
+// write client per node, built on first use.
+const nodeBoards = new Map();
+
+export function nodeTaskboard(node) {
+  let board = nodeBoards.get(node);
+  if (!board) {
+    // A node id this page cannot address reads as a board that is off.
+    let fetchImpl;
+    try { fetchImpl = nodeFetch(node); } catch (_) { fetchImpl = async () => ({ ok: false, status: 404, json: async () => null }); }
+    board = { source: createTaskboardContextSource({ fetchImpl }), api: createTaskboardApi({ fetchImpl }) };
+    nodeBoards.set(node, board);
+  }
+  return board;
+}
+
+// peerWrites reports whether a linked node's view lets this node change the
+// group's board: unrestricted trust, or its taskboard.write grant there.
+export function peerWrites(peerView, groupName) {
+  if (!peerView) return false;
+  if (peerView.level === 'unrestricted') return true;
+  const held = peerView.groups?.[groupName];
+  return Array.isArray(held) && held.includes('taskboard.write');
+}
+
+// boardOf picks the source and write client for group: this node's own, or
+// the linked node's it lives on (api null where its grants allow no writes).
+function boardOf(group, source, api, boards) {
+  const node = group?.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
+  if (node) {
+    const board = boards(node);
+    return { source: board.source, api: peerWrites(nodeSnapshot(node)?.peer_view, group.name) ? board.api : null };
+  }
+  if (onPeerPage()) {
+    return { source, api: api && peerWrites(dashboardState.snapshot.value?.peer_view, group.name) ? api : null };
+  }
+  return { source, api };
 }
 
 // agentLabel names an agent from the snapshot: the group's own members
@@ -498,7 +539,8 @@ function ViewSelector({ group }) {
 // counts; it opens on its own when something needs the operator, until they
 // fold or open it themselves (remembered per group). `api` is the writes'
 // client; null draws the read-only list.
-export function TaskboardSection({ group, snapshot, source = taskboardContext, api = taskboardApi }) {
+export function TaskboardSection({ group, snapshot, source: ownSource = taskboardContext, api: ownApi = taskboardApi, boards = nodeTaskboard }) {
+  const { source, api } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   const [importing, setImporting] = useState(false);
@@ -507,7 +549,7 @@ export function TaskboardSection({ group, snapshot, source = taskboardContext, a
   // task never folds it under a form or the capture box in use. The
   // operator's own fold or open is remembered and wins as before.
   const autoOpened = useRef(false);
-  if (!entry || !localGroup(group)) return null;
+  if (!entry) return null;
   const wizard = isWizardActive();
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
@@ -532,9 +574,10 @@ function TaskboardCounts({ counts }) {
 
 // TaskboardSummaryChip carries the counts on the group's summary line, so a
 // folded group still says what is on its board. Nothing when it is empty.
-export function TaskboardSummaryChip({ group, source = taskboardContext }) {
+export function TaskboardSummaryChip({ group, source: ownSource = taskboardContext, boards = nodeTaskboard }) {
+  const { source } = boardOf(group, ownSource, null, boards);
   const entry = useTaskboardEntry(group.name, source);
-  if (!entry || !localGroup(group) || !entry.counts?.live) return null;
+  if (!entry || !entry.counts?.live) return null;
   const parts = taskboardCountParts(entry.counts);
   const wizard = isWizardActive();
   return html`<span class="group-taskboard-chip" data-taskboard-chip=${group.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts)}`}>
