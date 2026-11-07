@@ -107,8 +107,8 @@ export function sortResourceRows(rows) {
 // head shows the header row (only on the first of the two); its headers sort.
 export function ResourceTable({ head = true, attrs = {}, children }) {
   const active = tableSortState(RESOURCE_SORT, RESOURCE_COLS);
-  return html`<table class="gr-rtable" ...${attrs}>
-    <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`gr-col-${c.key}`} />`)}</colgroup>
+  return html`<table class="gr-rtable ui-table-auto" ...${attrs}>
+    <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`${c.key === 'detail' ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />`)}</colgroup>
     ${head && html`<thead><tr>${RESOURCE_COLS.map((c) => (c.col
     ? html`<${SortTh} key=${c.key} active=${active?.col === c.col} dir=${active?.dir} data-sort-table=${RESOURCE_SORT} data-sort-col=${c.col} sortLabel=${c.label}>${c.label}<//>`
     : html`<th key=${c.key}></th>`))}</tr></thead>`}

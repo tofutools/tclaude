@@ -412,7 +412,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
     <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle"
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
-    <td class="tb-title-cell"><div class="tb-title-box">
+    <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
@@ -434,7 +434,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
 // Agents table's order and look, then the board's own Who, Ref, Deps and
 // Files. Each is as wide as its content (dashboard.css .tb-table); Name takes
 // the rest. The Ideas band and history are rows of the same table.
-const COLUMNS = html`<colgroup><col class="tb-col-ctl" /><col class="tb-col-name" /><col class="tb-col-state" /><col class="tb-col-last" /><col class="tb-col-age" /><col class="tb-col-who" /><col class="tb-col-ref" /><col class="tb-col-deps" /><col class="tb-col-files" /></colgroup>`;
+const COLUMNS = html`<colgroup>${['ctl', 'name', 'state', 'last', 'age', 'who', 'ref', 'deps'].map((key) => html`<col key=${key} class=${`ui-col-fit tb-col-${key}`} />`)}<col class="ui-col-rest tb-col-files" /></colgroup>`;
 const TABLE_COLS = 9;
 
 const TASK_DRAG_TYPE = 'application/x-tclaude-task';
@@ -703,7 +703,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
-  const table = tasks.length ? html`<table class="tb-table" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+  const table = tasks.length ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>

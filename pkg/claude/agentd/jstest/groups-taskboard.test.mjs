@@ -222,17 +222,27 @@ test('a stalled assignment shows amber and says its agent went idle', async (t) 
   assert.match(state.closest('.tb-state-wrap').getAttribute('title'), /^stalled · with .* · idle, no report$/);
 });
 
-test('the list packs its columns left: Name is content-sized between a minimum and a maximum, never the column that takes the rest', async () => {
+test('the list packs its columns left: Name is content-sized between a minimum and a maximum, never the column that takes the rest', async (t) => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
-  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] || '';
-  const box = rule('.tb-title-box');
-  assert.match(box, /max-width:\s*30em/, 'a hard maximum: a longer title wraps within it');
-  assert.match(box, /min-width:\s*12em/);
-  assert.match(box, /width:\s*max-content/, 'otherwise as wide as the title');
-  assert.doesNotMatch(box, /nowrap|ellipsis/, 'a long title wraps, never ellipsizes');
-  const shrunk = css.match(/([^{}]*)\{\s*width:\s*1%;\s*\}/g)?.find((r) => r.includes('.tb-col-name')) || '';
-  assert.ok(shrunk.includes('.tb-col-name'), 'Name shrinks to its content like the other columns');
-  assert.ok(!shrunk.includes('.tb-col-files'), 'Files, the last, takes the spare width');
-  assert.doesNotMatch(rule('.gr-rtable .gr-col-name'), /%/, 'a Resources Name is not a share of the row either');
+  const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const ui = read('../dashboard/ui.css');
+  const css = read('../dashboard/dashboard.css');
+  const rule = (src, sel) => src.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] || '';
+  // The shared convention (ui.css): a fitted column shrinks to its content,
+  // a fitted cell sits between its minimum and maximum and wraps past it.
+  assert.match(rule(ui, 'table.ui-table-auto > colgroup > col.ui-col-fit'), /width:\s*1%/);
+  const fit = rule(ui, '.ui-fit');
+  assert.match(fit, /max-width:\s*var\(--ui-fit-max/);
+  assert.match(fit, /width:\s*max-content/);
+  assert.doesNotMatch(fit, /nowrap|ellipsis/, 'past the maximum, text wraps');
+  assert.match(rule(css, '.tb-title-box'), /--ui-fit-min:\s*12em;\s*--ui-fit-max:\s*30em/, 'Name: 12em to 30em');
+  // The task list uses it: Name is fitted, and only Files takes the rest.
+  const harness = await createPreactHarness(t);
+  const group = crew('tb-cols');
+  const { container } = await mountSection(harness, { group, context: { groups: [board('tb-cols')] } });
+  const table = container.querySelector('table.tb-table');
+  assert.ok(table.classList.contains('ui-table-auto'));
+  const cols = [...table.querySelectorAll('colgroup col')];
+  assert.deepEqual(cols.filter((c) => !c.classList.contains('ui-col-fit')).map((c) => c.className), ['ui-col-rest tb-col-files']);
+  assert.ok(table.querySelector('td.tb-title-cell > .ui-fit.tb-title-box'), 'the title sits in a fitted box');
 });
