@@ -9,7 +9,7 @@ import { ConversationSearchPanel } from './conversation-search.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import {
-  GroupsFocusSwitch, effectiveGroupsFocus, focusRun, useGroupsFocusRestore,
+  RunKindFilter, focusRun, groupsShowRuns, useGroupsFocusRestore,
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
@@ -124,7 +124,6 @@ export function GroupsControls({ state, actions }) {
         onClick=${() => { state.contentSearchOpen.value = !state.contentSearchOpen.value; }}
       >${wizard ? '📜 search scrolls' : '📜 search conversations'}<//>
     `}
-    <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
     <${ViewMenu}
       open=${state.viewOpen.value}
@@ -161,6 +160,7 @@ export function GroupsControls({ state, actions }) {
           ><${ColumnLabel} column=${column} /><//>
         `)}
       </div>
+      <${RunKindFilter} state=${state} wizard=${wizard} />
     <//>
   `;
 }
@@ -237,29 +237,26 @@ export function useGroupsHover(host, groups) {
   return hoveredGroupKey;
 }
 
-// GroupsLensList is the Groups listing through the chosen lens: the one
-// groups tree, framed by the Processes or Both lens when one is chosen. One
-// node's Groups view and the fused Groups view both render it, from their
-// own groups, snapshot and actions; `rosters` are the groups as the run
-// context names them (see groups-process-scope.js).
+// GroupsLensList is the Groups listing: the one groups tree, framed so each
+// group card shows its sections (Agents, Processes, ...) wherever processes
+// are available, else the bare tree of member tables. One node's Groups view
+// and the fused Groups view both render it, from their own groups, snapshot
+// and actions; `rosters` are the groups as the run context names them (see
+// groups-process-scope.js).
 export function GroupsLensList({
   state, groups, rosters, snapshot, actions, triggers = [], hoveredGroupKey = null, processSource = undefined, wizard,
-  focus = effectiveGroupsFocus(state),
+  showRuns = groupsShowRuns(state),
 }) {
-  // Every lens renders the same groups tree; Processes frames it and swaps
-  // each group's member details for its runs, Both frames it and shows the
-  // two as sections of each group.
   const tree = html`<${GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${actions}
     triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
-  if (focus === 'agents') return tree;
+  if (!showRuns) return tree;
   return html`<${GroupsProcessesFocus} groups=${groups} allGroups=${rosters} wizard=${wizard}
-    filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
+    filter=${state.processFilter.value} source=${processSource} fused
     focusedRun=${state.focusedRun.value} onFocusRun=${(run, options) => focusRun(state, run, options)}>${tree}<//>`;
 }
 
 export function GroupsList({ host, state, actions, processSource = undefined }) {
   const wizard = useWizardTheme();
-  const focus = effectiveGroupsFocus(state);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
   const triggersEnabled = triggersAvailable(state.snapshot.value);
@@ -284,8 +281,8 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   useGroupsTableControls(host, state, actions);
   const hoveredGroupKey = useGroupsHover(host, current.groups);
 
-  // Both lenses read the process context: Processes for its cards, Agents for
-  // the G1 header chips and row badges. One fetch per snapshot poll.
+  // The process context feeds the Processes sections and the G1 header chips
+  // and row badges. One fetch per snapshot poll.
   const processesEnabled = processesAvailable(state.snapshot.value);
   useEffect(() => {
     if (!processesEnabled) return undefined;
@@ -305,12 +302,6 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     state.rerender();
   }, [processesEnabled]);
 
-  // The drag-and-drop hints and member-table chrome belong to the Agents lens.
-  useEffect(() => {
-    document.body.classList.toggle('groups-focus-processes', focus === 'processes');
-    return () => document.body.classList.remove('groups-focus-processes');
-  }, [focus]);
-
   // While fused this list is hidden and the fused Groups view
   // (fleet-merged-island.js) shows the standing-orders dialog and the runs:
   // one copy only, so a process start handed to a group (takeProcessStart)
@@ -322,7 +313,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     `}
     <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
       actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard}
-      focus=${state.listed.value ? 'agents' : focus} />
+      showRuns=${!state.listed.value && groupsShowRuns(state)} />
     ${state.standingOrdersDialog.value && !state.standingOrdersDialog.value.node && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}

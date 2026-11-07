@@ -4,7 +4,6 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
 import { Tabs } from './ui-tabs.js';
-import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 import { isLoopbackDashboard } from './helpers.js';
 import { remoteNodeID } from './fleet-model.js';
 import { hostRoutePreviewURL } from './groups-route-preview.js';
@@ -243,10 +242,9 @@ export function GroupsRouteMap({ state }) {
   };
   const changeSubview = (next) => {
     state.setSubview(next);
-    // Members shows whichever Agents | Processes lens is remembered.
     const location = next === 'routes'
       ? routesLocation('', state.routeGroup.value, state.routeView.value)
-      : groupsFocusLocation(effectiveGroupsFocus(state));
+      : { tab: 'groups' };
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
   };
   const selectGroup = (key) => {

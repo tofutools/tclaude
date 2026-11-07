@@ -498,7 +498,7 @@ for an agent is `--agent`.
   planned runs, and the optional Process column (turn it on under **▾ view**)
   shows a *run › node* badge on each member row for every run the agent works
   in (amber when parked on a human gate, dashed when queued).
-- **Groups › Processes** — each group's runs as live graph cards with the
+- **Groups, a group's Processes section** — each group's runs as live graph cards with the
   agents on the nodes they perform, needs-you first. *open ›* focuses one run:
   the live graph, a docked inspector (approve or request changes on a human
   gate, the node's history), the group's agents as a performer dock, and the

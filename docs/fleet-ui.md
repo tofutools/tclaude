@@ -283,7 +283,7 @@ with. CLI: `tclaude federation access request --node <peer> --permission <slug>
 
 In a fused view, Groups lists every group on the ticked nodes, named
 `group@node` with the node's colour on the suffix. It is the same Groups view
-under the same toolbar: the filter, the Both / Agents / Processes lens, and
+under the same toolbar: the filter and
 **▾ view** (offline members, columns, and the virtual groups) apply to every
 node's groups, and the filter counts them all. The virtual groups (Ungrouped,
 Retired, Conversations, Replaced generations) show per node, named

@@ -850,10 +850,12 @@ function findFocusGroup(focusedRun, rosters, groups) {
 // GroupsProcessesFocus frames the Processes perspective: the load states, and
 // either the single-run focus or `children` -- the shared groups tree --
 // under the ProcessesPerspective it reads. The run filter itself is the
-// checklist on the toolbar's Processes button (groups-focus.js).
+// checklist in the toolbar's ▾ view menu (groups-focus.js RunKindFilter).
 //
-// `fused` frames Both the same way, except that the tree never waits on the
-// run context: until it is ready the tree shows as in Agents.
+// `fused` is how the Groups tab frames it: each group card shows its
+// sections, and the tree never waits on the run context (until it is ready
+// it shows the member tables). Unfused, the run graphs replace each group's
+// member details; the Groups tab no longer offers that lens.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = DEFAULT_RUN_FILTER, wizard = false, source = processContext, api = processRunApi,
   focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false, confirm = undefined,
