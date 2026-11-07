@@ -135,6 +135,11 @@ func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCur
 		return out, fmt.Errorf("list group ownerships: %w", err)
 	}
 
+	// Unassign the agent's live tasks as retired before the memberships go,
+	// so their history says why rather than "assignee left the group".
+	if err := unassignAgentGroupTasksTx(tx, agentID, "system:retire", "assignee retired", time.Now()); err != nil {
+		return out, fmt.Errorf("unassign tasks: %w", err)
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_group_owners WHERE agent_id = ?`, agentID); err != nil {
 		return out, fmt.Errorf("unjoin group ownerships: %w", err)
 	}
