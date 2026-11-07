@@ -38,15 +38,25 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   transfer.transferDeps.toast = (text) => toasts.push(text);
   t.after(() => Object.assign(transfer.transferDeps, saved));
   const calls = [];
+  const remote = [];
+  let awayFails = 0;
+  transfer.transferDeps.nodeApi = async (node) => ({
+    transferIn: async (...args) => { remote.push([node, 'transferIn', ...args]); return { id: 'tk_000000aa' }; },
+  });
   const api = {
     moveToGroup: async (...args) => { calls.push(args); return { task: { id: args[0] }, group: args[1], dropped_dependents: ['tk_00000002'] }; },
+    movedAway: async (...args) => {
+      calls.push(['movedAway', ...args]);
+      if (awayFails > 0) { awayFails--; throw new Error('node offline'); }
+      return { id: args[0], status: 'dropped' };
+    },
     move: async () => ({}), assign: async () => ({}), status: async () => ({}), stage: async () => ({}),
   };
   const source = { context: harness.signals.signal({ groups: [board('tbt-a', [1, 2]), board('tbt-b', [3, 4])] }),
     status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const card = (name, node = '') => {
     const group = { name, members: members() };
-    return harness.html`<details open data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined}>
+    return harness.html`<details open data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined} data-fleet-node-name=${node ? 'other' : undefined}>
       <summary>${name}</summary>
       <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />
     </details>`;
@@ -63,7 +73,8 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   };
   const section = (name) => c.querySelector(`[data-fused-taskboard="${name}"]`);
   const summary = (name) => c.querySelector(`details[data-group-key="${name}"] > summary`);
-  return { harness, c, calls, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; }, transfer };
+  return { harness, c, calls, remote, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; },
+    failAway: (n) => { awayFails = n; }, transfer };
 }
 
 test('a task dropped on another group\'s board moves there after the confirmation', async (t) => {
@@ -118,15 +129,55 @@ test('a drop on another group\'s Next cell lands it in next', async (t) => {
   assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: false, stage: 'next' }]]);
 });
 
-test('its own board, a virtual group and a group on another node are not targets', async (t) => {
-  const { calls, c, dt, start, over, drop, summary } = await mountTwo(t, { otherNode: 'nd_other' });
+test('its own board and a virtual group are not targets', async (t) => {
+  const { calls, c, dt, start, over, drop, summary } = await mountTwo(t);
   const data = dt();
   await start('tk_00000001', data);
   assert.equal(over(summary('tbt-a'), data).defaultPrevented, false, 'its own group');
-  assert.equal(over(c.querySelector('details[data-group-key="virtual:ungrouped"] > summary'), data).defaultPrevented, false, 'a virtual group');
-  assert.equal(over(summary('tbt-b'), data).defaultPrevented, false, 'another node: a separate step');
-  await drop(summary('tbt-b'), data);
+  const virtual = c.querySelector('details[data-group-key="virtual:ungrouped"] > summary');
+  assert.equal(over(virtual, data).defaultPrevented, false, 'a virtual group');
+  await drop(virtual, data);
   assert.deepEqual(calls, []);
+});
+
+test('a drop on a group on another node creates it there first, then drops the original', async (t) => {
+  const { calls, remote, confirms, toasts, dt, start, over, drop, summary } = await mountTwo(t, { otherNode: 'nd_other' });
+  const data = dt();
+  await start('tk_00000001', data);
+  assert.equal(over(summary('tbt-b'), data).defaultPrevented, true, 'another node\'s group takes it');
+  await drop(summary('tbt-b'), data);
+  assert.equal(confirms[0].title, 'Move task to another node?');
+  assert.match(confirms[0].body, /created there in Ideas.*only then closed here as dropped \("moved to other\/tbt-b"\)/);
+  assert.deepEqual(remote, [['nd_other', 'transferIn', 'tbt-b', { title: 'tbt-a first', body: '', ref: '', refLabel: '',
+    stage: 'idea', clone: false, origin: { node: '', group: 'tbt-a', task: 'tk_00000001' } }]], 'the target node creates it');
+  assert.deepEqual(calls, [['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
+    'then the source drops it, naming the new task');
+  assert.match(toasts[0], /Moved "tbt-a first" to tbt-b on other/);
+});
+
+test('a clone to another node only creates; a failed drop is retried once, then warns of both copies', async (t) => {
+  const { calls, remote, toasts, dt, start, drop, summary, failAway } = await mountTwo(t, { otherNode: 'nd_other' });
+  let data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data, { ctrlKey: true });
+  assert.equal(remote.length, 1);
+  assert.equal(remote[0][3].clone, true);
+  assert.deepEqual(calls, [], 'a clone leaves the original alone');
+
+  failAway(1);
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.length, 2, 'one retry');
+  assert.match(toasts.at(-1), /Moved/);
+
+  failAway(2);
+  calls.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.length, 2);
+  assert.match(toasts.at(-1), /could not be closed here \(node offline\): both copies are live, drop this one by hand/);
 });
 
 test('the confirmation says what a move keeps and undoes', async (t) => {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // A group's task board over federation (tcl-0jgecz, docs/taskboard.md): a
@@ -81,11 +82,33 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 // history and an assignment's brief name it rather than this operator.
 type taskboardPeerAuthorKey struct{}
 
+// taskboardPeerIDKey carries the linked node's instance id alongside it.
+type taskboardPeerIDKey struct{}
+
 // peerTaskboardAsLocal is an unrestricted peer's request as this node's
 // operator, its author attached.
 func peerTaskboardAsLocal(r *http.Request, v *peerView) *http.Request {
 	local := peerAsLocalRequest(r)
-	return local.WithContext(context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID)))
+	ctx := context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID))
+	return local.WithContext(context.WithValue(ctx, taskboardPeerIDKey{}, v.peer.InstanceID))
+}
+
+// taskboardPeerNode names the linked node behind a request as this node
+// lists it, or "" for a local caller.
+func taskboardPeerNode(r *http.Request) string {
+	id := ""
+	if a := peerGrantFromRequest(r); a != nil {
+		id = a.peer
+	} else {
+		id, _ = r.Context().Value(taskboardPeerIDKey{}).(string)
+	}
+	if id == "" {
+		return ""
+	}
+	if p, err := db.GetFederationPeer(id); err == nil && p != nil {
+		return proto.SafeName(peerDisplay(p), false)
+	}
+	return id
 }
 
 // taskboardPeerAuthor names the linked node behind a request, or "" for a

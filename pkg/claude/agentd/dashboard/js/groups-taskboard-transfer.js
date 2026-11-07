@@ -8,8 +8,14 @@
 //
 // A drop on a lanes cell in Next lands the task in next; anywhere else it
 // lands in the ideas. The drag is the operator's, so nothing gates it here
-// but the route. A group on another node is not a target yet: a move across
-// nodes is a separate step.
+// but the routes.
+//
+// In the fleet view a group on another node is a target too (this node's or
+// a linked one's, either way round): the task is created there first
+// (transfer-in, on the target node), and only once that node has it is the
+// original dropped with a "moved to node/group" note (moved-away, on its own
+// node). A failed create changes nothing; a failed drop is retried once,
+// then left as a warning that names both copies, never a silent duplicate.
 
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
@@ -21,6 +27,8 @@ const OVER = 'tb-transfer-over';
 export const transferDeps = {
   confirm: async (options) => (await import('./refresh.js')).confirmModal(options),
   toast: (text, error) => shellToast(text, error),
+  // nodeApi is the write client for the boards of a node (by instance id).
+  nodeApi: async (node) => (await import('./groups-taskboard.js')).nodeTaskboard(node).api,
 };
 
 // cloneGesture is the Groups view's clone modifier: Ctrl or Cmd held, or a
@@ -40,14 +48,15 @@ function realGroupBox(el) {
 // ownName is a group's name on its own node: the fused view lists a linked
 // node's group as name@node.
 function ownName(shown, box) {
-  const node = box?.dataset.fleetNodeName;
+  const node = box?.getAttribute('data-fleet-node-name');
   const at = node ? `@${node}` : '';
   return at && shown.endsWith(at) ? shown.slice(0, -at.length) : shown;
 }
 
 // transferTarget is where a drag over el would move a task from the board
 // shown as `fromShown` (in box `fromBox`): another group's Task board
-// section or header row on the same node, or null.
+// section or header row, or null. node and nodeName name the target's node,
+// and cross says it is not the source's.
 export function transferTarget(el, fromShown, fromBox) {
   const section = el?.closest?.('[data-fused-taskboard]');
   let box;
@@ -65,10 +74,13 @@ export function transferTarget(el, fromShown, fromBox) {
     into = summary;
   }
   if (!shown || shown === fromShown) return null;
-  // Same node only: both boxes name the same node, or neither does.
-  if ((box?.dataset.fleetNode || '') !== (fromBox?.dataset.fleetNode || '')) return null;
+  const node = box?.getAttribute('data-fleet-node') || '';
+  const cross = node !== (fromBox?.getAttribute('data-fleet-node') || '');
   const column = section ? el.closest?.('.tb-cell')?.dataset.column : '';
-  return { el: into, shown, group: ownName(shown, box), stage: column === 'next' ? 'next' : 'idea' };
+  return {
+    el: into, shown, group: ownName(shown, box), stage: column === 'next' ? 'next' : 'idea',
+    node, nodeName: box?.getAttribute('data-fleet-node-name') || '', cross,
+  };
 }
 
 function clearOver(state) {
@@ -85,6 +97,28 @@ function stageLabel(stage) {
 function targetMembers(name) {
   const group = (dashboardState.snapshot.value?.groups || []).find((g) => g.name === name);
   return group?.members || [];
+}
+
+// crossMessage is the confirmation's text for a move (or clone) to a group
+// on another node.
+export function crossMessage({ task, from, fromNode, to, toNode, stage, clone }) {
+  const title = task.title || task.id;
+  const there = `group "${to}" on ${toNode}`;
+  if (clone) {
+    return {
+      title: 'Clone task to another node?',
+      body: `Clone "${title}" into ${there} as a new task in ${stageLabel(stage)}, with the same title, brief and ref. `
+        + `The original stays in "${from}"${fromNode ? ` on ${fromNode}` : ''}.`,
+      okLabel: 'Clone',
+    };
+  }
+  return {
+    title: 'Move task to another node?',
+    body: `Move "${title}" to ${there}: it is created there in ${stageLabel(stage)}, with the same title, brief and ref `
+      + `and a note where it came from, and only then closed here as dropped ("moved to ${toNode}/${to}"). `
+      + 'Its history, assignee and dependencies stay behind; an assignee is told.',
+    okLabel: 'Move',
+  };
 }
 
 // transferMessage is the confirmation's text for moving (or cloning) task
@@ -149,7 +183,12 @@ export function listenForTransfer({ task, group, tasks = [], actions, onDrop = (
     const clone = cloneGesture(event);
     off();
     onDrop();
-    void runTransfer({ task, group, tasks, actions, to: hit.group, stage: hit.stage, clone });
+    if (hit.cross) {
+      void runCrossTransfer({ task, group, actions, to: hit.group, node: hit.node, nodeName: hit.nodeName,
+        fromNodeName: fromBox()?.getAttribute('data-fleet-node-name') || '', stage: hit.stage, clone });
+    } else {
+      void runTransfer({ task, group, tasks, actions, to: hit.group, stage: hit.stage, clone });
+    }
   };
   document.addEventListener('dragover', onOver, true);
   document.addEventListener('drop', onDropEvent, true);
@@ -171,5 +210,40 @@ export async function runTransfer({ task, group, tasks = [], actions, to, stage,
   if (dropped) notes.push(`${dropped} dependenc${dropped === 1 ? 'y' : 'ies'} dropped`);
   transferDeps.toast(notes.length ? `${done} (${notes.join(', ')})` : done, false);
   markLanded({ group: to, node: group.fleet_node?.id || '', section: 'taskboard' });
+  return out;
+}
+
+// runCrossTransfer asks, then moves or clones the task to group `to` on
+// node `node`: create there first, then drop the original here.
+export async function runCrossTransfer({ task, group, actions, to, node, nodeName, fromNodeName = '', stage, clone }) {
+  const toNode = nodeName || node;
+  const text = crossMessage({ task, from: group.name, fromNode: fromNodeName, to, toNode, stage, clone });
+  const ok = await transferDeps.confirm({ ...text, meta: task.title || task.id });
+  if (!ok) return null;
+  const target = await transferDeps.nodeApi(node);
+  let warning = '';
+  const out = await actions.run(`${task.id}:transfer`, clone ? 'Clone' : 'Move', async (api) => {
+    const created = await target.transferIn(to, {
+      title: task.title, body: task.body || '', ref: task.ref?.url || task.ref?.label || '',
+      refLabel: task.ref?.url ? (task.ref?.label || '') : '', stage, clone,
+      origin: { node: fromNodeName, group: group.name, task: task.id },
+    });
+    if (clone) return { created };
+    const away = { node: toNode, group: to, task: created?.id || '' };
+    let last;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { await api.movedAway(task.id, away); return { created }; } catch (cause) { last = cause; }
+    }
+    warning = `Moved "${task.title}" to ${toNode}/${to} as ${created?.id || 'a new task'}, but the original `
+      + `${task.id} could not be closed here (${last?.message || last}): both copies are live, drop this one by hand.`;
+    return { created, warning };
+  });
+  if (!out || out === true) return null;
+  if (warning) {
+    transferDeps.toast(warning, true);
+  } else {
+    transferDeps.toast(clone ? `Cloned "${task.title}" into ${to} on ${toNode}` : `Moved "${task.title}" to ${to} on ${toNode}`, false);
+  }
+  markLanded({ group: to, node, section: 'taskboard' });
   return out;
 }

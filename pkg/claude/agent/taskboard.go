@@ -1045,7 +1045,7 @@ func runTaskboardMove(p *taskboardMoveParams, stdout, stderr io.Writer) int {
 
 type taskboardMoveToGroupParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
-	Group    string `pos:"true" help:"Group to move the task to, on this node"`
+	Group    string `pos:"true" help:"Group to move the task to: a group on this node, or group@peer for one on a linked node"`
 	Clone    bool   `long:"clone" help:"Clone it instead: a new task with the same title, brief and ref; the original stays"`
 	Stage    string `long:"stage" optional:"true" help:"Where it lands: idea (the default) or next"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
@@ -1067,12 +1067,16 @@ func taskboardMoveToGroupCmd() *cobra.Command {
 	return boa.CmdT[taskboardMoveToGroupParams]{
 		Use:   "move-to-group",
 		Short: "Move or clone a task to another group's board",
-		Long: "Move a task to another group's board on this node, or with --clone copy its title, brief and ref there.\n\n" +
+		Long: "Move a task to another group's board, on this node or a linked one, or with --clone copy its title, brief and ref there.\n\n" +
 			"A move keeps the task and its history. Its dependencies are dropped (they never cross groups), an assignee " +
 			"who is not a member of the new group is unassigned, and anything but a done task lands open. A clone has no " +
 			"assignee and no dependencies.\n\n" +
 			"Needs taskboard.transfer on the target group (its owners have it). A move also needs taskboard.write on the " +
-			"source when you hold the task, taskboard.manage there otherwise; a clone needs taskboard.read on the source.",
+			"source when you hold the task, taskboard.manage there otherwise; a clone needs taskboard.read on the source.\n\n" +
+			"GROUP@PEER moves it to a linked node's group, under the taskboard.transfer grant that node gave this one: the " +
+			"task is created there first (title, brief and ref, with a note where it came from), and only then dropped here " +
+			"with a \"moved to PEER/GROUP\" note. Its history, assignee and dependencies stay behind. If the create fails " +
+			"nothing changes; if the drop fails it is retried once, then reported, with both copies live.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardMoveToGroupParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -1096,6 +1100,9 @@ func runTaskboardMoveToGroup(p *taskboardMoveToGroupParams, stdout, stderr io.Wr
 	if rc != rcOK {
 		return rc
 	}
+	if group, peer, ok := strings.Cut(p.Group, "@"); ok {
+		return runTaskboardMoveToPeer(p, strings.TrimSpace(group), strings.TrimSpace(peer), ask, stdout, stderr)
+	}
 	req := map[string]any{"group": p.Group, "clone": p.Clone, "stage": p.Stage}
 	var out taskboardTransfer
 	if err := remoteRequestOpts("", http.MethodPost, taskboardPath(p.Task, "/move-to-group"), req, &out, DaemonOpts{AskHuman: ask}); err != nil {
@@ -1116,6 +1123,66 @@ func runTaskboardMoveToGroup(p *taskboardMoveToGroupParams, stdout, stderr io.Wr
 	if out.Unassigned != "" {
 		fmt.Fprintf(stdout, "  unassigned %s (not a member of %s)\n", out.Unassigned, out.Group)
 	}
+	return rcOK
+}
+
+// runTaskboardMoveToPeer moves or clones a task of this node to group on
+// linked node peer: create there (transfer-in), then drop it here
+// (moved-away).
+func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, ask time.Duration, stdout, stderr io.Writer) int {
+	if group == "" || peer == "" {
+		fmt.Fprintln(stderr, "Error: give the target as group@peer")
+		return rcInvalidArg
+	}
+	var t taskboardTask
+	if err := remoteRequest("", http.MethodGet, taskboardPath(p.Task, ""), nil, &t); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	stage := p.Stage
+	if stage == "" {
+		stage = "idea"
+	}
+	in := map[string]any{"title": t.Title, "body": t.Body, "stage": stage, "clone": p.Clone,
+		"origin": map[string]any{"group": t.Group, "task": t.ID}}
+	if t.Ref != nil {
+		if t.Ref.URL != "" {
+			in["ref"], in["ref_label"] = t.Ref.URL, t.Ref.Label
+		} else {
+			in["ref"] = t.Ref.Label
+		}
+	}
+	var created taskboardTask
+	path := "/v1/groups/" + url.PathEscape(group) + "/taskboard/transfer-in"
+	if err := remoteRequestOpts(peer, http.MethodPost, path, in, &created, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %s on %s did not take it, nothing changed: %v\n", group, peer, err)
+		return MapDaemonErrorToRC(err)
+	}
+	out := map[string]any{"task": t.ID, "created": created, "group": group, "peer": peer, "clone": p.Clone}
+	if p.Clone {
+		if p.JSON {
+			return writeJSONTo(stdout, out)
+		}
+		fmt.Fprintf(stdout, "cloned %s to %s on %s as %s: %s  [%s]\n", t.ID, group, peer, created.ID, created.Title, created.Stage)
+		return rcOK
+	}
+	away := map[string]any{"to": map[string]any{"node": peer, "group": group, "task": created.ID}}
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err = remoteRequestOpts("", http.MethodPost, taskboardPath(t.ID, "/moved-away"), away, nil, DaemonOpts{AskHuman: ask}); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: created %s on %s/%s, but could not drop %s here: %v\n"+
+			"Both copies are live; drop this one with: tclaude agent taskboard drop %s --reason \"moved to %s/%s\"\n",
+			created.ID, peer, group, t.ID, err, t.ID, peer, group)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return writeJSONTo(stdout, out)
+	}
+	fmt.Fprintf(stdout, "moved %s to %s on %s as %s: %s  [%s]; dropped here\n", t.ID, group, peer, created.ID, created.Title, created.Stage)
 	return rcOK
 }
 

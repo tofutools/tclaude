@@ -21,6 +21,8 @@
 //   drag onto another move-to-group <task> <group> [--clone] [--stage next]
 //   group (Ctrl/Cmd
 //   clones)
+//   … on another     transfer-in on that node, then moved-away here
+//   node             (move-to-group <task> <group>@<peer>)
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
@@ -173,6 +175,17 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     // clone copies it there (groups-taskboard-transfer.js).
     moveToGroup(id, group, { clone = false, stage = '' } = {}) {
       return call('POST', taskPath(id, '/move-to-group'), { group, clone, ...(stage ? { stage } : {}) });
+    },
+    // transferIn creates, on this node's group, a task moved or cloned in
+    // from another node; origin is { node, group, task } there.
+    transferIn(group, { title, body = '', ref = '', refLabel = '', stage = 'idea', clone = false, origin }) {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/transfer-in`,
+        { title, body, ref, ref_label: refLabel, stage, clone, origin });
+    },
+    // movedAway drops the original of a task moved to another node, noting
+    // where it went: to is { node, group, task }.
+    movedAway(id, to) {
+      return call('POST', taskPath(id, '/moved-away'), { to });
     },
   };
 }

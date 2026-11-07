@@ -211,6 +211,11 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	// A task coming in from a linked node names that node as this node
+	// knows it, not as the caller says.
+	if node := taskboardPeerNode(r); node != "" {
+		body.Origin.Node = node
+	}
 	verb := "moved from "
 	if body.Clone {
 		verb = "cloned from "
