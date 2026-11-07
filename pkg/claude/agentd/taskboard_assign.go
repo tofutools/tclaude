@@ -158,6 +158,14 @@ func taskboardBrief(g *db.AgentGroup, t *db.GroupTask, by string) string {
 	if len(t.DependsOn) > 0 {
 		fmt.Fprintf(&b, "After: %s\n", strings.Join(t.DependsOn, ", "))
 	}
+	if files, err := db.ListGroupTaskAttachments(t.ID); err == nil && len(files) > 0 {
+		names := make([]string, 0, len(files))
+		for _, f := range files {
+			names = append(names, f.Name)
+		}
+		fmt.Fprintf(&b, "Files: %s\n", strings.Join(names, ", "))
+		fmt.Fprintf(&b, "Fetch them:        tclaude agent taskboard attachments %s --save <dir>\n", t.ID)
+	}
 	fmt.Fprintf(&b, "\nWhen it is done:   tclaude agent taskboard report done --task %s --note \"what you did\"\n", t.ID)
 	fmt.Fprintf(&b, "If you cannot:     tclaude agent taskboard report failed --task %s --note \"why\"\n", t.ID)
 	fmt.Fprintf(&b, "Give it back:      tclaude agent taskboard release %s\n", t.ID)

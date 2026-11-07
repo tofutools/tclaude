@@ -231,6 +231,10 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
 	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},
 	{"POST /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersSet)},
+	{"POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardWriteAccess, handleTaskboardAttach)},
+	{"GET /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachments)},
+	{"GET /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachmentGet)},
+	{"DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardDetach)},
 }
 
 func registerDashboardTaskboardRoutes(mux *http.ServeMux) {

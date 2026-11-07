@@ -176,6 +176,11 @@ func (c *Conn) Read(p []byte) (int, error) {
 }
 
 func (c *Conn) writeRecord(typ byte, data []byte) error {
+	// Write chunks at maxChunk; the bound here keeps the allocation's size
+	// visibly small.
+	if len(data) > maxChunk {
+		return errors.New("stream: record larger than a chunk")
+	}
 	pt := make([]byte, 1+len(data))
 	pt[0] = typ
 	copy(pt[1:], data)

@@ -34,6 +34,12 @@ import (
 var peerUploadGates = map[string]bool{
 	"POST /api/groups/import":         true,
 	"POST /api/groups/import/inspect": true,
+	// A task board's files, under the route's own peer rule
+	// (servePeerTaskboardUpload).
+	"POST /v1/taskboard/tasks/{id}/attachments":    true,
+	"POST /v1/groups/{name}/taskboard/tasks":       true,
+	"POST /v1/groups/{name}/taskboard/transfer-in": true,
+	"POST /v1/groups/{name}/taskboard/ask":         true,
 }
 
 func addPeerImportRules(rules map[string]peerViewRule) {
@@ -79,6 +85,11 @@ func servePeerUploadFinish(w http.ResponseWriter, r *http.Request, v *peerView, 
 	}
 	peer := v.peer.InstanceID
 	finishPeerUpload(w, peerAsLocalRequest(r), peer, func(w http.ResponseWriter, sub *http.Request, pattern string) {
+		// A task board's upload runs through its route's own peer rule,
+		// which also names the peer in the task's history.
+		if servePeerTaskboardUpload(w, sub, v, pattern) {
+			return
+		}
 		if v.unrestricted() {
 			if pattern == "POST /api/groups/import" {
 				servePeerImportAudited(w, sub, peer, peerImportDropsOf(sub))
