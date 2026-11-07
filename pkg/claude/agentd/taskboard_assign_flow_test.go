@@ -252,3 +252,37 @@ func TestTaskboardAssignScopeAndLock(t *testing.T) {
 	code, body = h.post(h.worker, mine.ID, "status", map[string]any{"status": "done"})
 	assert.Equal(t, http.StatusOK, code, body)
 }
+
+// Review regressions: a reassign needs the right over the current holder too;
+// another member cannot drop a held task; release never takes a task from
+// someone else; /mine hides groups the agent has left.
+func TestTaskboardHolderProtections(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	const steward = "tb-steward-5555"
+	h.agent(t, steward)
+	task := h.add("held", "next")
+	code, _ := h.post(h.worker, task.ID, "assign", map[string]any{"to": ""})
+	require.Equal(t, http.StatusOK, code)
+
+	require.NoError(t, db.GrantAgentPermissionWithScope(steward, agentd.PermTaskboardRead, `{"group":["crew"]}`, "test"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(steward, agentd.PermTaskboardAssign,
+		`{"group":["crew"],"target_agent":["`+tbAgentID(t, h.peer)+`"]}`, "test"))
+	code, body := h.post(steward, task.ID, "assign", map[string]any{"to": h.peer})
+	assert.Equal(t, http.StatusForbidden, code, "the worker is outside the steward's scope: %s", body)
+
+	code, body = h.post(h.peer, task.ID, "status", map[string]any{"status": "dropped"})
+	assert.Equal(t, http.StatusForbidden, code, "dropping someone's task needs assign: %s", body)
+
+	code, body = h.post(h.lead, task.ID, "unassign", map[string]any{"self": true})
+	assert.Equal(t, http.StatusConflict, code, body)
+	assert.Contains(t, body, "not_assignee")
+	code, body = h.post(h.lead, task.ID, "unassign", nil)
+	require.Equal(t, http.StatusOK, code, "the owner takes it back: %s", body)
+
+	code, _ = h.post(h.peer, task.ID, "assign", map[string]any{"to": ""})
+	require.Equal(t, http.StatusOK, code)
+	require.NoError(t, db.RemoveAgentGroupMember(h.crew.ID, h.peer))
+	rec := h.call(h.peer, http.MethodGet, "/v1/taskboard/mine", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), task.ID)
+}

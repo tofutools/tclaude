@@ -41,8 +41,15 @@ var ErrGroupTaskNotAssignee = errors.New("you are not the current assignee of th
 // (event assigned). An idea is promoted to the end of the queue on assign; an
 // agent only takes a queued task. A task already assigned to someone else is
 // reassigned by an assign, refused by a take.
-func AssignGroupTask(id, agentID, assignedBy string, take bool, actor string) (*GroupTask, error) {
+//
+// expectAssignee is the holder the caller was authorised against ("" for
+// unassigned, AnyAssignee for no check): a task that changed hands meanwhile
+// is refused.
+func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee && t.AssigneeID != agentID {
+			return errAssigneeChanged(id)
+		}
 		if t.Status != GroupTaskOpen {
 			return taskConflict("not_open", "task %s is %s; only an open task is assigned", id, t.Status)
 		}
@@ -87,10 +94,13 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor string) (*
 // UnassignGroupTask clears the task's assignee. release records it as the
 // assignee giving the task back (event released). Unassigned already is a
 // conflict.
-func UnassignGroupTask(id string, release bool, detail, actor string) (*GroupTask, error) {
+func UnassignGroupTask(id string, release bool, detail, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		if t.AssigneeID == "" {
 			return taskConflict("not_assigned", "task %s is not assigned", id)
+		}
+		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
+			return errAssigneeChanged(id)
 		}
 		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
 			id); err != nil {
@@ -127,8 +137,12 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 	detail := truncateUTF8(outcome+": "+note, GroupTaskEventDetailMax)
 	out := &GroupTaskReport{}
 	task, err := withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		// A repeat is the same report: same actor, same outcome and the same
+		// full note as the last one applied, with no assignment since.
+		sameAsLast := t.Outcome == outcome && t.OutcomeNote == note
 		if t.AssigneeID != agentID {
 			repeat, err := isRepeatedGroupTaskReport(tx, id, actor, detail)
+			repeat = repeat && sameAsLast
 			if err != nil {
 				return err
 			}
@@ -140,6 +154,7 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 		}
 		if t.Status == GroupTaskDone || t.Status == GroupTaskDropped {
 			repeat, err := isRepeatedGroupTaskReport(tx, id, actor, detail)
+			repeat = repeat && sameAsLast
 			if err != nil {
 				return err
 			}

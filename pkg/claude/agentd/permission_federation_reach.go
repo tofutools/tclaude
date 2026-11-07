@@ -138,10 +138,13 @@ var slugFederationReach = map[string]FedReach{
 	PermSelfRemoteControl:                 {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTask:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTaskboard:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
-	PermTaskboardRead:                     {Kind: FedLocal, Why: peerTaskboardWhy},
-	PermTaskboardWrite:                    {Kind: FedLocal, Why: peerTaskboardWhy},
-	PermTaskboardManage:                   {Kind: FedLocal, Why: peerTaskboardWhy},
-	PermTaskboardAssign:                   {Kind: FedLocal, Why: peerTaskboardWhy},
+	// A group's task board is meant to be read and worked by trusted peers
+	// under group-scoped peer grants (default nothing); the peer routes land
+	// with the federation slice (V1.9), so until then the grants are pending.
+	PermTaskboardRead:                     {Kind: FedPeerGroup, Pending: true},
+	PermTaskboardWrite:                    {Kind: FedPeerGroup, Pending: true},
+	PermTaskboardManage:                   {Kind: FedPeerGroup, Pending: true},
+	PermTaskboardAssign:                   {Kind: FedPeerGroup, Pending: true},
 	PermSelfPR:                            {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTags:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfDirRepair:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},

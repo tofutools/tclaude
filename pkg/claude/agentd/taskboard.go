@@ -36,8 +36,6 @@ const (
 	PermSelfTaskboard   = "self.taskboard"
 )
 
-const peerTaskboardWhy = "the federation read path of a group's task board is a later slice; until then a peer does not reach it"
-
 const (
 	maxTaskTitleBytes = 200
 	maxTaskBodyBytes  = 8 << 10
@@ -101,7 +99,8 @@ func requireTaskboard(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 
 // requireTaskboardUnlocked refuses a confirmed agent's change of a locked
 // board unless it is a listed writer, an owner of the group, or holds the
-// write or assign slug through an explicit grant (not through membership).
+// write or assign slug through an explicit grant (not through membership)
+// whose scope the group alone satisfies.
 // The operator and other callers are not narrowed by the lock.
 func requireTaskboardUnlocked(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) bool {
 	conv := confirmedAgentConv(r)
@@ -276,8 +275,8 @@ type taskboardTaskView struct {
 	DependsOn   []string      `json:"depends_on"`
 	// Unmet lists the dependencies not yet done; an open task with any is
 	// queued.
-	Unmet     []string `json:"unmet,omitempty"`
-	Queued    bool     `json:"queued,omitempty"`
+	Unmet  []string `json:"unmet,omitempty"`
+	Queued bool     `json:"queued,omitempty"`
 	// Assignee is the task's one assignee; absent when unassigned.
 	Assignee    *taskboardAgentRef `json:"assignee,omitempty"`
 	AssignedBy  string             `json:"assigned_by,omitempty"`
@@ -285,10 +284,10 @@ type taskboardTaskView struct {
 	Outcome     string             `json:"outcome,omitempty"`
 	OutcomeNote string             `json:"outcome_note,omitempty"`
 	Failures    int                `json:"failures,omitempty"`
-	CreatedBy string   `json:"created_by"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
-	ClosedAt  string   `json:"closed_at,omitempty"`
+	CreatedBy   string             `json:"created_by"`
+	CreatedAt   string             `json:"created_at"`
+	UpdatedAt   string             `json:"updated_at"`
+	ClosedAt    string             `json:"closed_at,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -823,16 +822,18 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	// Closing an assigned task as done is the assignee's own (self.taskboard)
-	// or an assigner's (taskboard.assign); everything else is a write.
-	if body.Status == db.GroupTaskDone && t.AssigneeID != "" && t.Live() {
+	// Closing an assigned task (done or dropped) is the assignee's own
+	// (self.taskboard) or an assigner's (taskboard.assign); everything else is
+	// a write.
+	closing := body.Status == db.GroupTaskDone || body.Status == db.GroupTaskDropped
+	if closing && t.AssigneeID != "" && t.Live() {
 		if !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, false) {
 			return
 		}
 	} else if !requireTaskboard(w, r, g, true) {
 		return
 	}
-	out, err := db.SetGroupTaskStatus(t.ID, body.Status, reason, taskboardActor(r))
+	out, err := db.SetGroupTaskStatusFor(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return

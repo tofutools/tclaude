@@ -734,7 +734,7 @@ func taskboardUnassignCmd(use, short string) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/unassign"), map[string]any{},
+			os.Exit(taskboardWrite(http.MethodPost, taskboardPath(p.Task, "/unassign"), map[string]any{"self": use == "release"},
 				p.AskHuman, p.JSON, verb, cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -830,8 +830,8 @@ func groupsSetTaskboardWritersCmd() *cobra.Command {
 		Use:   "set-taskboard-writers",
 		Short: "Lock a group's task board to listed writers, or open it to every member (--members)",
 		Long: "By default every member of a group may change its task board and take its tasks. Listing writers " +
-			"narrows that to them; owners, agents with an explicit taskboard.write or taskboard.assign grant, and " +
-			"the operator are not affected, and reporting on your own task is never locked. With no agents and no " +
+			"narrows that to them; owners, the operator, and agents with an explicit unscoped or group-scoped " +
+			"taskboard.write or taskboard.assign grant are not affected, and reporting on your own task is never locked. With no agents and no " +
 			"--members the board is locked to owners only. Needs taskboard.manage (group owners have it).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsTaskboardWritersParams, _ *cobra.Command) error {

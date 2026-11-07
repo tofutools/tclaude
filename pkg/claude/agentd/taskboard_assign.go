@@ -187,12 +187,19 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			writeError(w, http.StatusConflict, "not_member", "only an active member of "+g.Name+" takes its tasks")
 			return
 		}
-	} else if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
-		ActionContext{Group: g.Name, TargetAgent: target, targetConv: targetConv}); !ok {
-		return
+	} else {
+		if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
+			ActionContext{Group: g.Name, TargetAgent: target, targetConv: targetConv}); !ok {
+			return
+		}
+		// A reassign also takes the task away from its holder: the caller
+		// must be allowed to do that too.
+		if t.AssigneeID != "" && t.AssigneeID != target && !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, false) {
+			return
+		}
 	}
 	before := t.AssigneeID
-	out, err := db.AssignGroupTask(t.ID, target, taskboardActor(r), take, taskboardActor(r))
+	out, err := db.AssignGroupTask(t.ID, target, taskboardActor(r), take, taskboardActor(r), before)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
@@ -219,6 +226,14 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 // POST /v1/taskboard/tasks/{id}/unassign — the assignee releases its task, or
 // an assigner takes it back.
 func handleTaskboardUnassign(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	// {"self": true} is `release`: only the holder gives a task back, so a
+	// caller who could also take it back from someone else does not by mistake.
+	var body struct {
+		Self bool `json:"self"`
+	}
+	if r.ContentLength != 0 && !decodeTaskboardBody(w, r, &body) {
+		return
+	}
 	if t.AssigneeID == "" {
 		writeError(w, http.StatusConflict, "not_assigned", "task "+t.ID+" is not assigned")
 		return
@@ -228,11 +243,15 @@ func handleTaskboardUnassign(w http.ResponseWriter, r *http.Request, t *db.Group
 	}
 	self, _ := callerAgentID(r)
 	release := self != "" && self == t.AssigneeID
+	if body.Self && !release {
+		writeError(w, http.StatusConflict, "not_assignee", "task "+t.ID+" is not assigned to you")
+		return
+	}
 	detail := t.AssigneeID
 	if !release {
 		detail = "from " + t.AssigneeID
 	}
-	out, err := db.UnassignGroupTask(t.ID, release, detail, taskboardActor(r))
+	out, err := db.UnassignGroupTask(t.ID, release, detail, taskboardActor(r), t.AssigneeID)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
@@ -343,7 +362,7 @@ func handleTaskboardMine(w http.ResponseWriter, r *http.Request) {
 	if !taskboardEnabled(w) {
 		return
 	}
-	self, _ := callerAgentID(r)
+	self, conv := callerAgentID(r)
 	if self == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "only an agent has tasks assigned to it")
 		return
@@ -354,7 +373,19 @@ func handleTaskboardMine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	views := []taskboardTaskView{}
+	readable := map[string]bool{}
 	for _, a := range assigned {
+		// Only the groups the agent is still an active member of and reads:
+		// a task left on it after it left the group stays out of view.
+		ok, seen := readable[a.GroupName]
+		if !seen {
+			g, err := db.GetAgentGroupByName(a.GroupName)
+			ok = err == nil && g != nil && activeGroupMember(g, self) != "" && agentReadsTaskboard(r, conv, g)
+			readable[a.GroupName] = ok
+		}
+		if !ok {
+			continue
+		}
 		v, err := taskboardViews(a.GroupName, []*db.GroupTask{a.Task})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())

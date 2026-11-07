@@ -100,15 +100,17 @@ task's group.
 - `assign --to <agent>` gives the task to a member. If the task is an idea, it
   is promoted to the end of the queue first. The assignee gets an inbox message
   from you, `[taskboard] <group> · tk_… "title" — assigned to you by <you>`,
-  with the brief, the ref and the exact report commands. The message is
-  delivered as inbox mail, never typed into the agent's pane.
+  with the brief, the ref and the exact report commands. It is ordinary inbox
+  mail, delivered like any agent message. A short, paste-safe message is
+  shown inline in the agent's pane.
 - `take` assigns a task to yourself. You can only take a task that is queued
-  (`next`), open and unassigned. `release` gives it back.
+  (`next`), open and unassigned. `release` gives back a task that is assigned
+  to you. It never takes a task away from someone else.
 - `unassign` takes a task back from its assignee. The assignee is told by inbox
   mail.
 - `report done` closes the task. `report failed` counts a failure and gives the
   task back. After three failures the task is blocked with the reason
-  "3 failed attempts". If an agent assigned the task, that agent is told about
+  "3 failed attempts". Unblocking or reopening the task resets the count. If an agent assigned the task, that agent is told about
   every report.
 - Only the current assignee can report. A report from someone who has been
   unassigned, or whose task was reassigned, is refused with `not_assignee`
@@ -118,7 +120,12 @@ task's group.
   agent where it is, ready to take the next task. Retiring an agent unassigns
   its live tasks; the history records "assignee retired". Reincarnation keeps
   the assignment, because the agent id is stable. A clone does not inherit it.
-- `ls --mine` lists the live tasks assigned to you, in every group.
+- `ls --mine` lists the live tasks assigned to you, in every group you are
+  still an active member of.
+- Reassigning a task takes it away from its current holder, so it needs the
+  right to do both: assign the new agent, and take the task back from the old
+  one. A change gated against one holder is refused with `assignee_changed`
+  if the task changed hands in the meantime.
 
 Assigned tasks show `@<agent>` in `ls`, and their history records who
 assigned whom.
@@ -127,8 +134,10 @@ assigned whom.
 
 By default, every member of a group may change its board and take its tasks.
 `groups set-taskboard-writers <group> <agent>…` narrows this to the listed
-members. Owners of the group, agents with an explicit `taskboard.write` or
-`taskboard.assign` grant, and the operator are not affected. With no agents
+members. Owners of the group, the operator, and agents with an explicit
+unscoped or group-scoped `taskboard.write` or `taskboard.assign` grant are not
+affected. An assign grant that is also scoped to target agents does not pass
+the lock. With no agents
 listed, the board is locked to owners only. `--members` opens it to every
 member again, and `--show` prints the current lock. A locked change is refused
 with `taskboard_locked`. Reporting on your own task is never locked, because
@@ -146,8 +155,9 @@ The operator passes every gate. For agents:
 | `taskboard.manage` | The writer lock | Owners of the group |
 | `self.taskboard` | Taking and releasing a task for yourself, and reporting on your own task | Default-granted |
 
-`done` on an unassigned task needs `taskboard.write`. On your own task it needs
-`self.taskboard`, and on a task assigned to someone else, `taskboard.assign`.
+Closing a task (`done` or `drop`) that is unassigned needs `taskboard.write`.
+Closing your own task needs `self.taskboard`. Closing a task assigned to
+someone else needs `taskboard.assign`.
 
 None of the `taskboard.*` slugs are default-granted. Access to another group's
 board is an ordinary scoped grant:

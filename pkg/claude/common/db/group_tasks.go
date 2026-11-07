@@ -662,7 +662,27 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 // unblock a live task, close it as done or dropped, or reopen a closed one
 // where it was, in its stage and rank.
 func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
+	return SetGroupTaskStatusFor(id, status, reason, actor, AnyAssignee)
+}
+
+// AnyAssignee is the expectAssignee of a change that does not depend on who
+// holds the task.
+const AnyAssignee = "\x00any"
+
+// errAssigneeChanged is a change gated against an assignee that no longer
+// holds the task.
+func errAssigneeChanged(id string) error {
+	return taskConflict("assignee_changed", "task %s changed hands meanwhile; look again and retry", id)
+}
+
+// SetGroupTaskStatusFor is SetGroupTaskStatus for a caller authorised against
+// expectAssignee ("" for unassigned): it refuses when the task is held by
+// someone else by the time it is changed.
+func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
+			return errAssigneeChanged(id)
+		}
 		if t.Status == status && status != GroupTaskBlocked {
 			return nil
 		}
@@ -685,8 +705,9 @@ func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
 				kind = GroupTaskEventReopened
 				detail = "was " + t.Status
 			}
+			// Unblocking or reopening gives the task a fresh run of attempts.
 			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', closed_at = NULL,
-				archived_at = NULL WHERE id = ?`, id); err != nil {
+				archived_at = NULL, failures = 0 WHERE id = ?`, id); err != nil {
 				return err
 			}
 			// A task closed while assigned comes back without an assignee that
