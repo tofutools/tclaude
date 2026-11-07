@@ -129,3 +129,33 @@ test('a column edge resizes from the keyboard, is stored per group, and a double
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-widths.tbo-cols'), null);
   assert.doesNotMatch(c.querySelector('.tb-lanes').getAttribute('style') || '', /--tb-lane-cols/);
 });
+
+// Fleet- and federation-wide: a linked node's group (name@node in the fused
+// view) keeps its layout under that shown name, which the section's "reset
+// order" reads.
+test('on a linked node\'s group in the fused view, a lane reorder is kept and reset under its shown name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection }, { dashPrefs }, { setNodeSnapshotSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  setNodeSnapshotSource((node) => (node === 'nd_forge' ? { peer_view: { level: 'unrestricted' } } : null));
+  const shown = 'tbo-peer@forge';
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${shown}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${shown}`, '1');
+  const source = { context: harness.signals.signal({ groups: [board('tbo-peer')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const api = { capture: async () => ({}), create: async () => ({}), assign: async () => ({}) };
+  const group = { name: shown, members: members(), fleet_node: { id: 'nd_forge', name: 'forge', local: false } };
+  const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} boards=${() => ({ source, api })} />`);
+  const c = mounted.container;
+  const lanes = () => [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-lane-agent="agt_writer"]'), 'keydown', { key: 'ArrowUp', altKey: true }); });
+  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_writer', 'agt_tester']);
+  assert.ok(dashPrefs.getItem(`tclaude.dash.groups.taskboard.lanes-order.${shown}`), 'kept under the shown name');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-order.tbo-peer'), null, 'not under a local group of the same name');
+  const reset = c.querySelector('.tb-lanes-reset');
+  assert.ok(reset, 'reset order shows');
+  await harness.act(async () => { harness.fireEvent(reset, 'click'); });
+  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
+});

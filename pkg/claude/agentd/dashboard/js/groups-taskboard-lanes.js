@@ -288,7 +288,7 @@ function useLaneDrag(actions, group) {
       clear();
       if (drop.reason) { setBlocking({ task, drop }); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
-      if (ok && drop.kind === 'assign') markLanded({ group: group.name, section: 'agents', ids: [drop.agent] });
+      if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
 }
@@ -300,7 +300,7 @@ function BlockForm({ task, drop, numbers, actions, group, onClose }) {
   const submit = async () => {
     if (!reason.trim() || actions.busy) return;
     const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason.trim()));
-    if (ok && drop.agent) markLanded({ group: group.name, section: 'agents', ids: [drop.agent] });
+    if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     if (ok) onClose();
   };
   const n = numbers.get(task.id);
@@ -331,6 +331,13 @@ function LaneHead({ lane, order }) {
 
 const LANE_DRAG_TYPE = 'application/x-tclaude-lane';
 
+// layoutKey is the group the lanes' layout is kept under: the name the view
+// shows (name@node for a linked node's group), as the section's own view
+// prefs are, so two nodes' same-named groups keep their own layout.
+function layoutKey(group) {
+  return group.shownName || group.name;
+}
+
 // useLaneOrder drags a lane head onto another lane head in its heading, or a
 // heading onto another heading, to reorder them (a view preference, stored
 // per group for this viewer). Alt+↑/↓ on a focused head does the same.
@@ -340,8 +347,8 @@ function useLaneOrder(group, groups, by, onChange) {
   const [over, setOver] = useState(null);
   const groupOf = (laneId) => groups.find((g) => g.lanes.some((lane) => lane.id === laneId));
   const apply = (kind, moving, target, after) => {
-    if (kind === 'lane') moveLane(group.name, groups, moving, target, after);
-    else moveHead(group.name, groups, by, moving, target, after);
+    if (kind === 'lane') moveLane(layoutKey(group), groups, moving, target, after);
+    else moveHead(layoutKey(group), groups, by, moving, target, after);
     onChange();
   };
   // accepts says whether the drag in flight may land on target: a lane
@@ -413,7 +420,7 @@ function useColumnResize(group, onChange) {
     const cells = head ? [...head.children].filter((el) => !el.classList.contains('tb-col-resize')) : [];
     return cells.map((el) => el.getBoundingClientRect().width);
   };
-  const commit = (widths) => { setLaneWidths(group.name, widths); setLive(null); onChange(); };
+  const commit = (widths) => { setLaneWidths(layoutKey(group), widths); setLive(null); onChange(); };
   const handle = (index, label) => ({
     role: 'separator', 'aria-orientation': 'vertical', tabindex: '0', 'aria-label': `Resize the ${label} column`,
     title: 'Drag to resize · double-click to reset all widths · ←/→ when focused',
@@ -448,7 +455,7 @@ function useColumnResize(group, onChange) {
     },
     onClick: (event) => event.stopPropagation(),
   });
-  return { gridRef, handle, widths: live || laneWidths(group.name) };
+  return { gridRef, handle, widths: live || laneWidths(layoutKey(group)) };
 }
 
 // TaskboardLanes is the section's swim-lane view of the same board the list
@@ -470,7 +477,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const relayout = () => { bumpLayout((n) => n + 1); onLayout?.(); };
   const model = laneModel(entry, group, by, snapshot, now);
   const { cells } = model;
-  const groups = applyLaneOrder(model.groups, laneOrder(group.name), by);
+  const groups = applyLaneOrder(model.groups, laneOrder(layoutKey(group)), by);
   const drag = useLaneDrag(actions, group);
   const order = useLaneOrder(group, groups, by, relayout);
   const resize = useColumnResize(group, relayout);

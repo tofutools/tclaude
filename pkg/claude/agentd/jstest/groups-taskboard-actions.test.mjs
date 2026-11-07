@@ -310,6 +310,10 @@ test("an agent's row shows the board tasks assigned to it", async (t) => {
     member=${{ agent_id: 'agt_builder' }} source=${source} boards=${boards} />`);
   assert.equal(peer.container.textContent.replace(/\s+/g, ' ').trim(), '☰ 1 task · on the peer');
   assert.ok(asked.length && asked.every((node) => node === 'nd_peer'));
+  // In the fused view the group is name@node; the peer's board knows it as name.
+  const fused = await harness.mount(harness.html`<${AgentTaskIndicator} group=${{ ...group, name: `${group.name}@forge`, fleet_node: { id: 'nd_peer', name: 'forge', local: false } }}
+    member=${{ agent_id: 'agt_builder' }} source=${source} boards=${boards} />`);
+  assert.equal(fused.container.textContent.replace(/\s+/g, ' ').trim(), '☰ 1 task · on the peer');
 });
 
 test('a board whose api cannot assign draws no assign controls', async (t) => {
