@@ -59,7 +59,7 @@ tclaude agent taskboard history <task>
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
-                                    [--assignee <agent>] [--blocked "reason"|--done] [--attach f]…
+                                    [--assignee <agent>|--mine] [--blocked "reason"|--done] [--attach f]…
 tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…   # or --prompt-file f
 tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
@@ -107,9 +107,10 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
 - `ask` mails a member of the group a request in your own words. The member
   is told to turn it into tasks with `taskboard add`, to reply when it is
   done, and not to start the work. The request is inbox mail, never keys sent
-  into its pane. You need `taskboard.write` on the group, as for `add`. The
-  member must be an active member who may change the board, so a
-  [writer lock](#the-writer-lock) limits who can be asked.
+  into its pane. You need `taskboard.write` on the group. The agent asked
+  must be an active member or owner that holds `taskboard.write` there and
+  passes the [writer lock](#the-writer-lock). A member that only tracks its
+  own work (`taskboard.own`) cannot be asked.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
 
 ### Where a new task starts
@@ -119,8 +120,9 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
 - **Ideas**, the default, or **Next** with `--next`.
 - **In progress** with `--assignee <agent>`. The task is assigned as it is
   created, so it lands in next, and the assignee gets the brief in its inbox,
-  as with `assign`. Naming yourself takes the task. Anyone else needs
-  `taskboard.assign`, and the assignee must be an active member of the group.
+  as with `assign`. Naming yourself (or `--mine`) takes the task. Anyone else
+  needs `taskboard.assign`, and the assignee must be an active member of the
+  group.
 - **Blocked** with `--blocked "reason"`. The reason is required. An
   `--assignee` makes it a blocked task that agent holds.
 - **Done** with `--done`, for logging work after the fact. The task is closed
@@ -128,6 +130,12 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   nobody is mailed. A done task does not count toward the live cap.
 
 An import (`--from-*`, `--lines-file`) lands in Ideas or Next only.
+
+These start states are for `taskboard.write` holders. A member that holds only
+[`taskboard.own`](#tracking-your-own-work-taskboardown) adds its own tasks:
+each one is assigned to it as it is created. A plain `add` starts in progress,
+`--blocked` starts blocked and held by you, and `--done` logs work you did. An
+unassigned task (`--next`, or an idea) and an import need `taskboard.write`.
 
 ## Files on a task
 
@@ -145,8 +153,9 @@ with the command to fetch them.
 - The files are stored where agents cannot reach them. `attachments <task>
   --save <dir>` writes them into a directory (it never overwrites a file).
   `detach` removes one, by name or by the `#id` the list shows.
-- Attaching and detaching need `taskboard.write` on the task's group. Reading
-  the files needs `taskboard.read`. Both are recorded in the task's history
+- Attaching and detaching need `taskboard.write` on the task's group, or
+  `taskboard.own` on a task assigned to you. Reading the files needs
+  `taskboard.read`. Both are recorded in the task's history
   (`attached`, `detached`).
 - `ask --attach` sends the files with the request, as attachments of the
   mail. The asked member is told to put them on the tasks it creates.
@@ -217,9 +226,11 @@ task's group.
   with the brief, the ref and the exact report commands. It is ordinary inbox
   mail, delivered like any agent message. A short, paste-safe message is
   shown inline in the agent's pane.
-- `take` assigns a task to yourself. You can only take a task that is queued
-  (`next`), open and unassigned. `release` gives back a task that is assigned
-  to you. It never takes a task away from someone else.
+- `take` assigns a task to yourself. You can take any open, unassigned task.
+  An idea is promoted to the end of the queue as you take it. A task that is
+  assigned to someone else cannot be taken: that is `taskboard.assign`'s
+  reassign. `release` gives back a task that is assigned to you. It never
+  takes a task away from someone else.
 - `unassign` takes a task back from its assignee. The assignee is told by inbox
   mail.
 - `report done` closes the task. `report failed` counts a failure and gives the
@@ -284,11 +295,14 @@ brief's JSON carries the same counts per group under `taskboards`.
 
 ## The writer lock
 
-By default, every member of a group may change its board and take its tasks.
+By default, every member of a group may track its own work on its board
+(`taskboard.own`) and take its tasks.
 `groups set-taskboard-writers <group> <agent>…` narrows this to the listed
 members. Owners of the group, the operator, and agents with an explicit
-unscoped or group-scoped `taskboard.write` or `taskboard.assign` grant are not
-affected. An assign grant that is also scoped to target agents does not pass
+unscoped or group-scoped `taskboard.write`, `taskboard.assign` or
+`taskboard.own` grant (a group grant included) are not affected. Since every
+source of `taskboard.write` passes the lock, the lock in practice narrows
+members' own work: adding, changing and taking their own tasks. An assign grant that is also scoped to target agents does not pass
 the lock. With no agents
 listed, the board is locked to owners only. `--members` opens it to every
 member again, and `--show` prints the current lock. A locked change is refused
@@ -302,11 +316,12 @@ The operator passes every gate. For agents:
 | Slug | What it allows | Who has it without a grant |
 |---|---|---|
 | `taskboard.read` | `ls`, `show`, `history` | Members and owners of the group |
-| `taskboard.write` | Everything that changes a task. Implies read. | Members and owners of the group |
+| `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status. Implies read. | Owners of the group. Members only through a grant. |
+| `taskboard.own` | Tracking your own work: adding tasks that are assigned to you, changing and closing your own tasks, taking any unassigned task, releasing yours, reporting, and commenting on any task of the board | Members of the group, on their own group's board only |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
 | `taskboard.manage` | The writer lock, and moving a task you do not hold to another group | Owners of the group |
 | `taskboard.transfer` | Moving or cloning a task into the group from another group. Scope it with the target `group`. | Owners of the group |
-| `self.taskboard` | Taking and releasing a task for yourself, and reporting on your own task | Default-granted |
+| `self.taskboard` | Deprecated alias of `taskboard.own`. An existing grant keeps working and adds nothing. An explicit deny of it still denies `taskboard.own`. | No longer default-granted |
 
 Moving a task to another group (`move-to-group`) needs `taskboard.transfer` on
 the target group. On the source it needs `taskboard.write` when the task is
@@ -315,8 +330,63 @@ yours (assigned to you), or `taskboard.manage` when it is not. A clone
 the target.
 
 Closing a task (`done` or `drop`) that is unassigned needs `taskboard.write`.
-Closing your own task needs `self.taskboard`. Closing a task assigned to
+Closing your own task needs `taskboard.own`. Closing a task assigned to
 someone else needs `taskboard.assign`.
+
+### Tracking your own work (taskboard.own)
+
+`taskboard.own` lets an agent track its own work on its group's board without
+owning the group. Every active member holds it on its own group's board. It
+never reaches the board of a group the agent is not an active member of,
+whatever a grant's scope says. Under it an agent may:
+
+- add a task, which is assigned to it as it is created: in progress, or
+  blocked or done with `--blocked` / `--done`;
+- edit, promote, demote, block, unblock, reopen, close and report on the tasks
+  assigned to it;
+- take any open, unassigned task, an idea included, and release its own;
+- comment on any task of the board.
+
+It may not add an unassigned task or import, ask a member for tasks, reorder
+the board, or change a task that is someone else's or nobody's. Those need
+`taskboard.write`. Taking a task from someone else needs `taskboard.assign`.
+The [writer lock](#the-writer-lock) narrows `taskboard.own`, except a report.
+
+To have an agent track its own work, spawn it into the group and tell it to:
+
+```bash
+tclaude agent taskboard add crew "fix the flaky retry test" --ref tcl-a1b2c3   # assigned to you, in progress
+tclaude agent taskboard take tk_1a2b3c4d                                    # or take an unassigned one
+tclaude agent taskboard report done --note "merged #4200"
+```
+
+### Migration: members no longer write the board
+
+Members used to hold `taskboard.write` on their group's board through
+membership. They now hold `taskboard.read` and `taskboard.own`. Owners keep
+`taskboard.write`, `taskboard.assign`, `taskboard.manage` and
+`taskboard.transfer`. For a plain member, with no grant, this changes:
+
+- `add` assigns the task to the member (in progress). `--next`, ideas,
+  imports and `ask` need `taskboard.write`.
+- Editing, promoting, demoting, blocking, unblocking and reopening work only on
+  the member's own tasks. Reordering (`move`) and closing an unassigned task
+  need `taskboard.write`.
+- Moving a task you hold to another group needs `taskboard.write` on the
+  source.
+- A plain member can no longer be asked for tasks (`ask`, and *Ask an agent*
+  in the dashboard).
+- `take` now also takes an unassigned idea, which it promotes.
+
+To give the members of a group the old, broad rights back, give the group a
+[group grant](#giving-a-whole-group-access-to-another-groups-board) of
+`taskboard.write` scoped to the group itself. In the dashboard, open the
+group's ⚙ permissions, add `taskboard.write`, and set its `group` scope to the
+group's own name. Like any explicit grant, it also passes the writer lock.
+
+`self.taskboard` is no longer installed as a default permission. An existing
+grant of it does no harm, and an explicit deny of it still denies
+`taskboard.own`.
 
 None of the `taskboard.*` slugs are default-granted. Access to another group's
 board is an ordinary scoped grant:
@@ -572,8 +642,8 @@ a CLI verb:
     the task, and Esc or *Cancel* closes the form.
   - *Ask an agent* sends a request in your own words to a member, as `ask`
     does. It picks the group's owner when one is online. You can pick any
-    other online member who may change the board. With no such member
-    online, the item is off, and says why. Files go with the request.
+    other online member who holds `taskboard.write` there and passes the
+    writer lock. With no such member online, the item is off, and says why. Files go with the request.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
 - **✎ *Edit*** on a row (or a double-click on a lanes card) opens the edit
   form. It has the title, the brief, the ref, *Where it is* (*Idea*, *Next*,

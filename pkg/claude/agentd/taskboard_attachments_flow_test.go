@@ -105,6 +105,7 @@ func TestTaskboardAttachmentsLifecycle(t *testing.T) {
 	h.f.HaveGroup("elsewhere")
 	h.f.HaveMember("crew", member)
 	h.f.HaveMember("elsewhere", outsider)
+	h.groupWrites("crew")
 
 	created := h.fileTask(h.upload(member, "/v1/groups/crew/taskboard/tasks",
 		map[string]any{"title": "fix the layout", "stage": "next"},
@@ -243,6 +244,7 @@ func TestTaskboardAttachmentsAskAndBrief(t *testing.T) {
 	h.agent(t, member)
 	h.f.HaveGroup("crew")
 	h.f.HaveMember("crew", member)
+	h.groupWrites("crew")
 
 	rec := h.upload("", "/v1/groups/crew/taskboard/ask", map[string]any{"to": member, "prompt": "turn this mock into tasks"},
 		[2]string{"mock.png", string(tbPNG)})

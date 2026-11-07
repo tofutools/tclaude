@@ -136,6 +136,7 @@ var slugFederationReach = map[string]FedReach{
 	PermSelfRemoteControl:                 {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTask:                          {Kind: FedLocal, Why: "acts on the calling agent itself"},
 	PermSelfTaskboard:                     {Kind: FedLocal, Why: "acts on the calling agent itself"},
+	PermTaskboardOwn:                      {Kind: FedLocal, Why: "an agent's own work on its own group's board, on its own node"},
 	PermTaskboardRead:                     {Kind: FedPeerGroup, Cap: "taskboard_read", SelfGate: true},
 	PermTaskboardWrite:                    {Kind: FedPeerGroup, Cap: "taskboard_write", SelfGate: true, Sensitive: true},
 	PermTaskboardManage:                   {Kind: FedPeerGroup, Cap: "taskboard_manage", SelfGate: true, Sensitive: true},

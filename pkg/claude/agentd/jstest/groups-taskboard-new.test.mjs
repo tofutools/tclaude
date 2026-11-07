@@ -115,6 +115,17 @@ test('the writer lock narrows who Ask an agent may mail', async (t) => {
   assert.match(askUnavailable(group, board('crew', { locked: true, writers: [] })), /writer lock/);
 });
 
+test('the context\'s askable list says who Ask an agent may mail: a member that only tracks its own work is not offered', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { askableMembers, askUnavailable } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const group = { name: 'crew', members: members() };
+  assert.deepEqual(askableMembers(group, board('crew', { askable: ['agt_lead'] })).map((m) => m.agent_id), ['agt_lead'],
+    'only the owner, though the plain member is online');
+  assert.deepEqual(askableMembers(group, board('crew', { askable: [] })), []);
+  assert.match(askUnavailable(group, board('crew', { askable: [] })), /taskboard\.write/);
+  assert.match(askUnavailable(group, board('crew', { askable: [], locked: true, writers: [] })), /writer lock/);
+});
+
 test('Write it myself sends every field, the assignee included, in one add', async (t) => {
   const { harness, c, api, choose, dialog, click, refreshes } = await mountBoard(t, 'tbn-form');
   await choose('form');

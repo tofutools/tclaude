@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -54,6 +55,8 @@ func TestTaskboardCreateResolvesRef(t *testing.T) {
 // and a member the writer lock keeps off the board.
 func TestTaskboardAskMailsAMember(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
+	// The member asked must write the board, not only track its own work.
+	h.groupWrites("crew")
 	ask := func(conv string, body map[string]any) (int, string) {
 		rec := h.call(conv, http.MethodPost, "/v1/groups/crew/taskboard/ask", body)
 		return rec.Code, rec.Body.String()
@@ -96,14 +99,21 @@ func TestTaskboardAskMailsAMember(t *testing.T) {
 	code, _ = ask("", map[string]any{"prompt": "who?"})
 	assert.Equal(t, http.StatusBadRequest, code)
 
-	// Lock the board to the worker: the peer may no longer be asked, and the
-	// context says who may.
-	rec := h.call(h.lead, http.MethodPost, "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{h.worker}})
+	// Without the group grant, a member only tracks its own work there
+	// (taskboard.own), which does not add tasks for others: it is not asked.
+	// Every write source left (ownership, an explicit or group grant) passes
+	// the writer lock, so a lock to the worker leaves the owner askable alone.
+	rec := h.call("", http.MethodPatch, "/v1/groups/crew", map[string]any{"permissions": []any{}})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	code, body = ask("", map[string]any{"to": h.peer, "prompt": "locked out"})
+	code, body = ask("", map[string]any{"to": h.peer, "prompt": "own only"})
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Contains(t, body, agentd.PermTaskboardWrite)
+	rec = h.call(h.lead, http.MethodPost, "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{h.worker}})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	code, body = ask("", map[string]any{"to": h.worker, "prompt": "listed, but own only"})
 	assert.Equal(t, http.StatusConflict, code)
 	assert.Contains(t, body, "taskboard_locked")
-	code, body = ask("", map[string]any{"to": h.worker, "prompt": "still fine"})
+	code, body = ask("", map[string]any{"to": h.lead, "prompt": "still fine"})
 	assert.Equal(t, http.StatusOK, code, body)
 
 	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)
@@ -113,12 +123,14 @@ func TestTaskboardAskMailsAMember(t *testing.T) {
 			Group   string   `json:"group"`
 			Locked  bool     `json:"locked"`
 			Writers []string `json:"writers"`
+			Askable []string `json:"askable"`
 		} `json:"groups"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
 	require.Len(t, ctx.Groups, 1)
 	assert.True(t, ctx.Groups[0].Locked)
 	assert.ElementsMatch(t, []string{tbAgentID(t, h.lead), tbAgentID(t, h.worker)}, ctx.Groups[0].Writers, "the owner and the listed writer")
+	assert.Equal(t, []string{tbAgentID(t, h.lead)}, ctx.Groups[0].Askable, "only the owner writes the board")
 
 	// A member the lock keeps off the board may not ask either.
 	code, _ = ask(h.peer, map[string]any{"to": h.worker, "prompt": "from outside the lock"})

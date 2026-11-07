@@ -19,11 +19,18 @@ func TestGroupTaskAssignReportAndRetire(t *testing.T) {
 
 	idea, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "idea", Actor: "t"})
 	require.NoError(t, err)
-	// A take needs a queued task; an assign promotes an idea.
-	_, err = AssignGroupTask(idea.ID, worker, "agent:"+worker, true, "agent:"+worker, AnyAssignee)
+	// A take and an assign alike promote an idea; a take of an assigned
+	// task is refused.
+	taken, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "taken idea", Actor: "t"})
+	require.NoError(t, err)
+	took, err := AssignGroupTask(taken.ID, worker, "agent:"+worker, true, "agent:"+worker, AnyAssignee)
+	require.NoError(t, err)
+	assert.Equal(t, GroupTaskStageNext, took.Stage)
+	assert.Equal(t, worker, took.AssigneeID)
+	_, err = AssignGroupTask(taken.ID, other, "agent:"+other, true, "agent:"+other, AnyAssignee)
 	var conflict *GroupTaskConflict
 	require.ErrorAs(t, err, &conflict)
-	assert.Equal(t, "not_queued", conflict.Code)
+	assert.Equal(t, "assigned", conflict.Code)
 	task, err := AssignGroupTask(idea.ID, worker, "human:operator", false, "human:operator", AnyAssignee)
 	require.NoError(t, err)
 	assert.Equal(t, GroupTaskStageNext, task.Stage)
