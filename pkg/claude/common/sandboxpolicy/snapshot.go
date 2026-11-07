@@ -485,6 +485,15 @@ type Snapshot struct {
 	// default: the sandbox tier and the group environment both come from
 	// ResolutionGroupID, which tracks the agent's membership.
 	GroupBinding *GroupBinding `json:"group_binding,omitempty"`
+	// ExplicitProfileReassigned is an operator's change of the explicit-tier
+	// sandbox profile, made on an existing agent after this snapshot was
+	// launched. Nil means the explicit tier follows Applied, as it always did.
+	// Set, it names the profile the next relaunch resolves instead (an empty
+	// one: no explicit profile). A launch that resolved the chain records the
+	// new profile in Applied and drops this; a relaunch that fell back to this
+	// stored policy keeps it, so the operator's choice survives until it can
+	// apply.
+	ExplicitProfileReassigned *ExplicitProfileRef `json:"explicit_profile_reassigned,omitempty"`
 	// DenyOverlay is the spawn-time deny overlay (deny_overlay.go): the
 	// canonical paths denied to this agent on top of its profiles, its
 	// parent's included. Effective already has it applied; it is kept
@@ -525,6 +534,22 @@ type GroupBinding struct {
 	EnvironmentGroupPinned bool  `json:"environment_group_pinned,omitempty"`
 }
 
+// ExplicitProfileRef names an explicit-tier sandbox profile by stable ID and
+// by name. The zero value is "no explicit profile".
+type ExplicitProfileRef struct {
+	ID   int64  `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// Clone returns an independent copy; nil stays nil.
+func (r *ExplicitProfileRef) Clone() *ExplicitProfileRef {
+	if r == nil {
+		return nil
+	}
+	out := *r
+	return &out
+}
+
 // Clone returns an independent copy; nil stays nil.
 func (b *GroupBinding) Clone() *GroupBinding {
 	if b == nil {
@@ -549,8 +574,6 @@ func (s Snapshot) EnvironmentGroupID() (int64, bool) {
 	return s.ResolutionGroupID, false
 }
 
-// CopyGroupProvenance carries the group provenance (ResolutionGroupID and
-// GroupBinding) from another snapshot of the same agent.
 // ProfilesOmittedByChoice reports an omission the launch asked for, which
 // every relaunch keeps.
 func (s Snapshot) ProfilesOmittedByChoice() bool {
@@ -568,9 +591,29 @@ func (s *Snapshot) CopyOmission(from Snapshot) {
 	s.DenyOverlay = append([]string(nil), from.DenyOverlay...)
 }
 
+// CopyGroupProvenance carries the registry provenance a relaunch resolves
+// from (ResolutionGroupID, GroupBinding and a pending explicit-profile
+// reassignment) from another snapshot of the same agent.
 func (s *Snapshot) CopyGroupProvenance(from Snapshot) {
 	s.ResolutionGroupID = from.ResolutionGroupID
 	s.GroupBinding = from.GroupBinding.Clone()
+	s.ExplicitProfileReassigned = from.ExplicitProfileReassigned.Clone()
+}
+
+// ExplicitProfile is the explicit-tier profile the next relaunch resolves:
+// the pending reassignment when there is one, else the one Applied recorded.
+// The zero value means none.
+func (s Snapshot) ExplicitProfile() ExplicitProfileRef {
+	if s.ExplicitProfileReassigned != nil {
+		return *s.ExplicitProfileReassigned
+	}
+	var ref ExplicitProfileRef
+	for _, applied := range s.Applied {
+		if applied.Scope == ScopeExplicit {
+			ref = ExplicitProfileRef{ID: applied.ID, Name: applied.Name}
+		}
+	}
+	return ref
 }
 
 // NewSnapshot freezes a resolver result and its stable registry provenance.

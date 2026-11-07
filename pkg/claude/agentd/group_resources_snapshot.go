@@ -12,7 +12,7 @@ import (
 
 // One resource state model for a group's things (tcl-1lth8e): the
 // snapshot's group_resources lists every group's pages, boards, processes and
-// shell in one shape, so the Groups tab and the Collab rail read one model
+// shells (its own and its agents' directory shells) in one shape, so the Groups tab and the Collab rail read one model
 // (resource-model.js). The server knows only whether something is live
 // (running) or exists with nothing live (closed); the browser layers what it
 // has open on top (open-tab, floating, minimized) and calls a live page or
@@ -35,6 +35,11 @@ type groupResource struct {
 	Detail  string `json:"detail,omitempty"`
 	// Session is a shell's tmux session, which the dashboard kills it by.
 	Session string `json:"session,omitempty"`
+	// Agent and Which are an agent shell's (a shell in an agent's start,
+	// current or worktree directory): the agent it opens for and which of its
+	// directories. A group's own shell has neither.
+	Agent string `json:"agent,omitempty"`
+	Which string `json:"which,omitempty"`
 	// Locked is the lock against agent changes (group_resource_locks.go), for
 	// the Collab panel's and tab strip's lock icon.
 	Locked bool `json:"locked,omitempty"`
@@ -77,10 +82,110 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 		}
 		out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateRunning, Session: session, Detail: g.DefaultCwd})
 	}
+	out = append(out, agentShellResources(active, alive)...)
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))
 	})
 	return out
+}
+
+// agentShellResources are the running shells in an agent's directories
+// (dashboard_term.go's termSessionNameForGroup), each under the group it was
+// opened from, or else the agent's own group: the one it was spawned into
+// while it is still a member, else its first. Like a group's shell, one lists
+// only while its tmux session is up. Its ID is the dashboard pane key the
+// shell opens under (term:<agent>:<which>:<group>), so the browser matches it
+// to the tab, window or background row showing it. A shell of a superseded
+// generation, or of an agent in no active group, is not a group's.
+func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struct{}) []groupResource {
+	var shells []backgroundTmuxSession
+	for name := range alive {
+		if strings.HasPrefix(name, "tclaude-term-") {
+			shells = append(shells, backgroundTmuxSession{name: name})
+		}
+	}
+	if len(shells) == 0 {
+		return nil
+	}
+	// Only a current member of an active group has a group to list its
+	// shell under, so only those conversations are hashed (classifyShells),
+	// not every conversation ever: this runs on every snapshot poll.
+	convs := map[string]struct{}{}
+	byName := map[string]*db.AgentGroup{}
+	names := make([]string, 0, len(active))
+	for _, g := range active {
+		byName[g.Name] = g
+		names = append(names, g.Name)
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			slog.Warn("group resources: group members unavailable", "group", g.Name, "error", err)
+			continue
+		}
+		for _, m := range members {
+			if m.ConvID != "" {
+				convs[m.ConvID] = struct{}{}
+			}
+		}
+	}
+	if len(convs) == 0 {
+		return nil
+	}
+	spawnGroups, err := db.AgentSpawnGroupIDs()
+	if err != nil {
+		slog.Warn("group resources: spawn groups unavailable", "error", err)
+	}
+	var out []groupResource
+	for _, t := range classifyShells(shells, nil, convs, names) {
+		if t.Kind != "shell" || t.AgentID == "" || t.Superseded {
+			continue
+		}
+		g := byName[t.Group]
+		if g == nil {
+			g = agentHomeGroup(t.AgentID, active, spawnGroups)
+		}
+		if g == nil {
+			continue
+		}
+		start, current, worktree, _ := resolveDirs(t.ConvID)
+		out = append(out, groupResource{
+			Kind: resourceKindShell, ID: t.Key, GroupID: g.ID, Title: agentShellTitle(t.Label, t.Which), State: resourceStateRunning,
+			Session: t.TmuxSession, Detail: pickDir(t.Which, start, current, worktree), Agent: t.AgentID, Which: t.Which,
+		})
+	}
+	return out
+}
+
+// agentHomeGroup is the active group an agent's shell lists under: the one it
+// was spawned into while it is still a member, else its first by name
+// (ListGroupsForAgent's order).
+func agentHomeGroup(agentID string, active map[int64]*db.AgentGroup, spawnGroups map[string]int64) *db.AgentGroup {
+	groups, err := db.ListGroupsForAgent(agentID)
+	if err != nil {
+		slog.Warn("group resources: agent groups unavailable", "agent_id", agentID, "error", err)
+		return nil
+	}
+	var first *db.AgentGroup
+	for _, g := range groups {
+		if g == nil || active[g.ID] == nil {
+			continue
+		}
+		if g.ID == spawnGroups[agentID] {
+			return g
+		}
+		if first == nil {
+			first = g
+		}
+	}
+	return first
+}
+
+// agentShellTitle names an agent shell for its agent, and for its directory
+// when that is not the agent's current one.
+func agentShellTitle(agent, which string) string {
+	if which == "current" {
+		return agent + " shell"
+	}
+	return fmt.Sprintf("%s shell (%s)", agent, which)
 }
 
 // groupPageResources are the live pages shared in a group (running) and the

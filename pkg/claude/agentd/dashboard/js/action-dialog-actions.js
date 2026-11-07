@@ -377,12 +377,16 @@ export function createActionDialogActions({
         requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
       return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
-    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, restart = false, confirmMoveOut = false }, owner) {
+    // sandboxProfile, when given (a name, or '' for none), replaces the
+    // agent's explicit sandbox profile; an empty implementation leaves the
+    // implementation alone.
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, sandboxProfile, restart = false, confirmMoveOut = false }, owner) {
       const payload = await requestJSON(
         nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            implementation, sandbox: sandbox || '',
+            implementation: implementation || '', sandbox: sandbox || '',
+            ...(typeof sandboxProfile === 'string' ? { sandbox_profile: sandboxProfile } : {}),
             ...(restart ? { restart: true } : {}),
             ...(confirmMoveOut ? { confirm_move_out: true } : {}),
           }),
@@ -395,9 +399,13 @@ export function createActionDialogActions({
       // nothing about the agent as it stands — it is recorded intent, and an
       // operator who reads "assigned" as "applied" would believe it is bounded.
       const note = payload.note ? `; ${payload.note}` : '';
+      const changes = [];
+      if (implementation) changes.push(`sandbox implementation → ${payload.sandbox_implementation}`);
+      if (typeof sandboxProfile === 'string') changes.push(`sandbox profile → ${payload.sandbox_profile || 'none'}`);
+      const what = changes.join(', ') || `sandbox implementation → ${payload.sandbox_implementation}`;
       notify(payload.restart
-        ? `${name}: sandbox implementation → ${payload.sandbox_implementation} (restarted)${note}`
-        : `${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)${note}`);
+        ? `${name}: ${what} (restarted)${note}`
+        : `${name}: ${what} (applied when you wake it)${note}`);
       await refresh();
       return payload;
     },

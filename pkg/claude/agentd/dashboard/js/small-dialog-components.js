@@ -454,8 +454,10 @@ const SANDBOX_IMPL_MODE_INHERIT = '';
 // Every other one derives its own, which is why the pin is offered only here.
 const SANDBOX_IMPL_HARNESS_BUILTIN = 'harness-builtin';
 
-// SandboxImplDialog assigns the sandbox IMPLEMENTATION an existing agent will
-// relaunch under — the operator counterpart to picking one at spawn.
+// SandboxImplDialog assigns the sandbox IMPLEMENTATION and/or the explicit
+// sandbox PROFILE an existing agent will relaunch under — the operator
+// counterpart to picking them at spawn. Either can change alone, or both in
+// one assignment (and one restart).
 //
 // It loads the durable posture itself instead of reading the row it was opened
 // from: the row's sandbox fields describe the agent's last LAUNCH, while this
@@ -467,6 +469,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const [request, setRequest] = useState({ phase: 'loading', data: null, error: '' });
   const [choice, setChoice] = useState('');
   const [mode, setMode] = useState(SANDBOX_IMPL_MODE_INHERIT);
+  const [profile, setProfile] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // What the server says moving this OpenCode agent out of private state does,
@@ -482,6 +485,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       (data) => {
         setRequest({ phase: 'ready', data, error: '' });
         setChoice(String(data?.sandbox_implementation || ''));
+        setProfile(String(data?.sandbox_profile || ''));
       },
       (cause) => {
         if (cause?.name !== 'AbortError') {
@@ -505,16 +509,27 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
     : [];
   const availability = actions.sandboxImplAvailability(harnessName, choice, posture.catalog);
   const pinned = modes.length > 0 ? mode : SANDBOX_IMPL_MODE_INHERIT;
+  // The explicit-tier profile. The global and group tiers are shown for
+  // context only: they follow the workspace and group assignments.
+  const currentProfile = String(posture.sandbox_profile || '');
+  const profileLocked = String(posture.sandbox_profile_unchangeable || '');
+  const profileOptions = Array.isArray(posture.sandbox_profile_options) ? posture.sandbox_profile_options : [];
+  // A recorded profile that has since been deleted still reads as current.
+  const profileChoices = currentProfile && !profileOptions.includes(currentProfile)
+    ? [currentProfile, ...profileOptions] : profileOptions;
+  const ambientTiers = (Array.isArray(posture.sandbox_profile_tiers) ? posture.sandbox_profile_tiers : [])
+    .filter((tier) => tier?.scope !== 'explicit');
+  const implChanged = choice !== current || pinned !== SANDBOX_IMPL_MODE_INHERIT;
+  const profileChanged = !profileLocked && profile !== currentProfile;
   // Dirty only once the operator has actually moved off the recorded posture, so
   // closing a dialog they merely looked at does not raise a discard prompt.
-  const dirty = request.phase === 'ready'
-    && (choice !== current || pinned !== SANDBOX_IMPL_MODE_INHERIT);
+  const dirty = request.phase === 'ready' && (implChanged || profileChanged);
   // A running agent takes the assignment through a restart (stop, assign,
   // resume); the server refuses a live assignment without it.
   const restart = !!posture.online;
 
   const submit = async () => {
-    if (submitGuard.current || !choice || request.phase !== 'ready' || !dirty) return;
+    if (submitGuard.current || (implChanged && !choice) || request.phase !== 'ready' || !dirty) return;
     submitGuard.current = true;
     setError('');
     setBusy(true);
@@ -523,8 +538,11 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         conv: descriptor.conv,
         ...(descriptor.node ? { node: descriptor.node } : {}),
         label: descriptor.label,
-        implementation: choice,
-        sandbox: pinned,
+        // Unchanged is sent empty: re-sending the recorded implementation would
+        // be an assignment of its own, which re-derives the harness mode.
+        implementation: implChanged ? choice : '',
+        sandbox: implChanged ? pinned : '',
+        ...(profileChanged ? { sandboxProfile: profile } : {}),
         restart,
         ...(moveOut ? { confirmMoveOut: true } : {}),
       }, descriptor);
@@ -548,13 +566,13 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
       guard=${{ requestClose, registerClose }} title=${html`<${Words}
-        plain="Sandbox implementation"
-        wizard="Ward implementation"
+        plain="Sandbox implementation & profile"
+        wizard="Ward & ward implementation"
       />`}>
       <div class="modal-meta" id="sandbox-impl-meta">${descriptor.label || shortId(descriptor.conv)}</div>
       <p><${Words}
-        plain="Which layer owns OS-level confinement for this agent's launches. Recorded now and applied by the next launch — wake the agent to run under it."
-        wizard="Which layer holds the ward around this hero. Bound now, taking effect the next time it is summoned."
+        plain="Which layer owns OS-level confinement for this agent's launches, and which sandbox profile it applies. Change either or both. Recorded now and applied by the next launch — wake the agent to run under it."
+        wizard="Which layer holds the ward around this hero, and which ward it bears. Bound now, taking effect the next time it is summoned."
       /></p>
       ${request.phase === 'loading' && html`<p class="sandbox-impl-loading" id="sandbox-impl-loading">loading the recorded posture…</p>`}
       ${request.phase === 'error' && html`<div class="cron-create-error ui-error-box" id="sandbox-impl-load-error" role="alert">${request.error}</div>`}
@@ -602,9 +620,22 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
             wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>
         `}
+        <label class="cron-create-row" id="sandbox-impl-profile-row">
+          <span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span>
+          <${Select} id="sandbox-impl-profile" value=${profile} disabled=${busy || !!profileLocked}
+            onChange=${(event) => setProfile(event.currentTarget.value)}>
+            <option value="">none</option>
+            ${profileChoices.map((name) => html`<option key=${name} value=${name}>${name}${name === currentProfile ? ' (current)' : ''}</option>`)}
+          <//>
+        </label>
+        <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-profile-hint">${profileLocked
+          ? `The sandbox profile cannot be changed: ${profileLocked}.`
+          : html`The agent's own (explicit) profile. ${ambientTiers.length
+            ? `Also applied, from the workspace and group assignments: ${ambientTiers.map((tier) => `${tier.scope} “${tier.name}”`).join(', ')}.`
+            : 'No workspace or group profile applies.'}${posture.sandbox_profile_pending ? ' Reassigned since the last launch; applied by the next one.' : ''}`}</p>
         ${restart && html`
           <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-restart"><${Words}
-            plain="This agent is running. Assigning restarts it in the same conversation under the new implementation; it must be idle (no turn, background agents, shells or monitors running)."
+            plain="This agent is running. Assigning restarts it in the same conversation under the new sandbox; it must be idle (no turn, background agents, shells or monitors running)."
             wizard="This familiar is awake. Binding the ward re-summons it under the new one; it must be at rest."
           /></p>
         `}
