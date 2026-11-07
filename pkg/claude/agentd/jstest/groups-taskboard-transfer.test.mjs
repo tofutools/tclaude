@@ -142,4 +142,19 @@ test('the confirmation says what a move keeps and undoes', async (t) => {
   const stays = transferMessage({ task: { ...task, status: 'open', depends_on: [] }, from: 'a', to: 'b', stage: 'idea', tasks, members: [{ agent_id: 'agt_x' }] });
   assert.match(stays.body, /It stays assigned and lands in Next\./);
   assert.doesNotMatch(stays.body, /unassigned/);
+  const done = transferMessage({ task: { ...task, status: 'done', depends_on: [] }, from: 'a', to: 'b', stage: 'idea', tasks, members: [{ agent_id: 'agt_x' }] });
+  assert.match(done.body, /It stays done and assigned\./);
+  assert.doesNotMatch(done.body, /Next/);
+  const linked = transferMessage({ task, from: 'a', to: 'b', stage: 'idea', tasks, members: null });
+  assert.match(linked.body, /If its assignee is not a member of "b", it is unassigned\./, 'a linked node\'s members are not guessed');
+});
+
+test('a drag that is not a task drag is left alone, even by a listener a missed dragend left behind', async (t) => {
+  const { calls, confirms, dt, start, over, drop, summary } = await mountTwo(t);
+  await start('tk_00000001', dt());
+  const agentDrag = { ...dt(), types: ['application/x-tclaude-agent'] };
+  assert.equal(over(summary('tbt-b'), agentDrag).defaultPrevented, false, 'an agent drag onto a group is not taken');
+  await drop(summary('tbt-b'), agentDrag);
+  assert.equal(confirms.length, 0);
+  assert.deepEqual(calls, []);
 });

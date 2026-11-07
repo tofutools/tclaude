@@ -64,6 +64,11 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
+	// A linked node learns of no group it may not move tasks into: a missing
+	// group and one it holds no taskboard.transfer on answer alike.
+	if a := peerGrantFromRequest(r); a != nil && target != nil && !fedPeerAllows(a.peer, target.ID, PermTaskboardTransfer) {
+		target = nil
+	}
 	if target == nil {
 		writeError(w, http.StatusNotFound, "not_found", "no such group "+guideText(name, 60))
 		return
@@ -97,7 +102,8 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeTaskboardError(w, err)
 		return
 	}
-	if res.Unassigned != "" {
+	// A done task's former assignee has nothing to stop: no mail.
+	if res.Unassigned != "" && res.Task.Status != db.GroupTaskDone {
 		if conv, _ := db.CurrentConvForAgent(res.Unassigned); conv != "" {
 			mailTaskboard(r, g, conv, taskboardSubject(target, res.Task, "moved away from you"),
 				fmt.Sprintf("%s moved task %s %q from %s to %s. You are not a member of %s, so it is no longer assigned to you; stop work on it.\n",

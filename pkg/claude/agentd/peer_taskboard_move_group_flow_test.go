@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,13 +42,22 @@ func TestPeerTaskboardMoveToGroup(t *testing.T) {
 	code, body := call("POST", path, map[string]any{"group": "ops"})
 	assert.Equal(t, http.StatusNotFound, code, body)
 
-	// Reading crew, but no transfer on ops: refused.
+	// Reading crew, but no transfer on ops: ops answers as a missing group
+	// does, so group names do not leak.
 	h.grant(t, agentd.PermTaskboardRead, "group=crew")
 	code, body = call("POST", path, map[string]any{"group": "ops", "clone": true})
-	assert.Equal(t, http.StatusForbidden, code, body)
+	assert.Equal(t, http.StatusNotFound, code, body)
+	code, missing := call("POST", path, map[string]any{"group": "nope", "clone": true})
+	assert.Equal(t, http.StatusNotFound, code)
+	assert.Equal(t, missing, strings.Replace(body, "ops", "nope", 1), "the same answer as a missing group")
 
-	// Transfer on ops: a clone goes through on read alone.
+	// Transfer on ops: a clone goes through on read alone. Transfer does not
+	// show ops' board.
 	h.grant(t, agentd.PermTaskboardTransfer, "group=ops")
+	code, ctx := call("GET", "/v1/taskboard/context", nil)
+	require.Equal(t, http.StatusOK, code, ctx)
+	assert.Contains(t, ctx, `"group":"crew"`)
+	assert.NotContains(t, ctx, `"group":"ops"`, "transfer alone does not read the board")
 	code, body = call("POST", path, map[string]any{"group": "ops", "clone": true})
 	require.Equal(t, http.StatusOK, code, body)
 
