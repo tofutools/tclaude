@@ -29,7 +29,8 @@ function fakeApi() {
   const calls = [];
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'),
-    stage: record('stage'), status: record('status'), assign: record('assign'), unassign: record('unassign') };
+    stage: record('stage'), status: record('status'), assign: record('assign'), unassign: record('unassign'),
+    create: async (...args) => { calls.push(['create', ...args]); return { id: 'tk_00000099', title: args[1].title }; } };
 }
 
 const members = () => [
@@ -101,10 +102,36 @@ test('laneColumn derives the five columns as the design says', async (t) => {
   assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'progress'), { assign: false }), null, 'no assign grant');
   assert.equal(kind(building, at('agt_builder', 'progress'), at('agt_builder', 'done'), { assign: false }), null, "no closing someone's task without assign");
   assert.equal(kind(queued, at('', 'next'), at('', 'done'), { assign: false }), 'done', 'an unassigned task closes on write');
+  // Across lanes AND columns: the lane's write, then the column's.
+  assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'blocked')), 'assign+block');
+  assert.equal(kind(idea, at('', 'ideas'), at('agt_builder', 'blocked')), 'assign+block');
+  assert.equal(kind(building, at('agt_builder', 'progress'), at('', 'ideas')), 'unassign+demote');
+  assert.equal(kind(building, at('agt_builder', 'progress'), at('', 'blocked')), 'unassign+block');
+  assert.equal(kind(building, at('agt_builder', 'progress'), at('agt_tester', 'blocked')), 'assign+block', 'reassign and block');
+  assert.equal(kind(building, at('agt_builder', 'progress'), at('', 'done')), null, 'unassign and close is not one move');
+  assert.equal(kind(queued, at('', 'next'), at('agt_builder', 'blocked'), { assign: false }), null);
+  // A stalled task (open, shown in its agent's Blocked) onto the Unassigned
+  // lane's Blocked is blocked too; a blocked one is only unassigned.
+  const stalled = b.tasks.find((task) => task.stalled);
+  assert.equal(kind(stalled, at('agt_lead', 'blocked'), at('', 'blocked')), 'unassign+block');
+  assert.equal(kind({ ...held, assignee: builder }, at('agt_builder', 'blocked'), at('', 'blocked')), 'unassign');
+
+  // A retry after the second write was refused runs only that write.
+  const calls = [];
+  let refuse = true;
+  const api = {
+    unassign: async (id) => { calls.push(['unassign', id]); },
+    status: async (id, status) => { calls.push(['status', id, status]); if (refuse) throw new Error('refused'); },
+  };
+  const drop = laneDrop(stalled, at('agt_lead', 'blocked'), at('', 'blocked'));
+  await assert.rejects(drop.run(api, 'why'));
+  refuse = false;
+  await drop.run(api, 'why');
+  assert.deepEqual(calls.map(([verb]) => verb), ['unassign', 'status', 'status'], 'the unassign that landed is not repeated');
 });
 
 test('the lanes draw the board by role, with the Unassigned lane first and offline lane groups folded', async (t) => {
-  const { c, ids, cell, harness } = await mountLanes(t, 'tbl-role');
+  const { c, ids, cell, harness } = await mountLanes(t, 'tbl-role', { by: 'role' });
   assert.ok(c.querySelector('[data-taskboard-lanes="tbl-role"][data-lanes-by="role"]'));
   assert.equal(c.querySelector('table.tb-table'), null, 'no list in the lanes view');
   const lanes = [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
@@ -128,14 +155,18 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.ok(c.querySelector('[data-lane-row="agt_old"]'), 'unfolded on click');
 });
 
-test('List | Lanes and the lanes-by switch are remembered per group', async (t) => {
+test('List | Lanes and the lanes-by switch are remembered per group; lanes default to by agent', async (t) => {
   const { c, harness, dashPrefs } = await mountLanes(t, 'tbl-prefs');
   const button = (text) => [...c.querySelectorAll('.tb-view button')].find((b) => b.textContent.trim() === text);
-  await harness.act(async () => { harness.fireEvent(button('agent'), 'click'); });
-  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), 'agent');
+  // By agent, the default: no role heads ("no role" never shows), the
+  // offline agents fold under one.
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), null);
   assert.ok(c.querySelector('[data-lanes-by="agent"]'));
-  // By agent: no role heads, the offline agents fold under one.
+  assert.equal(button('agent').getAttribute('aria-pressed'), 'true');
   assert.deepEqual([...c.querySelectorAll('[data-lane-group]')].map((el) => el.dataset.laneGroup), ['offline']);
+  await harness.act(async () => { harness.fireEvent(button('role'), 'click'); });
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), 'role', 'a choice is remembered and wins');
+  assert.ok(c.querySelector('[data-lanes-by="role"]'));
   await harness.act(async () => { harness.fireEvent(button('☰ List'), 'click'); });
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.view.tbl-prefs'), 'list');
   assert.ok(c.querySelector('table.tb-table'));
@@ -197,11 +228,95 @@ test('without the assign grant, agent lanes take no drops', async (t) => {
   assert.deepEqual(calls.calls, [['stage', 'tk_00000004', 'next']], 'stage changes still work');
 });
 
-test('a read-only board draws the lanes without drags or capture', async (t) => {
+test('a read-only board draws the lanes without drags or a cell +', async (t) => {
   const ro = await mountLanes(t, 'tbl-readonly', { api: null });
   assert.ok(ro.c.querySelector('.tb-lanes'));
   assert.equal(ro.c.querySelector('.tb-card[draggable]'), null);
-  assert.equal(ro.c.querySelector('[data-taskboard-capture]'), null);
+  assert.equal(ro.c.querySelector('.tb-cell-add'), null);
+});
+
+test('a diagonal drag runs both writes through the real handlers, the lane first', async (t) => {
+  const { api, drag, c, harness } = await mountLanes(t, 'tbl-diagonal');
+  // Unassigned · Next → builder · Blocked: assign, then block with a reason.
+  let out = await drag('tk_00000001', 'agt_builder', 'blocked');
+  assert.equal(out.taken, true);
+  assert.equal(out.label, 'assign to builder · block (asks why)');
+  assert.deepEqual(api.calls, [], 'nothing runs before the reason');
+  const form = c.querySelector('.tb-lanes-block');
+  assert.match(form.textContent, /assign to builder · block #1/);
+  await harness.input(form.querySelector('input'), 'waits on the API');
+  await harness.act(async () => {
+    harness.fireEvent([...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block'), 'click');
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.deepEqual(api.calls.splice(0), [['assign', 'tk_00000001', 'agt_builder'], ['status', 'tk_00000001', 'blocked', 'waits on the API']]);
+
+  // builder · In progress → Unassigned · Ideas: unassign, then demote.
+  out = await drag('tk_00000002', 'unassigned', 'ideas');
+  assert.equal(out.label, 'unassign · demote to ideas');
+  assert.deepEqual(api.calls.splice(0), [['unassign', 'tk_00000002'], ['stage', 'tk_00000002', 'idea']]);
+
+  // Unassigned · Ideas → tester · In progress: assign (an idea is promoted on assign).
+  out = await drag('tk_00000004', 'agt_tester', 'progress');
+  assert.deepEqual(api.calls.splice(0), [['assign', 'tk_00000004', 'agt_tester']]);
+
+  // lead · Blocked (stalled) → builder · Next: reassign.
+  await drag('tk_00000006', 'agt_builder', 'next');
+  assert.deepEqual(api.calls.splice(0), [['assign', 'tk_00000006', 'agt_builder']]);
+
+  // A move the board cannot make in one go is not taken.
+  out = await drag('tk_00000002', 'unassigned', 'done');
+  assert.equal(out.taken, false);
+  assert.deepEqual(api.calls, []);
+});
+
+test('a cell + opens the New task form filled from the cell: the stage from the column, the assignee from the lane', async (t) => {
+  const { api, c, cell, harness } = await mountLanes(t, 'tbl-add');
+  const plus = (lane, column) => cell(lane, column).querySelector('.tb-cell-add');
+  assert.ok(plus('unassigned', 'ideas') && plus('unassigned', 'next') && plus('agt_builder', 'next') && plus('agt_builder', 'progress'));
+  assert.equal(plus('unassigned', 'progress'), null, 'striped');
+  assert.equal(plus('agt_builder', 'ideas'), null, 'striped');
+  assert.equal(plus('unassigned', 'blocked'), null, 'a new task does not land blocked');
+  assert.equal(plus('agt_builder', 'done'), null);
+  assert.match(plus('agt_builder', 'progress').getAttribute('aria-label'), /builder · In progress/);
+  assert.ok(cell('agt_builder', 'progress').classList.contains('tb-cell-addable'), 'the cell keeps room for its +');
+  assert.equal(c.querySelector('.tb-cell-add-title'), null, 'no inline quick-add');
+
+  const addIn = async (lane, column, title) => {
+    await harness.act(async () => { harness.fireEvent(plus(lane, column), 'click'); });
+    const modal = c.querySelector('#taskboard-new-modal');
+    assert.ok(modal, `the form opens from ${lane} · ${column}`);
+    await harness.input(modal.querySelector('.tb-new-title'), title);
+    await harness.act(async () => { harness.fireEvent(modal.querySelector('#taskboard-new-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+    assert.equal(c.querySelector('#taskboard-new-modal'), null, 'the form closes after it adds');
+  };
+  await addIn('unassigned', 'ideas', 'an idea from the cell');
+  await addIn('unassigned', 'next', 'queued from the cell');
+  await addIn('agt_builder', 'progress', 'for builder');
+  assert.deepEqual(api.calls, [
+    ['create', 'tbl-add', { title: 'an idea from the cell', body: '', ref: '', stage: 'idea', after: [], resolveRef: false }],
+    ['create', 'tbl-add', { title: 'queued from the cell', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
+    ['create', 'tbl-add', { title: 'for builder', body: '', ref: '', stage: 'next', after: [], resolveRef: false }],
+    ['assign', 'tk_00000099', 'agt_builder'],
+  ], 'each form carries its cell\'s stage and assignee');
+});
+
+test('without the assign grant, agent lanes have no +', async (t) => {
+  const api = fakeApi();
+  api.can = { assign: false };
+  const { cell } = await mountLanes(t, 'tbl-add-noassign', { api });
+  assert.ok(cell('unassigned', 'next').querySelector('.tb-cell-add'));
+  assert.equal(cell('agt_builder', 'next').querySelector('.tb-cell-add'), null);
+  assert.equal(cell('agt_builder', 'progress').querySelector('.tb-cell-add'), null);
+});
+
+test('a long agent name ends in an ellipsis with the full name as its title; the avatar keeps its own box', async (t) => {
+  const long = 'better-resource-handling-for-the-lanes-view';
+  const { c } = await mountLanes(t, 'tbl-long', { groupExtra: { members: [...members(), { agent_id: 'agt_long', title: long, role: 'dev', online: true }] } });
+  const name = c.querySelector('[data-lane-agent="agt_long"] .tb-lane-name');
+  assert.equal(name.getAttribute('title'), long);
+  assert.equal(name.querySelector('.tb-lane-label').textContent, long, 'the label is its own span, so it can end in …');
+  assert.equal(name.querySelector('.tb-avatar').textContent, 'B');
 });
 
 test("a linked node's group shows that node's board in lanes", async (t) => {
@@ -246,4 +361,40 @@ test('a drag that is not a task drag drives no cell; the Done header counts the 
   // A task drag still works.
   const out = await drag('tk_00000004', 'unassigned', 'next');
   assert.equal(out.taken, true);
+});
+
+// Fleet- and federation-wide: in the fused view a linked node's group is
+// name@node; its lanes write to that node under the group's own name.
+test('on a linked node\'s group in the fused view, a cell + and lane drags write to that node under its own name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection }, { dashPrefs }, { setNodeSnapshotSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  setNodeSnapshotSource((node) => (node === 'nd_forge' ? { peer_view: { level: 'unrestricted' } } : null));
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbl-fused@forge', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbl-fused@forge', '1');
+  const api = fakeApi();
+  const source = { context: harness.signals.signal({ groups: [board('tbl-fused')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const group = { name: 'tbl-fused@forge', members: members(), fleet_node: { id: 'nd_forge', name: 'forge', local: false } };
+  const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} boards=${() => ({ source, api })} />`);
+  const c = mounted.container;
+  const cell = (lane, column) => c.querySelector(`.tb-cell[data-lane="${lane}"][data-column="${column}"]`);
+  const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+
+  await click(cell('agt_tester', 'next').querySelector('.tb-cell-add'));
+  const form = c.querySelector('#taskboard-new-modal');
+  assert.ok(form, 'the cell + opens the form');
+  await harness.input(form.querySelector('.tb-new-title'), 'peer task');
+  await click(form.querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls.map(([verb, arg]) => [verb, arg]), [['create', 'tbl-fused'], ['assign', 'tk_00000099']]);
+
+  api.calls.length = 0;
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
+  const card = c.querySelector('.tb-card[data-task-id="tk_00000001"]');
+  await harness.act(async () => { harness.fireEvent(card, 'dragstart', { dataTransfer: transfer }); });
+  harness.fireEvent(cell('agt_tester', 'next'), 'dragover', { dataTransfer: transfer });
+  await harness.act(async () => { harness.fireEvent(cell('agt_tester', 'next'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_tester']], 'an assign drag goes to the group\'s node');
 });

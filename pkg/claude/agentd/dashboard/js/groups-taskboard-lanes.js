@@ -8,9 +8,14 @@
 //                                      unblock · done · reopen
 //   card → an agent's lane             assign <task> --to <agent>
 //   card → the Unassigned lane         unassign <task>
+//   card → another lane AND column     both, in that order: assign then block
+//                                      --reason; unassign then demote or block
 //
 // Cells that cannot hold a card are striped: Ideas in an agent's lane (an
-// idea is unassigned), In progress in the Unassigned lane.
+// idea is unassigned), In progress in the Unassigned lane. A cell a new task
+// can land in has a small "+" in its lower-right corner that opens the New
+// task form filled from the cell (add [--next], then assign --to for an
+// agent's lane).
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
@@ -63,7 +68,7 @@ function memberState(member) {
 
 // laneModel lays a board out: the cells' tasks per lane and column, and the
 // agent lanes in their lane groups. `by` is agent | role | subgroup.
-export function laneModel(entry, group, by = 'role', snapshot = null, now = Date.now()) {
+export function laneModel(entry, group, by = 'agent', snapshot = null, now = Date.now()) {
   const cells = new Map();
   const put = (lane, column, task) => {
     const key = `${lane}|${column}`;
@@ -140,21 +145,51 @@ function laneGroups(lanes, group, by, snapshot) {
 }
 
 // laneDrop says what dropping `task` from its cell onto another does: the
-// write and its words, or null when the cell does not take it. `block`
-// asks a reason before it runs.
+// write and its words, or null when the cell does not take it. `reason`
+// asks a block reason before it runs. A move to another lane AND another
+// column is the two writes in a row: the lane first (assign, unassign),
+// then the column (block, demote).
+// twoStep runs first, then second, and remembers a first write that landed:
+// a retry after the second was refused (the block form stays open) runs only
+// the second, rather than repeating an unassign the server would refuse.
+function twoStep(first, second) {
+  let firstDone = false;
+  return async (api, reason) => {
+    if (!firstDone) { await first(api); firstDone = true; }
+    return second(api, reason);
+  };
+}
+
 export function laneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
   const open = task.status === 'open';
+  const block = (api, reason) => api.status(task.id, 'blocked', reason);
   if (from.lane !== to.lane) {
     if (!assign) return null;
     if (to.lane === UNASSIGNED) {
       if (!task.assignee?.agent_id || task.status === 'done') return null;
-      if (to.column !== 'next' && to.column !== from.column) return null;
-      return { kind: 'unassign', label: 'unassign', run: (api) => api.unassign(task.id) };
+      const unassign = (api) => api.unassign(task.id);
+      // An open task in an agent's Blocked column is a stalled one: onto
+      // the Unassigned lane's Blocked it is blocked too, not only unassigned.
+      if (to.column === 'blocked' && open) {
+        return { kind: 'unassign+block', label: 'unassign · block (asks why)', reason: true, run: twoStep(unassign, block) };
+      }
+      if (to.column === 'next' || to.column === from.column) return { kind: 'unassign', label: 'unassign', run: unassign };
+      if (to.column === 'ideas' && open) {
+        return { kind: 'unassign+demote', label: 'unassign · demote to ideas', run: twoStep(unassign, (api) => api.stage(task.id, 'idea')) };
+      }
+      return null;
     }
-    // Only a member can be assigned (a former member's lane holds what it had).
-    if (!open || to.member === false || (to.column !== 'progress' && to.column !== 'next')) return null;
-    return { kind: 'assign', label: `assign to ${to.name || to.lane}`, agent: to.lane, run: (api) => api.assign(task.id, to.lane) };
+    // Only a member can be assigned (a former member's lane holds what it
+    // had), and only an open task.
+    if (!open || to.member === false) return null;
+    const name = to.name || to.lane;
+    const give = (api) => api.assign(task.id, to.lane);
+    if (to.column === 'progress' || to.column === 'next') return { kind: 'assign', label: `assign to ${name}`, agent: to.lane, run: give };
+    if (to.column === 'blocked') {
+      return { kind: 'assign+block', label: `assign to ${name} · block (asks why)`, agent: to.lane, reason: true, run: twoStep(give, block) };
+    }
+    return null;
   }
   switch (to.column) {
     case 'ideas':
@@ -168,7 +203,7 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
       return null;
     case 'blocked':
       if (!open) return null;
-      return { kind: 'block', label: 'block (asks why)', reason: true, run: (api, reason) => api.status(task.id, 'blocked', reason) };
+      return { kind: 'block', label: 'block (asks why)', reason: true, run: block };
     case 'done':
       // An assigned task is closed by its assignee or an assigner.
       if ((!open && task.status !== 'blocked') || (task.assignee?.agent_id && !assign)) return null;
@@ -176,6 +211,19 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     default:
       return null;
   }
+}
+
+// cellAdd is what the "+" in a cell pre-fills, or null where a new task
+// cannot land: Ideas and Next set the stage; an agent's lane (Next or In
+// progress) sets the assignee, only for a viewer who may assign. Blocked and
+// Done take no new task, and striped cells none at all.
+export function cellAdd(lane, column, { assign = true, member = true } = {}) {
+  if (striped(lane, column)) return null;
+  if (lane === UNASSIGNED) {
+    return column === 'ideas' || column === 'next' ? { stage: column === 'ideas' ? 'idea' : 'next', to: '' } : null;
+  }
+  if (!assign || !member || (column !== 'next' && column !== 'progress')) return null;
+  return { stage: 'next', to: lane };
 }
 
 function cardHint(task) {
@@ -244,22 +292,26 @@ function useLaneDrag(actions, group) {
       if (!drop) return;
       const { task } = dragged.current;
       clear();
-      if (drop.reason) { setBlocking(task); return; }
+      if (drop.reason) { setBlocking({ task, drop }); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
       if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
 }
 
-function BlockForm({ task, numbers, actions, onClose }) {
+// BlockForm asks the reason a drop onto Blocked needs, then runs the drop
+// (with an assign or unassign first, for a move across lanes too).
+function BlockForm({ task, drop, numbers, actions, group, onClose }) {
   const [reason, setReason] = useState('');
   const submit = async () => {
     if (!reason.trim() || actions.busy) return;
-    if (await actions.run(`${task.id}:lane`, 'Block', (api) => api.status(task.id, 'blocked', reason.trim()))) onClose();
+    const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason.trim()));
+    if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
+    if (ok) onClose();
   };
   const n = numbers.get(task.id);
   return html`<div class="tb-form tb-lanes-block" data-task-form="block">
-    <span class="ui-hint">Block ${n ? `#${n}` : task.id} “${task.title}”:</span>
+    <span class="ui-hint">${drop.kind === 'block' ? 'Block' : drop.label.replace(/ \(asks why\)$/, '')} ${n ? `#${n}` : task.id} “${task.title}”:</span>
     <${Input} size="sm" class="tb-form-reason" aria-label="Block reason" autoFocus placeholder="why is it blocked? (required)"
       value=${reason} maxLength=${400} onInput=${(event) => setReason(event.currentTarget.value)}
       onKeyDown=${(event) => {
@@ -276,7 +328,7 @@ function LaneHead({ lane }) {
     return html`<div class="tb-lane-head"><span class="tb-lane-name">Unassigned</span><span class="tb-lane-sub">${lane.count} task${lane.count === 1 ? '' : 's'} · operator order</span></div>`;
   }
   return html`<div class="tb-lane-head" data-lane-agent=${lane.id}>
-    <span class="tb-lane-name"><span class="tb-avatar" aria-hidden="true">${lane.name.slice(0, 1).toUpperCase()}</span>${lane.name}</span>
+    <span class="tb-lane-name" title=${lane.name}><span class="tb-avatar" aria-hidden="true">${lane.name.slice(0, 1).toUpperCase()}</span><span class="tb-lane-label">${lane.name}</span></span>
     <span class=${`tb-lane-sub tb-lane-state-${lane.state.replace(/\s+/g, '-')}`}>${lane.state}${lane.member?.owner ? ' · owner' : ''}</span>
     <span class="tb-lane-sub">holds ${lane.holds}</span>
   </div>`;
@@ -284,7 +336,17 @@ function LaneHead({ lane }) {
 
 // TaskboardLanes is the section's swim-lane view of the same board the list
 // shows. Without `actions` it is read-only: no drags.
-export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = null, wizard = false, now = Date.now() }) {
+// CellAdd is a cell's "+": a small button in its lower-right corner that
+// opens the New task form filled from the cell (its stage, and the lane's
+// agent as the assignee).
+function CellAdd({ lane, column, add, onNewTask, wizard }) {
+  const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.name} · ${wizard ? column.wizard : column.label}`;
+  const what = wizard ? 'quest' : 'task';
+  return html`<${Button} size="sm" variant="ghost" class="tb-cell-add" title=${`New ${what} here: ${where}`}
+    aria-label=${`New ${what} in ${where}`} onClick=${() => onNewTask({ stage: add.stage, to: add.to })}>+<//>`;
+}
+
+export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, wizard = false, now = Date.now(), onNewTask = null }) {
   const tasks = entry.tasks || [];
   const numbers = new Map(tasks.map((task, i) => [task.id, i + 1]));
   const { cells, groups } = laneModel(entry, group, by, snapshot, now);
@@ -298,7 +360,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = 
     const target = { lane: lane.id, column: column.key, name: lane.name, member: lane.id === UNASSIGNED || !!lane.member };
     const over = drag.over?.key === key;
     const shown = column.key === 'done' && !doneOpen[lane.id] ? list.slice(0, DONE_SHOWN) : list;
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}`}
+    const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: lane.id === UNASSIGNED || !!lane.member });
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
@@ -306,6 +369,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = 
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null} />`)}
       ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
         onClick=${() => setDoneOpen({ ...doneOpen, [lane.id]: true })}>+ ${list.length - shown.length} more<//>`}
+      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} />`}
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class="tb-lane" data-lane-row=${lane.id || 'unassigned'}>
@@ -315,7 +379,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'role', actions = 
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
   return html`<div class="tb-lanes-wrap">
-    ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking} numbers=${numbers} actions=${actions} onClose=${() => drag.setBlocking(null)} />`}
+    ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking.task} drop=${drag.blocking.drop} numbers=${numbers} actions=${actions}
+      group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow">Lane</div>

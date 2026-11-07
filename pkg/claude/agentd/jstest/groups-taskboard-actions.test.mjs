@@ -28,13 +28,9 @@ function fakeApi() {
     assign: record('assign'), unassign: record('unassign') };
 }
 
-async function mountBoard(t, name, { api = fakeApi(), context = null, view = 'list' } = {}) {
+async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
-  if (view === 'lanes') {
-    const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
-    dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
-  }
   let refreshes = 0;
   const source = {
     context: harness.signals.signal(context || { groups: [board(name)] }), status: harness.signals.signal('ready'),
@@ -99,31 +95,10 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(api.calls, [['status', 'tk_00000005', 'open']]);
 });
 
-test('the list view has no capture panel: it adds through + New task', async (t) => {
+test('the section has no capture box: it adds through ＋ New task', async (t) => {
   const list = await mountBoard(t, 'tba-capture-list');
   assert.equal(list.c.querySelector('[data-taskboard-capture]'), null);
   assert.equal(list.c.querySelector('[data-taskboard-new]').getAttribute('aria-label'), 'New task');
-});
-
-test('the lanes capture line adds on Enter, keeps the box for the next line, and adds a pasted list at once', async (t) => {
-  const { harness, c, api } = await mountBoard(t, 'tba-capture', { view: 'lanes' });
-  const box = c.querySelector('.tb-capture-input');
-  await harness.input(box, 'try the fused card');
-  await harness.act(async () => { harness.fireEvent(box, 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
-  assert.deepEqual(api.calls, [['capture', 'tba-capture', 'try the fused card', { next: false }]]);
-  assert.equal(c.querySelector('.tb-capture-input').value, '', 'cleared for the next line');
-  assert.match(c.querySelector('.tb-capture-note').textContent, /burst: 2 ideas added/);
-
-  // A pasted list adds one task per line.
-  api.calls.length = 0;
-  await harness.act(async () => {
-    // Preact listens for "paste" where the element has onpaste (browsers),
-    // else for the event name as written ("Paste", LinkeDOM).
-    const area = c.querySelector('.tb-capture-input');
-    harness.fireEvent(area, 'onpaste' in area ? 'paste' : 'Paste', { clipboardData: { getData: () => 'one\ntcl-fb0bfz\n' } });
-    await new Promise((r) => setTimeout(r, 0));
-  });
-  assert.deepEqual(api.calls, [['capture', 'tba-capture', 'one\ntcl-fb0bfz', { next: false }]]);
 });
 
 test('dragging a row reorders it; dropping a queued task on the Ideas band demotes it', async (t) => {
@@ -204,42 +179,6 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
 
   const refusing = createTaskboardApi({ fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'cap', message: 'board is full' }) }) });
   await assert.rejects(refusing.status('tk_00000001', 'done'), (err) => err.message === 'board is full' && err.status === 409);
-});
-
-test('a capture in flight: Enter again sends nothing twice, and the next line typed meanwhile is kept', async (t) => {
-  const api = fakeApi();
-  let release;
-  api.capture = (...args) => { api.calls.push(['capture', ...args]); return new Promise((resolve) => { release = () => resolve({ created: 2, results: [] }); }); };
-  const { harness, c } = await mountBoard(t, 'tba-inflight', { api, view: 'lanes' });
-  const box = () => c.querySelector('.tb-capture-input');
-  await harness.input(box(), 'a\nb');
-  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); });
-  assert.equal(box().value, '', 'the sent lines leave the box at once');
-  assert.match(c.querySelector('.tb-capture-note').textContent, /looking up titles/);
-  await harness.input(box(), 'typed meanwhile');
-  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); });
-  assert.equal(api.calls.length, 1, 'one capture at a time');
-  await harness.act(async () => { release(); await new Promise((r) => setTimeout(r, 0)); });
-  assert.equal(box().value, 'typed meanwhile');
-});
-
-test('a failed capture puts its lines back; a batch that fails part way keeps the added ones out', async (t) => {
-  const api = fakeApi();
-  let mode = 'refuse';
-  api.capture = async (...args) => {
-    api.calls.push(['capture', ...args]);
-    if (mode === 'refuse') throw new Error('board is full');
-    return { created: 50, results: [], failed: { message: 'network down', remaining: ['line 51', 'line 52'] } };
-  };
-  const { harness, c } = await mountBoard(t, 'tba-failed', { api, view: 'lanes' });
-  const box = () => c.querySelector('.tb-capture-input');
-  await harness.input(box(), 'lost?');
-  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
-  assert.equal(box().value, 'lost?', 'a refused capture comes back');
-  mode = 'partial';
-  await harness.act(async () => { harness.fireEvent(box(), 'keydown', { key: 'Enter' }); await new Promise((r) => setTimeout(r, 0)); });
-  assert.equal(box().value, 'line 51\nline 52', 'only the lines not sent come back');
-  assert.match(c.querySelector('.tb-capture-note').textContent, /50 ideas added · stopped: network down; 2 not sent/);
 });
 
 test('a section that opened on its own stays open when the last blocked task clears', async (t) => {
