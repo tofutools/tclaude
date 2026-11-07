@@ -357,6 +357,17 @@ test("an agent's row shows the board tasks assigned to it", async (t) => {
   const shown = mounted.container.querySelectorAll('.tb-agent-tasks');
   assert.equal(shown.length, 1, 'nothing for an agent with no tasks');
   assert.equal(shown[0].textContent.replace(/\s+/g, ' ').trim(), '☰ 2 tasks · second');
+
+  // A linked node's group reads that node's board, not this node's.
+  const peerEntry = board('tba-indicator');
+  peerEntry.tasks = [peerEntry.tasks[0]].map((task) => ({ ...task, title: 'on the peer', assignee: { agent_id: 'agt_builder' } }));
+  const peerSource = { context: harness.signals.signal({ groups: [peerEntry] }), attach: () => () => {} };
+  const asked = [];
+  const boards = (node) => { asked.push(node); return { source: peerSource }; };
+  const peer = await harness.mount(harness.html`<${AgentTaskIndicator} group=${{ ...group, fleet_node: { id: 'nd_peer', local: false } }}
+    member=${{ agent_id: 'agt_builder' }} source=${source} boards=${boards} />`);
+  assert.equal(peer.container.textContent.replace(/\s+/g, ' ').trim(), '☰ 1 task · on the peer');
+  assert.ok(asked.length && asked.every((node) => node === 'nd_peer'));
 });
 
 test('a board whose api cannot assign draws no assign controls', async (t) => {
