@@ -530,7 +530,8 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
       clear();
       await actions.run(`${task.id}:assign`, 'Unassign', (api) => api.unassign(task.id));
     },
-    end: clear,
+    // dragend: a clone the browser ended without a drop still runs.
+    end() { transferOff.current?.({ ended: true }); clear(); },
     // leaveTable drops the marker once the pointer leaves the list.
     leaveTable(event) {
       if (!dragged.current || event.currentTarget.contains(event.relatedTarget)) return;

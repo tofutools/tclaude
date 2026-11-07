@@ -295,7 +295,8 @@ function useLaneDrag(actions, group, tasks = []) {
       transferOff.current?.();
       transferOff.current = listenForTransfer({ task, group, tasks, actions, droppable: binDroppable(task, actions), onDrop: clear });
     },
-    end: clear,
+    // dragend: a clone the browser ended without a drop still runs.
+    end() { transferOff.current?.({ ended: true }); clear(); },
     overCell(event, to) {
       const drop = hit(event, to);
       const key = drop ? `${to.lane}|${to.column}` : '';
