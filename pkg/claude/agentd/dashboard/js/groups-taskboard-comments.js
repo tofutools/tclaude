@@ -20,6 +20,10 @@ import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
+// COMMENT_AREA is where a paste or a drop is a comment's, not the task's:
+// the composer and a comment being edited.
+export const COMMENT_AREA = '.tb-comment-composer, .tb-comment-editor';
+
 // COMMENT_MAX is a comment's size limit, as the server holds it.
 export const COMMENT_MAX = 16 << 10;
 
@@ -70,9 +74,12 @@ function authorOf(comment, nameOf) {
   return comment.author_name || (nameOf ? nameOf(comment.author) : comment.author);
 }
 
-function CommentEntry({ api, taskId, entry, me, nameOf, onChanged }) {
+function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = () => {} }) {
   const comment = entry.comment;
   const [editing, setEditing] = useState(null);
+  // An open edit is unsaved input: the form asks before it closes.
+  useEffect(() => { onEditing(comment.id, editing !== null && editing !== comment.body); }, [editing !== null && editing !== comment.body]);
+  useEffect(() => () => onEditing(comment.id, false), []);
   const [busy, setBusy] = useState(false);
   const deleted = !!comment.deleted_at;
   const mine = !!me && comment.author === me && !deleted && comment.kind === 'comment';
@@ -170,12 +177,23 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     if (el) el.scrollTop = el.scrollHeight;
   }, [stream.entries.length]);
 
-  const dirty = draft.trim().length > 0 || files.length > 0;
+  const [editingIds, setEditingIds] = useState(() => new Set());
+  const onEditing = (id, on) => setEditingIds((before) => {
+    if (before.has(id) === on) return before;
+    const next = new Set(before);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  const dirty = draft.trim().length > 0 || files.length > 0 || editingIds.size > 0;
   useEffect(() => { onDraft(dirty); }, [dirty]);
 
   const send = async () => {
     const body = draft.trim();
-    if (!body || sendingRef.current) return;
+    if (sendingRef.current) return;
+    if (!body) {
+      if (files.length) shellToast('A comment needs text: say what the files are', true);
+      return;
+    }
     sendingRef.current = true;
     setSending(true);
     try {
@@ -202,12 +220,11 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     ${entries.length > 0 && html`<ol class="tb-activity-list" ref=${list}>
       ${entries.map((entry, i) => (entry.comment
         ? html`<${CommentEntry} key=${`c-${entry.comment.id}`} api=${api} taskId=${task.id} entry=${entry} me=${me} nameOf=${nameOf}
-            onChanged=${() => setReads((n) => n + 1)} />`
+            onChanged=${() => setReads((n) => n + 1)} onEditing=${onEditing} />`
         : html`<${ChangeEntry} key=${entry.id || `e-${i}`} entry=${entry} nameOf=${nameOf} />`))}
     </ol>`}
     ${stream.state === 'ready' && !comments && html`<div class="ui-hint tb-activity-empty">no comments yet</div>`}
-    <div class="tb-comment-composer"
-      onPaste=${(event) => { intake.handlers.onPaste(event); if (event.defaultPrevented) event.stopPropagation(); }}>
+    <div class=${`tb-comment-composer${intake.dragOver ? ' files-drag-over' : ''}`} ...${intake.handlers}>
       <${Textarea} class="tb-comment-new" rows=${3} value=${draft} maxLength=${COMMENT_MAX} disabled=${sending}
         placeholder="Write a comment (Markdown) · Ctrl+Enter sends"
         onInput=${(event) => { setDraft(event.currentTarget.value); key.current = newCommentKey(); }}
@@ -216,7 +233,7 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
         }} />
       <span class="tb-comment-send-row">
         <${FilesField} intake=${intake} attachments=${files} busy=${sending} hint="files go with the comment: 📎, or paste into it" />
-        <${Button} size="sm" variant="primary" id="taskboard-comment-send" busy=${sending} disabled=${sending || !draft.trim()}
+        <${Button} size="sm" variant="primary" id="taskboard-comment-send" busy=${sending} disabled=${sending || (!draft.trim() && !files.length)}
           onClick=${() => void send()}>${sending ? 'Sending…' : 'Comment'}<//>
       </span>
     </div>

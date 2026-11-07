@@ -18,7 +18,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
-import { TaskActivity } from './groups-taskboard-comments.js';
+import { COMMENT_AREA, TaskActivity } from './groups-taskboard-comments.js';
 import { Button, Input, Select, Textarea } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
@@ -246,7 +246,9 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const titleRef = useRef(null);
   const held = (task.attachments || []).length - removed.length;
   const intake = useAttachmentIntake({ setAttachments: setPending, attachments: pending, busy: () => sending.current,
-    limits: taskFileLimits(held), onReject: (text) => shellToast(text, true) });
+    limits: taskFileLimits(held), onReject: (text) => shellToast(text, true),
+    // A paste or a drop in the Activity's comment box is the comment's.
+    ignore: (event) => !!event.target?.closest?.(COMMENT_AREA) });
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const tasks = entry?.tasks || [];
   const n = tasks.findIndex((t) => t.id === task.id) + 1;
@@ -257,12 +259,10 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const dirty = steps.length > 0 || commenting;
   const save = async () => {
     if (missing || sending.current) return;
-    // An unsent comment keeps the form open: Save does not send it.
-    const close = () => {
-      if (commenting) { shellToast('The comment is not sent yet: press Comment, or clear it', true); return; }
-      onClose();
-    };
-    if (!steps.length) { close(); return; }
+    // An unsent comment (or an open comment edit) keeps the form open, and
+    // Save writes nothing until it is sent or cleared: Save does not send it.
+    if (commenting) { shellToast('A comment is not sent yet: send it, or clear it, then Save', true); return; }
+    if (!steps.length) { onClose(); return; }
     sending.current = true;
     setBusy(true);
     setError('');
@@ -271,7 +271,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       onSaved(out);
       if (!out.refused.length) {
         shellToast(`Saved ${task.id}`);
-        close();
+        onClose();
         return;
       }
       setError(`${out.saved.length ? `Saved: ${out.saved.join(', ')}. ` : ''}Not saved: ${out.refused.map((r) => `${r.name} (${r.message})`).join('; ')}`);

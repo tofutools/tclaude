@@ -53,11 +53,13 @@ export function clipboardFiles(transfer) {
 //   onReject(text)  says which files were left out, and why
 //   revoke          revoke the thumbnails' object URLs when the dialog goes
 //                   (default); a dialog that does it itself passes false
+//   ignore(event)   true for a paste or drop that a part of the dialog with
+//                   its own files takes (the edit form's comment box)
 //
 // It returns add(files), remove(id), dragOver (a drag of files is over the
 // dialog) and handlers ({ onPaste, onDragEnter, onDragOver, onDragLeave,
 // onDrop }) for the dialog's root.
-export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {}, revoke = true }) {
+export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {}, revoke = true, ignore = () => false }) {
   const sequence = useRef(0);
   const pasteState = useRef({ at: 0, keys: new Set() });
   const dragDepth = useRef(0);
@@ -103,7 +105,7 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
   };
 
   const onPaste = (event) => {
-    if (busy()) return;
+    if (busy() || ignore(event)) return;
     const collected = clipboardFiles(event.clipboardData);
     if (!collected.length) return;
     event.preventDefault();
@@ -138,6 +140,7 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
     if (busy()) return;
     dragDepth.current = 0;
     setDragOver(false);
+    if (ignore(event)) return;
     add(event.dataTransfer.files);
   };
 
