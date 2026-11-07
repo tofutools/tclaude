@@ -459,6 +459,14 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		groupName = g.Name
 	}
 	fromTitle := titleFor(m.FromConv)
+	if m.FromConv == "" {
+		// Senderless mail is the operator's when marked so, otherwise
+		// tclaude's own, as the daemon path labels it.
+		fromTitle = "tclaude (system)"
+		if db.IsOperatorAgentMessage(m.ID) {
+			fromTitle = "human operator"
+		}
+	}
 
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)

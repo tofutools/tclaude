@@ -611,6 +611,13 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 		fmt.Fprintln(stderr, "warning: "+w)
 	}
 	sort.Strings(resp.Effective)
+	// Effective lists slugs only; show the scope the grant just set on its own
+	// slug, so a scoped grant does not read as an unscoped one.
+	for i, e := range resp.Effective {
+		if e == slug {
+			resp.Effective[i] = scopedPermissionLabel(e, resp.Scope)
+		}
+	}
 	if len(resp.Effective) == 0 {
 		fmt.Fprintf(stdout, "%s %q on %s. Effective: (none)\n", verb, slug, label)
 	} else {

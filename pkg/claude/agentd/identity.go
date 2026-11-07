@@ -1495,7 +1495,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			return "", false
 		}
 		writeError(w, http.StatusForbidden, "permission",
-			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with "+askHumanHint+" to ask the human via popup)", perm))
 		return "", false
 	}
 	return p.ConvID, true
@@ -2298,3 +2298,8 @@ func connAcceptedAt(ctx context.Context) time.Time {
 	at, _ := ctx.Value(connAcceptedAtKey{}).(time.Time)
 	return at
 }
+
+// askHumanHint is how a permission denial tells an API caller to ask the
+// human: the request header. The tclaude CLI rewrites it to its own
+// --ask-human flag when it prints the error (agent.DaemonError).
+const askHumanHint = "X-Tclaude-Ask-Human: <duration>"
