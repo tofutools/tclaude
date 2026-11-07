@@ -87,6 +87,39 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
     awayAnswers: (status) => { awayStatus = status; }, transfer };
 }
 
+// pickMenu opens a list row's ⋯ and picks the path's items in turn.
+async function pickMenu(harness, c, id, ...path) {
+  const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  await click(c.querySelector(`tr[data-task-id="${id}"] .tb-act-more`));
+  for (const label of path) {
+    const items = [...c.querySelectorAll('.gr-add-menu [role="menuitem"]')];
+    const item = items.find((b) => b.textContent.trim().replace(/ ›$/, '') === label);
+    assert.ok(item, `menu item ${label}: ${items.map((b) => b.textContent.trim()).join(', ')}`);
+    await click(item);
+  }
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+
+test('a list row\'s ⋯ moves or clones a task to the groups a drag reaches, after the same confirmation', async (t) => {
+  const { harness, c, calls, confirms } = await mountTwo(t);
+  await pickMenu(harness, c, 'tk_00000001', 'Move to group');
+  assert.deepEqual([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].map((b) => b.textContent.trim()), ['‹ Back', 'tbt-b'],
+    'its own board and a virtual group are not targets');
+  await harness.act(async () => { harness.fireEvent([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'tbt-b'), 'click'); });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(confirms[0].title, 'Move task to another group?');
+  await pickMenu(harness, c, 'tk_00000002', 'Clone to group', 'tbt-b');
+  assert.equal(confirms[1].title, 'Clone task to another group?');
+  assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: false, stage: 'idea' }], ['tk_00000002', 'tbt-b', { clone: true, stage: 'idea' }]]);
+});
+
+test('a list row\'s ⋯ moves a task to a group on another node as a drop does', async (t) => {
+  const { harness, c, calls, remote } = await mountTwo(t, { otherNode: 'nd_other' });
+  await pickMenu(harness, c, 'tk_00000001', 'Move to group', 'tbt-b');
+  assert.equal(remote[0][0], 'nd_other', 'the target node creates it');
+  assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]]);
+});
+
 test('a task dropped on another group\'s board moves there after the confirmation', async (t) => {
   const { calls, confirms, toasts, dt, start, over, drop, section } = await mountTwo(t);
   const data = dt();

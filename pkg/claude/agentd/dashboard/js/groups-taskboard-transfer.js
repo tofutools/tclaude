@@ -92,6 +92,28 @@ export function transferTarget(el, fromShown, fromBox) {
   };
 }
 
+// transferTargets are the groups a row's menu can move or clone a task
+// from the board shown as `fromShown` into: every other real group on the
+// page, as a drop could reach it (in the fleet view, a linked node's too).
+// Each is { shown, group, node, nodeName, cross }.
+export function transferTargets(fromShown) {
+  const boxes = [...document.querySelectorAll('details[data-group-key]')].filter((box) => realGroupBox(box) === box);
+  const fromBox = [...document.querySelectorAll('[data-fused-taskboard]')]
+    .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('details[data-group-key]') || null;
+  const fromNode = fromBox?.getAttribute('data-fleet-node') || '';
+  const seen = new Set();
+  const out = [];
+  for (const box of boxes) {
+    const shown = box.dataset.groupKey;
+    if (!shown || shown === fromShown || seen.has(shown)) continue;
+    seen.add(shown);
+    const node = box.getAttribute('data-fleet-node') || '';
+    out.push({ shown, group: ownName(shown, box), node, nodeName: box.getAttribute('data-fleet-node-name') || '', cross: node !== fromNode,
+      fromNodeName: fromBox?.getAttribute('data-fleet-node-name') || '' });
+  }
+  return out;
+}
+
 function clearOver(state) {
   state.over?.classList.remove(OVER);
   state.over?.removeAttribute('data-tb-transfer');

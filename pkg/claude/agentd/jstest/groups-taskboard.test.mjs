@@ -80,7 +80,8 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.equal(rows[1].querySelector('a.tb-ref'), null);
   assert.match(rows[1].querySelector('.tb-ref').textContent, /tcl-n7x41z/);
   // Who and state.
-  assert.match(rows[0].querySelector('.tb-who').textContent.replace(/\s+/g, ' '), /builder\s*by operator/);
+  assert.equal(rows[0].querySelector('.tb-who-name').textContent, 'builder');
+  assert.match(rows[0].querySelector('.tb-who').getAttribute('title'), /^builder · assigned .* by operator$/, 'who assigned it is the tooltip');
   assert.match(rows[0].querySelector('.tb-state').textContent, /^in progress · 41m$/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');

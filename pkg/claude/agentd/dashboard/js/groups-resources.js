@@ -8,7 +8,7 @@
 // (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
@@ -30,6 +30,10 @@ import { openGroupWebTermPane, openShellResource } from './terminals-tab.js';
 import { killShell } from './background-terminals.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
 import { registerResourceRemover } from './resource-dnd.js';
+import { agentColumns, useAgentColumns } from './agent-align.js';
+import { RowMenu } from './row-menu.js';
+
+export { agentColumns, RowMenu };
 
 export { LockChip };
 
@@ -94,67 +98,14 @@ export function sortResourceRows(rows) {
   return applySortState(rows, RESOURCE_ACCESSORS, tableSortState(RESOURCE_SORT, RESOURCE_COLS));
 }
 
-// ALIGNED_COLS are the agents table's headers (data-sort-col) a Resources
-// table lines its own up under, in order, each with this table's width
-// variable: the controls take whatever lies left of Name.
-const ALIGNED_COLS = Object.freeze([
-  { col: 'title', key: 'name', min: 60 },
-  { col: 'state', key: 'state', min: 40 },
-  { col: 'last', key: 'last', min: 30 },
-  { col: 'age', key: 'age', min: 30 },
-]);
-
-// agentColumns finds, for a Resources table, where the agents table above it
-// in the same group starts its Name, State, Last and Age columns, as widths
-// for this table's controls, Name, State, Last and Age columns ({ ctl, name,
-// state, last, age }, 0 for one not to set); null when there is no agents
-// table to line up with (folded, or none). A column runs to where the next
-// of these starts, so one the agents table shows between them (Process) is
-// taken in and the next still lines up; without that next one (hidden), it
-// is its header's own width.
-export function agentColumns(table) {
-  const section = table?.closest?.('[data-fused-section]');
-  // The members table, by its Name header: a pending-spawns table may come
-  // first in the section.
-  const name = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] thead th[data-sort-col="title"]');
-  const head = name?.closest('thead');
-  if (!head) return null;
-  const left = table.getBoundingClientRect().left;
-  const nameLeft = name?.getBoundingClientRect().left;
-  if (!name || !(nameLeft > left)) return null;
-  const out = { ctl: Math.round(nameLeft - left) };
-  const rects = ALIGNED_COLS.map(({ col }) => (col === 'title' ? name : head.querySelector(`th[data-sort-col="${col}"]`))?.getBoundingClientRect() || null);
-  ALIGNED_COLS.forEach(({ key, min }, i) => {
-    const own = rects[i];
-    const next = rects[i + 1];
-    // Name has no width of its own to fall back to: the table's rest takes it.
-    const width = !own ? 0 : next ? Math.round(next.left - own.left) : key === 'name' ? 0 : Math.round(own.width);
-    out[key] = width > min ? width : 0;
-  });
-  return out;
-}
-
-// useAgentAlignment keeps table's controls, Name, State, Last and Age columns
-// as wide as the agents table's above it, so those line up across the two:
-// on every render and whenever the agents table changes size.
+// useAgentAlignment keeps the table's controls, Name, State, Last and Age
+// columns as wide as the agents table's above it (agent-align.js).
 function useAgentAlignment(ref) {
-  const apply = () => {
-    const table = ref.current;
-    if (!table) return;
-    const cols = agentColumns(table);
+  useAgentColumns(ref, (table, cols) => {
     // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
     table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
     for (const key of ['name', 'state', 'last', 'age']) table.style.setProperty(`--gr-${key}-w`, cols?.[key] ? `${cols[key]}px` : '');
-  };
-  useLayoutEffect(apply);
-  useEffect(() => {
-    const table = ref.current;
-    const agents = table?.closest?.('[data-fused-section]')?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"]');
-    if (!agents || typeof ResizeObserver !== 'function') return undefined;
-    const observer = new ResizeObserver(() => apply());
-    observer.observe(agents);
-    return () => observer.disconnect();
-  }, []);
+  });
 }
 
 // ResourceTable is a group's resources as a table like the agents table:
@@ -188,35 +139,6 @@ function primaryLabel(kind, view) {
   if (view === 'background') return kind === 'shell' ? 'Attach' : 'Open';
   if (view === 'closed' && kind === 'page') return 'Reopen';
   return PRIMARY[view] || 'Open';
-}
-
-// RowMenu is a row's ⋯: what is rarely wanted, and what cannot be undone
-// behind a confirm. An item with children opens them in its place (Move to
-// group lists the groups), with a way back.
-export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more', keepSlot = false }) {
-  const [open, setOpen] = useState(false);
-  const [sub, setSub] = useState(null);
-  const ref = useRef(null);
-  const close = () => { setOpen(false); setSub(null); };
-  useDismissablePopover(ref, open, (why) => { if (why !== 'away') close(); });
-  if (!items.length) {
-    return keepSlot ? html`<${Button} size="sm" icon=${true} class=${buttonClass} disabled aria-label=${`Nothing more for ${label}`}>${glyph}<//>` : null;
-  }
-  const shown = sub ? [{ label: '‹ Back', attrs: { 'data-menu-back': '' }, back: true }, ...sub.children] : items;
-  const pick = (item) => {
-    if (item.back) return setSub(null);
-    if (item.children) return setSub(item);
-    close();
-    void item.run();
-  };
-  return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant=${keepSlot ? undefined : 'link'} icon=${keepSlot} class=${keepSlot ? buttonClass : `gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${title || `More for ${label}`} aria-label=${title || `More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>${glyph}<//>
-    ${open && html`<${Menu} size="sm" class="gr-add-menu">
-      ${shown.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} ...${item.attrs || {}}
-        onClick=${() => pick(item)}>${item.children ? `${item.label} ›` : item.label}<//>`)}
-    <//>`}
-  </span>`;
 }
 
 // RenameField edits a row's name in place: Enter saves, Escape or leaving
