@@ -28,6 +28,9 @@ import (
 // alone, so non-agent senders are unaffected. The delivery/flush queue is
 // already actor-keyed the same way (JOH-310).
 
+// systemMailSender names tclaude itself as the sender of its own mail.
+const systemMailSender = "tclaude (system)"
+
 // inboxForCaller returns the caller's received mail across all of the actor's
 // generations (plus its own current-conv mail).
 func inboxForCaller(callerConv string, limit int) ([]*db.AgentMessage, error) {
@@ -520,6 +523,11 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	resp["replyable"] = replyable
 	if operatorAuthored {
 		resp["from_title"] = "human operator"
+	} else if m.FromConv == "" && remoteLabel == "" {
+		// Senderless mail the operator did not write is tclaude's own (a
+		// startup context, a task board notice). Without a title the CLI
+		// would render the empty sender as the operator.
+		resp["from_title"] = systemMailSender
 	}
 	if replyable && remoteLabel == "" {
 		// Operator-authored mail has no mailbox return address and advertises

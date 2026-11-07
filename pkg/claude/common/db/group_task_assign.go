@@ -51,7 +51,7 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 			return errAssigneeChanged(id)
 		}
 		if t.Status != GroupTaskOpen {
-			return taskConflict("not_open", "task %s is %s; only an open task is assigned", id, t.Status)
+			return taskConflict("not_open", "task %s is %s; only an open task can be assigned or taken", id, t.Status)
 		}
 		if t.AssigneeID == agentID {
 			return nil
