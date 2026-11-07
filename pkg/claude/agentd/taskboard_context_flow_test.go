@@ -1,12 +1,15 @@
 package agentd_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -220,4 +223,34 @@ func TestTaskboardContextBounds(t *testing.T) {
 	assert.True(t, g.Truncated)
 	assert.Len(t, g.Closed, 8)
 	assert.Equal(t, 9, g.Counts.DoneThisWeek)
+}
+
+// `tclaude agent taskboard ls --summary` reads the same counts, for the
+// boards the caller can read, as text and as JSON.
+func TestTaskboardLsSummaryCLI(t *testing.T) {
+	h := newTaskboardFlow(t)
+	const member = "tb-ctx-cli-6666"
+	h.agent(t, member)
+	h.f.HaveGroup("crew")
+	h.f.HaveGroup("secret")
+	h.f.HaveMember("crew", member)
+	h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "queued", "stage": "next"}), http.StatusCreated)
+	h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "an idea"}), http.StatusCreated)
+	h.task(h.call("", http.MethodPost, "/v1/groups/secret/taskboard/tasks", map[string]any{"title": "secret plan"}), http.StatusCreated)
+	bridgeAgentClientToMuxAsAgent(t, h.f.Mux, member)
+
+	stdout := new(bytes.Buffer)
+	require.Equal(t, 0, agent.RunTaskboardSummary(false, stdout, new(bytes.Buffer)))
+	assert.Equal(t, "crew: 2 · 1 next · 1 idea\n", stdout.String(), "only the readable board")
+
+	stdout.Reset()
+	require.Equal(t, 0, agent.RunTaskboardSummary(true, stdout, new(bytes.Buffer)))
+	var out struct {
+		Groups []agent.TaskboardSummaryGroup `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &out))
+	require.Len(t, out.Groups, 1)
+	assert.Equal(t, "crew", out.Groups[0].Group)
+	assert.Equal(t, 2, out.Groups[0].Counts.Live)
+	assert.Equal(t, 1, out.Groups[0].Counts.Ideas)
 }

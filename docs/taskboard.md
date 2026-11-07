@@ -56,6 +56,7 @@ remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 
 ```bash
 tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--json]
+tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard history <task>
 
@@ -75,6 +76,9 @@ tclaude agent taskboard done <task>
 - If you leave out the group in `ls`, it lists your own group's board. This only
   works when you are an active member of exactly one group.
 - `ls --all` also lists done and dropped tasks that are not archived yet.
+- `ls --summary` prints one line of counts for every group board you can
+  read, for example `crew: 9 · 1 needs you · 2 in progress · 6 next · 3 ideas`.
+  These are the counts the dashboard section shows.
 - If `move --before` or `move --after` names a task in the other stage, the
   moved task is promoted or demoted in the same write.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
@@ -162,7 +166,7 @@ peer node's groups don't show their boards yet.
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
-| (dashboard) | `GET /v1/taskboard/context` |
+| `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
 
 `status` also accepts `{"status":"open"}` on a done or dropped task. This
 reopens the task in the stage and position it had before.
