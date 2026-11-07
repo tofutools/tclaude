@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -43,6 +45,18 @@ type fleetBrief struct {
 	Agents []fleetAgent `json:"agents"`
 	// UnreadMessages counts unread notifications in the Messages tab.
 	UnreadMessages int `json:"unread_messages"`
+	// Taskboards are the groups whose task board needs the operator:
+	// blocked tasks and stalled assignments (docs/taskboard.md). Absent
+	// while features.taskboard is off.
+	Taskboards []fleetTaskboard `json:"taskboards,omitempty"`
+}
+
+// fleetTaskboard is one group's task board "needs you" counts.
+type fleetTaskboard struct {
+	Group    string `json:"group"`
+	NeedsYou int    `json:"needs_you"`
+	Blocked  int    `json:"blocked"`
+	Stalled  int    `json:"stalled"`
 }
 
 type fleetCounts struct {
@@ -89,11 +103,12 @@ const (
 	fleetMessages   = "messages"   // unread notifications in Messages
 	fleetIdleLonger = "idle"       // online and idle for a while
 	fleetRecovering = "recovering" // a crashed agent: being recovered, or recovery stopped
+	fleetTaskboardK = "taskboard"  // a group's task board has blocked or stalled tasks
 )
 
 var fleetRank = map[string]int{
 	fleetApproval: 0, fleetPrompt: 1, fleetQuestion: 2, fleetError: 3,
-	fleetRecovering: 4, fleetPRReady: 5, fleetMessages: 6, fleetIdleLonger: 7,
+	fleetRecovering: 4, fleetTaskboardK: 5, fleetPRReady: 6, fleetMessages: 7, fleetIdleLonger: 8,
 }
 
 type fleetItem struct {
@@ -250,6 +265,9 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		}
 		brief.Attention = append(brief.Attention, item)
 	}
+	if err := addFleetTaskboards(brief, groups, now); err != nil {
+		return nil, err
+	}
 	if group == "" {
 		n, err := db.CountUnreadHumanMessages()
 		if err != nil {
@@ -288,6 +306,52 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		return strings.ToLower(a.Title) < strings.ToLower(b.Title)
 	})
 	return brief, nil
+}
+
+// addFleetTaskboards adds each listed group's task board "needs you" counts
+// and an attention item for every group with any.
+func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Time) error {
+	if cfg, _ := config.Load(); !cfg.TaskboardEnabled() {
+		return nil
+	}
+	blocked, err := db.CountBlockedGroupTasks()
+	if err != nil {
+		return err
+	}
+	assigned, err := db.ListOpenAssignedGroupTasks()
+	if err != nil {
+		return err
+	}
+	stalled := map[int64]int{}
+	staller := newTaskboardStaller(now)
+	for _, at := range assigned {
+		if _, ok := staller.stalled(at.Task); ok {
+			stalled[at.Task.GroupID]++
+		}
+	}
+	for _, g := range groups {
+		if g.IsArchived() || blocked[g.ID]+stalled[g.ID] == 0 {
+			continue
+		}
+		tb := fleetTaskboard{Group: g.Name, Blocked: blocked[g.ID], Stalled: stalled[g.ID]}
+		tb.NeedsYou = tb.Blocked + tb.Stalled
+		brief.Taskboards = append(brief.Taskboards, tb)
+		var parts []string
+		if tb.Stalled > 0 {
+			parts = append(parts, fmt.Sprintf("%d stalled", tb.Stalled))
+		}
+		if tb.Blocked > 0 {
+			parts = append(parts, fmt.Sprintf("%d blocked", tb.Blocked))
+		}
+		verb := " need you ("
+		if tb.NeedsYou == 1 {
+			verb = " needs you ("
+		}
+		brief.Attention = append(brief.Attention, fleetItem{Kind: fleetTaskboardK, Title: g.Name + " board:",
+			Detail: plural(tb.NeedsYou, "task") + verb + strings.Join(parts, ", ") + ")"})
+	}
+	sort.Slice(brief.Taskboards, func(i, j int) bool { return brief.Taskboards[i].Group < brief.Taskboards[j].Group })
+	return nil
 }
 
 func countFleetAgent(c *fleetCounts, a fleetAgent) {

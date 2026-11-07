@@ -67,6 +67,12 @@ type fleetResp struct {
 		} `json:"prs"`
 	} `json:"agents"`
 	UnreadMessages int `json:"unread_messages"`
+	Taskboards     []struct {
+		Group    string `json:"group"`
+		NeedsYou int    `json:"needs_you"`
+		Blocked  int    `json:"blocked"`
+		Stalled  int    `json:"stalled"`
+	} `json:"taskboards,omitempty"`
 }
 
 func fleetCmd() *cobra.Command {

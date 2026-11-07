@@ -77,6 +77,8 @@ type taskboardTask struct {
 	Outcome     string `json:"outcome,omitempty"`
 	OutcomeNote string `json:"outcome_note,omitempty"`
 	Failures    int    `json:"failures,omitempty"`
+	Stalled     bool   `json:"stalled,omitempty"`
+	IdleSince   string `json:"idle_since,omitempty"`
 	Ref         *struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url,omitempty"`
@@ -243,6 +245,9 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		if t.Queued {
 			state = "queued"
 		}
+		if t.Stalled {
+			state = "stalled"
+		}
 		line := fmt.Sprintf("%3d. %s  %-7s  %s", n, t.ID, state, t.Title)
 		if ref := t.refText(); ref != "" {
 			line += "  [" + ref + "]"
@@ -270,6 +275,7 @@ type TaskboardCounts struct {
 	Next         int `json:"next"`
 	Ideas        int `json:"ideas"`
 	Blocked      int `json:"blocked"`
+	Stalled      int `json:"stalled"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -367,6 +373,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  group:   %s\n  stage:   %s\n  status:  %s\n", t.Group, t.Stage, t.Status)
 	if t.BlockReason != "" {
 		fmt.Fprintf(stdout, "  blocked: %s\n", t.BlockReason)
+	}
+	if t.Stalled {
+		fmt.Fprintf(stdout, "  stalled: its assignee has been idle since %s without reporting\n", t.IdleSince)
 	}
 	if t.Ref != nil {
 		fmt.Fprintf(stdout, "  ref:     %s %s %s\n", t.Ref.Kind, t.Ref.Label, t.Ref.URL)

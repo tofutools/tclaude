@@ -45,7 +45,7 @@ function actorLabel(actor, group, snapshot) {
 }
 
 const STATE_LABELS = {
-  blocked: 'blocked', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
+  blocked: 'blocked', stalled: 'stalled', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
 };
 
 function RefChip({ task }) {
@@ -86,6 +86,7 @@ function StatePill({ task, numbers }) {
   const state = taskRowState(task);
   let text = STATE_LABELS[state];
   if (state === 'in-progress' && task.assigned_at) text = `in progress · ${relTime(task.assigned_at).replace(/ ago$/, '')}`;
+  if (state === 'stalled' && task.idle_since) text = `stalled · idle ${relTime(task.idle_since).replace(/ ago$/, '')}`;
   if (state === 'queued') {
     const waits = (task.unmet || []).map((dep) => (numbers.get(dep) ? `#${numbers.get(dep)}` : dep));
     if (waits.length) text = `queued · waits on ${waits.join(', ')}`;

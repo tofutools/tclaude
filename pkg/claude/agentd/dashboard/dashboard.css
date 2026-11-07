@@ -18635,6 +18635,7 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-state { white-space: nowrap; }
 .ui-tag.tb-state-in-progress { border-color: #238636; color: #3fb950; }
 .ui-tag.tb-state-blocked { border-color: #da3633; color: #f85149; }
+.ui-tag.tb-state-stalled { border-color: #9e6a03; color: #d29922; }
 .ui-tag.tb-state-idea { border-style: dashed; }
 .tb-row-done .tb-title, .tb-row-dropped .tb-title { color: #7d8590; }
 .tb-row-dropped .tb-title { text-decoration: line-through; }

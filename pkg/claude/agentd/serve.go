@@ -768,6 +768,7 @@ func runServe(p *serveParams) error {
 	// Group task board housekeeping: archives and purges done and dropped
 	// tasks, hourly. Does nothing while features.taskboard is off.
 	startTaskboardSweep(cronStop)
+	startTaskboardIdleSweep(cronStop)
 
 	// Size-based rotation of ~/.tclaude/output.log. agentd holds the
 	// log fd for its whole life, so rotation renames the file and
