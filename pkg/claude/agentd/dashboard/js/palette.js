@@ -320,8 +320,8 @@ export function buildCommands(snapshot) {
         node: page.id, icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home} on ${name}`, `browser scrying portal in ${home} on ${name}`),
-        keywords: `open new create make add terminal shell console web term cd home dir directory default cwd resource group ${g.name} terminal ${g.name} shell ${g.name}`
-          + ' portal scrying party',
+        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
+          + ' portal scrying party new create make add resource',
         ...(control.state === 'shell'
           ? { run: () => { recordGroupInteraction(g.name); void openRemote('openRemoteShell', { instance: page.id, peerLabel: name, ...control.shell }); } }
           : { enabled: false, disabledReason: limitHint(control.state, control.what, name, control.needs), run: () => {} }),
@@ -331,8 +331,8 @@ export function buildCommands(snapshot) {
         peerView: 'own', icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home}`, `browser scrying portal in ${home}`),
-        keywords: `open new create make add terminal shell console web term cd home dir directory default cwd resource group ${g.name} terminal ${g.name} shell ${g.name}`
-          + ' portal scrying party',
+        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
+          + ' portal scrying party new create make add resource',
         run: () => { recordGroupInteraction(g.name); openGroupWebTermPane(g.name, g.name); },
       });
     }
@@ -559,23 +559,6 @@ export function buildCommands(snapshot) {
       },
     });
   }
-  // A drawing board, a live page or a process made in a named group, as the
-  // group's ＋ makes them ("open drawing board in tclaude"). The group's
-  // shell is §1's "Open terminal in group".
-  const make = defaultNewContext();
-  cmds.push(...buildResourceCreateCommands(groups, {
-    wiz,
-    processes: processesAvailable(snap),
-    touch: recordGroupInteraction,
-    make: {
-      board: make.board,
-      page: (g) => make.page(g, []),
-      process: (g) => requestProcessStart({ group: g.name }, {
-        prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
-        showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,
-      }),
-    },
-  }));
   // The fused Groups view's other nodes' groups (group@node) take theirs on
   // their node.
   const fused = fusedGroupListing();
@@ -1071,6 +1054,24 @@ export function buildCommands(snapshot) {
   // Feature-owned contextual commands join the same global surface. Providers
   // are evaluated last and live, so opening the palette in the process editor
   // sees its current selection without the shell owning editor state.
+  // A drawing board, a live page or a process made in a named group, as the
+  // group's ＋ makes them ("open drawing board in tclaude"). The group's
+  // shell is §1's "Open terminal in group". Last, so a plain word they
+  // share with an older command (process, board, start) keeps its old first hit.
+  const make = defaultNewContext();
+  cmds.push(...buildResourceCreateCommands(groups, {
+    wiz,
+    processes: processesAvailable(snap),
+    touch: recordGroupInteraction,
+    make: {
+      board: make.board,
+      page: (g) => make.page(g, []),
+      process: (g) => requestProcessStart({ group: g.name }, {
+        prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
+        showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,
+      }),
+    },
+  }));
   cmds.push(...buildRegisteredCommands({ snapshot: snap }));
   return limitPeerViewCommands(cmds, snap);
 }

@@ -83,14 +83,11 @@ export const SYNONYMS = {
   group: ['party'],
   // The palette makes a group's resources (palette-resources.js): a drawing
   // board is also a "whiteboard", and 🧙 calls it a slate, a page a looking
-  // glass and a process a rite.
+  // glass and a process a rite. One way only: matching is by substring, so
+  // process → rite would also find "write" and "favorite".
   whiteboard: ['drawing board'],
   slate: ['drawing board'],
-  board: ['slate'],
-  glass: ['page'],
-  page: ['glass'],
   rite: ['process'],
-  process: ['rite'],
 };
 
 // FILLER are the words a phrased query carries that no command needs to

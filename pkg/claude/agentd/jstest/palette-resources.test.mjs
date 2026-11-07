@@ -46,7 +46,7 @@ test('a phrased query makes the named resource in the named group, in either the
 test('the kind narrows: a drawing board query offers no page or process', () => {
   const { commands } = build(false);
   const labels = rankCommands(commands, 'drawing board').map((c) => c.label);
-  assert.deepEqual(labels, ['New drawing board in tclaude', 'New drawing board in awb']);
+  assert.deepEqual(labels, ['Make a drawing board in tclaude', 'Make a drawing board in awb']);
 });
 
 test('no process command where the node offers no processes', () => {

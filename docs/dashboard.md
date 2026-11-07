@@ -95,8 +95,8 @@ power, repository updates and every manager dialog.
 - `drawing board <group>` (or `whiteboard`, or a phrase such as `open drawing
   board in tclaude`) makes a drawing board in that group and opens it.
   `page <group>` makes a live page there, and `process <group>` opens the
-  group's start form. In 🧙 mode the same commands answer to `slate`,
-  `looking glass` and `rite`.
+  group's start form. The 🧙 words `slate`, `looking glass` and `rite` find
+  them too, in either theme.
 - **Announce to all live agents…** sends one message to everyone running.
 
 On a peer's page, it runs on that peer, limited to what the peer allows.
