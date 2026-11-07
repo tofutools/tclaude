@@ -39,7 +39,7 @@ type taskboardHarness struct {
 
 func newTaskboardFlow(t *testing.T) *taskboardHarness {
 	f := newFlow(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Taskboard: true}}))
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Taskboard: new(true)}}))
 	return &taskboardHarness{t: t, f: f}
 }
 
@@ -164,11 +164,18 @@ func TestTaskboardMemberCapturesAndOrders(t *testing.T) {
 	assert.NotContains(t, h.list(member, "/v1/groups/crew/taskboard?all=1"), "fix flake in foo_test.go")
 }
 
-// Off by default: every route answers 404 until features.taskboard is on.
-func TestTaskboardIsOffByDefault(t *testing.T) {
+// On by default; features.taskboard false turns every route to 404.
+func TestTaskboardOnByDefaultAndCanBeTurnedOff(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
-	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups/crew/taskboard", nil)))
+	get := func() *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups/crew/taskboard", nil)))
+	}
+	rec := get()
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Taskboard: new(false)}}))
+	rec = get()
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Body.String(), "feature_disabled")
 }

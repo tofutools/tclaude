@@ -5,12 +5,9 @@ right now and the next few things it will do. Each [agent group](agents-and-grou
 has one board. The operator and the group's agents read and change it with
 `tclaude agent taskboard`.
 
-> The task board is in development and is off by default. Turn it on with
-> `"features": {"taskboard": true}` in `~/.tclaude/config.json`. While it is
-> off, its routes answer 404, but stored tasks are kept. So far there is the
-> store, the CLI, the API, importing refs from trackers, assigning tasks to
-> agents, the dashboard section, and reaching a linked node's boards over
-> federation.
+> The task board is on by default. To turn it off, set
+> `"features": {"taskboard": false}` in `~/.tclaude/data/config.json`. While it
+> is off, its routes answer 404 and its sweeps stop, but stored tasks are kept.
 
 ## What the board is for, and what it is not
 

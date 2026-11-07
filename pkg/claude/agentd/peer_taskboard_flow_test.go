@@ -20,7 +20,7 @@ func TestPeerTaskboardReadAndWriteUnderGroupGrants(t *testing.T) {
 	fh := newFedHarness(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features = &config.FeaturesConfig{Taskboard: true}
+	cfg.Features = &config.FeaturesConfig{Taskboard: new(true)}
 	require.NoError(t, config.Save(cfg))
 	fh.f.HaveGroup("crew")
 	fh.f.HaveGroup("other")
@@ -151,7 +151,7 @@ func TestPeerTaskboardUnrestricted(t *testing.T) {
 	h := newPeerProcessHarness(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features = &config.FeaturesConfig{Taskboard: true}
+	cfg.Features = &config.FeaturesConfig{Taskboard: new(true)}
 	require.NoError(t, config.Save(cfg))
 	rec := fedHuman(t, h.f, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "crew plan"})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
