@@ -105,12 +105,17 @@ unless you pass `--next`.
 - **A failed lookup still adds the task.** When no proxy is configured, the
   lookup is refused, or the tracker has no such item, the id becomes the title.
   The output says why for each item. Fix the title later with `edit --title`.
+  The fallback title is the tracker id, `owner/repo#n` for GitHub, or the whole
+  URL for a plain link. All lookups in one import share a one-minute budget;
+  refs left over when it runs out keep their id as the title.
 - **The link is filled in.** An awb ref links to the issue on the configured awb
   server, and a Linear ref to the URL Linear returns.
 - **Duplicates are refused one by one.** A ref that is already on the board
   (open or blocked, in either stage) is refused, and so is a repeat within the
   same import. The rest of the import still lands. A GitHub ref is matched by
   repository and number, so `owner/repo#12` and the issue URL count as the same.
+  An awb or Linear ref is matched by its id, and any other link by its whole URL.
+- **`owner/repo#n`** is looked up as an issue first, then as a pull request.
 - **Lines.** `--lines-file` adds one task per non-empty line. A line that is
   only an awb, Linear or GitHub id (or URL) becomes a task with that ref, and
   is looked up like the `--from-*` refs. Any other line is the title.

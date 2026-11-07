@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -34,6 +36,10 @@ import (
 // maxTaskboardImportItems bounds one batch. The board is meant to hold about
 // ten tasks; fifty leaves room for a burst without inviting a backlog dump.
 const maxTaskboardImportItems = 50
+
+// taskboardImportLookupBudget bounds the time all of one import's title
+// lookups may take together. The CLI waits longer than this.
+const taskboardImportLookupBudget = 60 * time.Second
 
 // taskboardImportMu serialises the duplicate check and the creates of an
 // import, so two concurrent imports cannot both add the same ref. Lookups run
@@ -115,21 +121,32 @@ func prepareTaskboardImport(refs, lines []string) ([]taskboardImportItem, []task
 	return items, results
 }
 
-// taskboardRefKey identifies a ref for the duplicate check: its kind and
-// label (an awb or Linear id), or its URL when it has no label.
+// taskboardRefKey identifies a ref for the duplicate check. A GitHub issue or
+// pull request is keyed by repository and number, so the owner/repo#n
+// shorthand and its URL collide. An awb or Linear ref is keyed by its tracker
+// id: read from its URL when it has one (its label may be custom), else its
+// label, which is the id unless set by hand. Anything else, a plain URL
+// included, is keyed by its whole URL: a URL's derived label is only its host.
 func taskboardRefKey(kind, refURL, label string) string {
-	if kind == "" {
+	switch kind {
+	case "":
 		return ""
+	case "github":
+		if owner, repo, n, _, ok := githubRefParts(refURL); ok {
+			return fmt.Sprintf("github\x00%s/%s#%d", strings.ToLower(owner), strings.ToLower(repo), n)
+		}
+	case "awb", "linear":
+		id := label
+		if refURL != "" {
+			if derived := deriveTaskLabel(refURL); derived != "" {
+				id = derived
+			}
+		}
+		if id != "" {
+			return kind + "\x00" + strings.ToLower(id)
+		}
 	}
-	// A GitHub ref is keyed by repository and number, so the owner/repo#n
-	// shorthand and the issue or pull URL of the same item collide.
-	if owner, repo, n, _, ok := githubRefParts(refURL); kind == "github" && ok {
-		return fmt.Sprintf("github\x00%s/%s#%d", strings.ToLower(owner), strings.ToLower(repo), n)
-	}
-	if label != "" {
-		return kind + "\x00" + strings.ToLower(label)
-	}
-	return kind + "\x00" + strings.ToLower(refURL)
+	return kind + "\x00" + strings.TrimRight(strings.ToLower(refURL), "/")
 }
 
 // handleTaskboardImport creates one task per ref or line. The answer is 200
@@ -147,12 +164,22 @@ func handleTaskboardImport(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 
 	// Resolve titles first, outside the lock: each lookup may reach a tracker.
+	// The lookups share one time budget, so a batch answers in bounded time;
+	// a ref past it keeps its id as the title.
+	ctx, cancel := context.WithTimeout(r.Context(), taskboardImportLookupBudget)
+	defer cancel()
+	lookupReq := r.WithContext(ctx)
 	for i := range items {
 		it := &items[i]
 		if results[i].Error != "" || it.title != "" {
 			continue
 		}
-		title, refURL, note := lookupTaskboardRef(r, it.kind, it.refURL, it.refLabel)
+		if ctx.Err() != nil {
+			it.title = taskboardRefFallbackTitle(it.kind, it.refURL, it.refLabel)
+			results[i].Note = "not looked up: the import's lookup time ran out"
+			continue
+		}
+		title, refURL, note := lookupTaskboardRef(lookupReq, it.kind, it.refURL, it.refLabel)
 		if note == "" {
 			results[i].Resolved = true
 		} else {
@@ -202,9 +229,12 @@ func handleTaskboardImport(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		if k := taskboardRefKey(it.kind, it.refURL, it.refLabel); k != "" {
 			seen[k] = t.ID
 		}
-		views, err := taskboardViews(g.Name, []*db.GroupTask{t})
-		if err == nil {
+		if views, err := taskboardViews(g.Name, []*db.GroupTask{t}); err == nil {
 			results[i].Task = &views[0]
+		} else {
+			// Created all the same: report the task without its derived fields.
+			results[i].Task = &taskboardTaskView{ID: t.ID, Group: g.Name, Title: t.Title, Stage: t.Stage,
+				Status: t.Status, DependsOn: []string{}}
 		}
 		created++
 	}
@@ -226,10 +256,26 @@ func taskboardErrorText(err error) (msg, code string) {
 	return err.Error(), "db"
 }
 
+// taskboardRefFallbackTitle is the title of a ref whose lookup failed: the
+// tracker id, owner/repo#n for GitHub, or the whole URL.
+func taskboardRefFallbackTitle(kind, refURL, label string) string {
+	switch kind {
+	case "awb", "linear":
+		if label != "" {
+			return sanitizeTaskTitle(label)
+		}
+	case "github":
+		if owner, repo, n, _, ok := githubRefParts(refURL); ok {
+			return sanitizeTaskTitle(fmt.Sprintf("%s/%s#%d", owner, repo, n))
+		}
+	}
+	return sanitizeTaskTitle(firstNonEmpty(refURL, label))
+}
+
 // lookupTaskboardRef finds a ref's title through its tracker's proxy. On any
-// refusal or failure it returns the ref's label as the title and a note.
+// refusal or failure it returns the fallback title and a note.
 func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, resolvedURL, note string) {
-	fallback := sanitizeTaskTitle(firstNonEmpty(label, refURL))
+	fallback := taskboardRefFallbackTitle(kind, refURL, label)
 	cfg, _ := config.Load()
 	var (
 		path string
@@ -265,10 +311,21 @@ func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, res
 		if pull {
 			path = "/v1/github/pr/view"
 		}
+		t, u, note := readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
+		// owner/repo#n names an issue or a pull request alike; try the pull
+		// request when no issue has the number.
+		if note != "" && !pull && strings.Contains(note, "no issue") {
+			return readTaskboardRefTitle(r, kind, "/v1/github/pr/view", body, repo, fallback, resolvedURL)
+		}
+		return t, u, note
 	default:
 		return fallback, "", "a plain URL is not looked up"
 	}
+	return readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
+}
 
+// readTaskboardRefTitle runs one proxy read and takes the title from it.
+func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, fallback, resolvedURL string) (title, outURL, note string) {
 	status, payload, errText := taskboardProxyRead(r, path, body)
 	if status != http.StatusOK {
 		return fallback, resolvedURL, "lookup refused: " + guideText(errText, 160)
@@ -283,6 +340,9 @@ func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, res
 		msg := "the proxy returned no issue"
 		if out.Stderr != "" {
 			msg = "lookup failed: " + guideText(out.Stderr, 160)
+		}
+		if repo != "" && out.Repo != "" && !strings.EqualFold(out.Repo, repo) {
+			msg = fmt.Sprintf("the GitHub proxy reaches %s from your repository, not %s", out.Repo, repo)
 		}
 		return fallback, resolvedURL, msg
 	}

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -441,13 +442,21 @@ func readImportLines(file string, stdin io.Reader) ([]string, error) {
 		b   []byte
 		err error
 	)
-	if file == "-" {
-		b, err = io.ReadAll(io.LimitReader(stdin, 48<<10))
-	} else {
-		b, err = os.ReadFile(file)
+	const limit = 48 << 10
+	src := stdin
+	if file != "-" {
+		f, err := os.Open(file)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = f.Close() }()
+		src = f
 	}
-	if err != nil {
+	if b, err = io.ReadAll(io.LimitReader(src, limit+1)); err != nil {
 		return nil, err
+	}
+	if len(b) > limit {
+		return nil, fmt.Errorf("the lines are over %d KiB; an import is for the next few tasks", limit>>10)
 	}
 	var lines []string
 	for line := range strings.SplitSeq(string(b), "\n") {
@@ -497,7 +506,9 @@ func runTaskboardImport(p *taskboardAddParams, stdin io.Reader, stdout, stderr i
 		Results []taskboardImportResult `json:"results"`
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
-	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	// The daemon spends up to a minute on title lookups; wait past that.
+	opts := DaemonOpts{AskHuman: ask, Timeout: 90 * time.Second}
+	if err := DaemonRequest(http.MethodPost, path, req, &resp, opts); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

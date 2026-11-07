@@ -172,6 +172,23 @@ func TestTaskboardImportFallsBackToTheID(t *testing.T) {
 	assert.NotEmpty(t, gh.Note)
 	assert.Equal(t, "duplicate", out.Results[2].Code, "the shorthand and the URL are the same issue")
 
+	// Plain URLs on one host are different refs, keyed by the whole URL; the
+	// title is the URL, not just its host. The same URL again is a duplicate.
+	out = h.importBatch(member, map[string]any{"refs": []string{
+		"https://jira.acme.com/browse/PROJ-1", "https://jira.acme.com/browse/PROJ-2", "https://jira.acme.com/browse/PROJ-1/",
+	}})
+	require.Len(t, out.Results, 3)
+	assert.Equal(t, 2, out.Created, "%+v", out.Results)
+	require.NotNil(t, out.Results[0].Task)
+	assert.Equal(t, "https://jira.acme.com/browse/PROJ-1", out.Results[0].Task.Title)
+	assert.Equal(t, "duplicate", out.Results[2].Code)
+
+	// A task added by hand with a custom ref label still blocks its id.
+	h.task(h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{
+		"title": "by hand", "ref": "https://awb.example/#/issues/tcl-hand01", "ref_label": "Hand-made"}), http.StatusCreated)
+	out = h.importBatch(member, map[string]any{"refs": []string{"awb:tcl-hand01"}})
+	assert.Equal(t, "duplicate", out.Results[0].Code, "%+v", out.Results[0])
+
 	// The import needs taskboard.write like any add.
 	const outsider = "tb-outsider-3333"
 	h.agent(t, outsider)
