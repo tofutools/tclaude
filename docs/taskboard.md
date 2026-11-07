@@ -164,7 +164,9 @@ task's group.
   again. `--task` may be left out when exactly one live task is assigned to you.
 - An assignment never retires, releases or stops the agent. `done` leaves the
   agent where it is, ready to take the next task. Retiring an agent unassigns
-  its live tasks; the history records "assignee retired". Reincarnation keeps
+  its live tasks; the history records "assignee retired". Removing an agent
+  from a group unassigns its live tasks on that group's board ("assignee left
+  the group"); its tasks on other groups' boards stay. Reincarnation keeps
   the assignment, because the agent id is stable. A clone does not inherit it.
 - `ls --mine` lists the live tasks assigned to you, in every group you are
   still an active member of.

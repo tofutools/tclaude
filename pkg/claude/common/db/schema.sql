@@ -700,6 +700,19 @@ CREATE TABLE "agent_group_members" (
 CREATE INDEX idx_agent_group_members_agent
 				ON agent_group_members(agent_id);
 
+CREATE TRIGGER group_tasks_unassign_on_leave
+		AFTER DELETE ON agent_group_members
+		BEGIN
+			INSERT INTO group_task_events (task_id, at, actor, kind, detail)
+				SELECT id, CAST((julianday('now') - 2440587.5) * 86400000000000 AS INTEGER),
+					'system:membership', 'unassigned', 'assignee left the group'
+				FROM group_tasks
+				WHERE group_id = OLD.group_id AND assignee_id = OLD.agent_id AND status IN ('open','blocked');
+			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL,
+					updated_at = CAST((julianday('now') - 2440587.5) * 86400000000000 AS INTEGER)
+				WHERE group_id = OLD.group_id AND assignee_id = OLD.agent_id AND status IN ('open','blocked');
+		END;
+
 CREATE TABLE "agent_group_owners" (
 				group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 				agent_id   TEXT NOT NULL,

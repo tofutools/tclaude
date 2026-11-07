@@ -324,3 +324,16 @@ func SetTaskboardLock(groupID int64, writers []string, by string) error {
 			updated_at = excluded.updated_at`, groupID, string(b), by, dbTime(time.Now()))
 	return err
 }
+
+// unassignAgentGroupTasksTx unassigns every live task assigned to agentID,
+// recording why in each task's history.
+func unassignAgentGroupTasksTx(tx taskTx, agentID, actor, detail string, now time.Time) error {
+	if _, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail)
+		SELECT id, ?, ?, ?, ? FROM group_tasks WHERE assignee_id = ? AND status IN ('open','blocked')`,
+		dbTime(now), actor, GroupTaskEventUnassigned, detail, agentID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = ?
+		WHERE assignee_id = ? AND status IN ('open','blocked')`, dbTime(now), agentID)
+	return err
+}
