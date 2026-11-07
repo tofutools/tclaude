@@ -44,6 +44,7 @@ func TestTaskboardOwnTracksOwnWork(t *testing.T) {
 		{"title": "queued for anyone", "stage": "next"},
 		{"title": "an idea", "stage": "idea"},
 		{"lines": []string{"one", "two"}},
+		{"title": "jump the queue", "position": map[string]any{"top": true}},
 	} {
 		code, body = add(h.worker, req)
 		assert.Equal(t, http.StatusForbidden, code, "%v: %s", req, body)

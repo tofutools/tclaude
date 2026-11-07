@@ -302,7 +302,7 @@ func taskboardContextAskable(r *http.Request, g *db.AgentGroup, entry *taskboard
 		return err
 	}
 	for _, o := range owners {
-		if !seen[o.AgentID] && activeGroupOwner(g, o.AgentID) != "" {
+		if conv := activeGroupOwner(g, o.AgentID); !seen[o.AgentID] && conv != "" && taskboardMemberWrites(r, g, conv) {
 			seen[o.AgentID] = true
 			entry.Askable = append(entry.Askable, o.AgentID)
 		}

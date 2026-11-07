@@ -675,19 +675,6 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !taskboardEnabled(w) {
 		return
 	}
-	// An agent that owns the board but does not write it creates its own
-	// tasks only: each is assigned to it as it is created.
-	ownOnly := taskboardOwnOnly(r, g)
-	if ownOnly {
-		if !requireTaskboardOwn(w, r, g, true) {
-			return
-		}
-	} else if !requireTaskboard(w, r, g, true) {
-		return
-	}
-	if !requireGroupActive(w, g) {
-		return
-	}
 	var body struct {
 		Title    string                `json:"title"`
 		Body     string                `json:"body"`
@@ -716,6 +703,23 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !decodeTaskboardBody(w, r, &body) {
 		return
 	}
+	// An agent that owns the board but does not write it creates its own
+	// tasks only: each is assigned to it as it is created. What taskboard.own
+	// does not cover (an import, an unassigned task, a place in the queue)
+	// goes through the write gate, so --ask-human can still ask for write.
+	needsWrite := len(body.Refs) > 0 || len(body.Lines) > 0 || body.Position != (taskboardPositionBody{}) ||
+		(strings.TrimSpace(body.To) == "" && !body.Mine && body.Stage != "")
+	ownOnly := !needsWrite && taskboardOwnOnly(r, g)
+	if ownOnly {
+		if !requireTaskboardOwn(w, r, g, true) {
+			return
+		}
+	} else if !requireTaskboard(w, r, g, true) {
+		return
+	}
+	if !requireGroupActive(w, g) {
+		return
+	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
 			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine {
@@ -725,10 +729,6 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		}
 		if body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
-			return
-		}
-		if ownOnly {
-			taskboardOwnOnlyRefusal(w, g, "an import creates unassigned tasks: it")
 			return
 		}
 		handleTaskboardImport(w, r, g, body.Refs, body.Lines, body.Stage)
@@ -791,10 +791,6 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		to = self
 	}
 	if ownOnly && to == "" {
-		if body.Stage != "" {
-			taskboardOwnOnlyRefusal(w, g, "an unassigned task (an idea, or in next)")
-			return
-		}
 		to, _ = callerAgentID(r)
 	}
 	var assignee, assigneeConv string
@@ -1060,11 +1056,4 @@ func sweepTaskboard(now time.Time) {
 	if archived > 0 || purged > 0 {
 		slog.Info("taskboard sweep", "archived", archived, "purged", purged)
 	}
-}
-
-// taskboardOwnOnlyRefusal refuses what taskboard.own alone does not cover.
-func taskboardOwnOnlyRefusal(w http.ResponseWriter, g *db.AgentGroup, what string) {
-	writeError(w, http.StatusForbidden, "permission_denied",
-		what+" needs "+PermTaskboardWrite+" on "+g.Name+"; under "+PermTaskboardOwn+
-			" alone a new task is assigned to you as it is created (leave out --next, or ask an owner to add it)")
 }
