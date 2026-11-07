@@ -335,10 +335,12 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       void lockChanged(kind, id, locked);
       return body;
     },
-    // createGroupPage creates a blank page the group owns (POST /api/pages).
-    async createGroupPage(group, name) {
+    // createGroupPage creates a blank page the group owns (POST /api/pages):
+    // name is its handle in the group, title what it is shown as (name when
+    // none is given).
+    async createGroupPage(group, name, title = name) {
       return processRequest('/api/pages', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, name, title: name }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, name, title }),
       }, fetchImpl);
     },
     // reopenGroupPage reopens a closed page saved with its group.

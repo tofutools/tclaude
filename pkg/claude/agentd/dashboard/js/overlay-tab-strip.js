@@ -14,13 +14,14 @@ import { signal } from '@preact/signals';
 import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
 import { sanitizeGroupName, segmentsFor } from './tab-group-model.js';
 import {
-  activateOverlayTab, changeOverlayGroup, groupOverlayTab, minimizeOverlayTab, minimizeOverlayTabs, moveOverlayGroup, moveOverlayTab,
+  activateOverlayTab, changeOverlayGroup, groupOverlayTab, labelOverlayWindow, minimizeOverlayTab, minimizeOverlayTabs, moveOverlayGroup, moveOverlayTab,
   overlayWindows, startOverlayGroup, tearOverlayGroupOut, tearOverlayTabOut, ungroupOverlayTabs,
 } from './overlay-instances.js';
 import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
 import { Glyph, STANDARD_GLYPHS } from './overlay-window-controls.js';
+import { TabResourceRename, tabRenameKey, tabRenameTarget } from './tab-resource-rename.js';
 
 const html = htm.bind(h);
 
@@ -32,6 +33,8 @@ const PILL_CLICK_PX = 5;
 const tabMenu = signal(null);
 // The group being renamed: { windowId, groupId }.
 const renaming = signal(null);
+// The tab whose drawing board or page is being renamed: its id.
+const renamingTab = signal(null);
 
 const groupMembers = (window, groupId) => window.tabs.filter((tab) => tab.groupId === groupId);
 
@@ -254,16 +257,44 @@ export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null 
       bar.removeEventListener('drop', drop);
     };
   }, [window.id]);
+  // A rename ended from the keyboard leaves focus on its tab, not the page.
+  const renamedTab = useRef(null);
+  const editing = renamingTab.value;
+  useEffect(() => {
+    const was = renamedTab.current;
+    renamedTab.current = editing;
+    if (!was || editing === was) return;
+    const doc = stripRef.current?.ownerDocument;
+    if (doc && (!doc.activeElement || doc.activeElement === doc.body)) {
+      [...(stripRef.current?.querySelectorAll('[data-tab-id]') || [])].find((node) => node.dataset.tabId === was)?.querySelector('button[role="tab"]')?.focus();
+    }
+  }, [editing]);
   // Ctrl+wheel over the title bar zooms a drawing board.
   const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
   const renderTab = (tab) => {
     const { label, lead, title } = viewOf(tab);
     const selected = tab.id === window.active;
     const menu = menuHandlers({ tabId: tab.id, label });
-    return html`<div key=${tab.id} class=${`companion-tab${selected ? ' selected' : ''}${landsBefore === tab.id ? ' drop-before' : ''}`} data-tab-id=${tab.id}>
-      <button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
+    // A drawing board's or a page's tab renames it in place: double-click or F2.
+    const target = tabRenameTarget(tab);
+    const startRename = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      renamingTab.value = tab.id;
+    };
+    const onKeyDown = (event) => {
+      if (target && tabRenameKey(event)) startRename(event);
+      else menu.onKeyDown(event);
+    };
+    const isRenaming = !!target && editing === tab.id;
+    return html`<div key=${tab.id} class=${`companion-tab${selected ? ' selected' : ''}${landsBefore === tab.id ? ' drop-before' : ''}${isRenaming ? ' renaming' : ''}`} data-tab-id=${tab.id}>
+      ${isRenaming ? html`<span class="companion-tab-renaming">${lead}<${TabResourceRename} target=${target} label=${label}
+        onRenamed=${(next) => labelOverlayWindow(tab.id, next)} onDone=${() => { if (renamingTab.peek() === tab.id) renamingTab.value = null; }} /></span>`
+      : html`<button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu"
+        title=${target ? [title, 'double-click or F2 to rename'].filter(Boolean).join(' · ') : title}
         onPointerDown=${(event) => onPointerDown(event, tab)} onClick=${(event) => (selected ? overlay.releaseFocus(event) : activateOverlayTab(tab.id))}
-        ...${menu}>${lead}<span>${label}</span></button>
+        onDblClick=${target ? startRename : undefined}
+        onContextMenu=${menu.onContextMenu} onKeyDown=${onKeyDown}>${lead}<span>${label}</span></button>`}
       <span class="companion-tab-buttons">
         <button data-ui-exempt type="button" class="companion-tab-minimize" aria-label=${`Minimize ${label} to dock`} title="Minimize to dock (it keeps running)"
           onClick=${() => minimizeOverlayTab(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.minimize} /></button>

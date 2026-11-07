@@ -30,6 +30,8 @@ import { openGroupWebTermPane, openShellResource } from './terminals-tab.js';
 import { killShell } from './background-terminals.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
 import { registerResourceRemover } from './resource-dnd.js';
+import { askResourceName } from './resource-name-dialog.js';
+import { groupContextEntry } from './process-context.js';
 
 export { LockChip };
 
@@ -221,7 +223,7 @@ export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass =
 
 // RenameField edits a row's name in place: Enter saves, Escape or leaving
 // it keeps the name.
-export function RenameField({ value, label, onSave, onDone }) {
+export function RenameField({ value, label, onSave, onDone, class: extra = '' }) {
   const ref = useRef(null);
   useEffect(() => { ref.current?.focus(); ref.current?.select?.(); }, []);
   const key = (event) => {
@@ -232,7 +234,7 @@ export function RenameField({ value, label, onSave, onDone }) {
     onDone();
     if (next && next !== value) void onSave(next);
   };
-  return html`<input ref=${ref} class="gr-rename" data-resource-rename-input="" aria-label=${`New name for ${label}`}
+  return html`<input ref=${ref} class=${extra ? `gr-rename ${extra}` : 'gr-rename'} data-resource-rename-input="" aria-label=${`New name for ${label}`}
     value=${value} onKeyDown=${key} onBlur=${onDone} />`;
 }
 
@@ -307,9 +309,12 @@ export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source
     { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-drawing-board-delete']: id }, run: remove }];
 }
 
-// renameResource sets a drawing board's or page's title, as its Rename… field saves it.
-export function renameResource(resource, { api, source, notify }) {
-  const call = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameDrawingBoard(resource.id, title);
+// renameResource sets a drawing board's or page's title, as its Rename… field
+// saves it (a row's, or a Collab tab's, tab-resource-rename.js). onRenamed(title)
+// hears of a rename that took.
+export function renameResource(resource, { api, source, notify, onRenamed = null }) {
+  const set = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameDrawingBoard(resource.id, title);
+  const call = async (title) => { await set(title); onRenamed?.(title); };
   return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
@@ -483,37 +488,61 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
-// addGroupDrawingBoard creates a drawing board linked to group, named for it, and opens it
-// as a tab. The Groups tab's ＋ and the Collab panel's ＋ New both make one.
+// addGroupDrawingBoard asks for the name of a drawing board to link to group
+// (resource-name-dialog.js), prefilled "<group> drawing board", then creates
+// it and opens it as a tab. The Groups tab's ＋, the Collab panel's ＋ New and
+// the palette all make one through here. A refusal stays in the dialog; it
+// resolves to the drawing board, or null when the operator cancelled.
 export async function addGroupDrawingBoard(group, { api, notify = defaultNotify, source } = {}) {
-  const title = `${group.name} drawing board`;
-  try {
-    // Drawing board ids are node-wide, so the free one is chosen among them all.
-    const taken = await api.drawingBoardIds();
-    const drawingBoard = await api.createGroupDrawingBoard(group.name, title, freeDrawingBoardId(title, taken));
-    notify(`Created ${drawingBoard.title || title} in ${group.name}`);
-    void source?.refresh?.();
-    openDrawingBoardPane(drawingBoard.id, drawingBoard.title || title);
-    return drawingBoard;
-  } catch (cause) {
-    notify(`Could not create the drawing board: ${cause.message}`, true);
-    return null;
-  }
+  return askResourceName({
+    kind: 'drawing_board', group: group.name, value: `${group.name} drawing board`,
+    create: async (title) => {
+      // Drawing board ids are node-wide, so the free one is chosen among them all.
+      const taken = await api.drawingBoardIds();
+      const drawingBoard = await api.createGroupDrawingBoard(group.name, title, freeDrawingBoardId(title, taken));
+      notify(`Created ${drawingBoard.title || title} in ${group.name}`);
+      void source?.refresh?.();
+      openDrawingBoardPane(drawingBoard.id, drawingBoard.title || title);
+      return drawingBoard;
+    },
+  });
 }
 
-// addGroupPage creates a blank page group owns; it opens, focused, when the
-// snapshot lists it (page-place.js).
+// pageNameTaken reports a refusal because the group already has a page by
+// that handle (POST /api/pages, 409 exists).
+const pageNameTaken = (cause) => cause?.status === 409 && (cause.body?.code === 'exists' || /already has a page named/.test(cause.message || ''));
+
+// addGroupPage asks for the name of a blank page group owns, prefilled with
+// the free sketch name, then creates it with that name as its title; it opens,
+// focused, when the snapshot lists it (page-place.js). The handle (sketch,
+// sketch-2, …) is free among pages when the dialog opened; one taken since is
+// refused, and the create reads the group's pages again (source) and tries
+// the next free handle once.
 export async function addGroupPage(group, pages = [], { api, notify = defaultNotify, source } = {}) {
-  try {
-    const page = await api.createGroupPage(group.name, freePageName(pages));
-    notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
-    void source?.refresh?.();
-    expectPage(page.id);
-    return page;
-  } catch (cause) {
-    notify(`Could not create the page: ${cause.message}`, true);
-    return null;
-  }
+  const taken = new Set(pages.map((page) => page.name));
+  const freeHandle = () => freePageName([...taken].map((name) => ({ name })));
+  const create = async (title, retry = true) => {
+    const name = freeHandle();
+    try {
+      return await api.createGroupPage(group.name, name, title);
+    } catch (cause) {
+      if (!retry || !pageNameTaken(cause)) throw cause;
+      taken.add(name);
+      await Promise.resolve(source?.refresh?.()).catch(() => {});
+      for (const page of groupContextEntry(source?.context?.value, group)?.pages || []) taken.add(page.name);
+      return create(title, false);
+    }
+  };
+  return askResourceName({
+    kind: 'page', group: group.name, value: freeHandle(),
+    create: async (title) => {
+      const page = await create(title);
+      notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
+      void source?.refresh?.();
+      expectPage(page.id);
+      return page;
+    },
+  });
 }
 
 // addGroupShell opens group's shell, or brings forward the overlay holding it.

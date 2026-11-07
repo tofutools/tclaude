@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 import { comboLabels, comboPick } from './combobox-helpers.mjs';
+import { mountNameHost, submitName, waitForNameDialog } from './resource-name-helpers.mjs';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
 
@@ -607,9 +608,10 @@ test('Both\'s Resources section lists the group\'s drawing boards and pages with
     setResourceLock: async (...args) => { calls.push(args); return {}; },
     drawingBoardIds: async () => ['frontend-squad-drawing-board'],
     createGroupDrawingBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
-    createGroupPage: async (...args) => { created.push(['page', ...args]); return { id: 'pg_new', name: args[1], title: args[1] }; },
+    createGroupPage: async (...args) => { created.push(['page', ...args]); return { id: 'pg_new', name: args[1], title: args[2] }; },
   };
   const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
+  await mountNameHost(harness);
   const section = (el) => el.querySelector('[data-fused-section="processes"]');
 
   const feSection = section(details('frontend-squad'));
@@ -650,12 +652,17 @@ test('Both\'s Resources section lists the group\'s drawing boards and pages with
   assert.deepEqual(calls, [['page', 'pg1', false]], 'the chip unlocks a locked page');
   assert.ok(source.refreshes > before, 'and reloads the context');
 
-  // ＋▾ › Drawing board picks an id free among every drawing board, not only the group's.
+  // ＋▾ › Drawing board asks for its name first, prefilled as before, and
+  // picks an id free among every drawing board, not only the group's.
   await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'click'));
   await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add-drawing-board]'), 'click'));
-  await settle(harness);
+  const { input } = await waitForNameDialog(harness, 'the Groups ＋ asks for the drawing board\'s name');
+  assert.equal(input.value, 'frontend-squad drawing board');
+  assert.equal(created.length, 0, 'nothing is made before the name is given');
+  await submitName(harness);
   assert.equal(created.length, 1);
   assert.equal(created[0][0], 'frontend-squad');
+  assert.equal(created[0][1], 'frontend-squad drawing board');
   assert.notEqual(created[0][2], 'frontend-squad-drawing-board', 'a taken id elsewhere on the node is not reused');
 
   // ＋▾ › Page creates a blank page the group owns, named free in the group.
@@ -663,8 +670,10 @@ test('Both\'s Resources section lists the group\'s drawing boards and pages with
   assert.match(infraNow.querySelector('[data-resource-page="pg2"]').textContent, /no member has taken it over/);
   await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add="infra-crew"]'), 'click'));
   await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add-page]'), 'click'));
-  await settle(harness);
-  assert.deepEqual(created[1], ['page', 'infra-crew', 'sketch-2'], 'the group already has a sketch');
+  const page2 = await waitForNameDialog(harness, 'the Groups ＋ asks for the page\'s name');
+  assert.equal(page2.input.value, 'sketch-2', 'prefilled with the free name: the group already has a sketch');
+  await submitName(harness, 'Landing mock');
+  assert.deepEqual(created[1], ['page', 'infra-crew', 'sketch-2', 'Landing mock'], 'the typed name is the page\'s title');
 });
 
 // tcl-i9elme: a peer's group lists its resources from that node; each lock
