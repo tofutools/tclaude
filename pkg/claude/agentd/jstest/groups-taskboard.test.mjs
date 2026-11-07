@@ -80,7 +80,8 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.equal(rows[1].querySelector('a.tb-ref'), null);
   assert.match(rows[1].querySelector('.tb-ref').textContent, /tcl-n7x41z/);
   // Who and state.
-  assert.match(rows[0].querySelector('.tb-who').textContent.replace(/\s+/g, ' '), /builder\s*by operator/);
+  assert.equal(rows[0].querySelector('.tb-who-name').textContent, 'builder');
+  assert.match(rows[0].querySelector('.tb-who').getAttribute('title'), /^builder · assigned .* by operator$/, 'who assigned it is the tooltip');
   assert.match(rows[0].querySelector('.tb-state').textContent, /^in progress · 41m$/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');
@@ -202,4 +203,44 @@ test('a stalled assignment shows amber with how long its agent has been idle', a
   assert.ok(state, 'the row is drawn as stalled');
   assert.ok(state.classList.contains('tb-state-stalled'));
   assert.equal(state.textContent, 'stalled · idle 7m');
+});
+
+test('the list lines its cluster, Name, State, Last and Age up with the agents table above', async (t) => {
+  const group = crew('tb-align');
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection }, { createTaskboardContextSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/taskboard-context.js'),
+  ]);
+  const { fetchImpl } = fetchWith({ groups: [board('tb-align')] });
+  const source = createTaskboardContextSource({ fetchImpl });
+  // The agents table's headers, as the group card draws them beside the board.
+  const agents = '<table><thead><tr><th></th><th data-sort-col="title" data-x="232"></th><th data-sort-col="state" data-x="449"></th>'
+    + '<th data-sort-col="last" data-x="633"></th><th data-sort-col="age" data-x="694" data-w="56"></th><th data-sort-col="cwd" data-x="750"></th></tr></thead></table>';
+  const proto = harness.window.HTMLElement.prototype;
+  const saved = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function rect() {
+    const left = this.matches?.('table.tb-table') ? 62 : Number(this.getAttribute?.('data-x') || 0);
+    const width = Number(this.getAttribute?.('data-w') || 0);
+    return { left, right: left + width, top: 0, bottom: 0, width, height: 0 };
+  };
+  t.after(() => { proto.getBoundingClientRect = saved; });
+  const { container } = await harness.mount(harness.html`<div>
+    <div data-fused-section="agents" dangerouslySetInnerHTML=${{ __html: agents }}></div>
+    <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} />
+  </div>`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const table = container.querySelector('table.tb-table');
+  assert.ok(table, 'the list is drawn once the board has tasks');
+  const vars = ['ctl', 'name', 'state', 'last', 'age'].map((key) => table.style.getPropertyValue(`--tb-${key}-w`));
+  assert.deepEqual(vars, ['170px', '217px', '184px', '61px', '56px'], 'each column runs to where the agents table\'s next one starts');
+
+  // The tracks only hold if one column takes the rest of the row: with
+  // table-layout: fixed, a row whose columns all have widths spreads the
+  // spare width over every one of them.
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const cols = [...table.querySelectorAll('colgroup col')].map((col) => col.getAttribute('class'));
+  const free = cols.filter((cls) => !new RegExp(`\\.${cls}\\s*\\{[^}]*\\bwidth\\s*:`).test(css));
+  assert.deepEqual(free, ['tb-col-files'], 'Files alone takes the rest of the row');
 });

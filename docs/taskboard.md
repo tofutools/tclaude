@@ -479,12 +479,19 @@ the **Quest board**), below its Agents and Resources sections.
   too). *Needs you* counts the blocked and the stalled tasks, and *in
   progress* counts the other assigned tasks. *Next* and *ideas* count the
   unassigned open tasks in each stage.
-- **Open**, the section lists the queue in your order and then the Ideas band.
-  Each row shows its number, title and id, a ref chip that links to the
-  tracker, who holds the task, and its state. A blocked task shows its reason
-  on the line below, and a dependency shows as `after #n` (amber until it is
-  done). The *history* line counts the tasks done this week and the dropped
-  ones. Click *history* to list the recently closed tasks.
+- **Open**, the *List* view is a table like the Agents and Resources tables
+  above it. It lists the queue in your order, then the Ideas band, then the
+  *history* line. Each row starts with a cluster of controls: the ⋮⋮ drag
+  handle, the one action the task's state calls for (✓ *Done*, ✓ *Next* on an
+  idea, ↺ *Reopen* in history), ✎ *Edit*, and ⋯ for the rest. Then come
+  *Name* (the task's number in your order, its title and id), *State*,
+  *Last* (its last change) and *Age*, in line with the Agents table's
+  columns of the same names. After those come *Who* holds it (the tooltip
+  says who assigned it, and when), *Ref* (a chip that links to the tracker),
+  *Deps* (`after #n`, amber until that task is done) and *Files*. A blocked
+  task shows its reason under its title. The *history* line counts the tasks
+  done this week and the dropped ones. Click *history* to list the recently
+  closed tasks in the same table.
 - The section opens on its own when something needs you. If you fold or open
   it yourself, the dashboard remembers that per group.
 
@@ -500,15 +507,15 @@ a CLI verb:
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
-| *✓ Next* on an idea | `promote <task>` |
-| *Block* (with a reason) / *Unblock* | `block <task> --reason …` / `unblock <task>` |
-| *Done* | `done <task>` |
-| *Drop* (with an optional reason) | `drop <task> [--reason …]` |
-| *Edit* | `edit <task> --title … --ref …` |
-| *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
-| *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
-| *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
-| Drag a task onto another group's Task board or header row (Ctrl/Cmd clones) | `move-to-group <task> <group> [--clone] [--stage next]` |
+| ✓ *Next* on an idea | `promote <task>` |
+| ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
+| ✓ *Done* | `done <task>` |
+| ⋯ *Drop…* (with an optional reason) | `drop <task> [--reason …]` |
+| ✎ *Edit* | `edit <task> --title … --ref …` |
+| ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
+| ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
+| ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
+| Drag a task onto another group's Task board or header row (Ctrl/Cmd clones), or ⋯ *Move to group ›* / *Clone to group ›* | `move-to-group <task> <group> [--clone] [--stage next]` |
 
 - **＋ ▾** (*New task*; in wizard mode, *New quest*) in the section head is
   the one way in, in both views. It opens a menu:
