@@ -13,14 +13,37 @@ import "database/sql"
 // for a REPLACE while recursive_triggers is off, as it is here. Retirement
 // unassigns with its own "assignee retired" detail before it drops the
 // memberships, so this trigger finds nothing left to do there.
+//
+// A later migration that rebuilds agent_group_members drops this trigger with
+// the table and must recreate it. A database missing any of the tables (only
+// the minimal schemas of the migration-chain tests) gets no trigger.
 func migrateV318toV319(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, stmt := range []string{
-		`CREATE TRIGGER IF NOT EXISTS group_tasks_unassign_on_leave
+	ready := true
+	for _, table := range []string{"agent_group_members", "group_tasks", "group_task_events"} {
+		have, err := txTableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		ready = ready && have
+	}
+	stmts := []string{`UPDATE schema_version SET version = 319`}
+	if ready {
+		stmts = append([]string{groupTasksUnassignOnLeaveTrigger}, stmts...)
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+const groupTasksUnassignOnLeaveTrigger = `CREATE TRIGGER IF NOT EXISTS group_tasks_unassign_on_leave
 		AFTER DELETE ON agent_group_members
 		BEGIN
 			INSERT INTO group_task_events (task_id, at, actor, kind, detail)
@@ -31,12 +54,4 @@ func migrateV318toV319(d *sql.DB) error {
 			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL,
 					updated_at = CAST((julianday('now') - 2440587.5) * 86400000000000 AS INTEGER)
 				WHERE group_id = OLD.group_id AND assignee_id = OLD.agent_id AND status IN ('open','blocked');
-		END`,
-		`UPDATE schema_version SET version = 319`,
-	} {
-		if _, err := tx.Exec(stmt); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
+		END`
