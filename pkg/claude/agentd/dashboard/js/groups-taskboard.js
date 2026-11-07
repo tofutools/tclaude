@@ -350,7 +350,7 @@ function CaptureBox({ group, actions, wizard }) {
       placeholder='next task… (a line that is only an awb, Linear or GitHub id becomes a ref: "tcl-fb0bfz", "LIN-231")'
       onInput=${(event) => setText(event.currentTarget.value)} onKeyDown=${onKeyDown} onPaste=${onPaste} />
     <div class="tb-capture-foot">
-      <span class="tb-capture-hint"><kbd>Enter</kbd> adds, stays here · paste a list → one task per line · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> done</span>
+      <span class="ui-hint"><kbd>Enter</kbd> adds, stays here · paste a list → one task per line · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> done</span>
       <${Button} size="sm" variant="primary" busy=${actions.busy === 'capture'} disabled=${!captureLines(text).length || !!actions.busy}
         onClick=${() => void add(text)}>Add<//>
     </div>

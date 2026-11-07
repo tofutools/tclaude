@@ -18668,7 +18668,6 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-capture-input, .tb-import-ids { width: 100%; box-sizing: border-box; resize: vertical; }
 .tb-import-row .tb-import-ids { flex: 1; width: auto; }
 .tb-capture-note { color: #3fb950; font-size: 11.5px; }
-.tb-capture-hint { color: #6e7681; font-size: 11px; }
-.tb-capture-hint kbd { font-size: 10.5px; padding: 0 4px; border: 1px solid #30363d; border-radius: 3px; background: #161b22; }
+.tb-capture-foot kbd { font-size: 10.5px; padding: 0 4px; border: 1px solid #30363d; border-radius: 3px; background: #161b22; }
 .tb-spacer { flex: 1; }
 .tb-view { margin-right: 6px; }
