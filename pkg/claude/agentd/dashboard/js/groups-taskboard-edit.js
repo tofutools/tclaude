@@ -168,8 +168,9 @@ export async function runPlan(api, steps) {
 
 // DepChips are the draft's dependencies as chips (✕ takes one off) and a
 // picker of the board's other live tasks.
-function DepsEdit({ task, tasks, value, onChange, disabled }) {
-  const title = (id) => tasks.find((t) => t.id === id)?.title || id;
+function DepsEdit({ task, tasks, closed = [], value, onChange, disabled }) {
+  // A dependency may be done already: its title is among the closed tasks.
+  const title = (id) => [...tasks, ...closed].find((t) => t.id === id)?.title || id;
   const free = tasks.filter((t) => t.id !== task.id && !value.includes(t.id));
   return html`<span class="tb-edit-deps">
     ${value.map((id) => html`<span key=${id} class="tb-edit-dep" data-dep=${id}>
@@ -333,7 +334,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
         <//>`
       : html`<span>${task.assignee?.name || assignee}</span>`,
       canAssign && draft.to !== start.to ? (draft.to ? 'the brief goes to its inbox' : 'its assignee is told') : null)}
-    ${row('After', html`<${DepsEdit} task=${task} tasks=${tasks} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
+    ${row('After', html`<${DepsEdit} task=${task} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}
     ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} />`,

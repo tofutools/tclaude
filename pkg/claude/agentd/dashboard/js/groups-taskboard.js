@@ -680,7 +680,6 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const drag = useRowDrag(tasks, actions, group);
   const queue = tasks.filter((task) => task.stage !== 'idea');
   const ideas = tasks.filter((task) => task.stage === 'idea');
-  // Numbers run down the whole list, as the operator reads it.
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
   // ✎ opens the edit form; the row's ⋯ Block… and Drop… are inline.
