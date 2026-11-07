@@ -127,7 +127,10 @@ this does anything on touch screens.
 - **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
   **Kill session…** for a background session or a group's shell, and on a
   drawing board **Download .excalidraw**, **End agents' sessions…** and **Delete
-  drawing board…**. Each destructive one asks first.
+  drawing board…**. An agent's menu has **Stop…** while it runs or **Resume**
+  while it is stopped, as its Groups row's status light, and **Retire…**, as
+  its Groups row's retire; a linked node's agent has each only where that node
+  grants it. Each destructive one asks first.
 - A drawing board, page or process row has a lock at its right end: an amber closed
   lock, always shown, while agents can only read it, and a dim open lock on
   hover or keyboard focus while they can edit it. Click it to lock or unlock;
