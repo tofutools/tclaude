@@ -19,7 +19,7 @@
 // are this viewer's own (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
@@ -27,6 +27,7 @@ import {
   LAYOUT_COLUMNS, applyLaneOrder, gridColumns, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
+import { listenForTransfer } from './groups-taskboard-transfer.js';
 import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
 
 const html = htm.bind(h);
@@ -242,13 +243,17 @@ function Card({ task, n, numbers, drag }) {
   </div>`;
 }
 
-function useLaneDrag(actions, group) {
+function useLaneDrag(actions, group, tasks = []) {
   const dragged = useRef(null);
   const [dragging, setDragging] = useState('');
   const [over, setOver] = useState(null);
   const [blocking, setBlocking] = useState(null);
+  // A drop on another group's board or header moves the task there
+  // (groups-taskboard-transfer.js); its listeners live for the drag.
+  const transferOff = useRef(null);
+  useEffect(() => () => transferOff.current?.(), []);
   const assign = canAssign(actions);
-  const clear = () => { dragged.current = null; setDragging(''); setOver(null); };
+  const clear = () => { dragged.current = null; setDragging(''); setOver(null); transferOff.current?.(); transferOff.current = null; };
   const hit = (event, to) => {
     // Only this board's task drag drives the cells: a text, link or file
     // drag after a missed dragend (the card re-rendered away mid-drag) must
@@ -270,7 +275,10 @@ function useLaneDrag(actions, group) {
       dragged.current = { task, ...from };
       setDragging(task.id);
       event.dataTransfer?.setData(TASK_DRAG_TYPE, task.id);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      // copyMove: Ctrl/Cmd onto another group clones (groups-taskboard-transfer.js).
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
+      transferOff.current?.();
+      transferOff.current = listenForTransfer({ task, group, tasks, actions, onDrop: clear });
     },
     end: clear,
     overCell(event, to) {
@@ -478,7 +486,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const model = laneModel(entry, group, by, snapshot, now);
   const { cells } = model;
   const groups = applyLaneOrder(model.groups, laneOrder(layoutKey(group)), by);
-  const drag = useLaneDrag(actions, group);
+  const drag = useLaneDrag(actions, group, tasks);
   const order = useLaneOrder(group, groups, by, relayout);
   const resize = useColumnResize(group, relayout);
   const [unfolded, setUnfolded] = useState({});
