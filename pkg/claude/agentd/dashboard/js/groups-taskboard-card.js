@@ -163,6 +163,10 @@ function useTitleHover(rootRef) {
   // over is the pointer on the title: a leave after close() (a click that
   // opened the edit form) must not bring the card back for its grace.
   const over = useRef(false);
+  // returning is set when the title opens the edit form: the dialog hands
+  // focus back to the title as it closes, and that focus (keyboard-visible
+  // after an Escape) must not open a card no pointer is on.
+  const returning = useRef(false);
   const close = () => { over.current = false; leave.cancel(); setHovered(false); setLingering(false); setFocused(false); };
   useExclusivePopover(rootRef, open, close);
   useEffect(() => {
@@ -184,10 +188,14 @@ function useTitleHover(rootRef) {
       setLingering(true);
       leave.schedule();
     },
-    onFocus: (event) => { if (keyboardFocus(event.currentTarget)) setFocused(true); },
+    onFocus: (event) => {
+      if (returning.current) { returning.current = false; return; }
+      if (keyboardFocus(event.currentTarget)) setFocused(true);
+    },
     onBlur: () => setFocused(false),
   };
-  return { open, hovered, focused, close, titleProps };
+  const handOff = () => { returning.current = true; close(); };
+  return { open, hovered, focused, close, handOff, titleProps };
 }
 
 // TaskTitle is a task's title with its hover card; onOpen opens the edit
@@ -196,7 +204,7 @@ export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = nul
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const { open, hovered, focused, close, titleProps } = useTitleHover(rootRef);
+  const { open, hovered, focused, close, handOff, titleProps } = useTitleHover(rootRef);
   const [dwelled, setDwelled] = useState(false);
   useEffect(() => {
     if (!hovered) { setDwelled(false); return undefined; }
@@ -209,7 +217,7 @@ export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = nul
   const headingID = `${panelID}-heading`;
   const openForm = (event) => {
     event.stopPropagation();
-    close();
+    handOff();
     onOpen();
   };
   const key = (event) => {

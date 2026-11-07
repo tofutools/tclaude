@@ -132,6 +132,12 @@ test('a click on the title opens the task and never pins the card', async (t) =>
   await harness.act(() => harness.fireEvent(title, 'mouseleave'));
   await settle();
   assert.equal(cardOf(c, 'tk_00000001'), null, 'nothing pinned it');
+  // The form, as it closes, hands focus back to the title: no card for it.
+  await harness.act(() => harness.fireEvent(title, 'focus'));
+  assert.equal(cardOf(c, 'tk_00000001'), null, 'focus coming back from the form opens no card');
+  await harness.act(() => harness.fireEvent(title, 'blur'));
+  await harness.act(() => harness.fireEvent(title, 'focus'));
+  assert.ok(cardOf(c, 'tk_00000001'), 'a later keyboard focus does');
 });
 
 test('another hover popover opening closes the card at once', async (t) => {
@@ -160,7 +166,12 @@ test('keyboard focus on a title shows its card; Escape hides it', async (t) => {
 test('the edit form\'s header copies the task\'s id', async (t) => {
   const { harness, c, settle } = await mountBoard(t);
   const copied = [];
+  const before = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
   Object.defineProperty(globalThis.navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { copied.push(text); } } });
+  t.after(() => {
+    if (before) Object.defineProperty(globalThis.navigator, 'clipboard', before);
+    else delete globalThis.navigator.clipboard;
+  });
   await harness.act(() => harness.fireEvent(titleOf(c, 'tk_00000001'), 'click'));
   await settle();
   const copy = harness.document.querySelector('#taskboard-edit-modal .tb-id-copy');
