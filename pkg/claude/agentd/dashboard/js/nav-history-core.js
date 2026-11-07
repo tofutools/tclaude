@@ -50,8 +50,8 @@ export const KNOWN_TABS = new Set([
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
 // sub-navigation. These tabs have one today:
-//   - Groups: Members (bare), the Route map, the Agents and Processes
-//     lenses, and the single-run focus (runs).
+//   - Groups: Members (bare), the Route map, and the single-run focus
+//     (runs). The retired lens links (agents / processes) parse as bare.
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor. Processes renders as a subtab

@@ -690,9 +690,9 @@ export function FusedSection({ group, section, label, count = null, auto = true,
 
 const ProcessesPerspective = createContext(null);
 
-// useProcessesPerspective is what the groups tree reads to tell the lenses
-// apart: null in Agents, the run context and handlers in Processes, and the
-// same with `fused` set in Both.
+// useProcessesPerspective is what the groups tree reads: null where runs do
+// not show (processes unavailable, the Route map), else the run context and
+// handlers, with `fused` set on the Groups tab.
 export function useProcessesPerspective() {
   return useContext(ProcessesPerspective);
 }

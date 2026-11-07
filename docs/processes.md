@@ -494,7 +494,7 @@ for an agent is `--agent`.
 
 **Following it.**
 
-- **Groups › Agents** — each group header counts running, waiting-on-you and
+- **Groups, a group's Agents section** — each group header counts running, waiting-on-you and
   planned runs, and the optional Process column (turn it on under **▾ view**)
   shows a *run › node* badge on each member row for every run the agent works
   in (amber when parked on a human gate, dashed when queued).

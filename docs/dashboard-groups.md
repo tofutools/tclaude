@@ -19,6 +19,9 @@ Above the groups, from left to right:
   **×** clears it.
 - **📜 search conversations.** Opens a panel that searches the text of past
   conversations. See [Searching conversations](#searching-conversations).
+- **Route map.** With `features.groups_route_map` on, a Route map view sits
+  beside the list; see
+  [Group routes](group-routes.md#open-a-published-route-on-the-host).
 - **▾ view.** What the list includes and which columns it shows. A badge on it
   counts what you changed from the defaults. See
   [What ▾ view controls](#what-view-controls).
@@ -48,9 +51,6 @@ The **⚙** actions menu has a filter box, like every ⚙ menu in the dashboard:
 **show offline scribes**. Your choices are saved by the daemon. A group's ⚙ menu
 overrides **show offline** for that group: click 💤 to cycle through the tab
 default, shown and hidden.
-
-With `features.groups_route_map` on, a Route map view sits beside the list; see
-[Group routes](group-routes.md#open-a-published-route-on-the-host).
 
 Below them, **Columns** lists what you can hide: ID, State, Process, Last, Age,
 CWD, Branch, Role, Task link and Description. ID is off by default. Click a

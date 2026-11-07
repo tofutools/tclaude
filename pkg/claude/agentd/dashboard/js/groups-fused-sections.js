@@ -1,6 +1,6 @@
 // groups-fused-sections.js -- the fold state of a group's sections: the
-// Both lens's Agents and Processes, and the Subgroups section every lens
-// draws. A choice is remembered per group and section; with none, Agents
+// Agents and Processes sections of each group card, and its Subgroups
+// section. A choice is remembered per group and section; with none, Agents
 // shows, Processes shows only when it has something in it, and Subgroups
 // shows only when there are some and the group has no members of its own
 // (see groups-list.js), so a quiet group

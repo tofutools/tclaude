@@ -66,11 +66,13 @@ test('a Start in request expands the group and expires if never taken', async (t
   const { requestProcessStart, takeProcessStart } = await harness.importDashboardModule('js/process-start-handoff.js');
   const prefs = new Map();
   let rerenders = 0;
+  let shown = 0;
   const doc = { querySelector: () => null, dispatchEvent: () => true };
-  const opts = { doc, prefs: { setItem: (k, v) => prefs.set(k, v) }, setFocus: () => {}, rerender: () => rerenders++, now: () => 1000 };
+  const opts = { doc, prefs: { setItem: (k, v) => prefs.set(k, v) }, showRuns: () => shown++, rerender: () => rerenders++, now: () => 1000 };
   requestProcessStart({ group: 'webshop', templateId: 'ship' }, opts);
   assert.equal(prefs.get('tclaude.dash.group.webshop'), '1');
   assert.equal(rerenders, 1);
+  assert.equal(shown, 1, 'the runs are brought on screen');
   assert.equal(takeProcessStart('infra', { now: () => 1000 }), null);
   assert.deepEqual(takeProcessStart('webshop', { now: () => 2000 }), { group: 'webshop', templateId: 'ship' });
   assert.equal(takeProcessStart('webshop', { now: () => 2000 }), null, 'taken once');

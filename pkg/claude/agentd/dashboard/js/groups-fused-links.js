@@ -1,4 +1,4 @@
-// groups-fused-links.js -- the Both lens's hover links: dashed lines between
+// groups-fused-links.js -- the group cards' hover links: dashed lines between
 // an agent's row in a group's Agents section and the process steps it
 // performs in the same group's Processes section.
 //
