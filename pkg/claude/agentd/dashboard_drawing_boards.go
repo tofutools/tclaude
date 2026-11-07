@@ -701,7 +701,26 @@ func serveDrawingBoardPatch(w http.ResponseWriter, r *http.Request, id, author, 
 }
 
 func drawingBoardSnapshotPath(id string) string {
-	return filepath.Join(config.DataDir(), "drawing-boards", id+".png")
+	dir := filepath.Join(config.DataDir(), "drawing-boards")
+	moveLegacyDrawingBoardDir(dir)
+	return filepath.Join(dir, id+".png")
+}
+
+// moveLegacyDrawingBoardDir moves the snapshot and region files a daemon from
+// before the drawing-board rename kept under DataDir()/boards, so a drawing
+// board's stored snapshot survives the upgrade. Once the new directory exists
+// there is nothing to do.
+func moveLegacyDrawingBoardDir(dir string) {
+	if _, err := os.Stat(dir); err == nil {
+		return
+	}
+	legacy := filepath.Join(filepath.Dir(dir), "boards")
+	if info, err := os.Stat(legacy); err != nil || !info.IsDir() {
+		return
+	}
+	if err := os.Rename(legacy, dir); err != nil && !errors.Is(err, os.ErrExist) {
+		slog.Warn("drawing boards: could not move the old snapshot directory", "from", legacy, "to", dir, "err", err)
+	}
 }
 
 func serveDrawingBoardSnapshot(w http.ResponseWriter, r *http.Request, id string) {

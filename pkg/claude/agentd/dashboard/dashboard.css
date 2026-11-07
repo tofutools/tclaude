@@ -17545,7 +17545,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub-errors { flex-basis: 100%; margin: 4px 0 0; padding-left: 18px; }
 .fa-hub-claim { margin: 10px 0; }
 .fa-hub-token { margin: 6px 0 10px; padding: 6px 10px; border: 1px solid #9e6a03; border-radius: 6px; overflow-wrap: anywhere; }
-/* Content boards (fleet-admin-drawing-boards.js). */
+/* Content boards (fleet-admin-boards.js). */
 .fa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
 .fa-row .spacer { flex: 1; }
 .fa-grow { flex: 1 1 260px; min-width: 0; }
@@ -17636,7 +17636,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-bi-list li { padding: 3px 0; overflow-wrap: anywhere; }
 .fa-bi-list .fa-link.active { font-weight: 600; text-decoration: underline; }
 /* Entry paths and holder names are link buttons that still wrap like text. */
-:is(.fa-bi-list, .fs-reach-holders, .fa-row, #fleet-drawing-boards-list) .ui-btn-link { white-space: normal; overflow-wrap: anywhere; text-align: left; justify-content: flex-start; }
+:is(.fa-bi-list, .fs-reach-holders, .fa-row, #fleet-boards-list) .ui-btn-link { white-space: normal; overflow-wrap: anywhere; text-align: left; justify-content: flex-start; }
 .fa-bi-view { min-width: 0; }
 .fa-bi-text { margin: 0; max-height: 60vh; overflow: auto; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fa-bi-more { margin-top: 6px; }

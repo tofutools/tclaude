@@ -606,7 +606,7 @@ findings, with these actions:
 
 - **Spawn…** starts a new agent from the snapshot.
 - **⤓** exports it as a [PAF](paf.md).
-- **Share…** puts it on a [drawing board](drawing-boards.md) for named members. You review a
+- **Share…** puts it on a [Board](federation-boards.md) for named members. You review a
   consent summary and type `share`. A snapshot with suspected credentials must be
   redacted first.
 - **Publish…** makes a public copy, always masking credentials, paths and
@@ -619,7 +619,7 @@ exist, a table here shows each one's last good snapshot and when the next is due
 Snapshots stay on their node. If a peer trusts this node unrestricted, its agents
 show **📸 snapshot…** and **⤓ export (PAF)…**, and its groups **⤓ export…**, on its
 own page and in the fused Groups view. The dialog acts on that node's library, and
-files download through this node. A public copy or a drawing board share is made here, from
+files download through this node. A public copy or a Board share is made here, from
 the downloaded file. A restricted peer hides these items.
 
 ## Pull or sync group repositories

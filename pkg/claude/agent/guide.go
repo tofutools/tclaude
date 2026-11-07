@@ -313,7 +313,7 @@ func printGuideCaptureContext(w io.Writer, c *guideCaptureContext) {
 }
 
 type guideShowParams struct {
-	Tab    string `long:"tab" optional:"true" help:"Dashboard tab to switch to: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin, drawing boards"`
+	Tab    string `long:"tab" optional:"true" help:"Dashboard tab to switch to: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin, drawing-boards"`
 	Path   string `long:"path" optional:"true" help:"Dashboard path to open instead of a tab, e.g. /processes/templates/<id> or /access/sudo"`
 	Target string `long:"target" optional:"true" help:"Visible text of the control or heading to highlight on that view, e.g. 'Save draft'"`
 	Note   string `long:"note" optional:"true" help:"Short note shown next to the highlight (or on its own)"`

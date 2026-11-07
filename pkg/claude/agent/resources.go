@@ -112,7 +112,7 @@ func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 		fmt.Fprintf(tw, "process\t%s\t%s\t%s\n", r.TemplateID, r.Name, lock(r.AgentsLocked))
 	}
 	for _, r := range resp.DrawingBoards {
-		fmt.Fprintf(tw, "drawing board\t%s\t%s\t%s\n", r.ID, r.Title, lock(r.AgentsLocked))
+		fmt.Fprintf(tw, "drawing_board\t%s\t%s\t%s\n", r.ID, r.Title, lock(r.AgentsLocked))
 	}
 	for _, r := range resp.Pages {
 		name := r.Owner + "/" + r.Name
@@ -140,7 +140,7 @@ func printGroupResources(stdout io.Writer, resp groupResourcesResp) {
 }
 
 type resourcesLockParams struct {
-	Kind     string `pos:"true" help:"process, drawing board or page"`
+	Kind     string `pos:"true" help:"process, drawing_board or page"`
 	ID       string `pos:"true" help:"The template id, drawing board id or page id (as resources ls lists it)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -175,7 +175,7 @@ func runResourcesLock(p *resourcesLockParams, lock bool, stdout, stderr io.Write
 	switch kind {
 	case "process", "drawing_board", "page":
 	default:
-		fmt.Fprintln(stderr, "Error: kind must be process, drawing board or page")
+		fmt.Fprintln(stderr, "Error: kind must be process, drawing_board or page")
 		return rcInvalidArg
 	}
 	body := map[string]any{"kind": kind, "id": strings.TrimSpace(p.ID), "locked": lock}

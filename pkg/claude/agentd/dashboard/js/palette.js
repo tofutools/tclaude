@@ -370,7 +370,7 @@ export function buildCommands(snapshot) {
     peerView: 'operator', what: 'its snapshot library', icon: '📸', label: wiz('Snapshots…', 'Captured heroes…'),
     hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
       'the library of captured heroes: capture, summon from, share or publish them'),
-    keywords: 'snapshot snapshots library paf fork spawn share drawing board publish resilience capture',
+    keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',
     run: () => openSnapshots(),
   });
   cmds.push({

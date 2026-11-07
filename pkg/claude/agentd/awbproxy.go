@@ -1534,28 +1534,28 @@ var (
 // `"close_reason": ""` on every issue — a value that reads as "this issue has
 // no reason recorded" for a concept the tracker no longer has.
 type awbIssue struct {
-	ID                 string          `json:"id"`
-	Workspace          string          `json:"workspace"`
-	Title              string          `json:"title"`
-	Description        string          `json:"description"`
-	CommitHash         string          `json:"commit_hash"`
-	PullRequestURL     string          `json:"pull_request_url"`
-	Metadata           json.RawMessage `json:"metadata,omitempty"`
-	Type               string          `json:"type"`
-	Status             string          `json:"status"`
-	Priority           int             `json:"priority"`
-	Order              int             `json:"order"`
-	DrawingBoardHidden bool            `json:"drawing_board_hidden"`
-	Labels             []string        `json:"labels"`
-	Assignees          []string        `json:"assignees"`
-	CreatedAt          string          `json:"created_at"`
-	UpdatedAt          string          `json:"updated_at"`
-	ClosedAt           string          `json:"closed_at"`
-	Blocked            bool            `json:"blocked"`
-	Blockers           []string        `json:"blockers"`
-	Relations          []awbRelation   `json:"relations"`
-	Links              []awbLink       `json:"links"`
-	Attachments        []awbAttachment `json:"attachments"`
+	ID             string          `json:"id"`
+	Workspace      string          `json:"workspace"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	CommitHash     string          `json:"commit_hash"`
+	PullRequestURL string          `json:"pull_request_url"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	Type           string          `json:"type"`
+	Status         string          `json:"status"`
+	Priority       int             `json:"priority"`
+	Order          int             `json:"order"`
+	BoardHidden    bool            `json:"board_hidden"`
+	Labels         []string        `json:"labels"`
+	Assignees      []string        `json:"assignees"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	ClosedAt       string          `json:"closed_at"`
+	Blocked        bool            `json:"blocked"`
+	Blockers       []string        `json:"blockers"`
+	Relations      []awbRelation   `json:"relations"`
+	Links          []awbLink       `json:"links"`
+	Attachments    []awbAttachment `json:"attachments"`
 }
 
 // awbIssueTree is one issue extended with its children, recursively.

@@ -53,7 +53,7 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'set-group-sandbox-profile': ['groups.settings', 'groups.members.spawn.sandbox', 'feature:spawn.catalog'],
   'group-attachment': ['groups.settings'],
   'rename-group': ['groups.settings'],
-  // The ⚙ menu's group settings (nesting is drawing board layout only).
+  // The ⚙ menu's group settings (nesting is board layout only).
   'group-settings': ['groups.settings'],
   'set-group-context': ['groups.settings'],
   'toggle-group-notify': ['groups.settings'],

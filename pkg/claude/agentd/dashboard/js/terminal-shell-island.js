@@ -842,7 +842,7 @@ function NodePill({ node, compact = false }) {
 // A drawing board has no agent behind it, so its tab says what it is instead.
 function drawingBoardTabStatus(pane) {
   const label = `Drawing board ${paneTitle(pane)}`;
-  return { key: 'drawing_board', className: 'drawing_board', symbol: '✎', title: label, ariaLabel: label, agent: null };
+  return { key: 'drawing_board', className: 'drawing-board', symbol: '✎', title: label, ariaLabel: label, agent: null };
 }
 
 // Nor has a process template's editor.
