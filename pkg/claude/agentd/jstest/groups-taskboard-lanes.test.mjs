@@ -344,3 +344,39 @@ test('a drag that is not a task drag drives no cell; the Done header counts the 
   const out = await drag('tk_00000004', 'unassigned', 'next');
   assert.equal(out.taken, true);
 });
+
+// Fleet- and federation-wide: in the fused view a linked node's group is
+// name@node; its lanes write to that node under the group's own name.
+test('on a linked node\'s group in the fused view, a cell + and lane drags write to that node under its own name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ TaskboardSection }, { dashPrefs }, { setNodeSnapshotSource }] = await Promise.all([
+    harness.importDashboardModule('js/groups-taskboard.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  setNodeSnapshotSource((node) => (node === 'nd_forge' ? { peer_view: { level: 'unrestricted' } } : null));
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbl-fused@forge', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbl-fused@forge', '1');
+  const api = fakeApi();
+  const source = { context: harness.signals.signal({ groups: [board('tbl-fused')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const group = { name: 'tbl-fused@forge', members: members(), fleet_node: { id: 'nd_forge', name: 'forge', local: false } };
+  const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} boards=${() => ({ source, api })} />`);
+  const c = mounted.container;
+  const cell = (lane, column) => c.querySelector(`.tb-cell[data-lane="${lane}"][data-column="${column}"]`);
+  const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+
+  await click(cell('agt_tester', 'next').querySelector('.tb-cell-add'));
+  const form = c.querySelector('#taskboard-new-modal');
+  assert.ok(form, 'the cell + opens the form');
+  await harness.input(form.querySelector('.tb-new-title'), 'peer task');
+  await click(form.querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls.map(([verb, arg]) => [verb, arg]), [['create', 'tbl-fused'], ['assign', 'tk_00000099']]);
+
+  api.calls.length = 0;
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
+  const card = c.querySelector('.tb-card[data-task-id="tk_00000001"]');
+  await harness.act(async () => { harness.fireEvent(card, 'dragstart', { dataTransfer: transfer }); });
+  harness.fireEvent(cell('agt_tester', 'next'), 'dragover', { dataTransfer: transfer });
+  await harness.act(async () => { harness.fireEvent(cell('agt_tester', 'next'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_tester']], 'an assign drag goes to the group\'s node');
+});
