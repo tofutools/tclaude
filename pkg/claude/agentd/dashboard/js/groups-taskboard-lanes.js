@@ -13,11 +13,10 @@
 //
 // Cells that cannot hold a card are striped: Ideas in an agent's lane (an
 // idea is unassigned), In progress in the Unassigned lane. A cell a new task
-// can land in shows a discreet "+" on hover or focus: a title adds it there
-// (add [--next], then assign --to for an agent's lane), and "full form…"
-// opens the New task form filled from the cell. Column widths and the order
-// of the lanes and their headings are this viewer's own
-// (groups-taskboard-lanes-layout.js).
+// can land in has a small "+" in its lower-right corner that opens the New
+// task form filled from the cell (add [--next], then assign --to for an
+// agent's lane). Column widths and the order of the lanes and their headings
+// are this viewer's own (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
