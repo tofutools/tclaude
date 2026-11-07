@@ -169,7 +169,7 @@ a CLI verb:
 - **The capture box** stays focused after each Enter, so you can add a burst of
   ideas in a row. Shift+Enter starts a new line. A line that is only an awb,
   Linear or GitHub id becomes a task with that ref, titled from the tracker
-  ([importing](#importing-from-a-tracker)). New tasks land at the end of the
+  (as in an import from a tracker). New tasks land at the end of the
   ideas. Tick *capture as next* to add them to the queue instead. Then drag
   them where you want them.
 - **Dragging** a row above or below another row moves it there. If you drop it
