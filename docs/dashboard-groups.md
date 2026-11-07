@@ -508,8 +508,10 @@ processes, drawing boards, pages and shells (runs are not counted), and a sectio
 nothing at all says *No resources yet*.
 The **＋** menu starts a process for the group or for one agent, adds a new drawing board
 linked to the group or a blank live page, or opens the group's shell (once the
-group has a directory). Draw on the blank page to show what to build, and a
-member takes it over with its own source (see
+group has a directory). A live page is a web page a member serves (its dev
+server or static files), shown live for you to view and mark up, and for
+the group to read your marks. A new one starts blank: sketch on it what to build, and a
+member serves the real page into it (see
 [Live page › A page the operator creates in a group](live-page.md#a-page-the-operator-creates-in-a-group)).
 
 Every row wears a state pill that reads the same for every kind:

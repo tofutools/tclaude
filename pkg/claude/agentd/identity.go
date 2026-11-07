@@ -1494,6 +1494,17 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				fmt.Sprintf("human declined or timed out after %s on permission %q", timeout, perm))
 			return "", false
 		}
+		if a := actionContextOf(actx); a.RemotePeer != "" {
+			// A remote action passes only a peer= grant: the config defaults
+			// the local hint names never reach a peer, so name the scope.
+			reach := a.RemotePeer
+			if a.RemoteGroup != "" {
+				reach += "/" + a.RemoteGroup
+			}
+			writeError(w, http.StatusForbidden, "permission",
+				fmt.Sprintf("caller is not granted permission %q for peer=%s (an operator grants it to the agent, or to a group it is in, with --scope peer=%s; or call again with "+askHumanHint+" to ask the human via popup)", perm, reach, reach))
+			return "", false
+		}
 		writeError(w, http.StatusForbidden, "permission",
 			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with "+askHumanHint+" to ask the human via popup)", perm))
 		return "", false

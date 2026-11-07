@@ -540,7 +540,7 @@ function ScopeDimLabel({ dim, declared }) {
 }
 
 // ScopeDimCombobox edits a dimension's values: the snapshot catalogue the
-// daemon offers, or for resource= the catalogue it serves on demand, loaded
+// daemon offers, or for resource= and peer= the catalogue it serves on demand, loaded
 // once when the drawer opens. It is the shared FilterCombobox, so nothing
 // here renders more than a handful of rows however many values there are. A
 // value the catalogue does not list is typed and committed with Enter, or by
@@ -581,7 +581,8 @@ function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loa
         placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
         emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
         freeText=${(text) => text} commitOnBlur
-        literal=${served ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:') : null}
+        literal=${dim === 'resource' ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:')
+          : dim === 'peer' ? (text) => /^\S+\/\S+$/.test(text) || /^inst_\S+$/.test(text) : null}
         onQuery=${(text) => {
     const typed = text.trim();
     const exact = typed && items.find((item) => item.key === typed

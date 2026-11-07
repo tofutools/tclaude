@@ -186,7 +186,11 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 	}
 	v.groupName = g.Name
 	if !v.allows(rule, g.ID) {
-		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for group:%s", rule.requires, g.Name))
+		// Whoever on the calling node asked, what is missing is this node's
+		// grant to that node: say so, and how this node's operator gives it.
+		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf(
+			"requires %s for group:%s, a peer grant the node you called has not given your node (that node's operator: tclaude federation grant <your node> %s --scope group=%s)",
+			rule.requires, g.Name, rule.requires, g.Name))
 		return
 	}
 	// Unrestricted trust acts as this node's operator does, every option of

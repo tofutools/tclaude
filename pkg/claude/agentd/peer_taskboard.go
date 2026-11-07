@@ -73,6 +73,13 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// manage on the task's group; the handler tells them apart.
 	rules["POST /v1/taskboard/tasks/{id}/moved-away"] = peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite,
 		orGrants: []string{PermTaskboardManage}, group: true, write: servePeerTaskboardTask}
+	// Moving or cloning a task to another group of this node: the board's
+	// read opens the route, and the handler asks for taskboard.transfer on
+	// the target and taskboard.manage on the source (a move).
+	moveTo := read
+	moveTo.feature = "groups.taskboard.transfer"
+	moveTo.write = servePeerTaskboardTask
+	rules["POST /v1/taskboard/tasks/{id}/move-to-group"] = moveTo
 	group("GET /v1/groups/{name}/taskboard/writers", read)
 	group("POST /v1/groups/{name}/taskboard/writers", peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true})
 }
@@ -133,9 +140,10 @@ func servePeerTaskboardGroup(w http.ResponseWriter, r *http.Request, v *peerView
 	servePeerInvoke(w, r, v, rule)
 }
 
-// peerTaskboardSlugs are the board's peer grants; any of them in a group
-// lets the peer read that group's board.
-var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardTransfer}
+// peerTaskboardSlugs are the board's peer grants that let the peer read the
+// group's board. taskboard.transfer is not one: moving tasks into a group
+// does not show its board.
+var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage}
 
 // peerTaskboardImpliedGates: a peer that writes, assigns on or manages a
 // group's board also reads it, so the board's read gate opens to those

@@ -22,6 +22,15 @@ import { markLanded } from './drop-landing.js';
 import { shellToast } from './shell-state.js';
 
 const OVER = 'tb-transfer-over';
+// TASK_DRAG_TYPE is a task drag's data type (groups-taskboard.js, the
+// lanes): only such a drag is moved, so a listener left behind by a missed
+// dragend never takes another drag (an agent onto a group).
+const TASK_DRAG_TYPE = 'application/x-tclaude-task';
+
+function isTaskDrag(event) {
+  const types = event.dataTransfer?.types;
+  return !types || Array.from(types).includes(TASK_DRAG_TYPE);
+}
 
 // transferDeps are the page's confirmation and toast, swappable in tests.
 export const transferDeps = {
@@ -141,9 +150,16 @@ export function transferMessage({ task, from, to, stage, clone, tasks = [], memb
   const dependents = tasks.filter((t) => (t.depends_on || []).includes(task.id)).map((t) => `"${t.title}"`);
   const parts = [`Move "${title}" from group "${from}" to group "${to}". It keeps its history.`];
   const assignee = task.assignee?.agent_id;
-  const stays = assignee && members.some((m) => m.agent_id === assignee);
-  parts.push(stays ? `It stays assigned and lands in Next.` : `It lands in ${task.status === 'done' ? 'Done' : stageLabel(stage)}.`);
-  if (assignee && !stays) parts.push(`Its assignee is not a member of "${to}", so it is unassigned (and told).`);
+  const done = task.status === 'done';
+  // members is null where the target's members are not known (a linked
+  // node's group): the server decides, and the dialog does not guess.
+  const known = Array.isArray(members);
+  const stays = known && assignee && members.some((m) => m.agent_id === assignee);
+  if (done) parts.push(stays ? 'It stays done and assigned.' : 'It stays done.');
+  else if (stays) parts.push('It stays assigned and lands in Next.');
+  else parts.push(`It lands in ${stageLabel(stage)}.`);
+  if (assignee && known && !stays) parts.push(`Its assignee is not a member of "${to}", so it is unassigned${done ? '' : ' (and told)'}.`);
+  if (assignee && !known) parts.push(`If its assignee is not a member of "${to}", it is unassigned.`);
   if (task.status === 'blocked') parts.push('Its block is lifted.');
   if (deps.length) parts.push(`It no longer waits for ${deps.join(', ')} (dependencies never cross groups).`);
   if (dependents.length) parts.push(`${dependents.join(', ')} no longer wait${dependents.length === 1 ? 's' : ''} for it.`);
@@ -161,6 +177,7 @@ export function listenForTransfer({ task, group, tasks = [], actions, onDrop = (
   const fromBox = () => [...document.querySelectorAll('[data-fused-taskboard]')]
     .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('details[data-group-key]') || null;
   const onOver = (event) => {
+    if (!isTaskDrag(event)) { clearOver(state); return; }
     const hit = transferTarget(event.target, fromShown, fromBox());
     if (!hit) { clearOver(state); return; }
     event.preventDefault();
@@ -176,6 +193,7 @@ export function listenForTransfer({ task, group, tasks = [], actions, onDrop = (
     document.removeEventListener('drop', onDropEvent, true);
   };
   const onDropEvent = (event) => {
+    if (!isTaskDrag(event)) { off(); return; }
     const hit = transferTarget(event.target, fromShown, fromBox());
     if (!hit) return;
     event.preventDefault();
@@ -197,7 +215,9 @@ export function listenForTransfer({ task, group, tasks = [], actions, onDrop = (
 
 // runTransfer asks, then moves or clones the task.
 export async function runTransfer({ task, group, tasks = [], actions, to, stage, clone }) {
-  const text = transferMessage({ task, from: group.name, to, stage, clone, tasks, members: targetMembers(to) });
+  // A linked node's groups are not in this page's snapshot by their own name.
+  const linked = group.fleet_node && !group.fleet_node.local;
+  const text = transferMessage({ task, from: group.name, to, stage, clone, tasks, members: linked ? null : targetMembers(to) });
   const ok = await transferDeps.confirm({ ...text, meta: task.title || task.id });
   if (!ok) return null;
   const out = await actions.run(`${task.id}:transfer`, clone ? 'Clone' : 'Move',
