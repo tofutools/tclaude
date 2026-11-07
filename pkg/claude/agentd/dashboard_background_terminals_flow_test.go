@@ -213,3 +213,42 @@ func TestBackgroundTerminals_ReaperKillsOrphanedShells(t *testing.T) {
 	assert.False(t, f.World.Tmux.IsAlive(ownerlessShell), "its agent was deleted")
 	assert.True(t, f.World.Tmux.IsAlive(watchedShell), "somebody is attached to it")
 }
+
+// Scenario: the operator kills a shell from the Groups tab's Resources while
+// it is open in a tab (a client is attached). The shell kill ends an agent's
+// or a group's shell attached or not, and nothing else: an agent's own
+// session, an unknown tclaude-term-* name and a non-shell name are refused.
+func TestShellKill_EndsAttachedShellsOnly(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "shk-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "spwn-shk", "tmux-shk", f.TestCwd("shk"))
+	f.HaveEnrolledAgent(conv)
+	f.HaveGroup("crew")
+	open := agentShellName(conv, "start")
+	f.World.Tmux.MarkAlive(open)
+	f.World.Tmux.AttachClient("/dev/pts/7", open)
+	groupShell := docGroupShellSession("crew")
+	f.World.Tmux.MarkAlive(groupShell)
+	f.World.Tmux.AttachClient("/dev/pts/8", groupShell)
+	stray := agentShellName("not-an-agent", "start")
+	f.World.Tmux.MarkAlive(stray)
+
+	kill := func(name string) int {
+		rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/shells/kill", map[string]string{"tmux_session": name}))
+		return rec.Code
+	}
+	assert.Equal(t, http.StatusBadRequest, kill("tmux-shk"), "an agent's session is not a shell")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-shk"))
+	assert.Equal(t, http.StatusNotFound, kill(stray), "a shell of no known agent or group")
+	assert.True(t, f.World.Tmux.IsAlive(stray))
+
+	assert.Equal(t, http.StatusOK, kill(open), "an attached agent shell")
+	assert.False(t, f.World.Tmux.IsAlive(open))
+	assert.Equal(t, http.StatusOK, kill(groupShell), "an attached group shell")
+	assert.False(t, f.World.Tmux.IsAlive(groupShell))
+	assert.Equal(t, http.StatusNotFound, kill(open), "a shell already gone")
+}

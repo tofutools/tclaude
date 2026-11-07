@@ -512,12 +512,19 @@ Every row wears a state pill that reads the same for every kind:
 - **closed**: it exists, and nothing of it is live.
 
 Open, floating and minimized are this browser's own: another browser of
-yours keeps its own windows. The row's main button follows the state:
-**Focus** brings an open one forward, **Restore** takes it off the dock,
-**Open** opens it (**Attach** for a running shell, **Reopen** for a closed
-page). A live page also has **↻**, which reloads it in every view, and a
-running shell **×**, which kills it after a confirm. For a page or a board,
-the row's **⋯** holds:
+yours keeps its own windows.
+
+Each row starts like a row of the agents table: a light in the state's
+colour, then the same buttons in the same order on every row, then the
+agent lock. The buttons brighten when you point at the row.
+- **👁** follows the state: it brings an open one forward, takes it off the
+  dock, opens it, attaches a running shell or reopens a closed page.
+  Clicking the name does the same.
+- **🗑** deletes a board or a page, or kills a running shell, after a
+  confirm. Killing works while the shell is open too; its tab then shows
+  the session ended, or closes, as your close-tab setting says. Dragging the
+  row onto the trash bin does the same.
+- **⚙** holds the rest. For a page or a board:
 - **Rename…**: the name becomes a field; Enter saves it, Escape keeps the old
   one. Your title for a page stays when its agent shows the page again,
   unless the agent passes a title of its own; the audit log says when one
@@ -526,7 +533,13 @@ the row's **⋯** holds:
   group its agent is a member of, and the marks sent before stay behind, as
   when the agent shows it into another group. A group's own blank page moves
   only while closed.
-- **Delete…**, behind a confirm.
+- **Delete…**, behind a confirm, as 🗑 does.
+- **Reload in every view** (a live page).
+
+A saved process's row has the same buttons. Its light starts a run, as an
+agent's light turns the agent on. **👁** opens it here as a graph, **🗑**
+removes it from the group (the template stays), and **⚙** holds Start… and
+Edit as a graph.
 
 Each resource has a lock chip. It shows the state and is also the toggle:
 click it (or focus it and press Enter) to switch between:

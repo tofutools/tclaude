@@ -73,6 +73,7 @@ var peerViewLocalRoutes = []string{
 	"/api/agent-generations/",
 	"/api/agent-windows",
 	"/api/background-terminals/kill",
+	"/api/shells/kill",
 	"/api/agents/",
 	"/api/audit",
 	"/api/claude-settings/default-model",

@@ -627,8 +627,8 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   // One style per kind: a heading, then rows ending in the lock chip; the
   // runs stay with the processes, above the other kinds.
   const shipRow = feSection.querySelector('[data-saved-process="ship"]');
-  assert.equal(shipRow.lastElementChild.dataset.resourceLock, 'process:ship', 'a process row ends in its lock');
-  assert.equal(board.lastElementChild.dataset.resourceLock, 'board:sprint', 'a board row ends in its lock');
+  assert.equal(shipRow.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'process:ship', 'a process row\'s actions end in its lock');
+  assert.equal(board.querySelector('.gr-acts').lastElementChild.dataset.resourceLock, 'board:sprint', 'a board row\'s actions end in its lock');
   assert.ok(feSection.querySelector('.gq-saved > .gr-kind-label'), 'Processes is a heading, as Boards is');
   const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
   assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'boards follow the runs');
@@ -843,7 +843,7 @@ test('Both lays Ungrouped out as a real group: Agents, then Resources listing th
   assert.deepEqual([...resources.querySelectorAll('[data-resource-board]')].map((row) => row.dataset.resourceBoard), ['sketch'], 'only the board in no group');
   assert.match(resources.querySelector('[data-resource-board="sketch"] .gr-meta').textContent, /2 editing/);
   assert.equal(resources.querySelector('[data-resource-add]'), null, 'no ＋: what is made here belongs in a group');
-  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-board="sketch"] .gr-more'), 'click'));
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-board="sketch"] .gr-cog'), 'click'));
   await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-move="sketch"]'), 'click'));
   assert.deepEqual([...resources.querySelectorAll('[data-move-to]')].map((item) => item.dataset.moveTo), ['frontend-squad', 'infra-crew'], 'every group is a target');
   await harness.act(() => harness.fireEvent(resources.querySelector('[data-move-to="infra-crew"]'), 'click'));
