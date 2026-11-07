@@ -259,14 +259,21 @@ export function scopeDimOptions(snapshot, dim) {
 // SCOPE_COMBOBOX_DIMS are the dimensions whose catalogue the daemon serves on
 // demand (GET /api/permissions/scope-values) rather than on the snapshot.
 // Every dimension is edited in the same type-to-filter box either way.
-export const SCOPE_COMBOBOX_DIMS = ['resource'];
+export const SCOPE_COMBOBOX_DIMS = ['resource', 'peer'];
 // SCOPE_CHIPS_SHOWN is how many matcher chips a dimension shows before the
 // rest collapse into "+N more", which opens a searchable list of them.
 export const SCOPE_CHIPS_SHOWN = 6;
 
 
 // RESOURCE_KIND_LABELS heads the resource picker's sections.
-export const RESOURCE_KIND_LABELS = { drawing_board: 'Drawing boards', process_template: 'Process templates' };
+export const RESOURCE_KIND_LABELS = { drawing_board: 'Drawing boards', process_template: 'Process templates', peer: 'Linked nodes' };
+
+// scopeCatalogueKey is the matcher a served catalogue entry stands for: its
+// value when the daemon gives one (peer=, stored as <instance id>[/<group>]),
+// and kind:id otherwise (resource=).
+function scopeCatalogueKey(entry) {
+  return entry.value || `${entry.kind}:${entry.id}`;
+}
 
 // scopeComboItems is a dimension's catalogue as FilterCombobox items: the
 // resource catalogue's entries ({kind, id, title, groups}) keyed by the
@@ -275,8 +282,8 @@ export const RESOURCE_KIND_LABELS = { drawing_board: 'Drawing boards', process_t
 export function scopeComboItems(dim, options, catalogue) {
   if (catalogue) {
     return catalogue.map((entry) => ({
-      key: `${entry.kind}:${entry.id}`, label: entry.title || entry.id, hint: `${entry.kind}:${entry.id}`,
-      kind: entry.kind, group: (entry.groups || []).join(', '), keywords: entry.id,
+      key: scopeCatalogueKey(entry), label: entry.title || entry.id, hint: scopeCatalogueKey(entry),
+      kind: entry.kind, group: entry.node || (entry.groups || []).join(', '), keywords: entry.id,
     }));
   }
   return [...(options?.values || []), ...(options?.selectors || [])].map((value) => ({ key: value, label: value }));
@@ -285,7 +292,7 @@ export function scopeComboItems(dim, options, catalogue) {
 // scopeValueLabel is how one matcher reads in a chip: a resource the
 // catalogue knows by its title, anything else as stored.
 export function scopeCatalogueIndex(catalogue) {
-  return catalogue ? new Map(catalogue.map((entry) => [`${entry.kind}:${entry.id}`, entry])) : null;
+  return catalogue ? new Map(catalogue.map((entry) => [scopeCatalogueKey(entry), entry])) : null;
 }
 
 // scopeValueLabel takes the index scopeCatalogueIndex built, so a sheet of
@@ -293,6 +300,7 @@ export function scopeCatalogueIndex(catalogue) {
 export function scopeValueLabel(value, index) {
   if (!index) return { kind: '', text: value };
   const entry = index.get(value);
+  if (entry?.kind === 'peer') return { kind: '', text: entry.title || entry.id };
   return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind === 'drawing_board' ? 'drawing board' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
 }
 

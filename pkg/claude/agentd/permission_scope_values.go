@@ -17,6 +17,11 @@ type permissionScopeValueItem struct {
 	ID     string   `json:"id"`
 	Title  string   `json:"title"`
 	Groups []string `json:"groups,omitempty"`
+	// Value is the matcher the item stands for when it is not kind:id: for
+	// peer=, the stored <instance id>[/<group>].
+	Value string `json:"value,omitempty"`
+	// Node names a peer= item's linked node, for the picker to group by.
+	Node string `json:"node,omitempty"`
 }
 
 // handleDashboardPermissionScopeValues serves GET
@@ -33,11 +38,24 @@ func handleDashboardPermissionScopeValues(w http.ResponseWriter, r *http.Request
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	if dim := r.URL.Query().Get("dim"); dim != string(ScopeDimResource) {
+	var items []permissionScopeValueItem
+	var err error
+	switch dim := r.URL.Query().Get("dim"); dim {
+	case string(ScopeDimResource):
+		items, err = resourceScopeCatalogue(r)
+	case string(ScopeDimPeer):
+		// This node's peers are its own: a linked node's operator reaching
+		// this route as local (unrestricted trust) does not list them, as it
+		// does not reach the federation routes either.
+		if requestFromPeerNode(r) {
+			writeError(w, http.StatusForbidden, "scope_dim", "this node's linked nodes are listed to its own operator only")
+			return
+		}
+		items, err = peerScopeCatalogue()
+	default:
 		writeError(w, http.StatusBadRequest, "scope_dim", "no catalogue is served for dimension "+dim+"; the snapshot carries the others")
 		return
 	}
-	items, err := resourceScopeCatalogue(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "scope_values", err.Error())
 		return
@@ -100,6 +118,52 @@ func resourceScopeCatalogue(r *http.Request) ([]permissionScopeValueItem, error)
 		}
 		slices.Sort(item.Groups)
 		items = append(items, item)
+	}
+	return items, nil
+}
+
+// requestFromPeerNode reports a request a linked node's operator makes
+// through the peer view (its own grants or unrestricted trust as local),
+// which marks the request remote-authed with a bare true.
+func requestFromPeerNode(r *http.Request) bool {
+	peer, _ := r.Context().Value(remoteAuthedCtxKey{}).(bool)
+	return peer || peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil
+}
+
+// peerScopeCatalogue lists what a peer= matcher may name: each trusted peer
+// node-wide, then each group its latest catalogue shows this node. A group
+// is in that catalogue only when the peer grants this node something there,
+// so these are the groups a peer-scoped grant can actually reach (which slug
+// the peer grants is still the peer's to decide). The value is the stored
+// form, the instance id; the title is the peer's label, the name an operator
+// knows it by.
+func peerScopeCatalogue() ([]permissionScopeValueItem, error) {
+	peers, err := db.ListFederationPeers()
+	if err != nil {
+		return nil, err
+	}
+	items := []permissionScopeValueItem{}
+	for i := range peers {
+		p := &peers[i]
+		node := peerDisplay(p)
+		items = append(items, permissionScopeValueItem{Kind: "peer", ID: p.InstanceID, Value: p.InstanceID,
+			Title: node + " (whole node)", Node: node})
+		cat, _, err := fedCatalogFor(p.InstanceID)
+		if err != nil || cat == nil {
+			continue // no catalogue yet: the node-wide value still applies
+		}
+		names := make([]string, 0, len(cat.Groups))
+		for _, g := range cat.Groups {
+			if g.Name != "" {
+				names = append(names, g.Name)
+			}
+		}
+		slices.Sort(names)
+		for _, name := range slices.Compact(names) {
+			value := p.InstanceID + "/" + name
+			items = append(items, permissionScopeValueItem{Kind: "peer", ID: value, Value: value,
+				Title: node + " / " + name, Node: node})
+		}
 	}
 	return items, nil
 }
