@@ -17687,12 +17687,15 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* The run-kind checklist in the Groups ▾ view menu (js/groups-focus.js
    RunKindFilter): a coloured dot per kind and a count once runs load. */
 .groups-run-kinds { display: flex; flex-direction: column; gap: 2px; }
-.view-menu label.groups-run-kind { display: flex; gap: 8px; }
+/* Keeps the shared .filter-toggle grid so the checkbox sits in the same
+   first column as the rows above, then the dot, the label, and the count
+   pinned right. Without counts the 1fr label track absorbs the empty one. */
+.view-menu label.groups-run-kind { grid-template-columns: auto auto 1fr auto; }
 .groups-run-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .groups-run-kind-running .groups-run-dot { background: #58a6ff; }
 .groups-run-kind-planned .groups-run-dot { border: 1.5px dashed #6e7f94; width: 6px; height: 6px; }
 .groups-run-kind-done .groups-run-dot { background: #2ea043; }
-.groups-run-count { margin-left: auto; padding-left: 12px; color: #8b949e; font-size: 11px; }
+.groups-run-count { padding-left: 4px; color: #8b949e; font-size: 11px; }
 .groups-processes-placeholder { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 18px 0; padding: 36px 20px; border: 1px dashed #30363d; border-radius: 10px; color: #8b949e; text-align: center; }
 .groups-processes-placeholder strong { color: #e6edf3; font-size: 14px; }
 .groups-processes-placeholder-glyph { font-size: 26px; color: #58a6ff; }
