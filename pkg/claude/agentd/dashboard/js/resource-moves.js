@@ -67,8 +67,9 @@ export function canMoveResource(resource, to, snapshotValue) {
 // moveResource moves resource to the group named to ('' takes a board out of
 // every group), says how it went, and refreshes. api is the process run API
 // (process-context.js): moveBoard, moveGroupPage.
-export async function moveResource(resource, to, { api, notify, refresh = () => {} }) {
+export async function moveResource(resource, to, { api, notify, refresh = () => {}, confirm = null }) {
   const label = resource.label || resource.id;
+  if (confirm && !(await confirm(dropConfirm(resource, to, false)))) return false;
   try {
     if (resource.kind === 'board') await api.moveBoard(resource.id, to);
     else if (resource.kind === 'process') {
@@ -99,8 +100,9 @@ export function canCopyResource(resource, to, snapshotValue) {
 // copyResource copies resource into the group named to, says how it went,
 // and refreshes. api: copyBoard and boardIds (a board), pinProcess (a
 // process).
-export async function copyResource(resource, to, { api, notify, refresh = () => {} }) {
+export async function copyResource(resource, to, { api, notify, refresh = () => {}, confirm = null }) {
   const label = resource.label || resource.id;
+  if (confirm && !(await confirm(dropConfirm(resource, to, true)))) return false;
   try {
     if (resource.kind === 'board') {
       const title = `${label} (copy)`;
@@ -116,4 +118,30 @@ export async function copyResource(resource, to, { api, notify, refresh = () => 
     notify(`Could not copy ${label}: ${cause.message}`, true);
     return false;
   }
+}
+
+const KIND_NOUN = Object.freeze({ board: 'drawing board', page: 'page', process: 'process' });
+
+// dropConfirm is the confirm a drag's drop asks before it moves or copies
+// resource into the group named to, as an agent's drop does (dnd-ops.js):
+// { title, body, meta, okLabel } for the shell's confirm modal.
+export function dropConfirm(resource, to, copy) {
+  const label = resource.label || resource.id;
+  const from = resource.group || '';
+  const noun = KIND_NOUN[resource.kind] || resource.kind;
+  if (copy) {
+    return resource.kind === 'process'
+      ? { title: 'Add process to another group?', meta: label, okLabel: 'Add',
+        body: `Save "${label}" to group "${to}" as well. It stays in "${from}"; both use the one template.` }
+      : { title: `Copy ${noun} to another group?`, meta: label, okLabel: 'Copy',
+        body: `Make a copy of "${label}" in group "${to}", with the same drawing. The original stays in "${from}".` };
+  }
+  if (!to) {
+    return { title: `Take ${noun} out of its group?`, meta: label, okLabel: 'Move',
+      body: `Take "${label}" out of group "${from}". It is then in no group.` };
+  }
+  const note = resource.kind === 'page' ? ' The marks sent before stay behind.'
+    : resource.kind === 'process' ? ` It is saved to "${to}" and removed from "${from}"; the template itself stays.` : '';
+  return { title: `Move ${noun} to another group?`, meta: label, okLabel: 'Move',
+    body: `Move "${label}" ${from ? `from group "${from}" ` : ''}to group "${to}".${note}` };
 }

@@ -7,6 +7,7 @@
 
 import { signal } from '@preact/signals';
 import { OTHER_SESSIONS, UNGROUPED, isAgentItem, railItems } from './collab-rail-model.js';
+import { shellConfirm } from './shell-state.js';
 import { MOVABLE_KINDS, canMoveResource, moveResource } from './resource-moves.js';
 import { processContext, processRunApi } from './process-context.js';
 import { onPeerPage } from './node-api.js';
@@ -232,7 +233,7 @@ export function railGroupDrop(item, target, snapshotValue, peer = onPeerPage()) 
 export async function railItemToGroup(item, drop, ctx = {}) {
   const notify = ctx.notify || (() => {});
   if (drop.resource) {
-    return moveResource(drop.resource, drop.to, { api: ctx.api || processRunApi, notify, refresh: () => processContext.refresh() });
+    return moveResource(drop.resource, drop.to, { api: ctx.api || processRunApi, notify, refresh: () => processContext.refresh(), confirm: ctx.confirm || shellConfirm });
   }
   const ops = ctx.groupOps || (await import('./dnd.js')).dndOps;
   const conv = drop.agent.conv_id || drop.agent.agent_id;
