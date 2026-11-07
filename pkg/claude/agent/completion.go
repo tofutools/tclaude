@@ -315,6 +315,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"taskboard.write", "Change a group's task board"},
 			{"taskboard.assign", "Assign a group's tasks to other agents and take them back"},
 			{"taskboard.manage", "Manage a group's task board: its writer lock"},
+			{"taskboard.transfer", "Move or clone tasks into a group's board from another group"},
 			{"auto-permit.enter-worktree", "Let tclaude answer Claude Code's EnterWorktree prompt"},
 			{"agent.reincarnate", "Reincarnate ANOTHER agent"},
 			{"agent.compact", "Compact ANOTHER agent"},
