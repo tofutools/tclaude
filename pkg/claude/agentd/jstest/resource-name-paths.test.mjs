@@ -11,7 +11,7 @@ import { mountNameHost, submitName, waitFor, waitForNameDialog } from './resourc
 
 const GROUP = { id: 7, name: 'crew', default_cwd: '/src/crew', members: [] };
 
-function fakeDaemon(t) {
+function fakeDaemon(t, { takenPages = [] } = {}) {
   const calls = [];
   const previous = globalThis.fetch;
   globalThis.fetch = async (path, init = {}) => {
@@ -21,6 +21,9 @@ function fakeDaemon(t) {
     const json = (value) => ({ ok: true, status: 200, json: async () => value });
     if (method === 'GET' && path === '/api/drawing-boards') return json({ drawingBoards: [{ id: 'crew-drawing-board' }] });
     if (method === 'POST' && path === '/api/drawing-boards') return json({ id: body.id, title: body.title });
+    if (method === 'POST' && path === '/api/pages' && takenPages.includes(body.name)) {
+      return { ok: false, status: 409, json: async () => ({ code: 'exists', error: `the group already has a page named ${body.name}` }) };
+    }
     if (method === 'POST' && path === '/api/pages') return json({ id: 'pg_new', name: body.name, title: body.title });
     return json({});
   };
@@ -29,10 +32,10 @@ function fakeDaemon(t) {
   return { calls, posts };
 }
 
-async function setup(t) {
+async function setup(t, daemonOptions) {
   const harness = await createPreactHarness(t);
   harness.document.body.innerHTML = '<nav><button data-tab="groups" class="active"></button></nav>';
-  const daemon = fakeDaemon(t);
+  const daemon = fakeDaemon(t, daemonOptions);
   await mountNameHost(harness);
   return { harness, ...daemon };
 }
@@ -92,4 +95,19 @@ test('the palette\'s "Make a live page in X" asks the name first', async (t) => 
   assert.equal(input.value, 'sketch');
   await submitName(harness, 'Pricing');
   assert.deepEqual(posts('/api/pages').map((c) => c.body), [{ group: 'crew', name: 'sketch', title: 'Pricing' }]);
+});
+
+test('a page handle taken since the dialog opened is retried with the next free one', async (t) => {
+  // Another view made "sketch" after this one read the group's pages.
+  const { harness, posts } = await setup(t, { takenPages: ['sketch'] });
+  const { NewMenu } = await harness.importDashboardModule('js/collab-new-menu.js');
+  const { container } = await harness.mount(harness.html`<${NewMenu} group=${GROUP} groups=${[GROUP]} />`);
+  await harness.act(() => container.querySelector('[data-new-menu="crew"]').click());
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-new-kind="page"]'), 'click'));
+  await waitForNameDialog(harness);
+  await submitName(harness, 'Checkout mock');
+  assert.deepEqual(posts('/api/pages').map((c) => c.body), [
+    { group: 'crew', name: 'sketch', title: 'Checkout mock' },
+    { group: 'crew', name: 'sketch-2', title: 'Checkout mock' },
+  ], 'the refused handle is skipped and the page made under the next');
 });

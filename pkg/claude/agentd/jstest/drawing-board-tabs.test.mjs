@@ -548,3 +548,27 @@ test('a terminal\'s tab has no name field to open', async (t) => {
   assert.ok(!requests.some((r) => r.endsWith('/title')));
   cleanup();
 });
+
+test('a page renamed from its tab keeps the new name while the snapshot still has the old title', async (t) => {
+  const requests = fakeDaemon(t);
+  const page = { id: PAGE_ID, name: 'sketch', title: 'sketch', owner: '', state: 'open', kind: 'scratch', groupOwned: true };
+  const env = await mountShell(t, { ...COLLAB_ON, live_pages: [page] });
+  const cleanup = await start(env);
+  const { harness, host, setSnapshot } = env;
+  const { openPagePane } = await harness.importDashboardModule('js/page-place.js');
+  await harness.act(async () => { await openPagePane(PAGE_ID, 'sketch'); await wait(); });
+  const key = [...host.querySelectorAll('.mux-tab')].map((tab) => tab.dataset.paneKey).find((k) => k.includes(PAGE_ID));
+  await harness.act(() => harness.fireEvent(tabOf(host, key), 'keydown', { key: 'F2' }));
+  const field = renameField(host, key);
+  field.value = 'Checkout mock';
+  await harness.act(() => harness.fireEvent(field, 'keydown', { key: 'Enter' }));
+  await waitUntil(harness, () => requests.includes(`POST /api/pages/${PAGE_ID}/title`), 'the rename reaches the daemon');
+  await waitUntil(harness, () => tabLabels(host).includes('Checkout mock'), 'the tab carries the new name');
+  // A poll before the daemon's answer shows up still has the old title.
+  await harness.act(async () => { setSnapshot({ ...COLLAB_ON, live_pages: [{ ...page }] }); await wait(); });
+  assert.deepEqual(tabLabels(host), ['Checkout mock'], 'the old title is not written back');
+  // Once the snapshot has a new title, the tab follows it.
+  await harness.act(async () => { setSnapshot({ ...COLLAB_ON, live_pages: [{ ...page, title: 'Checkout v2' }] }); await wait(); });
+  await waitUntil(harness, () => tabLabels(host).includes('Checkout v2'), 'a later title from the snapshot still reaches the tab');
+  cleanup();
+});

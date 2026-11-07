@@ -31,6 +31,7 @@ import { killShell } from './background-terminals.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
 import { registerResourceRemover } from './resource-dnd.js';
 import { askResourceName } from './resource-name-dialog.js';
+import { groupContextEntry } from './process-context.js';
 
 export { LockChip };
 
@@ -507,15 +508,35 @@ export async function addGroupDrawingBoard(group, { api, notify = defaultNotify,
   });
 }
 
+// pageNameTaken reports a refusal because the group already has a page by
+// that handle (POST /api/pages, 409 exists).
+const pageNameTaken = (cause) => cause?.status === 409 && (cause.body?.code === 'exists' || /already has a page named/.test(cause.message || ''));
+
 // addGroupPage asks for the name of a blank page group owns, prefilled with
 // the free sketch name, then creates it with that name as its title; it opens,
-// focused, when the snapshot lists it (page-place.js).
+// focused, when the snapshot lists it (page-place.js). The handle (sketch,
+// sketch-2, …) is free among pages when the dialog opened; one taken since is
+// refused, and the create reads the group's pages again (source) and tries
+// the next free handle once.
 export async function addGroupPage(group, pages = [], { api, notify = defaultNotify, source } = {}) {
-  const name = freePageName(pages);
+  const taken = new Set(pages.map((page) => page.name));
+  const freeHandle = () => freePageName([...taken].map((name) => ({ name })));
+  const create = async (title, retry = true) => {
+    const name = freeHandle();
+    try {
+      return await api.createGroupPage(group.name, name, title);
+    } catch (cause) {
+      if (!retry || !pageNameTaken(cause)) throw cause;
+      taken.add(name);
+      await Promise.resolve(source?.refresh?.()).catch(() => {});
+      for (const page of groupContextEntry(source?.context?.value, group)?.pages || []) taken.add(page.name);
+      return create(title, false);
+    }
+  };
   return askResourceName({
-    kind: 'page', group: group.name, value: name,
+    kind: 'page', group: group.name, value: freeHandle(),
     create: async (title) => {
-      const page = await api.createGroupPage(group.name, name, title);
+      const page = await create(title);
       notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
       void source?.refresh?.();
       expectPage(page.id);

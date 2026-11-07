@@ -12171,7 +12171,8 @@ body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93,
    the other wizard dialogs here, scoped to its id. */
 .resource-name-modal { min-width: 0; width: min(460px, calc(100vw - 32px)); }
 .resource-name-modal .ui-input { flex: 1; min-width: 0; }
-.resource-name-modal .resource-name-invalid { margin: -4px 0 0 var(--cron-label-w); }
+/* Under the field: the label column plus the .cron-create-row gap (10px). */
+.resource-name-modal .resource-name-invalid { margin: -4px 0 0 calc(var(--cron-label-w, 72px) + 10px); }
 body.wizard #resource-name-modal :is(.cron-create-label, .modal-hint) { color: #b39ddb; }
 body.wizard #resource-name-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 

@@ -10,7 +10,7 @@
 // daemon shows in the dialog's error slot and the dialog stays.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { signal } from '@preact/signals';
 import { Dialog } from './ui-dialog.js';
@@ -39,21 +39,28 @@ const KIND_COPY = Object.freeze({
 
 const pick = ([regular, wizard]) => wizWord(regular, wizard);
 
-// { kind, group, value, create, resolve } while the dialog is up.
+// { kind, group, value, create, resolve, busy } while the dialog is up.
 export const resourceNameRequest = signal(null);
 
 // askResourceName opens the dialog for kind ('drawing_board' or 'page') in
 // group (a name), with value as the Name. create(name) makes the resource and
 // throws to refuse; the promise resolves to what it returned, or null when the
-// operator cancelled. A request already up is cancelled first.
+// operator cancelled. A request already up is cancelled first, unless it is
+// creating: then it keeps the dialog, and the new request resolves to null at
+// once. Each promise resolves exactly once.
 let requests = 0;
 
 export function askResourceName({ kind, group, value = '', create }) {
-  resourceNameRequest.peek()?.resolve(null);
+  const open = resourceNameRequest.peek();
+  if (open?.busy) return Promise.resolve(null);
+  open?.resolve(null);
   return new Promise((resolve) => {
+    let settled = false;
     const request = {
-      kind, group, value, create, seq: ++requests,
+      kind, group, value, create, seq: ++requests, busy: false,
       resolve: (result) => {
+        if (settled) return;
+        settled = true;
         if (resourceNameRequest.peek() === request) resourceNameRequest.value = null;
         resolve(result);
       },
@@ -67,22 +74,30 @@ export function ResourceNameDialog({ request }) {
   const [name, setName] = useState(request.value);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Bumped by a refusal: the field, disabled while creating, takes focus back
+  // so Enter and Ctrl/Cmd+Enter try again.
+  const [refused, setRefused] = useState(0);
   const inputRef = useRef(null);
+  useEffect(() => { if (refused) inputRef.current?.focus(); }, [refused]);
   const submit = async () => {
-    if (busy) return;
+    if (request.busy) return;
     const typed = name.trim();
     if (!typed) {
       inputRef.current?.focus();
       return;
     }
+    request.busy = true;
     setBusy(true);
     setError('');
     try {
       const result = await request.create(typed);
+      request.busy = false;
       request.resolve(result ?? true);
     } catch (cause) {
+      request.busy = false;
       setBusy(false);
       setError(cause?.message || String(cause));
+      setRefused((n) => n + 1);
     }
   };
   const onKeyDown = (event) => {

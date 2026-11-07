@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
-import { mountNameHost, nameDialog, waitFor, waitForNameDialog } from './resource-name-helpers.mjs';
+import { mountNameHost, nameDialog, nameInput, waitFor, waitForNameDialog } from './resource-name-helpers.mjs';
 
 async function open(t, { kind = 'drawing_board', group = 'crew', value = 'crew drawing board', create, wizard = false } = {}) {
   const harness = await createPreactHarness(t);
@@ -80,7 +80,6 @@ test('an empty or blank name blocks Create and says so', async (t) => {
   assert.equal(dialog.querySelector('#resource-name-invalid').textContent, 'Give it a name.');
   await key(harness, input, { key: 'Enter' });
   await key(harness, input, { key: 'Enter', ctrlKey: true });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.ok(nameDialog(harness), 'the dialog stays');
   assert.deepEqual(made, [], 'nothing is made');
   await harness.input(input, 'ok');
@@ -102,6 +101,45 @@ test('a refusal shows in the dialog, which stays open to try again', async (t) =
   await key(harness, input, { key: 'Enter' });
   await waitFor(harness, () => !nameDialog(harness), 'a second try that works closes it');
   assert.equal(tries, 2);
+});
+
+test('after a refusal the field has focus again, so Enter and Ctrl+Enter retry', async (t) => {
+  let tries = 0;
+  let field = null;
+  const { harness, dialog, input } = await open(t, {
+    create: async (name) => {
+      tries += 1;
+      // A browser drops focus from the field once it is disabled while
+      // creating; the test DOM does not, so do what it would.
+      field?.blur();
+      assert.notEqual(harness.document.activeElement, field, 'focus left the field while creating');
+      if (tries < 3) throw new Error('refused');
+      return { id: 'x', title: name };
+    },
+  });
+  field = input;
+  await key(harness, input, { key: 'Enter' });
+  await waitFor(harness, () => harness.document.activeElement === input, 'the field takes focus back after the first refusal');
+  assert.equal(dialog.querySelector('#resource-name-error').textContent, 'refused');
+  await key(harness, harness.document.activeElement, { key: 'Enter', ctrlKey: true });
+  await waitFor(harness, () => tries === 2 && harness.document.activeElement === input, 'Ctrl+Enter from the field retries, and focus comes back again');
+  await key(harness, harness.document.activeElement, { key: 'Enter' });
+  await waitFor(harness, () => !nameDialog(harness), 'Enter from the field retries and the third try closes it');
+  assert.equal(tries, 3);
+});
+
+test('a second ask while one is creating keeps the first, and each resolves once', async (t) => {
+  let finish;
+  const { harness, host, input, result } = await open(t, { create: () => new Promise((resolve) => { finish = resolve; }) });
+  await key(harness, input, { key: 'Enter' });
+  await waitFor(harness, () => typeof finish === 'function', 'the first create is under way');
+  let second;
+  await harness.act(() => { second = host.askResourceName({ kind: 'page', group: 'crew', value: 'sketch', create: async () => 'other' }); });
+  assert.equal(await second, null, 'the new ask is refused while the first creates');
+  assert.equal(nameInput(harness), input, 'the first dialog stays');
+  await harness.act(() => finish({ id: 'first' }));
+  assert.deepEqual(await result, { id: 'first' }, 'the first create\'s result is not dropped');
+  await waitFor(harness, () => !nameDialog(harness), 'the dialog closes');
 });
 
 test('the wizard theme words a drawing board as the palette does', async (t) => {
