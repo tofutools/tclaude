@@ -18567,6 +18567,11 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-rtable tr.gq-saved-chip.open td { background: rgba(31, 111, 235, 0.08); }
 .gr-rtable tr.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-rtable .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
+/* A drawing board's or page's name is click-to-rename, as an agent's is
+   (.rowname-text gives it the agent name's hover frame); 👁 opens it. */
+.gr-rtable .gr-name-rename { display: inline-block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: middle; color: var(--ui-strong-text); font-weight: 600; }
+.gr-rtable tr.gr-closed .gr-name-rename { color: var(--ui-muted-text); font-weight: 500; }
 .gr-rtable tr[draggable="true"] { cursor: grab; }
 .gr-rtable .gq-saved-name { font-size: 13px; font-weight: 600; color: var(--ui-strong-text); }
 .gr-rtable td.gq-saved-namecell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
