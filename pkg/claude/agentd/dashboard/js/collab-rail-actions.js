@@ -13,6 +13,7 @@ import { processContext, processRunApi } from './process-context.js';
 import { onPeerPage } from './node-api.js';
 import { peerDrawingBoardResources, peerDrawingBoards } from './peer-drawing-boards.js';
 import { overlayResourceKey } from './resource-model.js';
+import { sortGroupsByPref } from './group-order.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { moveTabsToCollab } from './overlay-tab-moves.js';
@@ -70,13 +71,13 @@ function terminalStatus(item, value) {
 // strip's, snapshot the dashboard's.
 // On a peer's page its snapshot carries no resources: the drawing boards it shares
 // come from its drawing board list (peer-drawing-boards.js, tcl-ug8bb8).
-export function collabItems(panes, snapshot, peer = onPeerPage()) {
+export function collabItems(panes, snapshot, peer = onPeerPage(), order = undefined) {
   const value = snapshot?.value;
   const resources = peer ? peerDrawingBoardResources(peerDrawingBoards.value, value) : value?.group_resources || [];
   return railItems({
     resources, groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
-    titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(),
+    titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(), order, tabOrder: sortGroupsByPref,
   });
 }
 

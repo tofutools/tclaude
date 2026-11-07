@@ -13,7 +13,8 @@ import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { signal } from '@preact/signals';
 import {
-  DEFAULT_FILTER, FILTER_KINDS, FILTER_STATES, filterChanges, filterRail, isAgentItem, itemState, needsYou, railGlyph, readFilter,
+  DEFAULT_FILTER, DEFAULT_ORDER, FILTER_KINDS, FILTER_STATES, GROUP_ORDERS, ITEM_ORDERS, filterChanges, filterRail, isAgentItem, itemState,
+  needsYou, orderChanges, railGlyph, readFilter, readOrder,
 } from './collab-rail-model.js';
 import { closeOverlayTab, minimizeOverlayTab } from './overlay-instances.js';
 import { tabMoves } from './overlay-tab-moves.js';
@@ -31,6 +32,7 @@ import { RailGear } from './collab-rail-gear.js';
 import { PeerDrawingBoardBadge, PeerNewDrawingBoard } from './peer-drawing-boards-ui.js';
 import { peerDrawingBoardAccess } from './peer-drawing-boards.js';
 import { RenameField, renameResource } from './groups-resources.js';
+import { Select } from './ui-components.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { railResource } from './collab-rail-actions.js';
 import { isWizardActive } from './slop.js';
@@ -43,6 +45,7 @@ const html = htm.bind(h);
 const OPEN_PREF = 'tclaude.dash.collab.panel.open';
 const FILTER_PREF = 'tclaude.dash.collab.filter';
 const FOLDED_PREF = 'tclaude.dash.collab.folded-groups';
+const ORDER_PREF = 'tclaude.dash.collab.order';
 
 // The Collab view's panel in the shared right side panel: folded by default,
 // and offered only while the view is mounted (CollabRail below).
@@ -61,18 +64,30 @@ function setFilter(next) {
   dashPrefs.setItem(FILTER_PREF, JSON.stringify(next));
 }
 
+// railOrder is the panel's order ({ groups, items }), remembered in the
+// dashboard prefs like the filter.
+const railOrder = signal(null);
+const currentOrder = () => railOrder.value || readOrder(dashPrefs.getItem(ORDER_PREF));
+
+function setOrder(next) {
+  railOrder.value = next;
+  dashPrefs.setItem(ORDER_PREF, JSON.stringify(next));
+}
+
 // toggleIn is list with key on or off.
 const toggleIn = (list, key, on) => (on ? [...new Set([...list, key])] : list.filter((k) => k !== key));
 
 // RailFilter is the panel's Filter dropdown: the states and kinds it lists,
-// and Reset (the view-menu.js dropdown the Groups tab's view uses). It also
+// how it orders the groups and the items within each, and Reset (the
+// view-menu.js dropdown the Groups tab's view uses). Its count includes an
+// order that is not the default. It also
 // carries what the strip's old background counter did, so nothing running
 // without a terminal can hide: the button shows how many sessions run in the
 // background, the Background box counts them, and Attach all brings the ones
 // that can be attached up.
-function RailFilter({ filter, background = [], snapshot }) {
+function RailFilter({ filter, order = DEFAULT_ORDER, background = [], snapshot }) {
   const [open, setOpen] = useState(false);
-  const changes = filterChanges(filter);
+  const changes = filterChanges(filter) + orderChanges(order);
   const running = background.length;
   const attachable = background.filter((row) => row.key);
   const label = (key, text) => (key === 'background' && running ? `${text} (${running})` : text);
@@ -83,19 +98,34 @@ function RailFilter({ filter, background = [], snapshot }) {
     title=${`${running} running in the background with no terminal attached`}>${running}</span>` : null}`;
   return html`<${ViewMenu} open=${open} onOpenChange=${setOpen} label=${button} badge=${changes} buttonClass="cr-filter"
     ids=${{ button: 'collab-filter-btn', menu: 'collab-filter-menu', badge: 'collab-filter-badge' }}
-    title="Choose which states and kinds the panel lists">
+    title="Choose which states and kinds the panel lists, and their order">
     <${ViewMenuHeading}>State<//>
     ${FILTER_STATES.map((entry) => box('states', entry))}
     <${ViewMenuSep} />
     <${ViewMenuHeading}>Kind<//>
     ${FILTER_KINDS.map((entry) => box('kinds', entry))}
     <${ViewMenuSep} />
+    <${ViewMenuHeading}>Order<//>
+    ${orderPick('groups', 'Groups', 'How the groups are ordered', GROUP_ORDERS, order)}
+    ${orderPick('items', 'Within groups', 'How the items in each group are ordered', ITEM_ORDERS, order)}
+    <${ViewMenuSep} />
     <button data-ui-exempt type="button" class="view-menu-reset" data-collab-filter-reset="" disabled=${changes === 0}
-      onClick=${() => setFilter({ states: [...DEFAULT_FILTER.states], kinds: [...DEFAULT_FILTER.kinds] })}>Reset<//>
+      onClick=${() => { setFilter({ states: [...DEFAULT_FILTER.states], kinds: [...DEFAULT_FILTER.kinds] }); setOrder({ ...DEFAULT_ORDER }); }}>Reset<//>
     ${attachable.length ? html`<${ViewMenuSep} />
       <button data-ui-exempt type="button" class="view-menu-reset cr-attach-all" data-collab-attach-all=""
         onClick=${() => { setOpen(false); void attachAllBackgroundTerminals(attachable, snapshot?.value); }}>Attach all background (${attachable.length})</button>` : null}
   <//>`;
+}
+
+// orderPick is one order dropdown of the Filter menu: a label and a select.
+function orderPick(key, text, title, choices, order) {
+  return html`<label class="cr-order" title=${title}>
+    <span class="cr-order-label">${text}</span>
+    <${Select} size="sm" id=${`collab-order-${key}`} class="cr-order-select" value=${order[key]} data-order=${order[key]}
+      onChange=${(event) => setOrder({ ...currentOrder(), [key]: event.currentTarget.value })}>
+      ${choices.map(([value, label]) => html`<option key=${value} value=${value}>${label}</option>`)}
+    <//>
+  </label>`;
 }
 
 function readFolded() {
@@ -182,9 +212,10 @@ function RailItem({ item, actions, snapshot, notify, floatsOf, rowContext, edita
 function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = null, menuSection = null, rowContext = null, newContext = undefined }) {
   const [query, setQuery] = useState('');
   const filter = currentFilter();
+  const order = currentOrder();
   const folded = railFolded.value || readFolded();
   const searching = !!query.trim();
-  const { sections, hidden } = filterRail(collabItems(panes, snapshot), { filter, query });
+  const { sections, hidden } = filterRail(collabItems(panes, snapshot, undefined, order), { filter, query });
   const background = visibleBackgroundTerminals(backgroundTerminals.value, panes);
   useDockToggleCount(background.length);
   const [adding, setAdding] = useState('');
@@ -209,7 +240,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
     <div class="cr-head">
       <input class="cr-search" type="search" placeholder="Find…" aria-label="Find an agent or resource"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
-      <${RailFilter} filter=${filter} background=${background} snapshot=${snapshot} />
+      <${RailFilter} filter=${filter} order=${order} background=${background} snapshot=${snapshot} />
       ${making ? newMenu(null) : null}
     </div>
     <div class="cr-list">

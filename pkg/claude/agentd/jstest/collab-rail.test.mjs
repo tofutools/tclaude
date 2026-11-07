@@ -46,6 +46,7 @@ test('rail model: agents under their group first, live before closed, never-star
     background: [{ kind: 'agent', key: 'agent:z', tmux_session: 'tc-z', label: 'loner' }, { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'g' },
       { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
       { kind: 'agent', tmux_session: 'old-gen', label: 'superseded' }],
+    order: m.ACTIVITY_ORDER,
   });
   assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group', 'Other sessions'],
     'groups with something open here first; a group with only a closed shell is not there; sessions that cannot be attached last');
@@ -101,7 +102,7 @@ test('rail model: an agent\'s shell is a shell of its group, not an agent', asyn
   assert.equal(m.filterRail(all, { filter: { ...shellsOnly, kinds: ['agents'] } }).sections.length, 0, 'the Agents filter does not');
 });
 
-test('agents sort by what they are doing, then by name: needs you, working, idle', async (t) => {
+test('agents sort by what they are doing, then by name, under Activity: needs you, working, idle', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/collab-rail-model.js');
   const states = { zed: 'idle', amy: 'working', bob: 'awaiting_permission', cal: 'idle', dan: 'working' };
@@ -110,12 +111,102 @@ test('agents sort by what they are doing, then by name: needs you, working, idle
     groups: [{ id: 1, name: 'g' }],
     background: Object.keys(states).map((title) => ({ kind: 'agent', key: `agent:${title}`, tmux_session: title, label: title })),
     statusOf: (item) => ({ agent: agents.find((a) => a.title === item.title), key: states[item.title], label: states[item.title] }),
-    used: new Map([['bg::zed', 9]]),
+    used: new Map([['bg::zed', 9]]), order: m.ACTIVITY_ORDER,
   });
   assert.deepEqual(all.sections[0].items.map((i) => i.title), ['bob', 'amy', 'dan', 'cal', 'zed'], 'recent use does not move an agent');
   assert.ok(m.needsYou(all.sections[0].items[0]));
   assert.equal(m.itemState(all.sections[0].items[0]), 'needs you');
   assert.equal(m.itemState(all.sections[0].items[1]), '', 'the light says working; no word');
+});
+
+// ORDER_FIXTURE has groups whose snapshot order, Groups tab order (alpha is
+// nested under mid) and names all differ, and a group (mid) whose items sort
+// differently under each Within groups setting.
+const ORDER_FIXTURE = {
+  groups: [{ id: 1, name: 'alpha', parent: 'mid' }, { id: 2, name: 'zeta' }, { id: 3, name: 'mid' }],
+  resources: [
+    { kind: 'page', id: 'pa', group_id: 1, title: 'alpha page', state: 'running' },
+    { kind: 'page', id: 'pz', group_id: 2, title: 'zeta page', state: 'running' },
+    { kind: 'page', id: 'p2', group_id: 3, title: 'Beta page', state: 'running' },
+    { kind: 'page', id: 'p1', group_id: 3, title: 'Alpha page', state: 'running' },
+  ],
+  background: [{ kind: 'agent', key: 'agent:yan', tmux_session: 'yan', label: 'yan' }, { kind: 'agent', tmux_session: 'stray', label: 'stray' },
+    { kind: 'agent', key: 'agent:lone', tmux_session: 'lone', label: 'lone' }],
+};
+const orderStatus = (item) => (item.title === 'yan' ? { agent: { agent_id: 'yan', title: 'yan', groups: ['mid'] }, key: 'idle' }
+  : item.title === 'lone' ? { agent: { agent_id: 'lone', title: 'lone', groups: [] }, key: 'working' } : null);
+
+async function orderedRail(t, { order, open = [] } = {}) {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const model = await harness.importDashboardModule('js/resource-model.js');
+  const all = m.railItems({
+    resources: ORDER_FIXTURE.resources, groups: ORDER_FIXTURE.groups, background: ORDER_FIXTURE.background,
+    statusOf: orderStatus, places: model.browserPlaces({ strip: open }), order,
+  });
+  return { m, names: all.sections.map((s) => s.name), mid: all.sections.find((s) => s.name === 'mid').items.map((i) => i.title) };
+}
+
+test('order: Name A–Z is the default for groups and items; Not in a group, then Other sessions, come last', async (t) => {
+  const { m, names, mid } = await orderedRail(t);
+  assert.deepEqual(m.DEFAULT_ORDER, { groups: 'name', items: 'name' });
+  assert.deepEqual(names, ['alpha', 'mid', 'zeta', 'Not in a group', 'Other sessions']);
+  assert.deepEqual(mid, ['Alpha page', 'Beta page', 'yan'], 'by name, case aside, agents among the rest');
+});
+
+test('order: Groups tab order lists parents before their children, in the operator\'s order', async (t) => {
+  const { names } = await orderedRail(t, { order: { groups: 'groups', items: 'name' } });
+  assert.deepEqual(names, ['zeta', 'mid', 'alpha', 'Not in a group', 'Other sessions']);
+});
+
+test('order: Groups tab order follows the order the operator dragged the groups into there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const { sortGroupsByPref, GROUP_ORDER_KEY } = await harness.importDashboardModule('js/group-order.js');
+  const prefs = { getItem: (key) => (key === GROUP_ORDER_KEY ? JSON.stringify(['mid', 'zeta']) : null) };
+  const all = m.railItems({
+    resources: ORDER_FIXTURE.resources, groups: ORDER_FIXTURE.groups, background: ORDER_FIXTURE.background, statusOf: orderStatus,
+    order: { groups: 'groups', items: 'name' }, tabOrder: (list) => sortGroupsByPref(list, prefs),
+  });
+  assert.deepEqual(all.sections.map((s) => s.name), ['mid', 'alpha', 'zeta', 'Not in a group', 'Other sessions'],
+    'mid dragged above zeta, its subgroup alpha under it');
+});
+
+test('order: Activity puts a group with something open first, then the snapshot order; items by what is in use', async (t) => {
+  const { names, mid } = await orderedRail(t, { order: { groups: 'activity', items: 'activity' }, open: ['page:pz', 'page:p2'] });
+  assert.deepEqual(names.slice(0, 3), ['zeta', 'mid', 'alpha'], 'zeta and mid have a page open here');
+  assert.deepEqual(names.slice(3), ['Not in a group', 'Other sessions'], 'whatever they hold, they come last');
+  assert.deepEqual(mid, ['yan', 'Beta page', 'Alpha page'], 'agents, then what is open here');
+});
+
+test('order: Kind lists agents, then resources, each by name', async (t) => {
+  const { mid } = await orderedRail(t, { order: { groups: 'name', items: 'kind' } });
+  assert.deepEqual(mid, ['yan', 'Alpha page', 'Beta page']);
+});
+
+test('order: outside Activity, opening or closing an item moves nothing', async (t) => {
+  for (const groups of ['name', 'groups']) {
+    for (const items of ['name', 'kind']) {
+      const order = { groups, items };
+      const before = await orderedRail(t, { order });
+      const after = await orderedRail(t, { order, open: ['page:p2', 'page:pa'] });
+      assert.deepEqual([after.names, after.mid], [before.names, before.mid], `${groups}/${items}`);
+    }
+  }
+  const before = await orderedRail(t, { order: { groups: 'activity', items: 'activity' } });
+  const after = await orderedRail(t, { order: { groups: 'activity', items: 'activity' }, open: ['page:pa'] });
+  assert.notDeepEqual(after.names, before.names, 'under Activity it does: the point of that setting');
+});
+
+test('order: a stored order is read safely, and a change from the default counts', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  assert.deepEqual(m.readOrder(null), m.DEFAULT_ORDER);
+  assert.deepEqual(m.readOrder('not json'), m.DEFAULT_ORDER);
+  assert.deepEqual(m.readOrder(JSON.stringify({ groups: 'groups', items: 'bogus' })), { groups: 'groups', items: 'name' });
+  assert.equal(m.orderChanges(m.DEFAULT_ORDER), 0);
+  assert.equal(m.orderChanges({ groups: 'activity', items: 'name' }), 1);
+  assert.equal(m.orderChanges(m.ACTIVITY_ORDER), 2);
 });
 
 test('filter: place and kind for every item, what it is doing for an agent; a count of changes; a stored filter is read safely', async (t) => {
@@ -204,7 +295,7 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
   const root = container.querySelector('[data-collab-rail]');
   const items = () => [...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem);
   assert.deepEqual([...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup), ['tclaude']);
-  assert.deepEqual(items(), ['drawing_board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.deepEqual(items(), ['page:pg_dash', 'drawing_board:launch', 'process:pr-review', 'shell:tclaude'], 'by name by default');
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'the default filter shows no count');
   assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
   assert.equal(root.querySelector('[data-rail-item="drawing_board:launch"] .cr-state'), null, 'an item open here needs no words');
@@ -230,7 +321,7 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
   await tick('closed', true);
   for (const key of ['open', 'background']) await tick(key, false);
   assert.equal(root.querySelector('#collab-filter-badge').textContent, '3', 'three boxes differ from the default');
-  assert.deepEqual(items(), ['drawing_board:release', 'drawing_board:net', 'page:pg_status']);
+  assert.deepEqual(items(), ['drawing_board:net', 'page:pg_status', 'drawing_board:release'], 'home-lab before tclaude: groups by name');
   const search = root.querySelector('.cr-search');
   await harness.act(() => { search.value = 'preview'; harness.fireEvent(search, 'input'); });
   assert.deepEqual(items(), ['page:pg_dash'], 'a search finds a live item while Closed is picked');
@@ -238,10 +329,46 @@ test('rail: the Filter lists all but closed by default, ticks pick any mix, Rese
 
   await harness.act(() => harness.fireEvent(root.querySelector('[data-collab-filter-reset]'), 'click'));
   assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'Reset goes back to the default');
-  assert.deepEqual(items(), ['drawing_board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.deepEqual(items(), ['page:pg_dash', 'drawing_board:launch', 'process:pr-review', 'shell:tclaude']);
   await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-group="tclaude"] .cr-section-head'), 'click'));
   assert.deepEqual(items(), [], 'a folded group shows only its header');
   assert.equal(root.querySelector('[data-rail-group="tclaude"] .cr-count').textContent, '4');
+});
+
+test('rail: the Filter menu\'s two order dropdowns reorder the panel, count on the button, persist, and Reset', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [rail, places, prefs] = await Promise.all([
+    harness.importDashboardModule('js/collab-rail.js'),
+    harness.importDashboardModule('js/resource-places.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  await harness.act(() => { places.stripPaneKeys.value = ['page:pg_status']; });
+  const { container } = await harness.mount(harness.html`<${rail.CollabRail}
+    panes=${[{ key: 'page:pg_status', seed: { page: 'pg_status' }, label: 'Status page' }]}
+    actions=${{ activatePane: () => {}, closePane: () => {}, popOutPane: () => {} }} snapshot=${{ value: SNAPSHOT }} />`);
+  const root = container.querySelector('[data-collab-rail]');
+  const groups = () => [...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup);
+  const items = (group) => [...root.querySelectorAll(`[data-rail-group="${group}"] [data-rail-item]`)].map((el) => el.dataset.railItem);
+  assert.deepEqual(groups(), ['home-lab', 'tclaude'], 'by name by default');
+  await harness.act(() => harness.fireEvent(root.querySelector('#collab-filter-btn'), 'click'));
+  const pick = async (key, value) => {
+    const select = root.querySelector(`#collab-order-${key}`);
+    Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+    await harness.act(() => harness.fireEvent(select, 'change'));
+  };
+  assert.equal(root.querySelector('#collab-order-groups').dataset.order, 'name');
+  assert.equal(root.querySelector('#collab-order-items').dataset.order, 'name');
+  await pick('groups', 'groups');
+  assert.deepEqual(groups(), ['tclaude', 'home-lab'], 'the Groups tab order');
+  assert.equal(root.querySelector('#collab-filter-badge').textContent, '1', 'an order off the default counts');
+  await pick('items', 'activity');
+  assert.deepEqual(items('tclaude'), ['page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.equal(root.querySelector('#collab-filter-badge').textContent, '2');
+  assert.deepEqual(JSON.parse(prefs.dashPrefs.getItem('tclaude.dash.collab.order')), { groups: 'groups', items: 'activity' }, 'remembered');
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-collab-filter-reset]'), 'click'));
+  assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'Reset puts the order back too');
+  assert.deepEqual(groups(), ['home-lab', 'tclaude']);
+  assert.equal(root.querySelector('#collab-order-groups').dataset.order, 'name');
 });
 
 test('side panel: each tab has its own panel and state; Collab is folded by default and offered only while mounted', async (t) => {
