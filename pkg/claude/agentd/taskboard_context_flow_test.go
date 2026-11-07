@@ -254,3 +254,32 @@ func TestTaskboardLsSummaryCLI(t *testing.T) {
 	assert.Equal(t, 2, out.Groups[0].Counts.Live)
 	assert.Equal(t, 1, out.Groups[0].Counts.Ideas)
 }
+
+// The dashboard's Task board section writes through the CLI's own routes on
+// the dashboard mux, as the operator: capture, reorder across the Ideas band,
+// block and close.
+func TestTaskboardDashboardWrites(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	dash := agentd.BuildDashboardHandlerForTest()
+	send := func(method, path string, body any) tbTask {
+		t.Helper()
+		rec := testharness.Serve(dash, dashReq(t, method, path, body))
+		require.Less(t, rec.Code, 300, "%s %s: %s", method, path, rec.Body.String())
+		var out tbTask
+		testharness.DecodeJSON(t, rec, &out)
+		return out
+	}
+	first := send(http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "first", "stage": "next"})
+	assert.Equal(t, "human:operator", first.CreatedBy)
+	idea := send(http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "an idea"})
+	// Dropping the idea above the queued task promotes it in the same write.
+	moved := send(http.MethodPost, "/v1/taskboard/tasks/"+idea.ID+"/move", map[string]any{"before": first.ID})
+	assert.Equal(t, "next", moved.Stage)
+	send(http.MethodPatch, "/v1/taskboard/tasks/"+first.ID, map[string]any{"title": "first, renamed"})
+	blocked := send(http.MethodPost, "/v1/taskboard/tasks/"+first.ID+"/status", map[string]any{"status": "blocked", "reason": "waiting on CI"})
+	assert.Equal(t, "waiting on CI", blocked.BlockReason)
+	assert.Equal(t, []string{"an idea", "first, renamed"}, h.list("", "/v1/groups/crew/taskboard"))
+	send(http.MethodPost, "/v1/taskboard/tasks/"+idea.ID+"/status", map[string]any{"status": "done"})
+	assert.Equal(t, []string{"first, renamed"}, h.list("", "/v1/groups/crew/taskboard"))
+}

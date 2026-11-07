@@ -172,8 +172,7 @@ dependencies. Deleting a group deletes its board.
 ## In the dashboard
 
 Each group card on the Groups tab has a **Task board** section (in wizard mode,
-the **Quest board**), below its Agents and Resources sections. For now the
-section is read-only.
+the **Quest board**), below its Agents and Resources sections.
 
 - **Folded**, the section is one line of counts, for example
   `5 · 1 needs you · 1 in progress · 2 next · 1 idea`. *Needs you* counts the
@@ -189,6 +188,35 @@ section is read-only.
   ones. Click *history* to list the recently closed tasks.
 - The section opens on its own when something needs you. If you fold or open
   it yourself, the dashboard remembers that per group.
+
+You can change the board from the section. Each action uses the same route as
+a CLI verb:
+
+| In the section | CLI |
+|---|---|
+| Type a line in the capture box and press Enter | `add <group> "title"` |
+| Paste a list into the capture box | `add <group> --lines-file -` |
+| *+ from awb/Linear…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
+| Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
+| Drag a queued task onto the Ideas line | `demote <task>` |
+| *✓ Next* on an idea | `promote <task>` |
+| *Block* (with a reason) / *Unblock* | `block <task> --reason …` / `unblock <task>` |
+| *Done* | `done <task>` |
+| *Drop* (with an optional reason) | `drop <task> [--reason …]` |
+| *Edit* | `edit <task> --title … --ref …` |
+| *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
+
+- **The capture box** stays focused after each Enter, so you can add a burst of
+  ideas in a row. Shift+Enter starts a new line. A line that is only an awb,
+  Linear or GitHub id becomes a task with that ref, titled from the tracker
+  ([importing](#importing-from-a-tracker)). New tasks land at the end of the
+  ideas. Tick *capture as next* to add them to the queue instead. Then drag
+  them where you want them.
+- **Dragging** a row above or below another row moves it there. If you drop it
+  on the other side of the Ideas line, it is promoted or demoted in the same
+  step.
+- The *List | Lanes* switch in the section head is for the swim-lanes view of
+  a later slice. Until then only *List* works.
 
 The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off, and a
