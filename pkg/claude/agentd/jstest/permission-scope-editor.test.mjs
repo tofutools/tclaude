@@ -649,15 +649,15 @@ test('the reset clears a buffered draft\'s unknown slug, which has no row of its
 });
 
 // Resource umbrellas (tcl-h3zaen). resources.read / resources.write take a
-// resource=kind:id scope over a catalogue that can run to hundreds of boards
+// resource=kind:id scope over a catalogue that can run to hundreds of drawing boards
 // and templates, so the drawer searches it rather than listing it.
 const RES_READ = { slug: 'resources.read', description: 'read', scope_dims: ['group', 'resource'], umbrella: 'resources.write' };
 const RES_WRITE = { slug: 'resources.write', description: 'write', scope_dims: ['group', 'resource'] };
-const BOARDS_READ = { slug: 'boards.read', description: 'boards', umbrella: 'resources.read' };
+const DRAWING_BOARDS_READ = { slug: 'drawing-boards.read', description: 'drawing-boards', umbrella: 'resources.read' };
 
 function resourceCatalogue(count) {
   return Array.from({ length: count }, (_, i) => ({
-    kind: i % 3 ? 'board' : 'process_template', id: `res-${i}`,
+    kind: i % 3 ? 'drawing_board' : 'process_template', id: `res-${i}`,
     title: i === 7 ? 'Q4 plan' : `Roadmap ${i}`, groups: i % 4 ? ['crew'] : [],
   }));
 }
@@ -683,16 +683,16 @@ test('the resource= drawer searches the catalogue it loads once, and saves kind:
   await harness.act(() => harness.fireEvent(box, 'focus'));
   await harness.input(box, 'q4');
   const option = dim.querySelector('[role="option"]');
-  assert.equal(option.dataset.key, 'board:res-7');
+  assert.equal(option.dataset.key, 'drawing_board:res-7');
   await harness.act(() => harness.fireEvent(option, 'mousedown'));
-  assert.match(dim.querySelector('.perm-scope-chip').textContent, /board\s+Q4 plan/, 'the chip reads as the title');
-  await harness.input(box, 'board:roadmap');
+  assert.match(dim.querySelector('.perm-scope-chip').textContent, /drawing board\s+Q4 plan/, 'the chip reads as the title');
+  await harness.input(box, 'drawing_board:roadmap');
   assert.equal(dim.querySelectorAll('[role="option"]').length, 8);
   assert.match(dim.querySelector('.filter-combobox-foot').textContent, /Refine your search/);
   await harness.input(box, '');
 
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], { 'resources.read': { resource: ['board:res-7'] } }, 'the chosen kind:id is saved');
+  assert.deepEqual(saved[0], { 'resources.read': { resource: ['drawing_board:res-7'] } }, 'the chosen kind:id is saved');
 });
 
 // Text left in the search box is an uncommitted value, as in the plain box:
@@ -700,7 +700,7 @@ test('the resource= drawer searches the catalogue it loads once, and saves kind:
 // to judge), and never writes the grant unscoped because Enter was not pressed.
 test('Save folds what is left in the resource box in, never saving the grant unscoped', async (t) => {
   const harness = await createPreactHarness(t);
-  for (const [typed, want] of [['Q4 plan', 'board:res-7'], ['board:not-listed', 'board:not-listed']]) {
+  for (const [typed, want] of [['Q4 plan', 'drawing_board:res-7'], ['drawing_board:not-listed', 'drawing_board:not-listed']]) {
     const saved = [];
     const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [RES_READ], dimOptions: { resource: {} } }), {
       ...noopActions,
@@ -720,7 +720,7 @@ test('Save folds what is left in the resource box in, never saving the grant uns
 
 test('many selected resources collapse, in the drawer and in the row', async (t) => {
   const harness = await createPreactHarness(t);
-  const values = Array.from({ length: 41 }, (_, i) => `board:res-${String(i).padStart(2, '0')}`);
+  const values = Array.from({ length: 41 }, (_, i) => `drawing_board:res-${String(i).padStart(2, '0')}`);
   const saved = [];
   const { host } = await openEditor(harness, scopeSnapshot({
     slugs: [RES_READ], scopes: { 'resources.read': { resource: values } }, dimOptions: { resource: {} },
@@ -730,7 +730,7 @@ test('many selected resources collapse, in the drawer and in the row', async (t)
     savePermissions: async (descriptor, selection, scopes) => saved.push(scopes),
   });
   assert.match(host.querySelector('[data-slug="resources.read"] .perm-scope-chip').textContent,
-    /resource=board:res-00, board:res-01 \+39 more/);
+    /resource=drawing_board:res-00, drawing_board:res-01 \+39 more/);
   await harness.act(() => host.querySelector('[data-slug="resources.read"] button.perm-scope-twisty').click());
   const dim = host.querySelector('.perm-scope-dim[data-dim="resource"]');
   assert.equal(dim.querySelectorAll('.perm-scope-chips > .perm-scope-chip:not(.perm-scope-more)').length, 6);
@@ -745,24 +745,24 @@ test('many selected resources collapse, in the drawer and in the row', async (t)
   await harness.act(() => sheet.querySelector('.perm-scope-sheet-row button.x').click());
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(saved[0]['resources.read'].resource.length, 40);
-  assert.ok(!saved[0]['resources.read'].resource.includes('board:res-40'), 'removing from the sheet removes the matcher');
+  assert.ok(!saved[0]['resources.read'].resource.includes('drawing_board:res-40'), 'removing from the sheet removes the matcher');
 });
 
 test('a per-kind row an umbrella covers says so, in counts', async (t) => {
   const harness = await createPreactHarness(t);
   const snapshot = scopeSnapshot({
-    slugs: [RES_READ, RES_WRITE, BOARDS_READ],
-    scopes: { 'resources.read': { group: ['crew', 'web'], resource: ['board:a', 'board:b', 'board:c'] } },
+    slugs: [RES_READ, RES_WRITE, DRAWING_BOARDS_READ],
+    scopes: { 'resources.read': { group: ['crew', 'web'], resource: ['drawing_board:a', 'drawing_board:b', 'drawing_board:c'] } },
     dimOptions: { group: { values: ['crew', 'web'] }, resource: {} },
   });
   snapshot.permissions.overrides['conv-s'] = { 'resources.read': 'grant' };
   let opened = await openEditor(harness, snapshot, noopActions);
-  const covered = () => opened.host.querySelector('[data-slug="boards.read"] .perm-row-covered')?.textContent || '';
+  const covered = () => opened.host.querySelector('[data-slug="drawing-boards.read"] .perm-row-covered')?.textContent || '';
   assert.match(covered(), /covered by resources\.read, scoped to 2 groups and 3 resources/);
-  assert.doesNotMatch(covered(), /board:a/, 'counts, never names');
-  const eff = () => opened.host.querySelector('[data-slug="boards.read"] .perm-row-eff').textContent;
+  assert.doesNotMatch(covered(), /drawing_board:a/, 'counts, never names');
+  const eff = () => opened.host.querySelector('[data-slug="drawing-boards.read"] .perm-row-eff').textContent;
   assert.equal(eff(), '✓ via resources.read (scoped)', 'a covered row is not "denied (no source)"');
-  await harness.act(() => opened.host.querySelector('[data-slug="boards.read"] [data-effect="deny"]').click());
+  await harness.act(() => opened.host.querySelector('[data-slug="drawing-boards.read"] [data-effect="deny"]').click());
   assert.equal(covered(), '', 'a deny of the row wins over its umbrella');
   assert.match(eff(), /denied \(explicit veto\)/);
   await opened.mounted.unmount();
@@ -801,7 +801,7 @@ test('the covered-by hint honours stored denies the sudo picks do not override',
   const harness = await createPreactHarness(t);
   const { umbrellaCover } = await harness.importDashboardModule('js/message-access-dialog-model.js');
   const rows = [
-    { slug: 'boards.read', umbrella: 'resources.read', effect: 'deny', granted: false, sources: [] },
+    { slug: 'drawing-boards.read', umbrella: 'resources.read', effect: 'deny', granted: false, sources: [] },
     { slug: 'resources.read', umbrella: 'resources.write', effect: 'default', granted: false, sources: [] },
     { slug: 'resources.write', effect: 'default', granted: false, sources: [] },
   ];

@@ -2,7 +2,7 @@
 // terminal.
 //
 // Text another agent, a federated peer or a template author wrote (message
-// subjects and bodies, display names, group names, board and page titles)
+// subjects and bodies, display names, group names, drawing board and page titles)
 // reaches the operator's terminal through the CLI and the TUIs. Printed raw, a
 // control sequence in it is interpreted by the terminal rather than shown: an
 // ESC or C1 CSI sequence can rewrite or hide what is on screen, an OSC 8
@@ -152,4 +152,3 @@ var (
 	Stdout = ForTerminal(os.Stdout)
 	Stderr = ForTerminal(os.Stderr)
 )
-

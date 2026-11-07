@@ -1,31 +1,31 @@
-// resource-moves.js -- moving a board, a page or a saved process to another
-// group (tcl-eq8pq9), and copying a board or a process into one: which
+// resource-moves.js -- moving a drawing board, a page or a saved process to another
+// group (tcl-eq8pq9), and copying a drawing board or a process into one: which
 // groups it may go to, and the move or copy itself. The Groups
 // tab's ⋯ → Move to group, its drag of a resource row onto a group box
 // (resource-dnd.js) and the Collab panel's drag onto a group section
 // (collab-rail-actions.js) all go through here, so the three agree.
 //
-// A board may go to any group, or out of every group (''). A page always
+// A drawing board may go to any group, or out of every group (''). A page always
 // belongs to a group: an agent's page only to a group its agent is in, and a
 // group's own blank page only while it is closed. The server enforces the
 // same; this keeps the views from offering what it would refuse. A process
 // is pinned to groups: moving it pins it in the other group and unpins it
 // here, and copying it only pins it there (the one template is shared).
-// Copying a board makes a new board with the same drawing in the group. A
+// Copying a drawing board makes a new drawing board with the same drawing in the group. A
 // page is its agent's, and a shell its directory's: neither copies.
 
 // RESOURCE_DRAG_MIME carries a dragged resource: { kind, id, label, group,
 // owner, closed } (JSON).
-import { freeBoardId } from './board-manage.js';
+import { freeDrawingBoardId } from './drawing-board-manage.js';
 
 export const RESOURCE_DRAG_MIME = 'application/x-tclaude-resource';
 
 // MOVABLE_KINDS are the resources that change group. A shell is its group's
 // own.
-export const MOVABLE_KINDS = Object.freeze(['board', 'page', 'process']);
+export const MOVABLE_KINDS = Object.freeze(['drawing_board', 'page', 'process']);
 
 // COPYABLE_KINDS are the resources a Ctrl/Cmd-drag copies into a group.
-export const COPYABLE_KINDS = Object.freeze(['board', 'process']);
+export const COPYABLE_KINDS = Object.freeze(['drawing_board', 'process']);
 
 const realGroup = (snapshotValue, name) => (snapshotValue?.groups || []).find((g) => g?.id > 0 && g.name === name) || null;
 
@@ -49,7 +49,7 @@ export function canMoveResource(resource, to, snapshotValue) {
   if (!resource || !MOVABLE_KINDS.includes(resource.kind)) return false;
   const from = resource.group || '';
   if (to === from) return false;
-  if (resource.kind === 'board') return !to || !!realGroup(snapshotValue, to);
+  if (resource.kind === 'drawing_board') return !to || !!realGroup(snapshotValue, to);
   if (!to) return false;
   if (resource.kind === 'process') {
     // Only a process saved to its group moves out of it; one the group only
@@ -64,13 +64,14 @@ export function canMoveResource(resource, to, snapshotValue) {
   return moveTargets(snapshotValue, fromId, resource.owner || '').includes(to);
 }
 
-// moveResource moves resource to the group named to ('' takes a board out of
+// moveResource moves resource to the group named to ('' takes a drawing board out of
 // every group), says how it went, and refreshes. api is the process run API
-// (process-context.js): moveBoard, moveGroupPage.
-export async function moveResource(resource, to, { api, notify, refresh = () => {} }) {
+// (process-context.js): moveDrawingBoard, moveGroupPage.
+export async function moveResource(resource, to, { api, notify, refresh = () => {}, confirm = null }) {
   const label = resource.label || resource.id;
+  if (confirm && !(await confirm(dropConfirm(resource, to, false)))) return false;
   try {
-    if (resource.kind === 'board') await api.moveBoard(resource.id, to);
+    if (resource.kind === 'drawing_board') await api.moveDrawingBoard(resource.id, to);
     else if (resource.kind === 'process') {
       // Pinned there first, so a failed unpin leaves it in both, not neither.
       await api.pinProcess(to, resource.id);
@@ -87,25 +88,26 @@ export async function moveResource(resource, to, { api, notify, refresh = () => 
 }
 
 // canCopyResource says whether a Ctrl/Cmd-drop copies resource into the
-// group named to: a board into any group (its own too, as a second board),
+// group named to: a drawing board into any group (its own too, as a second drawing board),
 // a process into a group that does not list it yet.
 export function canCopyResource(resource, to, snapshotValue) {
   if (!resource || !COPYABLE_KINDS.includes(resource.kind) || !to) return false;
   const group = realGroup(snapshotValue, to);
   if (!group) return false;
-  return resource.kind === 'board' || !pinnedIn(snapshotValue, group, resource.id);
+  return resource.kind === 'drawing_board' || !pinnedIn(snapshotValue, group, resource.id);
 }
 
 // copyResource copies resource into the group named to, says how it went,
-// and refreshes. api: copyBoard and boardIds (a board), pinProcess (a
+// and refreshes. api: copyDrawingBoard and drawingBoardIds (a drawing board), pinProcess (a
 // process).
-export async function copyResource(resource, to, { api, notify, refresh = () => {} }) {
+export async function copyResource(resource, to, { api, notify, refresh = () => {}, confirm = null }) {
   const label = resource.label || resource.id;
+  if (confirm && !(await confirm(dropConfirm(resource, to, true)))) return false;
   try {
-    if (resource.kind === 'board') {
+    if (resource.kind === 'drawing_board') {
       const title = `${label} (copy)`;
-      const board = await api.copyBoard(resource.id, to, title, freeBoardId(title, await api.boardIds()));
-      notify(`Copied ${label} to ${to} as ${board?.title || title}`);
+      const drawingBoard = await api.copyDrawingBoard(resource.id, to, title, freeDrawingBoardId(title, await api.drawingBoardIds()));
+      notify(`Copied ${label} to ${to} as ${drawingBoard?.title || title}`);
     } else {
       await api.pinProcess(to, resource.id);
       notify(`Added ${label} to ${to}`);
@@ -116,4 +118,30 @@ export async function copyResource(resource, to, { api, notify, refresh = () => 
     notify(`Could not copy ${label}: ${cause.message}`, true);
     return false;
   }
+}
+
+const KIND_NOUN = Object.freeze({ drawing_board: 'drawing board', page: 'page', process: 'process' });
+
+// dropConfirm is the confirm a drag's drop asks before it moves or copies
+// resource into the group named to, as an agent's drop does (dnd-ops.js):
+// { title, body, meta, okLabel } for the shell's confirm modal.
+export function dropConfirm(resource, to, copy) {
+  const label = resource.label || resource.id;
+  const from = resource.group || '';
+  const noun = KIND_NOUN[resource.kind] || resource.kind;
+  if (copy) {
+    return resource.kind === 'process'
+      ? { title: 'Add process to another group?', meta: label, okLabel: 'Add',
+        body: `Save "${label}" to group "${to}" as well. It stays in "${from}"; both use the one template.` }
+      : { title: from === to ? `Copy ${noun}?` : `Copy ${noun} to another group?`, meta: label, okLabel: 'Copy',
+        body: `Make a copy of "${label}" in group "${to}", with the same drawing. The original stays ${from ? `in "${from}"` : 'where it is'}.` };
+  }
+  if (!to) {
+    return { title: `Take ${noun} out of its group?`, meta: label, okLabel: 'Move',
+      body: `Take "${label}" out of group "${from}". It is then in no group.` };
+  }
+  const note = resource.kind === 'page' ? ' The marks sent before are dropped.'
+    : resource.kind === 'process' ? ` It is saved to "${to}" and removed from "${from}"; the template itself stays.` : '';
+  return { title: `Move ${noun} to another group?`, meta: label, okLabel: 'Move',
+    body: `Move "${label}" ${from ? `from group "${from}" ` : ''}to group "${to}".${note}` };
 }

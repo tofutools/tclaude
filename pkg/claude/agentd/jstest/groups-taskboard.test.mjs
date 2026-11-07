@@ -60,8 +60,10 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   const section = container.querySelector('[data-fused-taskboard="tb-open"]');
   assert.ok(section, 'the section is drawn');
   assert.match(section.querySelector('.gf-label').textContent, /Task board/);
-  assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(),
-    '5 · 1 needs you · 1 in progress · 2 next · 1 idea');
+  assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(), '5', 'the head shows the total only');
+  assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 needs you/, 'the breakdown is in its tooltip');
+  const headActions = [...section.querySelector('.gf-section-actions').querySelectorAll('[data-taskboard-new], .tb-view')];
+  assert.ok(headActions.length >= 2 && headActions[0].matches('[data-taskboard-new]'), 'the add button comes before the view switch');
   assert.equal(container.querySelector('[data-taskboard-chip="tb-open"]').textContent.replace(/\s+/g, ' ').trim(),
     'task board: 1 needs you · 1 in progress · 2 next · 1 idea');
 

@@ -102,7 +102,7 @@ test('a raised window stays in the window layer, under the snap guide and the ch
   assert.ok(targets, 'the drop targets are a step in the window layer');
   assert.ok(Number(targets[1]) > Number(guide[1]), 'over the snap guide');
   assert.ok(band('window') + Number(targets[1]) < band('chrome'), 'and under the chrome');
-  for (const selector of ['.board-overlay', '.companion-window', '.window-resize-frame']) {
+  for (const selector of ['.drawing-board-overlay', '.companion-window', '.window-resize-frame']) {
     assert.equal(valueOf(selector), 'var(--overlay-level, var(--z-window))', `${selector} takes its window's level`);
   }
 });
@@ -111,7 +111,7 @@ test('opening a panel, dialog, popover or confirmation never moves a window', ()
   // The old scheme lowered or hid windows while a dialog showed. Under one
   // scale that is never needed: whatever is opened paints over the window.
   const opened = /\.(modal-overlay|manage-overlay)\.show|-modal\.show|\.open-prs\.is-open|-pop\b|-menu\.open/;
-  const windowish = /overlay-window|companion-window|board-overlay|window-resize-frame|companion-resize-frame|overlay-split/;
+  const windowish = /overlay-window|companion-window|drawing_board-overlay|window-resize-frame|companion-resize-frame|overlay-split/;
   const css = uncommented(SHEETS.map(read).join('\n'));
   const moved = [];
   for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
@@ -127,7 +127,7 @@ test('each kind of surface sits on its layer', () => {
     chrome: ['footer', '.overlay-dock.floating', '.knowledge-source-card', '.companion-peek'],
     panel: ['#agent-dock', '.human-notification-drawer'],
     dialog: ['.modal-overlay', '.manage-overlay', '#profile-editor-modal', '#perm-edit-modal', '#directory-picker-modal', '.overlay-expose'],
-    popover: ['.action-menu', '.view-menu', '.open-prs-popover', '.modal-overlay.palette-overlay', '.board-context', '.mux-tab-menu', '.ui-menu.overlay-dock-actions', 'footer:has(.open-prs.is-open)',
+    popover: ['.action-menu', '.view-menu', '.open-prs-popover', '.modal-overlay.palette-overlay', '.drawing-board-context', '.mux-tab-menu', '.ui-menu.overlay-dock-actions', 'footer:has(.open-prs.is-open)',
       // An agent's marks and guide cues paint over whatever they point into.
       '.companion-marks', '.companion-guide-ring', '.companion-guide-marks', '.companion-guide-float'],
     confirm: ['#confirm-modal', '.access-banner', '#sandbox-profile-diff-modal'],

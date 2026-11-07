@@ -19,7 +19,7 @@ function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {
 
 test('a field is named but its value never is', () => {
   const field = element('input', { attrs: { 'aria-label': 'Token' }, text: 'ignored' });
-  assert.deepEqual(describeElement(field), { tag: 'input', role: '', label: 'Token', text: '', id: '', ref: '', board_element: '' });
+  assert.deepEqual(describeElement(field), { tag: 'input', role: '', label: 'Token', text: '', id: '', ref: '', drawing_board_element: '' });
 });
 
 function maskedPage(body) {
@@ -93,9 +93,9 @@ test('the context carries no masked text, selected or under the cursor', () => {
   assert.equal(context(selecting('', null, SECRET)).selection, undefined, 'nor once focus has moved on from it');
 });
 
-test('a board element under the cursor is named', () => {
+test('a drawing board element under the cursor is named', () => {
   const shape = element('rect', { attrs: { 'data-element': 'abc' } });
-  assert.equal(describeElement(shape).board_element, 'abc');
+  assert.equal(describeElement(shape).drawing_board_element, 'abc');
 });
 
 test('the context carries the cursor, focus and viewport', () => {
@@ -114,7 +114,7 @@ test('the context carries the cursor, focus and viewport', () => {
   assert.deepEqual(context.cursor, { x: 5, y: 7, inside: true, age_ms: 100, under: describeElement(button) });
   assert.equal(context.focus.text, 'Save draft');
   assert.equal(context.selection, 'picked');
-  assert.equal(context.board, undefined);
+  assert.equal(context.drawingBoard, undefined);
 });
 
 test('a cursor that left the page is not looked up', () => {

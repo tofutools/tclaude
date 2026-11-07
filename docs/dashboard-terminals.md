@@ -1,7 +1,7 @@
 # Terminals and Collab
 
 This tab is where you work inside agents' sessions from the browser. It is
-called **Collab**, and [boards](boards.md) open as tabs here too. It is always shown,
+called **Collab**, and [drawing boards](drawing-boards.md) open as tabs here too. It is always shown,
 and its badge reads `N +M`: N open terminals plus M sessions running in the
 background.
 
@@ -43,7 +43,9 @@ Two motions peek the panel (no button held):
   the edge, the next move onto it opens the panel.
 
 A peek holds while the pointer stays by the edge, and goes shortly after the
-pointer moves away without opening it. With **growing peek** turned on (it is
+pointer moves away without opening it. Over another popover, such as the
+open-PRs list in the lower right, nothing peeks: the pointer is using that
+popover, even where it reaches the edge. With **growing peek** turned on (it is
 off by default), the peek widens as the pointer closes in, and crossing where
 the open panel's edge would be, or stopping there, opens the panel too.
 
@@ -74,17 +76,17 @@ their own there, and **Advanced** holds the values that tune them. None of
 this does anything on touch screens.
 
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
-  Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,
+  Background, Open, Closed) and kinds (Agents, Shells, Drawing boards, Pages,
   Processes). Shells are every shell that is not an agent's own session: a
   group's shell and the shells opened in an agent's directory. By default everything but Closed is listed. The button shows a
   count of the boxes changed from the default, and **Reset** puts them back.
   The browser remembers the filter. A search finds everything, whatever the
   filter is. It also counts the [background sessions](#background-sessions).
 - **＋ New ▾** makes something: **Agent…** (the spawn dialog), **Shell…** and
-  **Page…** (pick the group), **Board…** (the board list: open one, or create
+  **Page…** (pick the group), **Drawing board…** (the drawing board list: open one, or create
   one), **Process…** (the process list, with Processes on) and **Import
-  board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
-  the same menu for that group: a **Shell** in its directory, a **Board** and a
+  drawing board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
+  the same menu for that group: a **Shell** in its directory, a **Drawing board** and a
   **Page** in the group, and an agent spawned into it.
 - In each group, the agents come first, in a fixed order: needs you, working
   (green light), idle (amber), then by name. Closed items come last.
@@ -98,24 +100,24 @@ this does anything on touch screens.
   page reopens. Drag it onto the tab strip or the home to open it as a tab, or
   anywhere else to float it in a window. A terminal that cannot float stays a
   tab.
-- Drag an agent, board or page onto another group's section in the panel to
+- Drag an agent, drawing board or page onto another group's section in the panel to
   move it there, as you would in the Groups tab. An agent goes through the same
   confirm as there. Drop an agent on **Not in a group** to take it out of the
-  group it is listed under (it stays in any others), or a board to take it out
+  group it is listed under (it stays in any others), or a drawing board to take it out
   of its group. A page always stays in a group, and only moves to a group its
   agent is in.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
-- **⚙** on an agent, board or page row opens the same edit menu its Groups-tab
+- **⚙** on an agent, drawing board or page row opens the same edit menu its Groups-tab
   row has. An agent's menu starts with **move to** each other group (or Not in a
-  group), then has its Groups ⚙ items for the group it is listed under. A board's
-  or page's menu has **Rename…**, **Move to group** and **Delete…**. A board in
+  group), then has its Groups ⚙ items for the group it is listed under. A drawing board's
+  or page's menu has **Rename…**, **Move to group** and **Delete…**. A drawing board in
   no group is listed under **Not in a group**.
 - **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
   **Kill session…** for a background session or a group's shell, and on a
-  board **Download .excalidraw**, **End agents' sessions…** and **Delete
-  board…**. Each destructive one asks first.
-- A board, page or process row has a lock at its right end: an amber closed
+  drawing board **Download .excalidraw**, **End agents' sessions…** and **Delete
+  drawing board…**. Each destructive one asks first.
+- A drawing board, page or process row has a lock at its right end: an amber closed
   lock, always shown, while agents can only read it, and a dim open lock on
   hover or keyboard focus while they can edit it. Click it to lock or unlock;
   see [Groups › Resources](dashboard-groups.md#resources). Agent rows have none.
@@ -142,7 +144,7 @@ pending permission request, a **🔑** opens the
   with it, so a reload starts without them.
 - **Right-click a tab** (or Shift+F10) for `New group from this tab`, `Add to
   "<group>"`, `Remove from group`, `Open in separate window`, `Close tab`, `Close other tabs`
-  and `Close all tabs`. Boards, directory shells, group shells and running local agents add
+  and `Close all tabs`. Drawing boards, directory shells, group shells and running local agents add
   `Open in overlay`.
 - **Right-click a group** for `Expand group` or `Collapse group`, `Rename group…`,
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
@@ -161,7 +163,7 @@ pending permission request, a **🔑** opens the
   where a marker shows. Overlay tabs drag back the same way, onto this strip or onto
   **Collab** in the main nav.
 - **Float** a directory or group shell with **Open in overlay**. It
-  moves, snaps and splits like a board's window, on the same tmux session, and
+  moves, snaps and splits like a drawing board's window, on the same tmux session, and
   **Open in the Collab tab** returns it. Closing the window leaves the shell running. A peer's
   terminal stays a tab.
 - **Float** a running local agent with **Open in overlay**. It moves to the
@@ -246,8 +248,8 @@ each with its idle time (amber after a few hours).
   background** at the bottom of the Filter menu opens every one that can be
   attached, one at a time.
 - **Kill session…** in its menu ends it, after asking.
-- A board with [board sessions](boards.md#board-sessions) has **End agents'
-  sessions…** in its menu, which removes them and leaves the board.
+- A drawing board with [drawing-board sessions](drawing-boards.md#drawing-board-sessions) has **End agents'
+  sessions…** in its menu, which removes them and leaves the drawing board.
 - Sessions the dashboard cannot attach (an earlier generation, a tmux session
   tclaude did not start, or one that is locked) are listed last, under **Other
   sessions**. Their tooltip has the `tmux attach` command to reach them from a

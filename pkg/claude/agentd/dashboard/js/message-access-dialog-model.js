@@ -266,7 +266,7 @@ export const SCOPE_CHIPS_SHOWN = 6;
 
 
 // RESOURCE_KIND_LABELS heads the resource picker's sections.
-export const RESOURCE_KIND_LABELS = { board: 'Boards', process_template: 'Process templates' };
+export const RESOURCE_KIND_LABELS = { drawing_board: 'Drawing boards', process_template: 'Process templates' };
 
 // scopeComboItems is a dimension's catalogue as FilterCombobox items: the
 // resource catalogue's entries ({kind, id, title, groups}) keyed by the
@@ -293,7 +293,7 @@ export function scopeCatalogueIndex(catalogue) {
 export function scopeValueLabel(value, index) {
   if (!index) return { kind: '', text: value };
   const entry = index.get(value);
-  return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
+  return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind === 'drawing_board' ? 'drawing board' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
 }
 
 const SCOPE_COUNT_NOUNS = { group: ['group', 'groups'], resource: ['resource', 'resources'] };
@@ -312,7 +312,7 @@ export function scopeCountText(scope) {
 
 // umbrellaCover is the umbrella that covers a row the operator left at
 // Default: the nearest slug up its umbrella chain (served per slug by the
-// registry, so resources.write → resources.read → boards.read is never
+// registry, so resources.write → resources.read → drawing-boards.read is never
 // re-derived here) that is granted in this editor or held from a source.
 // null when nothing covers it, or the row itself is decided: a Deny of the
 // row wins over its umbrella, and a Grant needs no hint.

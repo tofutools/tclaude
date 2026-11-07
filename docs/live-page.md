@@ -84,7 +84,7 @@ The dashboard snapshot lists the open pages (`live_pages`), each with a revision
 that changes whenever the page is shown or updated, and the group it is shared
 in (`group_id`, `group`). The Page tab uses it.
 
-The snapshot's `group_resources` lists every active group's pages, boards,
+The snapshot's `group_resources` lists every active group's pages, drawing boards,
 processes and shell in one shape (`kind`, `id`, `group_id`, `title`,
 `state`, `owner`, `detail`), where `state` is what the daemon knows:
 `running` (a page's stage is live, a process run is active, the group's
@@ -145,7 +145,7 @@ tclaude agent page css agt_1234…/app 'button { color: red }'
 ### A page the operator creates in a group
 
 The operator can create a page in a group from the dashboard, as they create
-a board (`POST /api/pages` with the group and a name). No agent shows it, so
+a drawing board (`POST /api/pages` with the group and a name). No agent shows it, so
 the group owns it:
 
 - **It serves a blank scratch sheet.** This is tclaude's own fixed page, with
@@ -183,7 +183,7 @@ showed the page can read what you type in it. Then:
 - **Reload** loads the page again. Saved files under a static target and a
   re-show reload it on their own.
 - **Open in overlay** floats it in an overlay window, and **Pop out** moves it
-  to a browser window of its own. Like a board, a page tab can be reordered,
+  to a browser window of its own. Like a drawing board, a page tab can be reordered,
   grouped, dragged off the strip or onto an overlay window. A separate window
   is the dashboard's own page with the same frame in it: the page's origin
   never loads as a top-level page.
@@ -194,10 +194,10 @@ showed the page can read what you type in it. Then:
 
 ### Drawing on top
 
-![A live page in Draw mode: the boards' pen, arrow, box and text tools, the colours, undo, Clear, a note and Send to agent above the page, with a box and an arrow drawn over its form](assets/live-page-draw.png)
+![A live page in Draw mode: the drawing boards' pen, arrow, box and text tools, the colours, undo, Clear, a note and Send to agent above the page, with a box and an arrow drawn over its form](assets/live-page-draw.png)
 
 **Interact** / **Draw** in the header switches what the pointer does. In Draw
-mode a layer over the page takes the boards' pen, arrow, box and text tools and
+mode a layer over the page takes the drawing boards' pen, arrow, box and text tools and
 colours (red first), with undo and **Clear**. The layer is the dashboard's, not
 the page's: the page cannot see or change the marks. Switch back to Interact to
 scroll or click; the marks stay where they were drawn on the page, because they

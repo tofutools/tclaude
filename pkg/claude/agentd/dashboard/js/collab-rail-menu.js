@@ -1,8 +1,8 @@
 // collab-rail-menu.js -- a Collab panel row's menu (its ⋯ button, or a right
 // click on the row): every per-item action the strip's old menus offered, now
 // at the item (tcl-ievs1w). Attach or open; kill a background session,
-// an Other session included; end the agents' sessions on a board; download
-// or delete a board. Create and import live in the panel's ＋ New menu
+// an Other session included; end the agents' sessions on a drawing board; download
+// or delete a drawing board. Create and import live in the panel's ＋ New menu
 // (collab-new-menu.js).
 
 import { h } from 'preact';
@@ -11,12 +11,12 @@ import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
 import { Menu, MenuItem, MenuSep } from './ui-components.js';
 import { killBackgroundTerminal } from './background-terminals.js';
-import { askDeleteBoard, exportBoard } from './board-manage.js';
+import { askDeleteDrawingBoard, exportDrawingBoard } from './drawing-board-manage.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
-const boardID = (item) => item.resource?.id || item.key.slice('board:'.length);
+const drawingBoardID = (item) => item.resource?.id || item.key.slice('drawing_board:'.length);
 
 // tmuxAttachHint is how to reach a session the dashboard cannot attach: from
 // a shell, by hand.
@@ -24,32 +24,32 @@ export const tmuxAttachHint = (row) => `Attach from a shell: tmux -L tclaude att
 
 // railRowActions is what item's menu offers, in order: [{ id, label,
 // danger, run(ctx) }], with a separator before the destructive ones. ctx is
-// { open, confirm, notify, fetchImpl, kill, exportBoard, askDeleteBoard },
+// { open, confirm, notify, fetchImpl, kill, exportDrawingBoard, askDeleteDrawingBoard },
 // the seams tests swap.
 export function railRowActions(item) {
   const open = [];
   const end = [];
   const row = item.row;
   if (!row || row.key || row.attachLock) {
-    open.push({ id: 'open', label: row && row.kind !== 'board' ? (row.attachLock ? 'Attach (locked)' : 'Attach') : 'Open',
+    open.push({ id: 'open', label: row && row.kind !== 'drawing_board' ? (row.attachLock ? 'Attach (locked)' : 'Attach') : 'Open',
       disabled: !!row?.attachLock, title: row?.attachLock || '', run: (ctx) => ctx.open(item) });
   }
-  if (item.kind === 'board') {
-    open.push({ id: 'download', label: 'Download .excalidraw', run: (ctx) => ctx.exportBoard(boardID(item), ctx.fetchImpl)
-      .catch((err) => ctx.notify(`Could not export the board: ${err?.message || err}`, true)) });
+  if (item.kind === 'drawing_board') {
+    open.push({ id: 'download', label: 'Download .excalidraw', run: (ctx) => ctx.exportDrawingBoard(drawingBoardID(item), ctx.fetchImpl)
+      .catch((err) => ctx.notify(`Could not export the drawing board: ${err?.message || err}`, true)) });
   }
-  if (row?.killable && row.kind !== 'board') end.push(killEntry(item, row, 'Kill this session?'));
+  if (row?.killable && row.kind !== 'drawing_board') end.push(killEntry(item, row, 'Kill this session?'));
   if (item.shellSession) end.push(killEntry(item, item.shellSession, 'Kill this shell?'));
   if (item.sessions) {
     end.push(confirmEntry(item.sessions, {
-      id: 'end-sessions', label: 'End agents’ sessions…', title: 'End the agents’ sessions on this board?',
-      body: 'Every agent session on the board ends. The board stays.', okLabel: 'End', busyLabel: 'Ending…',
+      id: 'end-sessions', label: 'End agents’ sessions…', title: 'End the agents’ sessions on this drawing board?',
+      body: 'Every agent session on the drawing board ends. The drawing board stays.', okLabel: 'End', busyLabel: 'Ending…',
       done: `Ended the sessions on ${item.title}`, failed: 'Could not end the sessions',
     }));
   }
-  // A peer's board (tcl-ug8bb8) is deleted on its own node.
-  if (item.kind === 'board' && !item.resource?.peer) {
-    end.push({ id: 'delete-board', label: 'Delete board…', danger: true, run: (ctx) => ctx.askDeleteBoard({ id: boardID(item), title: item.title }) });
+  // A peer's drawing board (tcl-ug8bb8) is deleted on its own node.
+  if (item.kind === 'drawing_board' && !item.resource?.peer) {
+    end.push({ id: 'delete-drawing-board', label: 'Delete drawing board…', danger: true, run: (ctx) => ctx.askDeleteDrawingBoard({ id: drawingBoardID(item), title: item.title }) });
   }
   return { open, end };
 }
@@ -77,7 +77,7 @@ export function hasRowActions(item) {
 }
 
 export const defaultRowContext = () => ({
-  confirm: shellConfirm, notify: shellToast, kill: killBackgroundTerminal, exportBoard, askDeleteBoard,
+  confirm: shellConfirm, notify: shellToast, kill: killBackgroundTerminal, exportDrawingBoard, askDeleteDrawingBoard,
   fetchImpl: (...args) => globalThis.fetch(...args),
 });
 

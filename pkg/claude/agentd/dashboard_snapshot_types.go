@@ -402,7 +402,7 @@ type snapshotPayload struct {
 	// stage origin, whose token is the page's key: local dashboard only. A
 	// page's rev changes whenever it is shown or updated.
 	LivePages []pageView `json:"live_pages,omitempty"`
-	// GroupResources are every active group's pages, boards, processes and
+	// GroupResources are every active group's pages, drawing boards, processes and
 	// shell in one shape, with whether each is running (group_resources_snapshot.go).
 	// Local dashboard only, like LivePages.
 	GroupResources []groupResource `json:"group_resources,omitempty"`

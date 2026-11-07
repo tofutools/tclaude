@@ -13,7 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// tcl-kostyh: the operator renames a page or a board from its group's
+// tcl-kostyh: the operator renames a page or a drawing board from its group's
 // Resources row, and moves a page to another group its agent is in.
 
 func TestPageRenameAndMoveFromTheGroup(t *testing.T) {
@@ -88,15 +88,15 @@ func TestPageRenameAndMoveFromTheGroup(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, e.dashJSON(t, http.MethodPost, "/api/pages/pg_nope/group", map[string]any{"group": "crew"}).Code)
 }
 
-func TestBoardRenameFromTheGroup(t *testing.T) {
+func TestDrawingBoardRenameFromTheGroup(t *testing.T) {
 	e := newPageEnv(t)
-	rec := e.dashJSON(t, http.MethodPost, "/api/boards", map[string]any{"id": "plan", "title": "Plan"})
+	rec := e.dashJSON(t, http.MethodPost, "/api/drawing-boards", map[string]any{"id": "plan", "title": "Plan"})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	rec = e.dashJSON(t, http.MethodPost, "/api/boards/plan/title", map[string]any{"title": "Release plan"})
+	rec = e.dashJSON(t, http.MethodPost, "/api/drawing-boards/plan/title", map[string]any{"title": "Release plan"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	b, err := db.GetCollabBoard("plan")
+	b, err := db.GetCollabDrawingBoard("plan")
 	require.NoError(t, err)
 	assert.Equal(t, "Release plan", b.Title)
-	assert.Equal(t, http.StatusBadRequest, e.dashJSON(t, http.MethodPost, "/api/boards/plan/title", map[string]any{"title": ""}).Code)
-	assert.Equal(t, http.StatusNotFound, e.dashJSON(t, http.MethodPost, "/api/boards/nope/title", map[string]any{"title": "x"}).Code)
+	assert.Equal(t, http.StatusBadRequest, e.dashJSON(t, http.MethodPost, "/api/drawing-boards/plan/title", map[string]any{"title": ""}).Code)
+	assert.Equal(t, http.StatusNotFound, e.dashJSON(t, http.MethodPost, "/api/drawing-boards/nope/title", map[string]any{"title": "x"}).Code)
 }

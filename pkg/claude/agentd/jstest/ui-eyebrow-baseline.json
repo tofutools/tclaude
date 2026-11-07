@@ -1,6 +1,6 @@
 {
-  "board.css": [
-    ".board-section-name"
+  "drawing-board.css": [
+    ".drawing-board-section-name"
   ],
   "companion.css": [
     ".companion-cog-head"

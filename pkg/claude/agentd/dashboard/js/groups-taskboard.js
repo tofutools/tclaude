@@ -668,8 +668,9 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
   const choose = (what) => { if (what === 'import') setImporting(true); else setAdding({ kind: what, initial: {} }); };
-  const head = html`<${ViewSelector} prefs=${prefs} />
-    ${api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`}`;
+  // The add button sits right after the count, before the view switch.
+  const head = html`${api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`}
+    <${ViewSelector} prefs=${prefs} />`;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
@@ -684,11 +685,11 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   <//>`;
 }
 
+// TaskboardCounts is the section head's total; the columns (and the group's
+// summary line) show the breakdown, which the tooltip carries too.
 function TaskboardCounts({ counts }) {
-  const parts = taskboardCountParts(counts);
   return html`<span class="tb-counts" title=${taskboardCountsText(counts)}>
     <span class=${`gf-count${counts.live ? '' : ' zero'}`}>${counts.live || 0}</span>
-    ${parts.map((part) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${` · ${part.text}`}</span>`)}
   </span>`;
 }
 

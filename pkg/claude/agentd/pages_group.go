@@ -18,7 +18,7 @@ import (
 // An operator-created page (tcl-20ihu3).
 //
 // The operator creates a page in a group's Collab space from the dashboard
-// (POST /api/pages), as they create a board. No agent shows it, so the group
+// (POST /api/pages), as they create a drawing board. No agent shows it, so the group
 // owns it: it is keyed under groupPageOwner(groupID) instead of an agent id,
 // and members address it as <group>/<name> (`tclaude agent page marks
 // crew/sketch`) under the same groups.pages.* slugs as a page another member

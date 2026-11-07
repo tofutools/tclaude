@@ -17,15 +17,15 @@ import (
 // acts for nobody until the operator clicks. So a terminal link can only ever
 // be the sender's own tracked directory, and a PR link one the sender presented.
 //
-// What is stored is the name: "terminal", "board:<id>", "pr:<url>" or
+// What is stored is the name: "terminal", "drawing_board:<id>", "pr:<url>" or
 // "tab:<name>". The agent hears nothing back, and never gets the shell's input
 // or output.
 
 const (
-	humanActionTerminal = "terminal"
-	humanActionBoard    = "board"
-	humanActionPR       = "pr"
-	humanActionTab      = "tab"
+	humanActionTerminal     = "terminal"
+	humanActionDrawingBoard = "drawing_board"
+	humanActionPR           = "pr"
+	humanActionTab          = "tab"
 )
 
 // The directory an action link's shell opens in: what the agent's row and the
@@ -78,9 +78,9 @@ func validateHumanAction(callerConv, action string) error {
 			return errors.New("your directory is not known yet, so there is no terminal to offer")
 		}
 		return nil
-	case humanActionBoard:
-		if _, err := db.GetCollabBoard(arg); err != nil {
-			return fmt.Errorf("no board %q", arg)
+	case humanActionDrawingBoard:
+		if _, err := db.GetCollabDrawingBoard(arg); err != nil {
+			return fmt.Errorf("no drawing board %q", arg)
 		}
 		return nil
 	case humanActionPR:
@@ -98,7 +98,7 @@ func validateHumanAction(callerConv, action string) error {
 		}
 		return nil
 	}
-	return errors.New(`action must be "terminal", "board:<id>", "pr:<url>" or "tab:<name>"`)
+	return errors.New(`action must be "terminal", "drawing_board:<id>", "pr:<url>" or "tab:<name>"`)
 }
 
 // humanActionPRAllowed reports whether prURL is a PR agentID still presents.
@@ -149,7 +149,7 @@ func checkNotifyHumanAction(w http.ResponseWriter, callerConv, action string, de
 }
 
 // dashboardHumanMessageAction is the button on a message. All of it is the
-// daemon's text, apart from the board title and the paths it names, which the
+// daemon's text, apart from the drawing board title and the paths it names, which the
 // dashboard renders as text. Unavailable says why the button is off.
 type dashboardHumanMessageAction struct {
 	Kind        string `json:"kind"`
@@ -160,7 +160,7 @@ type dashboardHumanMessageAction struct {
 }
 
 // humanActionView builds a message's button as things stand now: the directory
-// is where the agent is, and an agent or board that is gone turns it off. dirs
+// is where the agent is, and an agent or drawing board that is gone turns it off. dirs
 // holds the directories looked up so far, by agent, for this listing.
 func humanActionView(m *db.HumanMessage, dirs map[string]string) *dashboardHumanMessageAction {
 	if m.Action == "" {
@@ -182,14 +182,14 @@ func humanActionView(m *db.HumanMessage, dirs map[string]string) *dashboardHuman
 		if dir == "" {
 			view.Unavailable = "That agent is gone, or its directory is not known."
 		}
-	case humanActionBoard:
-		view.Label = "Open board"
-		board, err := db.GetCollabBoard(arg)
+	case humanActionDrawingBoard:
+		view.Label = "Open drawing board"
+		drawingBoard, err := db.GetCollabDrawingBoard(arg)
 		if err != nil {
-			view.Unavailable = "That board is gone."
+			view.Unavailable = "That drawing board is gone."
 			return view
 		}
-		view.Label = "Open board “" + clipHumanActionText(boardActionTitle(board)) + "”"
+		view.Label = "Open drawing board “" + clipHumanActionText(drawingBoardActionTitle(drawingBoard)) + "”"
 	case humanActionPR:
 		view.Label, view.Detail = "Open PR", arg
 		if number := deriveGitHubPRNumber(arg); number > 0 {
@@ -210,7 +210,7 @@ func humanActionView(m *db.HumanMessage, dirs map[string]string) *dashboardHuman
 	return view
 }
 
-// A board title is free text on the daemon's button, so it stays short and in
+// A drawing board title is free text on the daemon's button, so it stays short and in
 // quotes, and cannot read as more of what the button does.
 func clipHumanActionText(text string) string {
 	if runes := []rune(text); len(runes) > humanActionTitleRunes {
@@ -219,11 +219,11 @@ func clipHumanActionText(text string) string {
 	return text
 }
 
-func boardActionTitle(board *db.CollabBoard) string {
-	if board.Title != "" {
-		return board.Title
+func drawingBoardActionTitle(drawingBoard *db.CollabDrawingBoard) string {
+	if drawingBoard.Title != "" {
+		return drawingBoard.Title
 	}
-	return board.ID
+	return drawingBoard.ID
 }
 
 // humanActionLiveConv is the agent's current conversation, or "" once it has
@@ -243,13 +243,13 @@ func humanActionLiveConv(agentID string) string {
 // humanActionTarget is what the dashboard does on a click, all of it resolved
 // here from the stored action. Nothing in the click request can change it.
 type humanActionTarget struct {
-	Kind  string `json:"kind"`
-	Agent string `json:"agent,omitempty"`
-	Group string `json:"group,omitempty"`
-	Board string `json:"board,omitempty"`
-	Title string `json:"title,omitempty"`
-	URL   string `json:"url,omitempty"`
-	Path  string `json:"path,omitempty"`
+	Kind         string `json:"kind"`
+	Agent        string `json:"agent,omitempty"`
+	Group        string `json:"group,omitempty"`
+	DrawingBoard string `json:"drawingBoard,omitempty"`
+	Title        string `json:"title,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Path         string `json:"path,omitempty"`
 }
 
 // resolveHumanAction turns a stored action into its target. The error is for
@@ -269,12 +269,12 @@ func resolveHumanAction(m *db.HumanMessage) (*humanActionTarget, error) {
 		target.Agent = m.FromAgent
 		target.Title = m.FromTitle
 		target.Group = humanActionShellGroup(m)
-	case humanActionBoard:
-		board, err := db.GetCollabBoard(arg)
+	case humanActionDrawingBoard:
+		drawingBoard, err := db.GetCollabDrawingBoard(arg)
 		if err != nil {
-			return nil, errors.New("that board is gone")
+			return nil, errors.New("that drawing board is gone")
 		}
-		target.Board, target.Title = board.ID, boardActionTitle(board)
+		target.DrawingBoard, target.Title = drawingBoard.ID, drawingBoardActionTitle(drawingBoard)
 	case humanActionPR:
 		target.URL = arg
 	case humanActionTab:

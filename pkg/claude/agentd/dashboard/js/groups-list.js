@@ -1,4 +1,4 @@
-import { PeerGroupBoards } from './peer-boards-ui.js';
+import { PeerGroupDrawingBoards } from './peer-drawing-boards-ui.js';
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -712,7 +712,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
         <${GroupTriggersSection} group=${group} triggers=${triggers} />
         ${processes ? html`<${GroupProcessBody} group=${group} />` : members}
         <${TaskboardSection} group=${group} snapshot=${snapshot} />
-        ${!processes && !fleet && html`<${PeerGroupBoards} group=${group} />`}`}
+        ${!processes && !fleet && html`<${PeerGroupDrawingBoards} group=${group} />`}`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;

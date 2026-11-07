@@ -14,7 +14,7 @@
 import { attachTerminalInteractions } from './terminal-interactions.js';
 import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
-import { boardPaneKey, isBoardId } from './board-model.js';
+import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 import { isPageId, pagePaneKey } from './page-pane-model.js';
 
@@ -178,14 +178,14 @@ export const TERMINAL_EXIT = Object.freeze({
   4004: { text: 'detached', closeTab: true },
 });
 
-// A board seed (seed.board) has no socket: it must name a valid board id, and
+// A drawing board seed (seed.drawing board) has no socket: it must name a valid drawing board id, and
 // whatever else a crafted hash put in it cannot give it one, or a key that
 // collides with another pane.
 export function normalizeSeed(seed) {
-  if (seed?.board !== undefined) {
-    if (!isBoardId(seed.board) || seed.process !== undefined || seed.page !== undefined) return null;
+  if (seed?.drawingBoard !== undefined) {
+    if (!isDrawingBoardId(seed.drawingBoard) || seed.process !== undefined || seed.page !== undefined) return null;
     const { ws: _ws, ...rest } = seed;
-    return { ...rest, key: boardPaneKey(seed.board) };
+    return { ...rest, key: drawingBoardPaneKey(seed.drawingBoard) };
   }
   // A process seed (seed.process) is the same: a template id and nothing to dial.
   if (seed?.process !== undefined) {

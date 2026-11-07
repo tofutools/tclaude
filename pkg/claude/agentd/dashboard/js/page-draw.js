@@ -1,6 +1,6 @@
 // page-draw.js -- drawing on top of a live page (tcl-2dwbad). In Draw mode a
 // layer in the dashboard, over the page's frame, takes pen, arrow, box and
-// text marks with the boards' tools and look. Marks are kept in page
+// text marks with the drawing boards' tools and look. Marks are kept in page
 // coordinates (the probe reports the frame's scroll), and when one ends the
 // probe names the elements under it. Send hands the marks and a note to the
 // agent that showed the page.
@@ -13,8 +13,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { BOARD_COLORS, BOARD_TOOLS, newElement, normalizeBox, simplifyStroke } from './board-model.js';
-import { BoardElement } from './board-island.js';
+import { DRAWING_BOARD_COLORS, DRAWING_BOARD_TOOLS, newElement, normalizeBox, simplifyStroke } from './drawing-board-model.js';
+import { DrawingBoardElement } from './drawing-board-island.js';
 import {
   acceptProbeMessage, cleanText, newProbeNonce, newProbeRequestId, planPatchSync, probeDom, probeElementsAt, probeEval, probeHello,
   probePatch, samplePoints,
@@ -39,12 +39,12 @@ export function thinPoints(points, max = PAGE_MARK_POINTS_MAX) {
   return out;
 }
 
-// The board tools a page mark can be made with, under the mark's kind.
+// The drawing board tools a page mark can be made with, under the mark's kind.
 const MARK_TOOLS = Object.freeze([['freedraw', 'pen'], ['arrow', 'arrow'], ['rectangle', 'box'], ['text', 'text']]);
-export const PAGE_DRAW_TOOLS = Object.freeze(MARK_TOOLS.map(([id, kind]) => ({ ...BOARD_TOOLS.find((t) => t.id === id), kind })));
+export const PAGE_DRAW_TOOLS = Object.freeze(MARK_TOOLS.map(([id, kind]) => ({ ...DRAWING_BOARD_TOOLS.find((t) => t.id === id), kind })));
 const KIND_OF = Object.fromEntries(MARK_TOOLS);
 // Red first: a mark is a correction on someone else's page.
-export const PAGE_DRAW_COLORS = Object.freeze(['#e03131', ...BOARD_COLORS.filter((c) => c !== '#e03131')]);
+export const PAGE_DRAW_COLORS = Object.freeze(['#e03131', ...DRAWING_BOARD_COLORS.filter((c) => c !== '#e03131')]);
 
 // usePageProbe talks to the probe in the frame: a fresh nonce per load (sent
 // in the hello the probe's 'ready' asks for), the frame's last scroll report,
@@ -187,7 +187,7 @@ export function usePageProbe(frameRef, { win = globalThis.window, onReload = nul
   return { ...api.current, scroll, connected };
 }
 
-// elementToMark turns a drawn board element (page coordinates) into the mark
+// elementToMark turns a drawn drawing board element (page coordinates) into the mark
 // the daemon stores: its kind, colour, points in page pixels and any text.
 export function elementToMark(el) {
   const kind = KIND_OF[el.type];
@@ -289,8 +289,8 @@ export function PageDrawLayer({ active, tool, color, marks, onMark, scroll }) {
     <svg ref=${svgRef} class="page-draw-svg" aria-label=${active ? 'Drawing layer over the page' : null} role=${active ? 'application' : null}
       onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${() => setDraft(null)}>
       <g transform=${`translate(${-sx} ${-sy})`}>
-        ${marks.map((m) => html`<${BoardElement} key=${m.el.id} el=${m.el} />`)}
-        ${draft ? html`<${BoardElement} el=${draft.el} />` : null}
+        ${marks.map((m) => html`<${DrawingBoardElement} key=${m.el.id} el=${m.el} />`)}
+        ${draft ? html`<${DrawingBoardElement} el=${draft.el} />` : null}
       </g>
     </svg>
     ${typing ? html`<input class="ui-input ui-sm page-draw-text" aria-label="Text for the mark" maxLength="500" autoFocus
@@ -307,14 +307,14 @@ export function PageDrawLayer({ active, tool, color, marks, onMark, scroll }) {
 // colours, undo and clear, the note and Send.
 export function PageDrawBar({ tool, setTool, color, setColor, marks, onUndo, onClear, note, setNote, onSend, sending, agentName }) {
   const canSend = !sending && (marks.length > 0 || note.trim() !== '');
-  return html`<div class="page-draw-bar board-toolbar" role="toolbar" aria-label="Drawing tools">
-    ${PAGE_DRAW_TOOLS.map((t) => html`<button key=${t.id} type="button" data-ui-exempt class=${`board-tool${tool === t.id ? ' on' : ''}`}
+  return html`<div class="page-draw-bar drawing-board-toolbar" role="toolbar" aria-label="Drawing tools">
+    ${PAGE_DRAW_TOOLS.map((t) => html`<button key=${t.id} type="button" data-ui-exempt class=${`drawing-board-tool${tool === t.id ? ' on' : ''}`}
       title=${t.label} aria-label=${t.label} aria-pressed=${tool === t.id ? 'true' : 'false'} onClick=${() => setTool(t.id)}>${t.icon}</button>`)}
-    <span class="board-sep"></span>
-    ${PAGE_DRAW_COLORS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
+    <span class="drawing-board-sep"></span>
+    ${PAGE_DRAW_COLORS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`drawing-board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
       title=${c} aria-label=${`Colour ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
-    <span class="board-sep"></span>
-    <button type="button" data-ui-exempt class="board-tool" title="Undo the last mark" aria-label="Undo the last mark" disabled=${!marks.length} onClick=${onUndo}>↶</button>
+    <span class="drawing-board-sep"></span>
+    <button type="button" data-ui-exempt class="drawing-board-tool" title="Undo the last mark" aria-label="Undo the last mark" disabled=${!marks.length} onClick=${onUndo}>↶</button>
     <${Button} size="sm" class="mux-btn" disabled=${!marks.length} title="Remove every mark" onClick=${onClear}>Clear<//>
     <input class="ui-input ui-sm page-draw-note" placeholder="Note for the agent (optional)" aria-label="Note for the agent"
       maxLength=${PAGE_NOTE_MAX} value=${note} onInput=${(event) => setNote(event.currentTarget.value)}

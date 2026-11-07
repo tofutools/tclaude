@@ -20,9 +20,9 @@ func TestResourceUmbrellasAreExplicitOnly(t *testing.T) {
 	}
 	assert.Equal(t, PermResourcesWrite, permissionUmbrellaFor(PermResourcesRead), "write implies read")
 	assert.Empty(t, permissionUmbrellaFor(PermResourcesWrite))
-	kindWrite := permSources{resolvable: true, override: map[string]overridePermSource{PermBoardsWrite: {Effect: "grant"}},
+	kindWrite := permSources{resolvable: true, override: map[string]overridePermSource{PermDrawingBoardsWrite: {Effect: "grant"}},
 		group: map[string][]string{}, sudo: map[string]sudoPermSource{}}
-	assert.Equal(t, permUndecided, resolveEffectivePermissionVerdictFrom(kindWrite, PermBoardsRead, false, false).Resolution,
+	assert.Equal(t, permUndecided, resolveEffectivePermissionVerdictFrom(kindWrite, PermDrawingBoardsRead, false, false).Resolution,
 		"the per-kind write slugs do not imply their read slugs")
 }
 
@@ -31,10 +31,10 @@ func TestResourceUmbrellasAreExplicitOnly(t *testing.T) {
 // stay membership's.
 func TestResourceUmbrellaImplications(t *testing.T) {
 	for slug, want := range map[string]string{
-		PermBoardsRead:             PermResourcesRead,
+		PermDrawingBoardsRead:      PermResourcesRead,
 		PermProcessTemplatesRead:   PermResourcesRead,
 		PermProcessRunsRead:        PermResourcesRead,
-		PermBoardsWrite:            PermResourcesWrite,
+		PermDrawingBoardsWrite:     PermResourcesWrite,
 		PermProcessTemplatesManage: PermResourcesWrite,
 		PermProcessRunsManage:      "",
 		PermProcessRunsStart:       "",
@@ -53,26 +53,26 @@ func TestResourceUmbrellaImplications(t *testing.T) {
 	for _, slug := range []string{PermProcessRunsManage, PermProcessRunsStart, PermGroupsResourcesLock} {
 		assert.Equal(t, permUndecided, resolveEffectivePermissionVerdictFrom(src, slug, false, false).Resolution, slug)
 	}
-	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(src, PermBoardsWrite, false, false).Resolution)
+	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(src, PermDrawingBoardsWrite, false, false).Resolution)
 
 	writeOnly := permSources{resolvable: true, override: map[string]overridePermSource{PermResourcesWrite: {Effect: "grant"}},
 		group: map[string][]string{}, sudo: map[string]sudoPermSource{}}
-	for _, slug := range []string{PermResourcesRead, PermBoardsRead, PermProcessTemplatesRead, PermProcessRunsRead} {
+	for _, slug := range []string{PermResourcesRead, PermDrawingBoardsRead, PermProcessTemplatesRead, PermProcessRunsRead} {
 		assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, slug, false, false).Resolution, "write implies %s", slug)
 	}
 	writeOnly.override[PermResourcesRead] = overridePermSource{Effect: "deny"}
-	for _, slug := range []string{PermResourcesRead, PermBoardsRead} {
+	for _, slug := range []string{PermResourcesRead, PermDrawingBoardsRead} {
 		assert.NotEqual(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, slug, false, false).Resolution,
 			"a deny of resources.read wins over write for %s", slug)
 	}
-	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, PermBoardsWrite, false, false).Resolution)
+	assert.Equal(t, permAllow, resolveEffectivePermissionVerdictFrom(writeOnly, PermDrawingBoardsWrite, false, false).Resolution)
 }
 
 func TestResourceScopeShape(t *testing.T) {
 	for _, raw := range []string{
-		`{"resource":["board:plan"]}`,
-		`{"resource":["process_template:release","board:b_12"]}`,
-		`{"group":["crew"],"resource":["board:plan"]}`,
+		`{"resource":["drawing_board:plan"]}`,
+		`{"resource":["process_template:release","drawing_board:b_12"]}`,
+		`{"group":["crew"],"resource":["drawing_board:plan"]}`,
 	} {
 		_, err := canonicalPermissionScopeForSlug(PermResourcesRead, raw)
 		assert.NoError(t, err, raw)
@@ -81,12 +81,12 @@ func TestResourceScopeShape(t *testing.T) {
 		`{"resource":["plan"]}`,
 		`{"resource":["page:sketch"]}`,
 		`{"resource":["board:"]}`,
-		`{"resource":["board: plan"]}`,
+		`{"resource":["drawing board: plan"]}`,
 		`{"resource":["process:release"]}`,
 	} {
 		_, err := canonicalPermissionScopeForSlug(PermResourcesWrite, raw)
 		assert.Error(t, err, raw)
 	}
-	_, err := canonicalPermissionScopeForSlug(PermBoardsRead, `{"group":["crew"]}`)
+	_, err := canonicalPermissionScopeForSlug(PermDrawingBoardsRead, `{"group":["crew"]}`)
 	assert.Error(t, err, "the per-kind slugs stay unscoped")
 }

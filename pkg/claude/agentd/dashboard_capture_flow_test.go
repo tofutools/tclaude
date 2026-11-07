@@ -88,9 +88,9 @@ func TestDashboardCapture_APollingPageIsNotCalledClosed(t *testing.T) {
 	rec := <-c.request()
 	assert.Contains(t, rec.Body.String(), "no dashboard has connected since the daemon started")
 
-	// A popped-out board polls but can never be captured.
-	board := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?standalone=1", nil))
-	require.Equal(t, http.StatusOK, board.Code)
+	// A popped-out drawing board polls but can never be captured.
+	drawingBoard := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?standalone=1", nil))
+	require.Equal(t, http.StatusOK, drawingBoard.Code)
 	rec = <-c.request()
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
@@ -128,10 +128,10 @@ func TestDashboardCapture_ReturnsTheFocusedTabsRender(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{
 		"png": capturePNG,
 		"context": map[string]any{
-			"tab": "boards", "path": "/boards/sketch", "focused": true,
-			"viewport": map[string]any{"width": 1400, "height": 850},
-			"cursor":   map[string]any{"x": 10, "y": 20, "inside": true, "under": map[string]any{"tag": "div", "text": "ok\x1b[31m"}},
-			"board":    map[string]any{"id": "sketch", "zoom": 1, "region": map[string]any{"x": 1, "y": 2, "width": 3, "height": 4}},
+			"tab": "drawing-boards", "path": "/drawing-boards/sketch", "focused": true,
+			"viewport":     map[string]any{"width": 1400, "height": 850},
+			"cursor":       map[string]any{"x": 10, "y": 20, "inside": true, "under": map[string]any{"tag": "div", "text": "ok\x1b[31m"}},
+			"drawingBoard": map[string]any{"id": "sketch", "zoom": 1, "region": map[string]any{"x": 1, "y": 2, "width": 3, "height": 4}},
 		},
 	}))
 	rec := <-waiting
@@ -145,15 +145,15 @@ func TestDashboardCapture_ReturnsTheFocusedTabsRender(t *testing.T) {
 					Text string `json:"text"`
 				} `json:"under"`
 			} `json:"cursor"`
-			Board struct {
+			DrawingBoard struct {
 				ID string `json:"id"`
-			} `json:"board"`
+			} `json:"drawingBoard"`
 		} `json:"context"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, capturePNG, resp.PNG)
-	assert.Equal(t, "/boards/sketch", resp.Context.Path)
-	assert.Equal(t, "sketch", resp.Context.Board.ID)
+	assert.Equal(t, "/drawing-boards/sketch", resp.Context.Path)
+	assert.Equal(t, "sketch", resp.Context.DrawingBoard.ID)
 	assert.Equal(t, "ok[31m", resp.Context.Cursor.Under.Text, "control bytes never reach the CLI")
 
 	assert.Equal(t, http.StatusConflict, c.answer(id, map[string]any{"png": capturePNG}), "a spent capture takes no second image")

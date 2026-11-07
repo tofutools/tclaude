@@ -82,7 +82,7 @@ Only tab cycling can be a single letter, digit or punctuation key. **Reset** put
 them back. Changes are saved with the rest of the form as
 `dashboard.keybindings` and apply on the next refresh of the dashboard data.
 Shortcuts marked *fixed* (the browser's own, the dialog keys, and the process
-editor, board and viewer keys) can't be rebound yet. A peer's per-node view
+editor, drawing board and viewer keys) can't be rebound yet. A peer's per-node view
 uses the default keys.
 
 ## Voice

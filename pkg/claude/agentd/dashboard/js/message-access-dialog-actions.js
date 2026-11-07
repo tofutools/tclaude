@@ -231,7 +231,7 @@ export function createMessageAccessDialogActions({
   }
 
   // loadScopeValues reads a scope dimension's catalogue that the snapshot
-  // does not carry (the resource= picker's boards and templates), from the
+  // does not carry (the resource= picker's drawing boards and templates), from the
   // node whose permissions the editor is editing. It is read when a drawer
   // opens, not polled.
   async function loadScopeValues(descriptor, dim) {

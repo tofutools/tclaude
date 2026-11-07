@@ -26,11 +26,11 @@ func TestResourcesLockSendsTheToggleAndRefusesAnUnknownKind(t *testing.T) {
 		return nil
 	}
 	var out bytes.Buffer
-	rc := runResourcesLock(&resourcesLockParams{Kind: "board", ID: "plan", AskHuman: "30s"}, false, &out, &bytes.Buffer{})
+	rc := runResourcesLock(&resourcesLockParams{Kind: "drawing_board", ID: "plan", AskHuman: "30s"}, false, &out, &bytes.Buffer{})
 	require.Equal(t, rcOK, rc)
 	assert.Equal(t, []string{http.MethodPost + " /v1/resource-locks"}, calls)
-	assert.Equal(t, map[string]any{"kind": "board", "id": "plan", "locked": false}, bodies[0])
-	assert.Contains(t, out.String(), "Unlocked board plan")
+	assert.Equal(t, map[string]any{"kind": "drawing_board", "id": "plan", "locked": false}, bodies[0])
+	assert.Contains(t, out.String(), "Unlocked drawing board plan")
 
 	rc = runResourcesLock(&resourcesLockParams{Kind: "group", ID: "x"}, true, &bytes.Buffer{}, &bytes.Buffer{})
 	assert.Equal(t, rcInvalidArg, rc)

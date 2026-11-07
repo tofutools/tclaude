@@ -1,6 +1,6 @@
 [
-  "board-empty-hint",
-  "board-hint",
+  "drawing-board-empty-hint",
+  "drawing-board-hint",
   "companion-cog-hint",
   "companion-send-hint",
   "fs-error",

@@ -1,5 +1,5 @@
 // process-overlay.js -- a process template's editor in a tab of an overlay
-// window (tcl-kjl2fr), beside chats, terminals and boards. The editor is the
+// window (tcl-kjl2fr), beside chats, terminals and drawing boards. The editor is the
 // live one from the Processes tab (process-editor-place.js): this tab shows its
 // mount while the tab is the one showing, and hands it back when it hides, so
 // switching tabs, minimizing or moving to another window keeps every unsaved
@@ -65,18 +65,18 @@ export function ProcessOverlayWindow({ instance, overlay, strip, more = null, cl
   const toCollab = () => void processTabToCollab(instance);
   const title = html`${strip}
     ${look !== 'classic' ? more : html`
-    <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor to a tab of the Collab view, unsaved edits and all"
+    <button data-ui-exempt type="button" class="drawing-board-overlay-action" title="Move this editor to a tab of the Collab view, unsaved edits and all"
       onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
-    <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
+    <button data-ui-exempt type="button" class="drawing-board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
       onClick=${() => void dockProcessEditor(instance.template)}>${TO_PROCESSES_LABEL}</button>
-    <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
+    <button data-ui-exempt type="button" class="drawing-board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
       onClick=${() => floatingProcessEditor(instance.template) && moveToWindow(instance, { rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify })}>${TO_WINDOW_LABEL}</button>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
       onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
       onClick=${close.onClose}>×</button>`}`;
-  return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay process-overlay" frameClass="board-overlay-resize-frame"
-    titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Process ${label}`} title=${title}
+  return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="drawing-board-overlay process-overlay" frameClass="drawing-board-overlay-resize-frame"
+    titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Process ${label}`} title=${title}
     controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
     <div class="process-overlay-body">
       ${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}

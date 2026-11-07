@@ -21,7 +21,7 @@ func servePeerBackgroundTerminals(w http.ResponseWriter, _ *http.Request, v *pee
 		writeError(w, http.StatusServiceUnavailable, "tmux", "background terminals unavailable")
 		return
 	}
-	// Not the local handler: that adds the board rows, and boards stay here.
+	// Not the local handler: that adds the drawing board rows, and drawing boards stay here.
 	if v.unrestricted() {
 		writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: classifyBackgroundTerminals(sessions)})
 		return

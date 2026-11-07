@@ -53,7 +53,7 @@ type HumanMessage struct {
 	DismissedBy   string
 	DismissReason string
 	// Action is the one action link the message carries: a name from a fixed
-	// list ("terminal", "board:<id>", "pr:<url>", "tab:<name>"), which the
+	// list ("terminal", "drawing_board:<id>", "pr:<url>", "tab:<name>"), which the
 	// daemon resolves when the operator clicks. "" for none.
 	Action string
 }

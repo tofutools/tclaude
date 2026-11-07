@@ -5,7 +5,7 @@ import (
 )
 
 // Resource umbrellas: resources.read and resources.write cover every kind of
-// resource at once (boards, process templates, and the runs of a template),
+// resource at once (drawing boards, process templates, and the runs of a template),
 // for a manager agent that looks after resources across groups. They are the
 // privileged counterpart of groups.resources.read/write, which membership
 // confers inside one group:
@@ -28,9 +28,9 @@ const (
 	PermResourcesWrite = "resources.write"
 )
 
-// Resource kinds as a resource= scope names them (resource=board:plan).
+// Resource kinds as a resource= scope names them (resource=drawing_board:plan).
 const (
-	resourceScopeKindBoard           = "board"
+	resourceScopeKindDrawingBoard    = "drawing_board"
 	resourceScopeKindProcessTemplate = "process_template"
 )
 
@@ -44,7 +44,7 @@ type resourceUmbrellaKind struct {
 }
 
 var resourceUmbrellaKinds = []resourceUmbrellaKind{
-	{kind: resourceScopeKindBoard, read: []string{PermBoardsRead}, write: []string{PermBoardsWrite}},
+	{kind: resourceScopeKindDrawingBoard, read: []string{PermDrawingBoardsRead}, write: []string{PermDrawingBoardsWrite}},
 	// A run is read as part of its template: resource=process_template:x
 	// reaches x's runs, group=g the runs scoped to g.
 	{kind: resourceScopeKindProcessTemplate,
@@ -73,7 +73,7 @@ func resourceUmbrellaFor(slug string) string {
 // The two umbrella families never overlap: groups.admin covers the groups.*
 // namespace, the resource umbrellas the per-kind resource slugs. resources.write
 // implies resources.read (a manager that may change a resource may read it),
-// but only the umbrella does: boards.write still does not imply boards.read.
+// but only the umbrella does: drawing-boards.write still does not imply drawing-boards.read.
 // A deny of resources.read wins over that step, as any dedicated deny does.
 func permissionUmbrellaFor(slug string) string {
 	if IsGroupsAdminImpliedSlug(slug) {

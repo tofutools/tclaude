@@ -429,7 +429,7 @@ function bindDnd() {
     // tab is showing, so this is currently unreachable rather than a live bug —
     // the guard keeps the separation explicit instead of resting on that.
     if (e.dataTransfer.types.includes('application/x-tclaude-terminal-tab')) return;
-    // A board or page row drag (resource-dnd.js) moves a resource, never a member.
+    // A drawing board or page row drag (resource-dnd.js) moves a resource, never a member.
     if (e.dataTransfer.types.includes('application/x-tclaude-resource')) return;
     // dragover only accepts (preventDefault) while this document's member
     // drag is live, so an inactive drop is one the macOS release path above

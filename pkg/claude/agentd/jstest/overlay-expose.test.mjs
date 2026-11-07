@@ -28,7 +28,7 @@ async function threeWindows({ harness, instances }) {
   await harness.act(() => {
     instances.openOverlayWindow(chat('a', 'Alpha'));
     instances.openOverlayWindow(chat('b', 'Bravo'));
-    instances.openTabInWindow(instances.overlayWindows.peek().find((window) => window.active === 'b').id, null, { id: 'b2', kind: 'board', label: 'Board two' });
+    instances.openTabInWindow(instances.overlayWindows.peek().find((window) => window.active === 'b').id, null, { id: 'b2', kind: 'drawing_board', label: 'Drawing board two' });
     instances.openOverlayWindow(chat('c', 'Charlie'));
     instances.minimizeOverlayWindow('a');
   });
@@ -54,7 +54,7 @@ test('Ctrl+, shows every window, the front first and minimized ones after, with 
   await threeWindows(s);
   await s.key({ key: ',', ctrlKey: true });
   assert.ok(s.view(), 'the view shows');
-  assert.deepEqual(s.cards(), ['Charlie', 'Board two', 'Alpha'], 'front first, the minimized window last');
+  assert.deepEqual(s.cards(), ['Charlie', 'Drawing board two', 'Alpha'], 'front first, the minimized window last');
   const [front, tabbed, away] = s.mounted.container.querySelectorAll('.overlay-expose-card');
   assert.match(front.querySelector('.overlay-expose-kind').textContent, /^Chat$/);
   assert.equal(tabbed.querySelector('.overlay-expose-count').textContent, '2', 'a window says how many tabs it holds');
@@ -73,7 +73,7 @@ test('typing filters by any tab title, and Enter raises the chosen window and le
   await s.harness.input(filter, 'alp');
   assert.deepEqual(s.cards(), ['Alpha']);
   await s.harness.input(filter, 'bravo');
-  assert.deepEqual(s.cards(), ['Board two'], 'a window matches by a tab that is not active');
+  assert.deepEqual(s.cards(), ['Drawing board two'], 'a window matches by a tab that is not active');
   await s.harness.input(filter, 'nothing like it');
   assert.match(s.mounted.container.querySelector('.overlay-expose-empty').textContent, /No window matches/);
   await s.harness.input(filter, 'alp');
@@ -207,7 +207,7 @@ test('the open windows themselves spread out, live, and the minimized ones are c
   const before = JSON.stringify(s.instances.overlayWindows.value);
   await s.key({ key: ',', ctrlKey: true });
   const targets = () => [...s.mounted.container.querySelectorAll('.overlay-expose-live')].map((target) => target.querySelector('.overlay-expose-live-label').textContent.trim());
-  assert.deepEqual(targets(), ['✎ Board two 2', '💬 Charlie'], 'a target over each spread window, in reading order, with its tab count');
+  assert.deepEqual(targets(), ['✎ Drawing board two 2', '💬 Charlie'], 'a target over each spread window, in reading order, with its tab count');
   assert.deepEqual(s.cards(), ['Alpha'], 'the minimized window is a card');
   assert.ok(s.mounted.container.querySelector('.overlay-expose-grid.row'), 'in a row along the bottom');
   assert.match(sheet(s), new RegExp(`\\[data-overlay-window="${ids.b2}"\\] \\{[^}]*transform: translate\\(`), 'each window moves by a transform');

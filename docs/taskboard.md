@@ -345,13 +345,13 @@ dependencies. Deleting a group deletes its board.
 Each group card on the Groups tab has a **Task board** section (in wizard mode,
 the **Quest board**), below its Agents and Resources sections.
 
-- **Folded**, the section is one line of counts, for example
-  `5 · 1 needs you · 1 in progress · 2 next · 1 idea`. *Needs you* counts the
-  blocked and the stalled tasks, and *in progress* counts the other assigned
-  tasks. *Next* and
-  *ideas* count the unassigned open tasks in each stage. The group's summary
-  line carries the same counts, so a folded group still shows what is on its
-  board.
+- The section head shows the number of live tasks, then the ＋▾ add button
+  and the List | Lanes switch. The group's summary line carries the breakdown,
+  for example `task board: 1 needs you · 1 in progress · 2 next · 1 idea`, so
+  a folded group still shows what is on its board (the count's tooltip has it
+  too). *Needs you* counts the blocked and the stalled tasks, and *in
+  progress* counts the other assigned tasks. *Next* and *ideas* count the
+  unassigned open tasks in each stage.
 - **Open**, the section lists the queue in your order and then the Ideas band.
   Each row shows its number, title and id, a ref chip that links to the
   tracker, who holds the task, and its state. A blocked task shows its reason
@@ -397,7 +397,8 @@ a CLI verb:
     other online member who may change the board. With no such member
     online, the item is off, and says why.
   - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
-- In the lanes view, a cell's **+** adds a task right there (see below).
+- In the lanes view, a cell's **+** opens the same form, filled in from the
+  cell (see below).
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
@@ -457,13 +458,13 @@ A drag to another lane and another column at once runs both writes in that
 order, the lane first. A move the board cannot make in one step, such as
 unassigning and closing a task, is not accepted.
 
-Hover or focus a cell that a new task can land in to see a discreet **+**.
-These are the Unassigned lane's *Ideas* and *Next*, and an agent's *Next* and
-*In progress*. Type a title and press Enter to add the task there. The column
-sets the stage, and an agent's lane assigns the task to that agent. *full
-form…* opens the New task form filled in from the cell. An agent's lanes show
-no **+** unless you may assign. Order within the queue is set in the *List*
-view.
+Each cell that a new task can land in has a small grey **+** in its
+lower-right corner, which brightens when you hover the cell. These are the
+Unassigned lane's *Ideas* and *Next*, and an agent's *Next* and *In progress*.
+It opens the New task form filled in from the cell: the column sets the
+stage, and an agent's lane sets that agent as the assignee. An agent's lanes
+show no **+** unless you may assign. Order within the queue is set in the
+*List* view.
 
 The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off. A

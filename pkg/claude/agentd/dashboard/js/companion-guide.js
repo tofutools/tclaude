@@ -23,8 +23,8 @@ export const GUIDE_MARK_PATIENCE_MS = 1000;
 export const GUIDE_SETTLE_MS = 350;
 
 // The companion's own chrome, which agents never point at. Every overlay window
-// is shown from the companion's island, and a board in one is the page's content.
-export const COMPANION_CHROME = '#companion-root :not(.board-overlay, .board-overlay *)';
+// is shown from the companion's island, and a drawing board in one is the page's content.
+export const COMPANION_CHROME = '#companion-root :not(.drawing-board-overlay, .drawing-board-overlay *)';
 
 export const TARGET_SELECTOR = [
   'button', 'a[href]', '[role="button"]', '[role="tab"]', '[role="menuitem"]', '[role="link"]',

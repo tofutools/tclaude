@@ -1,6 +1,6 @@
 // process-pane-model.js -- the pure half of a process template open as a Collab
 // strip tab (tcl-tnbtwp): the terminal shell's third pane kind, beside
-// terminals and boards. Its seed names the template instead of a socket, and its
+// terminals and drawing boards. Its seed names the template instead of a socket, and its
 // key is derived from the id, so a template has one strip tab at most. DOM-free,
 // so the terminal core and the standalone page can read a seed without the
 // editor's module graph.
