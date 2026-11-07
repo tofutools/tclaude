@@ -491,10 +491,11 @@ else sees it.
   end. With lanes by role or by subgroup, a lane moves within its heading, and
   you drag a heading to reorder the headings. A focused lane head or heading
   also moves with Alt+↑ and Alt+↓. *reset order*, next to the *lanes by*
-  switch, puts the default order back. A lane group whose agents are all
-offline folds; click *show offline lanes* to see it. Striped cells cannot hold a
-card: an agent's *Ideas* (an idea is unassigned) and the Unassigned lane's *In
-progress*.
+  switch, puts the default order back.
+
+A lane group whose agents are all offline folds; click *show offline lanes* to
+see it. Striped cells cannot hold a card: an agent's *Ideas* (an idea is
+unassigned) and the Unassigned lane's *In progress*.
 
 Dragging a card is one action, the same as its CLI verb:
 
