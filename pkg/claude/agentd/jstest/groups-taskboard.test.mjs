@@ -88,6 +88,8 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.equal(rows[0].querySelector('.tb-state').textContent, 'in progress');
   assert.equal(tip(rows[0]), 'in progress · with builder');
   assert.equal(rows[0].querySelector('.tb-state-wrap').getAttribute('tabindex'), '0', 'the tooltip is reachable by keyboard');
+  assert.ok(rows[0].querySelector('.tb-state-wrap').classList.contains('state-pill-wrap'), 'and shown on focus, as the Agents pill\'s is');
+  assert.equal(rows[0].querySelector('.tb-state-wrap').dataset.fullStatus, tip(rows[0]));
   assert.match(rows[0].querySelector('.tb-state-wrap').getAttribute('aria-label'), /^state: in progress · with builder/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');
@@ -201,7 +203,7 @@ test('while the feature is off the source looks again only now and then', async 
     '9 · 1 needs you · 2 in progress · 6 next · 3 ideas');
 });
 
-test('a stalled assignment shows amber with how long its agent has been idle', async (t) => {
+test('a stalled assignment shows amber and says its agent went idle', async (t) => {
   const group = crew('tb-stalled');
   const harness = await createPreactHarness(t);
   const context = { groups: [{

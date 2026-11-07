@@ -21,7 +21,6 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
 import {
   LAYOUT_COLUMNS, applyLaneOrder, gridColumns, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,

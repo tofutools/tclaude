@@ -225,7 +225,9 @@ function StatePill({ task, byId, assignee = '' }) {
   }
   if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason}”`);
   const title = `${word} · ${details.length ? details.join(' · ') : STATE_MEANING[state]}`;
-  return html`<span class="tb-state-wrap" tabindex="0" title=${title} aria-label=${`state: ${title}`}>
+  // The Agents pill's wrap (dashboard.css .state-pill-wrap): keyboard and
+  // touch focus show data-full-status, as the pointer's title does.
+  return html`<span class="state-pill-wrap tb-state-wrap" tabindex="0" title=${title} aria-label=${`state: ${title}`} data-full-status=${title}>
     <span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`} aria-hidden="true">${word}</span>
   </span>`;
 }
