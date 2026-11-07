@@ -18687,7 +18687,6 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-capture-line { margin: 8px 8px 0; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
 /* "+ New task" (groups-taskboard-new.js): the Resources ＋ menu's
    icon-only button, and the New task / Ask an agent dialogs. */
-.tb-new-menu.gr-new-menu { left: auto; right: 0; }
 #taskboard-new-modal > .ui-dialog, #taskboard-ask-modal > .ui-dialog { width: min(640px, calc(100vw - 32px)); }
 .tb-new-row { margin-top: 8px; }
 .tb-new-row .cron-create-label { flex-basis: 72px; }
