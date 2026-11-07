@@ -506,7 +506,7 @@ export async function addGroupDrawingBoard(group, { api, notify = defaultNotify,
 export async function addGroupPage(group, pages = [], { api, notify = defaultNotify, source } = {}) {
   try {
     const page = await api.createGroupPage(group.name, freePageName(pages));
-    notify(`Created a blank page in ${group.name}: draw on it, then a member takes it over`);
+    notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
     void source?.refresh?.();
     expectPage(page.id);
     return page;
@@ -566,7 +566,7 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
       ${item('data-resource-add-process-agent', process('agent'), wizard ? 'Rite for one hero' : 'Process for one agent', wizard ? 'Pick a hero; its steps are that hero\'s labour' : 'Pick a member; its steps run as that agent')}
       ${!processesOnly && html`<${MenuSep} />
       ${item('data-resource-add-drawing-board', addDrawingBoard, 'Drawing board', "A drawing board shared with the group's agents")}
-      ${item('data-resource-add-page', addPage, 'Live page', 'A blank page you draw on; a member takes it over with its own source')}
+      ${item('data-resource-add-page', addPage, 'Live page', 'A web page a member serves, live here for you to view and mark up; starts blank')}
       ${item('data-resource-add-shell', addShell, 'Shell', cwd ? `A terminal in ${cwd}` : 'Set the group\'s directory first', !cwd)}`}
     <//>`}
   </span>`;

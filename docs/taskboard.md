@@ -265,6 +265,29 @@ tclaude agent permissions grant steward taskboard.read   # unscoped: every group
 tclaude agent permissions grant lead taskboard.assign --scope group=tclaude --scope target_agent=@descendants
 ```
 
+### Giving a whole group access to another group's board
+
+To let every member of one group read or change another group's board, give
+the first group a **group grant**: the ordinary `taskboard.read` or
+`taskboard.write` slug, held by the group and scoped to the board's group.
+There is no separate sharing feature and no special slug. In the dashboard,
+open the group's ⚙ permissions, add the slug, and set its `group` scope to
+the board's group. For example, to give website read access to crew's board,
+and ops read and write access:
+
+| Group | Group grant | Its members may |
+|---|---|---|
+| `website` | `taskboard.read`, scope `group=crew` | List crew's board, show its tasks and their history |
+| `ops` | `taskboard.write`, scope `group=crew` | Also add, edit, move, promote, demote, block and close crew's tasks |
+
+A group grant applies to every current and future member, and ends for an
+agent as soon as it leaves the group. Like an explicit per-agent grant, it
+also passes the board's [writer lock](#the-writer-lock). Assigning and the
+lock itself stay on `taskboard.assign` and `taskboard.manage`, which a group
+can be granted in the same way. A board on a linked node works the same way,
+with a `peer` scope instead (see [A linked node's board, for a whole
+group](#a-linked-nodes-board-for-a-whole-group)).
+
 An explicit deny wins over membership and ownership, as it does everywhere.
 If an agent asks for a task in a group whose board it cannot read, the answer
 is 404 with "no such task". This way the reply does not reveal that the task
@@ -321,6 +344,40 @@ case, the linked node's own peer grants decide which groups it reaches. As
 everywhere in federation, a missing peer grant is a refusal, not a popup on
 the linked node. Its operator grants the access, either up front or in answer
 to an [access request](federation.md).
+
+### A linked node's board, for a whole group
+
+Giving the agents of a local group access to a group's board on a linked
+node takes two grants, one on each node. Each one bounds the other:
+
+1. **On the linked node (bob).** Its operator gives this node a peer grant
+   on the board's group, or trusts it unrestricted:
+   `tclaude federation grant <this node> taskboard.read --scope group=crew`.
+   This decides what any of this node's agents can reach on bob.
+2. **On this node.** Its operator gives the local group a group grant of the
+   same slug, scoped `peer=bob/crew`: in the group's ⚙ permissions, add
+   `taskboard.read` and pick **bob / crew** in its `peer` scope. The picker
+   lists each linked node, and the groups that node grants this node anything
+   on. This decides which of this node's agents may use that reach.
+
+Every member of the local group can then run
+`tclaude agent taskboard ls crew --peer bob`. With `taskboard.write` on both
+nodes it can also run `add crew … --peer bob` and the other writes. On this
+node, write does not imply read for a linked node's board, so give the group
+both slugs, each scoped `peer=bob/crew`. A local `group=`
+scope, an unscoped grant and group ownership never reach a linked node, and
+a `peer=` scope never reaches a local board. A verb that names only a task id
+(`show`, `edit`, `move`, `done` and the like) needs the node-wide scope
+`peer=bob` on this node, as described above.
+
+A refusal names a missing layer. When both are missing, the linked node's
+layer is reported first:
+
+| What is missing | What the agent is told |
+|---|---|
+| The linked node grants this node nothing on the group | `bob has not granted this node anything on group "crew"`, with the `tclaude federation grant` command its operator would run |
+| The linked node grants other things on the group, but not this slug | `requires taskboard.read for group:crew, a peer grant the node you called has not given your node`, also with the command |
+| This node's grant | `caller is not granted permission "taskboard.read" for peer=<bob's instance id>/crew`, with the scope to grant |
 
 `GET /api/node-summary` carries `taskboard`, the summed counts of the boards
 the reader may see.

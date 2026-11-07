@@ -488,9 +488,9 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 		refuse(http.StatusForbidden, "agent_field_not_allowed", err.Error())
 		return
 	}
-	groups, ok := agentPeerViewFootprint(cat, spec, values, body)
+	groups, unknown, ok := agentPeerViewFootprint(cat, spec, values, body)
 	if !ok {
-		refuse(http.StatusForbidden, "unknown_footprint", "the peer's catalog does not show every group this touches")
+		refuse(http.StatusForbidden, "unknown_footprint", agentPeerViewUnknownFootprint(node, unknown, slugs))
 		return
 	}
 	// Every (slug, group) needs an explicit peer= grant. One gap may still be
@@ -553,18 +553,19 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 // any group the body names for the action to land in. It is not ok when a
 // group is unknown or the catalog lists the target in none. The receiver
 // refuses anything outside the footprint the sender sends, so a stale or
-// partial catalog makes a request fail there rather than widen.
-func agentPeerViewFootprint(cat *proto.CatalogPayload, route agentPeerViewRoute, values map[string]string, body []byte) ([]string, bool) {
+// partial catalog makes a request fail there rather than widen. When a named
+// group is what the catalog lacks, unknown names it.
+func agentPeerViewFootprint(cat *proto.CatalogPayload, route agentPeerViewRoute, values map[string]string, body []byte) (groups []string, unknown string, ok bool) {
 	known := func(name string) bool {
 		return slices.ContainsFunc(cat.Groups, func(g proto.CatalogGroup) bool { return g.Name == name })
 	}
 	var out []string
 	switch route.target {
 	case agentViewNode:
-		return []string{""}, true
+		return []string{""}, "", true
 	case agentViewGroup:
 		if !known(values["name"]) {
-			return nil, false
+			return nil, values["name"], false
 		}
 		out = []string{values["name"]}
 	case agentViewAgent:
@@ -581,16 +582,33 @@ func agentPeerViewFootprint(cat *proto.CatalogPayload, route agentPeerViewRoute,
 			}
 		}
 		if len(out) == 0 {
-			return nil, false
+			return nil, "", false
 		}
 	}
 	if into := agentPeerViewIntoGroup(route, body); into != "" && !slices.Contains(out, into) {
 		if !known(into) {
-			return nil, false
+			return nil, into, false
 		}
 		out = append(out, into)
 	}
-	return out, true
+	return out, "", true
+}
+
+// agentPeerViewUnknownFootprint explains a footprint the peer's catalog does
+// not show. A group missing from it is one the peer grants this node nothing
+// on (or a catalog older than the grant), so the message names the grant the
+// peer's operator would give. The group is the one the agent itself named.
+func agentPeerViewUnknownFootprint(node, group string, slugs []string) string {
+	if group == "" {
+		return "the peer's catalog does not show every group this touches"
+	}
+	slug := "<slug>"
+	if len(slugs) > 0 {
+		slug = slugs[0]
+	}
+	return fmt.Sprintf("%s has not granted this node anything on group %q (or its catalog here predates the grant). "+
+		"Its operator grants it there with: tclaude federation grant <this node> %s --scope group=%s",
+		node, group, slug, group)
 }
 
 // statusRecorder remembers the status written through it.
