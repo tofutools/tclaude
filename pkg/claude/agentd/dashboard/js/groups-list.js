@@ -30,6 +30,7 @@ import {
   FusedSection, GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
 } from './groups-processes.js';
 import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
+import { TaskboardSection, TaskboardSummaryChip } from './groups-taskboard.js';
 import { featureState } from './feature-state-registry.js';
 import { firstUnreadHumanNotification } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
@@ -493,6 +494,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
     <${GroupProcessGraphs} group=${group} snapshot=${snapshot} source=${processes?.source} wizard=${wizard} />
     ${processes ? html`<${SubgroupRunTotal} node=${node} />` : null}
     <${ProcessChip} group=${group} />
+    <${TaskboardSummaryChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}
     ${group.pending?.length ? html`<span class="group-pending-chip" title=${`${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'} waiting for startup`}>⏳ ${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'}</span>` : null}
     <${CapacityQueuedChip} group=${group} snapshot=${snapshot} />
@@ -679,9 +681,10 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     actions: html`<${GroupActions} group=${group} actions=${actions} controls=${!table} />`,
     closedActions: table ? html`<${GroupActions} group=${group} actions=${actions} fold=${false} />` : null,
     // The task force card belongs to the roster, so it heads the Agents
-    // section; triggers follow both sections. Neither sits above a section
-    // line, which would move its controls when the card folds.
-    after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
+    // section; the Task board and then triggers follow both sections.
+    // Neither sits above a section line, which would move its controls when
+    // the card folds.
+    after: html`<${TaskboardSection} group=${group} snapshot=${snapshot} /><${GroupTriggersSection} group=${group} triggers=${triggers} />`,
     agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
   } : null;
   const wizard = isWizardActive();
@@ -708,6 +711,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
         <${ForceBlock} group=${group} />`}
         <${GroupTriggersSection} group=${group} triggers=${triggers} />
         ${processes ? html`<${GroupProcessBody} group=${group} />` : members}
+        <${TaskboardSection} group=${group} snapshot=${snapshot} />
         ${!processes && !fleet && html`<${PeerGroupBoards} group=${group} />`}`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
