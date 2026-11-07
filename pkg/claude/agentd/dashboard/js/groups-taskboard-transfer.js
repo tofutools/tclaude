@@ -20,6 +20,7 @@
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
 import { shellToast } from './shell-state.js';
+import { clearDropBox, markDropBox } from './dnd-ops.js';
 
 const OVER = 'tb-transfer-over';
 // TASK_DRAG_TYPE is a task drag's data type (groups-taskboard.js, the
@@ -118,9 +119,48 @@ export function transferTargets(fromShown) {
 }
 
 function clearOver(state) {
-  state.over?.classList.remove(OVER);
+  state.over?.classList.remove(OVER, CLONE);
   state.over?.removeAttribute('data-tb-transfer');
   state.over = null;
+  clearDropBox(state.box);
+  state.box = null;
+}
+
+// activeTransferOff ends the task drag in flight (listenForTransfer).
+let activeTransferOff = null;
+
+// CLONE tints the drop label green while Ctrl/Cmd clones, as the group's
+// box takes the groups view's clone look (dnd-ops.js markDropBox).
+const CLONE = 'tb-transfer-clone';
+
+// The groups view's bin (#dnd-trash, dashboard.html) takes a task drag too:
+// a drop there drops the task, as ⋯ Drop does. Its task mode labels it Drop.
+const BIN_MODE = 'dnd-trash-task-mode';
+const binEl = () => document.getElementById('dnd-trash');
+const onBin = (event) => !!event.target?.closest?.('#dnd-trash');
+
+function showBin() {
+  binEl()?.classList.add('show', BIN_MODE);
+}
+
+function hideBin() {
+  binEl()?.classList.remove('show', 'dnd-drop-over', BIN_MODE);
+}
+
+// dropMessage is the bin's confirmation for a task.
+export function dropMessage(task) {
+  return {
+    title: 'Drop task?',
+    body: `Drop "${task.title || task.id}": it is closed as dropped and leaves the board; it stays in history, where ↺ Reopen brings it back.`,
+    okLabel: 'Drop',
+  };
+}
+
+// runBinDrop asks, then drops the task (taskboard drop).
+export async function runBinDrop({ task, actions }) {
+  const ok = await transferDeps.confirm({ ...dropMessage(task), meta: task.title || task.id });
+  if (!ok) return false;
+  return actions.run(`${task.id}:form`, 'Drop', (api) => api.status(task.id, 'dropped'));
 }
 
 function stageLabel(stage) {
@@ -192,33 +232,66 @@ export function transferMessage({ task, from, to, stage, clone, tasks = [], memb
 }
 
 // listenForTransfer takes, for the length of one task drag, a drop on
-// another group's board or header. from is { task, group (the board's own
-// group, with shownName for a linked node's), tasks, actions }. Returns the
-// function that stops listening.
-export function listenForTransfer({ task, group, tasks = [], actions, onDrop = () => {} }) {
+// another group's board or header, and (when droppable: a live task the
+// viewer may drop, as ⋯ Drop) a drop on the groups view's bin. from is
+// { task, group (the board's own group, with shownName for a linked
+// node's), tasks, actions }. Returns the function that stops listening.
+export function listenForTransfer({ task, group, tasks = [], actions, droppable = false, onDrop = () => {} }) {
+  // One task drag at a time, whichever board it starts on: a drag whose
+  // dragend never came (its row re-rendered away) must not keep the bin up
+  // or take this drag's drop.
+  activeTransferOff?.();
   if (!actions || typeof actions.api?.moveToGroup !== 'function') return () => {};
   const fromShown = group.shownName || group.name;
-  const state = { over: null };
+  const state = { over: null, box: null };
+  if (droppable) showBin();
   const fromBox = () => [...document.querySelectorAll('[data-fused-taskboard]')]
     .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('details[data-group-key]') || null;
   const onOver = (event) => {
     if (!isTaskDrag(event)) { clearOver(state); return; }
+    // The bin: no clone meaning there, as for an agent.
+    const bin = droppable && onBin(event);
+    binEl()?.classList.toggle('dnd-drop-over', bin);
+    if (bin) {
+      clearOver(state);
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      return;
+    }
     const hit = transferTarget(event.target, fromShown, fromBox());
     if (!hit) { clearOver(state); return; }
     event.preventDefault();
     event.stopPropagation();
+    // Read on every dragover, so the look follows Ctrl/Cmd pressed or
+    // released mid-drag.
     const clone = cloneGesture(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = clone ? 'copy' : 'move';
     if (state.over !== hit.el) { clearOver(state); state.over = hit.el; hit.el.classList.add(OVER); }
+    hit.el.classList.toggle(CLONE, clone);
     hit.el.setAttribute('data-tb-transfer', `${clone ? 'clone' : 'move'} to ${hit.group} · ${stageLabel(hit.stage)}`);
+    const box = realGroupBox(hit.el);
+    if (state.box !== box) { clearDropBox(state.box); state.box = box; }
+    markDropBox(box, clone ? 'clone' : 'move');
   };
   const off = () => {
     clearOver(state);
+    hideBin();
     document.removeEventListener('dragover', onOver, true);
     document.removeEventListener('drop', onDropEvent, true);
+    document.removeEventListener('dragstart', off, true);
+    if (activeTransferOff === off) activeTransferOff = null;
   };
   const onDropEvent = (event) => {
     if (!isTaskDrag(event)) { off(); return; }
+    if (droppable && onBin(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      off();
+      onDrop();
+      void runBinDrop({ task, actions });
+      return;
+    }
     const hit = transferTarget(event.target, fromShown, fromBox());
     if (!hit) return;
     event.preventDefault();
@@ -235,6 +308,9 @@ export function listenForTransfer({ task, group, tasks = [], actions, onDrop = (
   };
   document.addEventListener('dragover', onOver, true);
   document.addEventListener('drop', onDropEvent, true);
+  // Any later drag (an agent, a resource, the next task) ends this one.
+  document.addEventListener('dragstart', off, true);
+  activeTransferOff = off;
   return off;
 }
 

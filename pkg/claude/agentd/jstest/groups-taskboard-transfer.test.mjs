@@ -60,7 +60,7 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
       if (awayStatus) { const status = awayStatus; awayStatus = 0; throw Object.assign(new Error(`status ${status}`), { status }); }
       return { id: args[0], status: 'dropped' };
     },
-    move: async () => ({}), assign: async () => ({}), status: async () => ({}), stage: async () => ({}),
+    move: async () => ({}), assign: async () => ({}), status: async (...args) => { calls.push(['status', ...args]); return {}; }, stage: async () => ({}),
   };
   const source = { context: harness.signals.signal({ groups: [board('tbt-a', [1, 2]), board('tbt-b', [3, 4])] }),
     status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
@@ -353,4 +353,108 @@ test('a list row dragged as a whole onto a group on another node goes there', as
   assert.deepEqual(remote.map((call) => call.slice(0, 3)), [['nd_other', 'transferIn', 'tbt-b']], 'the other node creates it');
   assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
     'then the source drops it');
+});
+
+// bin is the groups view's #dnd-trash (dashboard.html), as dnd.js shows it.
+function addBin(harness) {
+  const bin = harness.document.createElement('div');
+  bin.id = 'dnd-trash';
+  bin.setAttribute('data-dnd-target-retired', '1');
+  harness.document.body.append(bin);
+  return bin;
+}
+
+test('a task dragged to the groups view\'s bin is dropped after the bin\'s confirmation', async (t) => {
+  const { harness, calls, confirms, dt, start, over, drop } = await mountTwo(t);
+  const bin = addBin(harness);
+  assert.equal(bin.classList.contains('show'), false);
+  const data = dt();
+  await start('tk_00000001', data);
+  assert.ok(bin.classList.contains('show'), 'the bin appears when a task drag starts');
+  assert.ok(bin.classList.contains('dnd-trash-task-mode'), 'and says Drop, not Retire');
+  assert.equal(over(bin, data, { ctrlKey: true }).defaultPrevented, true, 'it takes the task (Ctrl/Cmd means nothing there)');
+  assert.ok(bin.classList.contains('dnd-drop-over'));
+  assert.equal(data.dropEffect, 'move');
+  await drop(bin, data);
+  assert.equal(confirms[0].title, 'Drop task?');
+  assert.equal(confirms[0].okLabel, 'Drop');
+  assert.deepEqual(calls, [['status', 'tk_00000001', 'dropped']], 'the drop route, as ⋯ Drop');
+  assert.equal(bin.classList.contains('show'), false, 'the bin goes with the drag');
+});
+
+test('a lanes card dragged to the bin is dropped too; a cancelled confirmation changes nothing', async (t) => {
+  const { harness, calls, confirms, dt, start, drop, setAnswer } = await mountTwo(t, { lanes: true });
+  const bin = addBin(harness);
+  setAnswer(false);
+  const data = dt();
+  await start('tk_00000003', data);
+  assert.ok(bin.classList.contains('show'), 'a card drag shows the bin');
+  await drop(bin, data);
+  assert.equal(confirms.length, 1);
+  assert.deepEqual(calls, [], 'cancelled: nothing is dropped');
+});
+
+test('the bin is offered only for a task the viewer may drop, as ⋯ Drop is', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { binDroppable } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { listenForTransfer } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const local = { api: { moveToGroup: async () => ({}) } };
+  const peerNoAssign = { api: { moveToGroup: async () => ({}), can: { assign: false } } };
+  assert.equal(binDroppable(row('g', 'tk_1', 'a'), local), true, 'the operator drops any live task');
+  assert.equal(binDroppable(row('g', 'tk_1', 'a', { status: 'blocked' }), local), true);
+  assert.equal(binDroppable(row('g', 'tk_1', 'a', { status: 'done' }), local), false, 'a closed task is not dropped again');
+  assert.equal(binDroppable(row('g', 'tk_1', 'a', { assignee: { agent_id: 'agt_dev' } }), peerNoAssign), false,
+    'an assigned task on a peer that grants no assign is not this viewer\'s to drop');
+  assert.equal(binDroppable(row('g', 'tk_1', 'a'), peerNoAssign), true, 'an unassigned one is');
+  const bin = addBin(harness);
+  const off = listenForTransfer({ task: row('g', 'tk_1', 'a'), group: { name: 'g' }, actions: local, droppable: false });
+  assert.equal(bin.classList.contains('show'), false, 'not droppable: no bin');
+  off();
+});
+
+test('Ctrl/Cmd over another group shows the groups view\'s clone look, and back to a move when released', async (t) => {
+  const { c, dt, start, over, summary, section } = await mountTwo(t);
+  const box = c.querySelector('details[data-group-key="tbt-b"]');
+  const data = dt();
+  await start('tk_00000001', data);
+  over(summary('tbt-b'), data);
+  assert.ok(box.classList.contains('dnd-drop-over'), 'the target group gets the groups view\'s drop look');
+  assert.equal(box.classList.contains('dnd-effect-clone'), false, 'a move');
+  over(summary('tbt-b'), data, { ctrlKey: true });
+  assert.ok(box.classList.contains('dnd-effect-clone'), 'Ctrl held: the clone look');
+  assert.ok(summary('tbt-b').classList.contains('tb-transfer-clone'));
+  assert.match(summary('tbt-b').getAttribute('data-tb-transfer'), /^clone to tbt-b/);
+  over(section('tbt-b').querySelector('.gf-section-head'), data, { metaKey: true });
+  assert.ok(box.classList.contains('dnd-effect-clone'), 'Cmd on the board too');
+  // A browser sets each dragover's dropEffect from the keys held: a move
+  // once Cmd is released.
+  data.dropEffect = 'move';
+  over(section('tbt-b').querySelector('.gf-section-head'), data);
+  assert.equal(box.classList.contains('dnd-effect-clone'), false, 'released mid-drag: a move again');
+  assert.equal(section('tbt-b').classList.contains('tb-transfer-clone'), false);
+  over(c.querySelector('details[data-group-key="tbt-a"] > summary'), data);
+  assert.equal(box.classList.contains('dnd-drop-over'), false, 'off the target, its look goes');
+});
+
+test('a task drag whose dragend never came leaves no bin behind: the next drag of any kind ends it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { listenForTransfer, transferDeps } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const confirms = [];
+  const saved = { ...transferDeps };
+  transferDeps.confirm = async (o) => { confirms.push(o); return false; };
+  t.after(() => Object.assign(transferDeps, saved));
+  const bin = addBin(harness);
+  const actions = { api: { moveToGroup: async () => ({}) }, run: async () => true };
+  // A drag on one board, its dragend lost; then a drag on another board.
+  listenForTransfer({ task: row('a', 'tk_1', 'stale'), group: { name: 'a' }, actions, droppable: true });
+  listenForTransfer({ task: row('b', 'tk_2', 'dragged'), group: { name: 'b' }, actions, droppable: true });
+  const types = ['application/x-tclaude-task'];
+  harness.fireEvent(bin, 'drop', { dataTransfer: { types } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(confirms.map((c) => c.meta), ['dragged'], 'only the task being dragged is asked about');
+  // Lost again; then an agent drag starts.
+  listenForTransfer({ task: row('b', 'tk_2', 'dragged'), group: { name: 'b' }, actions, droppable: true });
+  assert.ok(bin.classList.contains('dnd-trash-task-mode'));
+  harness.fireEvent(harness.document.body, 'dragstart', { dataTransfer: { types: ['text/plain'] } });
+  assert.equal(bin.classList.contains('dnd-trash-task-mode'), false, 'the agent drag gets the bin as Retire, not Drop');
 });
