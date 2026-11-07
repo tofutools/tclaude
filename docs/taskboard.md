@@ -320,6 +320,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock |
+| `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
 - Any of these grants also lets the node read the board.
 - A grant covers only the groups in its scope. A task in another group answers

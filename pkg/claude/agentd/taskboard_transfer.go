@@ -111,7 +111,15 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 
 // requireTaskboardTransfer gates a move or clone of t (in g) to target.
 func requireTaskboardTransfer(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g, target *db.AgentGroup, clone bool) bool {
-	if _, ok := requireGroupPermission(w, r, PermTaskboardTransfer, target); !ok {
+	if a := peerGrantFromRequest(r); a != nil {
+		// A linked node's authority covers the task's own group; the target
+		// is another group, so its transfer grant there is asked for here.
+		if !fedPeerAllows(a.peer, target.ID, PermTaskboardTransfer) {
+			writeError(w, http.StatusForbidden, "permission",
+				fmt.Sprintf("this node does not grant you %s for group:%s", PermTaskboardTransfer, target.Name))
+			return false
+		}
+	} else if _, ok := requireGroupPermission(w, r, PermTaskboardTransfer, target); !ok {
 		return false
 	}
 	if !requireTaskboardUnlocked(w, r, target) {
