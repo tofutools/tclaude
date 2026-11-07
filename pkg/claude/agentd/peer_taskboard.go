@@ -43,6 +43,7 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	}
 	group("GET /v1/groups/{name}/taskboard", read)
 	group("POST /v1/groups/{name}/taskboard/tasks", write)
+	group("POST /v1/groups/{name}/taskboard/ask", write)
 
 	context := read
 	context.serve = servePeerTaskboardContext
@@ -189,7 +190,7 @@ func servePeerTaskboardContext(w http.ResponseWriter, r *http.Request, v *peerVi
 		if g.IsArchived() || !peerTaskboardReads(v.peer.InstanceID, g.ID) {
 			continue
 		}
-		entry, err := buildTaskboardGroupContext(g, now)
+		entry, err := buildTaskboardGroupContext(r, g, now)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
@@ -217,7 +218,7 @@ func peerSummaryTaskboardCounts(v *peerView) *taskboardCounts {
 		if g.IsArchived() || v != nil && !v.unrestricted() && !peerTaskboardReads(v.peer.InstanceID, g.ID) {
 			continue
 		}
-		entry, err := buildTaskboardGroupContext(g, now)
+		entry, err := buildTaskboardGroupContext(nil, g, now)
 		if err != nil {
 			return nil
 		}

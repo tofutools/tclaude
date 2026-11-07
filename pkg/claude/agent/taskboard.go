@@ -37,6 +37,7 @@ func taskboardCmd() *cobra.Command {
 			taskboardShowCmd(),
 			taskboardHistoryCmd(),
 			taskboardAddCmd(),
+			taskboardAskCmd(),
 			taskboardEditCmd(),
 			taskboardMoveCmd(),
 			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
@@ -612,10 +613,12 @@ type taskboardAddParams struct {
 	BodyFile string `long:"body-file" optional:"true" help:"Read the brief from this file ('-' for stdin)"`
 	Ref      string `long:"ref" optional:"true" help:"External ref: an http(s) URL, owner/repo#n, or a tracker id (tcl-a1b2c3 for awb, LIN-123 for Linear; prefix awb: or linear: to say which)"`
 	RefLabel string `long:"ref-label" optional:"true" help:"Display label for the ref (default: derived)"`
-	Next     bool   `long:"next" help:"Add to the queue (next) instead of the ideas"`
-	After    string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
-	Top      bool   `long:"top" help:"Place at the top of its stage instead of the end"`
-	Before   string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
+	// ResolveRef is the dashboard's New task form's ref lookup.
+	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
+	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas"`
+	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
+	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
+	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
 	// Import flags: one task per ref or line, titles looked up through the
 	// tracker proxies.
 	FromAWB    string `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
@@ -700,8 +703,85 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if p.Next {
 		req["stage"] = "next"
 	}
+	if p.ResolveRef {
+		req["resolve_ref"] = true
+	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
 	return taskboardWrite(p.Peer, http.MethodPost, path, req, p.AskHuman, p.JSON, "added", stdout, stderr)
+}
+
+// ---- ask ----
+
+type taskboardAskParams struct {
+	Group      string `pos:"true" help:"Group whose board the tasks go on"`
+	Prompt     string `pos:"true" optional:"true" help:"What you want, in your own words"`
+	To         string `long:"to" help:"Member to ask (name or id): an active member of the group who may change its board"`
+	PromptFile string `long:"prompt-file" optional:"true" help:"Read the request from this file ('-' for stdin)"`
+	Peer       string `long:"peer" optional:"true" help:"Ask a member on a linked node's board, under the grants it gave this node (taskboard.write)"`
+	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON       bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardAskCmd() *cobra.Command {
+	return boa.CmdT[taskboardAskParams]{
+		Use:   "ask",
+		Short: "Ask a member to turn a request into tasks on the board (inbox mail)",
+		Long: "Mail a member of the group a request in prose. It is told to turn the request into well-formed tasks " +
+			"with `tclaude agent taskboard add`, to reply when done, and not to start the work. The request is inbox " +
+			"mail, never keys typed into its pane. It needs taskboard.write on the group, as add does, and the member " +
+			"must be able to change the board (the writer lock). This is the dashboard's + New task › Ask an agent.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardAskParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardAskParams, _ *cobra.Command, _ []string) {
+			taskboardExit(runTaskboardAsk(p, os.Stdin, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runTaskboardAsk(p *taskboardAskParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.To) == "" {
+		fmt.Fprintln(stderr, "Error: --to is required: the member to ask")
+		return rcInvalidArg
+	}
+	if p.Prompt != "" && p.PromptFile != "" {
+		fmt.Fprintln(stderr, "Error: give the request or --prompt-file, not both")
+		return rcInvalidArg
+	}
+	prompt, _, err := readTaskBody(p.Prompt, p.PromptFile, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if strings.TrimSpace(prompt) == "" {
+		fmt.Fprintln(stderr, "Error: give the request, as an argument or with --prompt-file")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	var out struct {
+		Group     string `json:"group"`
+		To        string `json:"to"`
+		MessageID int64  `json:"message_id"`
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/ask"
+	if err := remoteRequestOpts(p.Peer, http.MethodPost, path, map[string]any{"to": p.To, "prompt": prompt}, &out, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return writeJSONTo(stdout, out)
+	}
+	fmt.Fprintf(stdout, "asked %s for tasks on %s (message #%d); it replies when they are on the board\n", out.To, out.Group, out.MessageID)
+	return rcOK
 }
 
 // taskboardImportResult is one item of an import's answer.

@@ -333,6 +333,27 @@ func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, res
 	return readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
 }
 
+// resolveTaskboardRefLink is a single add's resolve_ref: a bare awb or Linear
+// id (no link yet) is looked up as the caller, within an import's time budget,
+// and takes the link the lookup gives. Any other ref, or a lookup that gives
+// no link, keeps refURL. The title is the caller's, so the looked-up one is
+// not used.
+func resolveTaskboardRefLink(r *http.Request, kind, refURL, label string) string {
+	if refURL != "" || (kind != "awb" && kind != "linear") {
+		return refURL
+	}
+	budget := taskboardImportLookupBudget
+	if taskboardPeerAuthor(r) != "" {
+		budget = taskboardImportPeerLookupBudget
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
+	defer cancel()
+	if _, resolved, _ := lookupTaskboardRef(r.WithContext(ctx), kind, refURL, label); resolved != "" {
+		return resolved
+	}
+	return refURL
+}
+
 // readTaskboardRefTitle runs one proxy read and takes the title from it.
 func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, fallback, resolvedURL string) (title, outURL, note string) {
 	status, payload, errText := taskboardProxyRead(r, path, body)

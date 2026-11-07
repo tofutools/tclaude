@@ -63,6 +63,15 @@ New tasks land in the ideas unless you pass `--next`. Keep the board short.
 When something will not happen soon, make sure the tracker has it, then
 `drop` it.
 
+### When you are asked for tasks
+
+A `[taskboard] task request from …: <group>` message (the dashboard's
+*+ New task › Ask an agent*, or `taskboard ask`) carries a request in prose.
+Turn it into one or more well-formed tasks with `taskboard add`: a one-line
+title, a short `--body` brief, a `--ref` where there is one, and `--next` only
+when it is clearly next. Create the tasks only; do not start the work. Then
+reply to the message with the task ids.
+
 ## Permissions
 
 - Members read and change their own group's board and take its tasks. If the

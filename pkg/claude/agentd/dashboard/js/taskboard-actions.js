@@ -3,6 +3,10 @@
 // form:
 //
 //   capture / paste   add <group> "title" [--next]  · add --lines-file -
+//   + New task ›      add <group> "title" --body … --ref … --resolve-ref
+//   Write it myself   [--next] --after tk_…  (then assign --to, if picked)
+//   + New task ›      ask <group> --to <agent> "request"
+//   Ask an agent
 //   + from awb/…      add <group> --from-awb / --from-linear / --from-github
 //   edit              edit <task> --title … --ref …|--clear-ref
 //   drag reorder      move <task> --before|--after|--top|--bottom
@@ -118,12 +122,30 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     importRefs(group, refs, { next = false } = {}) {
       return importBatches(group, 'refs', refs, next ? 'next' : undefined);
     },
-    edit(id, { title, ref, clearRef = false }) {
-      const body = {};
-      if (title !== undefined) body.title = title;
-      if (clearRef) body.clear_ref = true;
-      else if (ref !== undefined) body.ref = ref;
-      return call('PATCH', taskPath(id), body);
+    // create adds one task from the New task form (`add` with its flags);
+    // resolveRef links a bare awb or Linear id through its tracker
+    // (`--resolve-ref`). Fields left empty are not sent.
+    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false }) {
+      const payload = { title };
+      if (body) payload.body = body;
+      if (ref) payload.ref = ref;
+      if (ref && resolveRef) payload.resolve_ref = true;
+      if (stage === 'next') payload.stage = 'next';
+      if (after.length) payload.after = after;
+      return call('POST', boardPath(group), payload);
+    },
+    // ask mails a member a prose request to turn into tasks on the board.
+    ask(group, to, prompt) {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/ask`, { to, prompt });
+    },
+    edit(id, { title, body, ref, clearRef = false, addDeps }) {
+      const payload = {};
+      if (title !== undefined) payload.title = title;
+      if (body !== undefined) payload.body = body;
+      if (addDeps !== undefined) payload.add_deps = addDeps;
+      if (clearRef) payload.clear_ref = true;
+      else if (ref !== undefined) payload.ref = ref;
+      return call('PATCH', taskPath(id), payload);
     },
     // move places a task before or after another (crossing the Ideas band
     // promotes or demotes it in the same write), or at the top or bottom.

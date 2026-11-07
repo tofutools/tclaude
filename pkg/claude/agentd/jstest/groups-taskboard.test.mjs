@@ -60,8 +60,11 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   const section = container.querySelector('[data-fused-taskboard="tb-open"]');
   assert.ok(section, 'the section is drawn');
   assert.match(section.querySelector('.gf-label').textContent, /Task board/);
-  assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(),
-    '5 · 1 needs you · 1 in progress · 2 next · 1 idea');
+  assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(), '5', 'the head shows the total only');
+  assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 needs you/, 'the breakdown is in its tooltip');
+  assert.equal(section.querySelector('.gf-section-actions'), null, 'open, the title line carries only the label and the total');
+  const toolbar = [...section.querySelector('.gf-title-row').querySelectorAll('[data-taskboard-new], .tb-view')];
+  assert.ok(toolbar.length >= 2 && toolbar[0].matches('[data-taskboard-new]'), 'the toolbar row: the add button, then the view switch');
   assert.equal(container.querySelector('[data-taskboard-chip="tb-open"]').textContent.replace(/\s+/g, ' ').trim(),
     'task board: 1 needs you · 1 in progress · 2 next · 1 idea');
 
@@ -98,6 +101,9 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   await harness.act(() => harness.fireEvent(section.querySelector('.gf-section-toggle'), 'click'));
   assert.equal(section.querySelector('.tb-table'), null, 'folded, the rows are gone');
   assert.ok(section.querySelector('.tb-counts'), 'the counts stay on the line');
+  assert.equal(section.querySelector('.gf-title-row'), null, 'folded, no toolbar row');
+  assert.ok(section.querySelector('.gf-section-actions [data-taskboard-new]'), 'folded, the add button rides the section line');
+  assert.equal(section.querySelector('.gf-section-actions .tb-view'), null, 'but not the view switch');
 });
 
 test('a quiet board starts folded; the wizard calls it the Quest board', async (t) => {
@@ -151,7 +157,7 @@ test('a linked node\'s group reads its board from that node, read-only without t
   assert.deepEqual(local.calls, [], 'this node\'s context is not read for a peer group');
   assert.ok(mounted.container.querySelector('[data-fused-taskboard="tb-peer"]'), 'the peer group draws its board');
   assert.ok(mounted.container.querySelector('[data-taskboard-chip="tb-peer"]'));
-  assert.equal(mounted.container.querySelector('.tb-import-open'), null, 'no peer view with taskboard.write: read-only');
+  assert.equal(mounted.container.querySelector('[data-taskboard-new]'), null, 'no peer view with taskboard.write: read-only');
 
   assert.equal(peerWrites(null, 'crew'), false);
   assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.read'] } }, 'crew'), false);

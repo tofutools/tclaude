@@ -6,7 +6,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { taskboardContext, useTaskboardEntry } from './taskboard-context.js';
-import { nodeTaskboard } from './groups-taskboard.js';
+import { nodeTaskboard, ownBoardGroup } from './groups-taskboard.js';
 
 const html = htm.bind(h);
 
@@ -18,7 +18,8 @@ export function agentTasks(entry, agentId) {
 
 export function AgentTaskIndicator({ group, member, source = taskboardContext, boards = nodeTaskboard }) {
   const node = group?.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
-  const entry = useTaskboardEntry(group?.name || '', node ? boards(node).source : source);
+  // A linked node's board knows the group by its own name, not name@node.
+  const entry = useTaskboardEntry(ownBoardGroup(group)?.name || '', node ? boards(node).source : source);
   const tasks = agentTasks(entry, member?.agent_id);
   if (!tasks.length) return null;
   const blocked = tasks.some((task) => task.status === 'blocked');
