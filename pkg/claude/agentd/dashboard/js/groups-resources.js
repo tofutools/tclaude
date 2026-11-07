@@ -32,10 +32,9 @@ import { EyeIcon, TrashIcon } from './row-icons.js';
 import { registerResourceRemover } from './resource-dnd.js';
 import { askResourceName } from './resource-name-dialog.js';
 import { groupContextEntry } from './process-context.js';
-import { agentColumns, useAgentColumns } from './agent-align.js';
 import { RowMenu } from './row-menu.js';
 
-export { agentColumns, RowMenu };
+export { RowMenu };
 
 export { LockChip };
 
@@ -100,26 +99,15 @@ export function sortResourceRows(rows) {
   return applySortState(rows, RESOURCE_ACCESSORS, tableSortState(RESOURCE_SORT, RESOURCE_COLS));
 }
 
-// useAgentAlignment keeps the table's controls, Name, State, Last and Age
-// columns as wide as the agents table's above it (agent-align.js).
-function useAgentAlignment(ref) {
-  useAgentColumns(ref, (table, cols) => {
-    // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
-    table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
-    for (const key of ['name', 'state', 'last', 'age']) table.style.setProperty(`--gr-${key}-w`, cols?.[key] ? `${cols[key]}px` : '');
-  });
-}
-
-// ResourceTable is a group's resources as a table like the agents table:
-// RESOURCE_COLS, with fixed widths lined up with the agents table above
-// (useAgentAlignment), so the processes' table above the runs and the other
-// resources' table below them line up with it and with each other. head
-// shows the header row (only on the first of the two); its headers sort.
+// ResourceTable is a group's resources as a table in the agents table's
+// look (the controls, then Name, State, Last and Age, the same header and
+// density), sized on its own: its widths are its own, never the agents
+// table's, and the same for the processes' table above the runs and the
+// other resources' table below them, so those two line up with each other.
+// head shows the header row (only on the first of the two); its headers sort.
 export function ResourceTable({ head = true, attrs = {}, children }) {
-  const ref = useRef(null);
-  useAgentAlignment(ref);
   const active = tableSortState(RESOURCE_SORT, RESOURCE_COLS);
-  return html`<table class="gr-rtable" ref=${ref} ...${attrs}>
+  return html`<table class="gr-rtable" ...${attrs}>
     <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`gr-col-${c.key}`} />`)}</colgroup>
     ${head && html`<thead><tr>${RESOURCE_COLS.map((c) => (c.col
     ? html`<${SortTh} key=${c.key} active=${active?.col === c.col} dir=${active?.dir} data-sort-table=${RESOURCE_SORT} data-sort-col=${c.col} sortLabel=${c.label}>${c.label}<//>`

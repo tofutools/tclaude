@@ -204,7 +204,7 @@ test('＋ hands each process item its scope, and processesOnly lists just those 
   assert.deepEqual(scopes, ['agent', 'group']);
 });
 
-test('Resources sorts by its headers, across kinds, and lines Name, State, Last and Age up with the agents table', async (t) => {
+test('Resources sorts by its headers, across kinds', async (t) => {
   const harness = await createPreactHarness(t);
   const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
   const group = { id: 7, name: 'crew' };
@@ -220,33 +220,6 @@ test('Resources sorts by its headers, across kinds, and lines Name, State, Last 
     api=${{ setResourceLock: async () => ({}) }} snapshot=${snapshot} nameOf=${() => ''} />`);
   assert.deepEqual(names(container), ['Alpha', 'Group shell', 'Middle', 'Zeta'], 'sorted by name across every kind');
   assert.ok(container.querySelector('th[data-sort-col="name"]').classList.contains('sort-active'));
-
-  // Alignment: the controls column reaches the agents' Name, Name the
-  // agents' State, State their Last (past a Process column between them),
-  // Last their Age, and Age is as wide as theirs.
-  const doc = harness.document;
-  const card = doc.body.appendChild(doc.createElement('div'));
-  card.innerHTML = '<div data-fused-section="agents"><table class="pending"><thead><tr><th data-sort-col="name"></th></tr></thead></table>'
-    + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th><th></th><th data-sort-col="last"></th><th data-sort-col="age"></th><th data-sort-col="cwd"></th></tr></thead></table></div>'
-    + '<div data-fused-section="processes"><table class="gr-rtable"></table></div>';
-  const rect = (left, width = 0) => () => ({ left, right: left + width, top: 0, bottom: 0, width, height: 0 });
-  const title = card.querySelector('th[data-sort-col="title"]');
-  const state = card.querySelector('th[data-sort-col="state"]');
-  card.querySelector('th[data-sort-col="name"]').getBoundingClientRect = rect(70);
-  const table = card.querySelector('.gr-rtable');
-  title.getBoundingClientRect = rect(280);
-  state.getBoundingClientRect = rect(445);
-  const last = card.querySelector('th[data-sort-col="last"]');
-  const age = card.querySelector('th[data-sort-col="age"]');
-  last.getBoundingClientRect = rect(640, 80);
-  age.getBoundingClientRect = rect(720, 90);
-  table.getBoundingClientRect = rect(70);
-  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165, state: 195, last: 80, age: 90 }, 'the members table, past a pending-spawns table before it');
-  last.remove();
-  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165, state: 0, last: 0, age: 90 },
-    'with Last hidden, State keeps its fallback width rather than reach to Age');
-  card.querySelector('[data-fused-section="agents"]').remove();
-  assert.equal(mod.agentColumns(table), null, 'no agents table, nothing to line up with');
 });
 
 test('a click on a drawing board\'s or page\'s name renames it, as an agent\'s does; 👁 opens it', async (t) => {
