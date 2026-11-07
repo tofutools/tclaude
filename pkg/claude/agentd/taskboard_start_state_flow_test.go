@@ -61,6 +61,14 @@ func TestTaskboardCreateStartState(t *testing.T) {
 	require.NotNil(t, got.Assignee)
 	assert.Equal(t, worker, got.Assignee.AgentID)
 	assert.Len(t, tbInboxSubjects(t, h.worker), before, "work logged as done tells nobody")
+	assert.Equal(t, "next", got.Stage, "an assigned task is queued, done or not, so a reopen keeps it queued")
+
+	// An anchor in the ideas does not put an assigned task there.
+	code, idea, body := create("", map[string]any{"title": "an idea"})
+	require.Equal(t, http.StatusCreated, code, body)
+	code, got, body = create("", map[string]any{"title": "next to the idea", "to": h.worker, "position": map[string]any{"before": idea.ID}})
+	require.Equal(t, http.StatusCreated, code, body)
+	assert.Equal(t, "next", got.Stage)
 	rec := h.call("", http.MethodGet, "/v1/groups/crew/taskboard?all=1", nil)
 	assert.Contains(t, rec.Body.String(), "fixed the flake")
 	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)

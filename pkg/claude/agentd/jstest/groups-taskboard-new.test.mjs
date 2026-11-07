@@ -352,3 +352,13 @@ test('without the assign grant the form offers no In progress', async (t) => {
   const states = [...dialog().querySelectorAll('input[name="tb-new-stage"]')].map((el) => el.getAttribute('value'));
   assert.deepEqual(states, ['idea', 'next', 'blocked', 'done']);
 });
+
+test('a tracker id with a start state is one add with the id as its ref, so nobody is mailed for done work', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { newTaskPlan } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  assert.equal(newTaskPlan({ title: 'tcl-a1b2c3', start: 'next' }).kind, 'tracker', 'Ideas or Next unassigned: the import, titled from the tracker');
+  assert.deepEqual(newTaskPlan({ title: 'tcl-a1b2c3', start: 'done', to: 'agt_dev' }), {
+    kind: 'add', task: { title: 'tcl-a1b2c3', body: '', ref: 'tcl-a1b2c3', after: [], resolveRef: true, stage: 'idea', status: 'done', to: 'agt_dev' },
+  });
+  assert.equal(newTaskPlan({ title: 'tcl-a1b2c3', start: 'progress', to: 'agt_dev' }).task.to, 'agt_dev');
+});

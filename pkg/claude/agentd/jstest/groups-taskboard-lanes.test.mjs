@@ -316,6 +316,20 @@ test('a cell + opens the add menu; its choice starts from the cell: the column, 
   ], 'each form carries its cell\'s start state and assignee, in one create');
 });
 
+test('a cell\'s menu opens above a + near the viewport\'s bottom, and a scroll closes it', async (t) => {
+  const { cell, harness } = await mountLanes(t, 'tbl-add-flip');
+  const plus = cell('agt_builder', 'done').querySelector('.tb-cell-add');
+  const saved = globalThis.innerHeight;
+  globalThis.innerHeight = 600;
+  t.after(() => { globalThis.innerHeight = saved; });
+  plus.getBoundingClientRect = () => ({ top: 560, bottom: 578, left: 900, right: 918, width: 18, height: 18 });
+  await harness.act(async () => { harness.fireEvent(plus, 'click'); });
+  const menu = cell('agt_builder', 'done').querySelector('.tb-cell-menu');
+  assert.match(menu.getAttribute('style') || '', /bottom: 42px/, 'no room below: it opens above the +');
+  await harness.act(async () => { harness.fireEvent(document, 'scroll'); });
+  assert.equal(cell('agt_builder', 'done').querySelector('.tb-cell-menu'), null, 'a scroll closes it');
+});
+
 test('a cell + carries its start state into Ask an agent and the import', async (t) => {
   const { c, cell, harness } = await mountLanes(t, 'tbl-add-ask');
   const plus = (lane, column) => cell(lane, column).querySelector('.tb-cell-add');

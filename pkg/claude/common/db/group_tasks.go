@@ -182,7 +182,7 @@ type NewGroupTask struct {
 	// Status open (the default), blocked (BlockReason says why) or done
 	// (work logged after the fact: closed now). AssigneeID, when set, is who
 	// holds it (in progress) or, done, who did it; AssignedBy records who
-	// assigned it. An assigned task that is not done lands in next.
+	// assigned it. An assigned task always lands in next.
 	Status      string
 	BlockReason string
 	AssigneeID  string
@@ -402,12 +402,21 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if stage == "" {
 		stage = GroupTaskStageIdea
 	}
-	if in.AssigneeID != "" && status != GroupTaskDone {
+	// An assigned task is queued, done or not: assign promotes an idea, and
+	// a done task reopened comes back assigned.
+	if in.AssigneeID != "" {
 		stage = GroupTaskStageNext
 	}
 	stage, rank, err := placeTask(tx, in.GroupID, stage, "", in.Position)
 	if err != nil {
 		return nil, err
+	}
+	// An anchor (before/after) names its own stage; an assigned task stays in
+	// next, at its end.
+	if in.AssigneeID != "" && stage != GroupTaskStageNext {
+		if stage, rank, err = placeTask(tx, in.GroupID, GroupTaskStageNext, "", GroupTaskPosition{Bottom: true}); err != nil {
+			return nil, err
+		}
 	}
 	id := newGroupTaskID()
 	for range 8 {

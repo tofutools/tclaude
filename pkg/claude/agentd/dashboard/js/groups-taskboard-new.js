@@ -14,7 +14,7 @@
 //   From awb/Linear/…   the import panel (`add --from-awb` and kin).
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button, Check, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
@@ -94,8 +94,15 @@ export function newTaskPlan(draft) {
   const ref = String(draft.ref || '').trim();
   const after = draft.after || [];
   const fields = startFields(start, { to: draft.to || '', reason: draft.reason || '' });
+  // A title that is only a tracker id is an import, titled from the tracker,
+  // when it starts in Ideas or Next unassigned. With any other start state
+  // it is one add with the id as its ref (linked through its tracker), so
+  // the state lands in the same call: an import cannot carry it.
+  if (!ref && isTrackerLine(title) && !fields.to && !fields.status) {
+    return { kind: 'tracker', text: title, next, body, after };
+  }
   if (!ref && isTrackerLine(title)) {
-    return { kind: 'tracker', text: title, next, body, after, to: fields.to, status: fields.status, blockReason: fields.blockReason || '' };
+    return { kind: 'add', task: { title, body, ref: title, after, resolveRef: true, ...fields } };
   }
   return { kind: 'add', task: { title, body, ref, after, resolveRef: !!ref, ...fields } };
 }
@@ -130,24 +137,12 @@ export async function submitNewTask(api, groupName, draft) {
   } else {
     return { created: 1, task: await api.create(groupName, plan.task), warning: '' };
   }
-  // The tracker import's start state follows it: the assignee, then the
-  // block or the done.
-  if (plan.to && task?.id) {
-    try {
-      await api.assign(task.id, plan.to);
-    } catch (cause) {
-      return { created: 1, task, warning: `added as ${task.id}, but not assigned: ${cause?.message || cause}` };
-    }
-  }
-  if (plan.status && task?.id) {
-    try {
-      await api.status(task.id, plan.status, plan.blockReason);
-    } catch (cause) {
-      return { created: 1, task, warning: `added as ${task.id}, but not ${plan.status}: ${cause?.message || cause}` };
-    }
-  }
   return { created: 1, task, warning: '' };
 }
+
+// CELL_MENU_HEIGHT is about the add menu's height: less room than this below
+// a cell's "+" opens it above.
+const CELL_MENU_HEIGHT = 170;
 
 // NewTaskMenu is the section head's "+ New task" button and its menu. With
 // `cell` it is a lanes cell's small "+" instead ({ label, title }): the same
@@ -161,14 +156,26 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
   const off = askUnavailable(group, entry, wizard);
   const choose = (what) => () => { setOpen(false); onChoose(what); };
+  // The cell menu is fixed at its "+": below it, or above it where the
+  // viewport has no room below; a scroll moves the "+" away, so it closes.
   const toggle = (event) => {
     if (cell && !open) {
       const rect = event.currentTarget.getBoundingClientRect?.();
-      const width = globalThis.innerWidth || 0;
-      setAt(rect ? { top: rect.bottom + 2, right: Math.max(4, width - rect.right) } : null);
+      const width = globalThis.document?.documentElement?.clientWidth || globalThis.innerWidth || 0;
+      const height = globalThis.innerHeight || 0;
+      const room = height - (rect?.bottom || 0);
+      setAt(rect ? { right: Math.max(4, width - rect.right),
+        ...(height && room < CELL_MENU_HEIGHT ? { bottom: Math.max(4, height - rect.top + 2) } : { top: rect.bottom + 2 }) } : null);
     }
     setOpen(!open);
   };
+  useEffect(() => {
+    if (!cell || !open) return undefined;
+    const close = () => setOpen(false);
+    // Capturing on the document sees the page's scroll and any scroller's.
+    document.addEventListener('scroll', close, true);
+    return () => document.removeEventListener('scroll', close, true);
+  }, [cell, open]);
   const item = (attr, onClick, name, line, disabled = false, title = undefined) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item"
     onClick=${onClick} disabled=${disabled} title=${title}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   // Icon-only, like the Resources ＋ beside it: the name lives in the
@@ -180,7 +187,7 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
         title=${cell.title} aria-label=${cell.label} onClick=${toggle}>+<//>`
     : html`<${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn tb-new-btn" data-taskboard-new=${group.name} aria-haspopup="menu"
       aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} onClick=${toggle}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>`;
-  const fixed = cell && at ? `position: fixed; top: ${at.top}px; right: ${at.right}px; left: auto;` : undefined;
+  const fixed = cell && at ? `position: fixed; right: ${at.right}px; left: auto; ${at.bottom !== undefined ? `bottom: ${at.bottom}px; top: auto;` : `top: ${at.top}px;`}` : undefined;
   return html`<span class=${cell ? 'tb-cell-add-wrap' : 'gr-add tb-new'} ref=${ref}>
     ${button}
     ${open && html`<${Menu} size="sm" class=${`gr-add-menu gr-new-menu tb-new-menu${cell ? ' tb-cell-menu' : ''}`} style=${fixed}>
@@ -289,7 +296,9 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           domRef=${titleRef} placeholder=${`one line (required); paste a list for one ${noun} per line`}
           onInput=${(event) => set('title')(event.currentTarget.value)} onPaste=${onPaste}
           onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void submit(); } }} />`,
-          tracker ? 'only a tracker id: it becomes the ref, titled from the tracker' : null)}
+          tracker ? (draft.to || !['idea', 'next'].includes(draft.start)
+            ? 'only a tracker id: it becomes the ref, and stays the title (an import cannot start it here or assign it)'
+            : 'only a tracker id: it becomes the ref, titled from the tracker') : null)}
         ${row('Brief', html`<${Textarea} class="tb-new-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
           placeholder="what the assignee needs to know (optional)" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}
         ${row('Ref', html`<${Input} class="tb-new-ref" aria-label="Ref" value=${draft.ref} disabled=${busy || tracker}
