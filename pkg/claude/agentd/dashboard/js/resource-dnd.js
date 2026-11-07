@@ -58,6 +58,9 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   const refresh = deps.refresh || (() => processContext.refresh());
   let dragged = null;
   let over = null;
+  // binShown is whether this drag showed the bin, so its end hides it even
+  // when a move to a group box already let go of dragged.
+  let binShown = false;
   const mark = (box) => {
     if (over === box) return;
     clearDropBox(over);
@@ -87,7 +90,11 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     e.dataTransfer?.setData(RESOURCE_DRAG_MIME, JSON.stringify(dragged));
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
     row.classList.add('dnd-source-row');
-    if (removerOf(dragged)) binOf(doc)?.classList.add('show');
+    if (removerOf(dragged)) {
+      // The bin says Delete (its template mode), not the agents' Retire.
+      binOf(doc)?.classList.add('show', 'dnd-trash-template-mode');
+      binShown = true;
+    }
     // dragend goes to the source, which a re-render may have detached.
     row.addEventListener('dragend', end, { once: true });
   };
@@ -132,7 +139,8 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     void moveResource(resource, hit.to, { api, notify, refresh });
   };
   const end = () => {
-    if (dragged) binOf(doc)?.classList.remove('show', 'dnd-drop-over');
+    if (binShown) binOf(doc)?.classList.remove('show', 'dnd-drop-over', 'dnd-trash-template-mode');
+    binShown = false;
     dragged = null;
     mark(null);
     restore();

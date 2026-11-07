@@ -240,10 +240,24 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
 
   fire('dragstart', shell);
   assert.ok(bin.classList.contains('show'), 'the bin shows for a row with a 🗑');
+  assert.ok(bin.classList.contains('dnd-trash-template-mode'), 'and says Delete, not Retire');
   assert.equal(fire('dragover', bin).defaultPrevented, true);
   assert.ok(bin.classList.contains('dnd-drop-over'));
   fire('drop', bin);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(removed, ['shell']);
   assert.equal(bin.classList.contains('show'), false, 'the bin hides after the drop');
+
+  // A drag that ends in a move (dragged already let go) still hides the bin.
+  t.after(dnd.registerResourceRemover('board:plan', async () => removed.push('board')));
+  const ops = doc.body.appendChild(doc.createElement('details'));
+  ops.setAttribute('data-dnd-target-group', 'ops');
+  const opsBox = ops.appendChild(doc.createElement('div'));
+  fire('dragstart', board);
+  assert.ok(bin.classList.contains('show'));
+  fire('dragover', opsBox);
+  fire('drop', opsBox);
+  fire('dragend', board);
+  assert.equal(bin.classList.contains('show'), false, 'the bin hides after a move too');
+  assert.equal(bin.classList.contains('dnd-trash-template-mode'), false);
 });

@@ -18063,8 +18063,6 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 .gq-saved-chip[data-saved-process-drag] { cursor: grab; }
 .gq-saved-chip.gq-saved-drag-source { opacity: .45; }
 .gq-saved-name { color: var(--ui-strong-text); font-weight: 600; }
-.gq-saved-run { font: inherit; font-size: 10px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #238636; background: #1b3a26; color: #7ee787; cursor: pointer; }
-.gq-saved-run:hover, .gq-saved-run:focus-visible { background: #238636; color: #fff; outline: none; }
 .gq-saved-remove { font: inherit; font-size: 13px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid transparent; background: transparent; color: #6e7681; cursor: pointer; }
 .gq-saved-remove:hover, .gq-saved-remove:focus-visible { border-color: #f85149; color: #ff7b72; outline: none; }
 .gq-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
@@ -18078,8 +18076,6 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 body.wizard .gq-strip { background: #181226; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gq-saved-chip.open { border-color: #d4af37; }
 body.wizard .gq-strip-title b { color: #f3e6c0; }
-body.wizard .gq-saved-run { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
-body.wizard .gq-saved-run:hover, body.wizard .gq-saved-run:focus-visible { background: #d4af37; color: #140f28; }
 
 /* Groups header process graphs (js/groups-process-indicators.js): the process
    twin of the .group-activity bots, sat just after them in both perspectives.
@@ -18562,7 +18558,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-pill.gr-pill-running { color: #a371f7; border-color: #6e40c9; }
 .gr-pill.gr-pill-background { color: #3fb950; border-color: #238636; }
 .gr-pill.gr-pill-closed { color: var(--ui-muted-text); }
-.gr-row .gr-primary, .gr-row .gr-action { min-width: 0; }
+.gr-row .gr-primary { min-width: 0; }
 /* The group's own Resources (ResourceRow) read as a table, like the agents
    table: actions first in one order, then name, state and detail, each a
    column shared by every row of the section (subgrid). */
