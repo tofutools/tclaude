@@ -8,14 +8,15 @@
 // (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openBoardPane } from './board-overlay-state.js';
 import { freeBoardId } from './board-manage.js';
 import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
-import { Button, Menu, MenuItem, MenuSep } from './ui-components.js';
+import { Button, Menu, MenuItem, MenuSep, SortTh } from './ui-components.js';
+import { applySortState, tableSortState } from './sort.js';
 import { LockChip } from './resource-lock.js';
 import { moveTargets } from './resource-moves.js';
 import { nodeFetch } from './node-api.js';
@@ -45,14 +46,90 @@ function pageDetail(page, nameOf) {
 // task board is another thing.
 export const KIND_WORD = Object.freeze({ board: 'drawing board', page: 'page', shell: 'shell', process: 'process' });
 
-// ResourceTable is a group's resources as a table like the agents table: a
-// control column (light, 👁 🗑 ⚙), then Name, Kind, State, Lock and Detail,
-// with fixed widths so the processes' table and the other resources' table
-// line up. head shows the header row (only on the first of the two).
+// RESOURCE_COLS are ResourceTable's columns, in the agents table's order
+// where they share one: the controls, Name, State, then what only a
+// resource has. A col is sortable (sort table "resources", sort.js), as an
+// agent column is.
+export const RESOURCE_COLS = Object.freeze([
+  { key: 'ctl', label: '' },
+  { key: 'name', label: 'Name', col: 'name' },
+  { key: 'state', label: 'State', col: 'state' },
+  { key: 'kind', label: 'Kind', col: 'kind' },
+  { key: 'lock', label: 'Lock', col: 'lock' },
+  { key: 'detail', label: 'Detail', col: 'detail' },
+]);
+
+// RESOURCE_SORT is the sort table the Resources headers share: the processes'
+// table and the other resources' table sort alike.
+export const RESOURCE_SORT = 'resources';
+
+const RESOURCE_ACCESSORS = Object.freeze({
+  name: (r) => r.name, state: (r) => r.state, kind: (r) => r.kind, lock: (r) => (r.lock == null ? null : r.lock ? 'locked' : 'open'), detail: (r) => r.detail,
+});
+
+// sortResourceRows orders rows ({ name, state, kind, lock, detail, … }) by
+// the Resources headers' sort, or keeps them as they are with none.
+export function sortResourceRows(rows) {
+  return applySortState(rows, RESOURCE_ACCESSORS, tableSortState(RESOURCE_SORT, RESOURCE_COLS));
+}
+
+// agentColumns finds, for a Resources table, where the agents table above it
+// in the same group starts its Name and State columns, as widths for this
+// table's controls and Name columns; null when there is no agents table to
+// line up with (folded, or none).
+export function agentColumns(table) {
+  const section = table?.closest?.('[data-fused-section]');
+  // The members table, by its Name header: a pending-spawns table may come
+  // first in the section.
+  const name = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] thead th[data-sort-col="title"]');
+  const head = name?.closest('thead');
+  if (!head) return null;
+  const state = head.querySelector('th[data-sort-col="state"]');
+  const left = table.getBoundingClientRect().left;
+  const nameLeft = name?.getBoundingClientRect().left;
+  if (!name || !(nameLeft > left)) return null;
+  const ctl = Math.round(nameLeft - left);
+  const nameWidth = state ? Math.round(state.getBoundingClientRect().left - nameLeft) : 0;
+  return { ctl, name: nameWidth > 60 ? nameWidth : 0 };
+}
+
+// useAgentAlignment keeps table's controls and Name columns as wide as the
+// agents table's above it, so Name and State line up across the two: on
+// every render and whenever the agents table changes size.
+function useAgentAlignment(ref) {
+  const apply = () => {
+    const table = ref.current;
+    if (!table) return;
+    const cols = agentColumns(table);
+    // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
+    table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
+    table.style.setProperty('--gr-name-w', cols?.name ? `${cols.name}px` : '');
+  };
+  useLayoutEffect(apply);
+  useEffect(() => {
+    const table = ref.current;
+    const agents = table?.closest?.('[data-fused-section]')?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"]');
+    if (!agents || typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(() => apply());
+    observer.observe(agents);
+    return () => observer.disconnect();
+  }, []);
+}
+
+// ResourceTable is a group's resources as a table like the agents table:
+// RESOURCE_COLS, with fixed widths lined up with the agents table above
+// (useAgentAlignment), so the processes' table above the runs and the other
+// resources' table below them line up with it and with each other. head
+// shows the header row (only on the first of the two); its headers sort.
 export function ResourceTable({ head = true, attrs = {}, children }) {
-  return html`<table class="gr-rtable" ...${attrs}>
-    <colgroup><col class="gr-col-ctl" /><col class="gr-col-name" /><col class="gr-col-kind" /><col class="gr-col-state" /><col class="gr-col-lock" /><col class="gr-col-detail" /></colgroup>
-    ${head && html`<thead><tr><th></th><th>Name</th><th>Kind</th><th>State</th><th>Lock</th><th>Detail</th></tr></thead>`}
+  const ref = useRef(null);
+  useAgentAlignment(ref);
+  const active = tableSortState(RESOURCE_SORT, RESOURCE_COLS);
+  return html`<table class="gr-rtable" ref=${ref} ...${attrs}>
+    <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`gr-col-${c.key}`} />`)}</colgroup>
+    ${head && html`<thead><tr>${RESOURCE_COLS.map((c) => (c.col
+    ? html`<${SortTh} key=${c.key} active=${active?.col === c.col} dir=${active?.dir} data-sort-table=${RESOURCE_SORT} data-sort-col=${c.col} sortLabel=${c.label}>${c.label}<//>`
+    : html`<th key=${c.key}></th>`))}</tr></thead>`}
     <tbody>${children}</tbody>
   </table>`;
 }
@@ -220,8 +297,8 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, r
     <td class="name-cell gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
       onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</td>
-    <td class="gq-dim gr-kindcell">${KIND_WORD[kind] || kind}</td>
     <td><${ResourcePill} view=${view} kind=${kind} /></td>
+    <td class="gq-dim gr-kindcell">${KIND_WORD[kind] || kind}</td>
     <td class="gr-lockcell">${lock || html`<span class="gq-dim">—</span>`}</td>
     <td class="gq-dim gr-meta" title=${meta}>${meta}</td>
   </tr>`;
@@ -322,12 +399,21 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
   // A row drags onto this node's group boxes (resource-dnd.js), which the
   // fused fleet view does not have.
   const props = { api, source, notify, confirm, snapshotValue, groupId: group.id, groupName: group.id > 0 ? group.name : '', draggable: !group.fleet_node };
+  // One list across kinds, so a header sorts the whole table; unsorted it
+  // keeps drawing boards, then pages, then shells.
+  const rows = sortResourceRows([
+    ...boards.map((board) => ({ key: `board:${board.id}`, name: board.title || board.id, state: resourceView(snapshotValue, group.id, 'board', board.id), kind: KIND_WORD.board,
+      lock: !!board.agentsLocked, detail: board.editing > 0 ? `${board.editing} editing` : '',
+      render: () => html`<${BoardRow} key=${`board:${board.id}`} board=${board} ...${props} />` })),
+    ...pages.map((page) => ({ key: `page:${page.id}`, name: page.title || page.name, state: resourceView(snapshotValue, group.id, 'page', page.id, page.state === 'closed' ? 'closed' : 'running'),
+      kind: KIND_WORD.page, lock: !!page.agentsLocked, detail: pageDetail(page, nameOf),
+      render: () => html`<${PageRow} key=${`page:${page.id}`} page=${page} nameOf=${nameOf} ...${props} />` })),
+    ...shells.map((shell) => ({ key: `shell:${shell.id}`, name: shell.agent ? shell.title : 'Group shell', state: resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state),
+      kind: KIND_WORD.shell, lock: null, detail: shell.detail || '',
+      render: () => html`<${ShellRow} key=${`shell:${shell.id}`} group=${group} shell=${shell} ...${props} />` })),
+  ]);
   return html`<div class="gr-resources" data-group-resources=${group.name}>
-    <${ResourceTable} head=${head}>
-      ${boards.map((board) => html`<${BoardRow} key=${`board:${board.id}`} board=${board} ...${props} />`)}
-      ${pages.map((page) => html`<${PageRow} key=${`page:${page.id}`} page=${page} nameOf=${nameOf} ...${props} />`)}
-      ${shells.map((shell) => html`<${ShellRow} key=${`shell:${shell.id}`} group=${group} shell=${shell} ...${props} />`)}
-    <//>
+    <${ResourceTable} head=${head}>${rows.map((row) => row.render())}<//>
   </div>`;
 }
 

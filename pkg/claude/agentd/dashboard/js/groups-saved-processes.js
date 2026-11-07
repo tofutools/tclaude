@@ -22,7 +22,7 @@ import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
-import { ResourceTable, RowMenu } from './groups-resources.js';
+import { ResourceTable, RowMenu, sortResourceRows } from './groups-resources.js';
 import { ResourcePill, resourceView } from './resource-pill.js';
 import { dashboardState } from './snapshot-store.js';
 
@@ -219,7 +219,10 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
   // run, then 👁 🗑 ⚙, name, kind, state, lock and steps.
   return html`<div class="gq-saved" data-saved-processes=${group.name} data-resource-kind="processes">
     <${ResourceTable} head=${true} attrs=${{ class: 'gr-rtable gq-saved-row' }}>
-      ${processes.map((process) => {
+      ${sortResourceRows(processes.map((process) => ({
+    process, name: process.name, state: resourceView(dashboardState.snapshot.value, group.id, 'process', process.templateId),
+    kind: 'process', lock: !!process.agentsLocked, detail: plural(process.steps || 0, 'step'),
+  }))).map(({ process }) => {
     const pill = resourceView(dashboardState.snapshot.value, group.id, 'process', process.templateId);
     const start = () => { setOpen(open === process.templateId && !removing ? '' : process.templateId); setRemoving(false); };
     return html`<tr key=${process.templateId} class=${`gr-trow gq-saved-chip${open === process.templateId ? ' open' : ''}`}
@@ -245,8 +248,8 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         </span></td>
         <td class="name-cell gq-saved-namecell"><span class="gr-glyph" aria-hidden="true">⧉</span>
           <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span></td>
-        <td class="gq-dim gr-kindcell">${wizard ? 'rite' : 'process'}</td>
         <td><${ResourcePill} view=${pill} /></td>
+        <td class="gq-dim gr-kindcell">${wizard ? 'rite' : 'process'}</td>
         <td class="gr-lockcell"><${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} /></td>
         <td class="gq-dim gr-meta">${plural(process.steps || 0, 'step')}</td>
       </tr>`;

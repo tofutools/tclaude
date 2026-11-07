@@ -57,8 +57,12 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   assert.equal(primary(board), 'Focus');
   assert.equal(board.tagName, 'TR', 'a resource is a table row, like an agent');
   const cells = (el) => [...el.children].map((td) => td.textContent.trim());
-  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.textContent), ['', 'Name', 'Kind', 'State', 'Lock', 'Detail']);
-  assert.deepEqual(cells(board).slice(1, 3), ['▦Plan', 'drawing board'], 'name, then kind: a board is a drawing board');
+  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.childNodes[0]?.textContent || ''), ['', 'Name', 'State', 'Kind', 'Lock', 'Detail'],
+    'Name, then State, in the agents table\'s order');
+  assert.deepEqual([...container.querySelectorAll('thead th[data-sort-table="resources"]')].map((th) => th.dataset.sortCol), ['name', 'state', 'kind', 'lock', 'detail'],
+    'every titled header sorts, as an agent header does');
+  assert.equal(cells(board)[1], '▦Plan');
+  assert.equal(cells(board)[3], 'drawing board', 'a board is a drawing board');
   assert.equal(board.children[4].querySelector('[data-resource-lock]').dataset.resourceLock, 'board:plan', 'the lock has its own column');
   assert.ok(board.firstElementChild.querySelector('.gr-light'), 'the light opens the row, like an agent\'s');
   assert.deepEqual([...board.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
@@ -198,4 +202,41 @@ test('＋ hands each process item its scope, and processesOnly lists just those 
   await open();
   await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add-process]'), 'click'));
   assert.deepEqual(scopes, ['agent', 'group']);
+});
+
+test('Resources sorts by its headers, across kinds, and lines Name and State up with the agents table', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
+  const group = { id: 7, name: 'crew' };
+  const snapshot = { value: { group_resources: [
+    { kind: 'shell', id: 'crew', group_id: 7, title: 'Group shell', state: 'running', session: 's' },
+  ] } };
+  const boards = [{ id: 'zeta', title: 'Zeta' }, { id: 'alpha', title: 'Alpha' }];
+  const pages = [{ id: 'pg', name: 'mid', title: 'Middle', owner: 'agt_x', kind: 'port', state: 'open' }];
+  const names = (root) => [...root.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('.gr-name').textContent.slice(1));
+  sort.cycleSort('resources', 'name');
+  t.after(() => { sort.cycleSort('resources', 'name'); sort.cycleSort('resources', 'name'); });
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group} boards=${boards} pages=${pages}
+    api=${{ setResourceLock: async () => ({}) }} snapshot=${snapshot} nameOf=${() => ''} />`);
+  assert.deepEqual(names(container), ['Alpha', 'Group shell', 'Middle', 'Zeta'], 'sorted by name across every kind');
+  assert.ok(container.querySelector('th[data-sort-col="name"]').classList.contains('sort-active'));
+
+  // Alignment: the controls column reaches the agents' Name, and Name the
+  // agents' State.
+  const doc = harness.document;
+  const card = doc.body.appendChild(doc.createElement('div'));
+  card.innerHTML = '<div data-fused-section="agents"><table class="pending"><thead><tr><th data-sort-col="name"></th></tr></thead></table>'
+    + '<table><thead><tr><th></th><th data-sort-col="title"></th><th data-sort-col="state"></th></tr></thead></table></div>'
+    + '<div data-fused-section="processes"><table class="gr-rtable"></table></div>';
+  const rect = (left) => () => ({ left, right: left, top: 0, bottom: 0, width: 0, height: 0 });
+  const title = card.querySelector('th[data-sort-col="title"]');
+  const state = card.querySelector('th[data-sort-col="state"]');
+  card.querySelector('th[data-sort-col="name"]').getBoundingClientRect = rect(70);
+  const table = card.querySelector('.gr-rtable');
+  title.getBoundingClientRect = rect(280);
+  state.getBoundingClientRect = rect(445);
+  table.getBoundingClientRect = rect(70);
+  assert.deepEqual(mod.agentColumns(table), { ctl: 210, name: 165 }, 'the members table, past a pending-spawns table before it');
+  card.querySelector('[data-fused-section="agents"]').remove();
+  assert.equal(mod.agentColumns(table), null, 'no agents table, nothing to line up with');
 });
