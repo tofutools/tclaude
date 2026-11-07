@@ -69,8 +69,22 @@ export function importRefs(kind, text) {
     .map((id) => (prefix && !id.includes(':') ? `${prefix}${id}` : id));
 }
 
+// IMPORT_BATCH is the most items one import request takes.
+export const IMPORT_BATCH = 50;
+
 export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
   const call = (method, path, payload) => request(fetchImpl, method, path, payload);
+  // importBatches sends a long import in batches of IMPORT_BATCH, one after
+  // another, and merges the replies; the results stay in input order.
+  const importBatches = async (group, key, items, stage) => {
+    const merged = { created: 0, results: [] };
+    for (let i = 0; i < items.length; i += IMPORT_BATCH) {
+      const out = await call('POST', boardPath(group), { [key]: items.slice(i, i + IMPORT_BATCH), stage });
+      merged.created += out?.created || 0;
+      merged.results.push(...(out?.results || []));
+    }
+    return merged;
+  };
   return {
     // capture adds the lines of a capture box: one plain line is one task;
     // several lines, or a line that is only a tracker id, go through the
@@ -84,11 +98,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
         const task = await call('POST', boardPath(group), { title: lines[0], stage });
         return { created: 1, results: [{ input: lines[0], task }] };
       }
-      return call('POST', boardPath(group), { lines, stage });
+      return importBatches(group, 'lines', lines, stage);
     },
     // importRefs adds one task per tracker ref (`add --from-awb` and kin).
     importRefs(group, refs, { next = false } = {}) {
-      return call('POST', boardPath(group), { refs, stage: next ? 'next' : undefined });
+      return importBatches(group, 'refs', refs, next ? 'next' : undefined);
     },
     edit(id, { title, ref, clearRef = false }) {
       const body = {};

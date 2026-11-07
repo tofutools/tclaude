@@ -23,7 +23,7 @@ import { relTime } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
-import { captureLines, importRefs, taskboardApi } from './taskboard-actions.js';
+import { captureLines, importRefs, isTrackerLine, taskboardApi } from './taskboard-actions.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import {
@@ -290,6 +290,19 @@ function useRowDrag(tasks, actions) {
 
 const IDEAS_BAND = '__ideas';
 
+// importSummary says what an import did beyond the count: the items that
+// kept their id as the title (with the server's note, e.g. a GitHub ref read
+// from the dashboard) and the refused ones.
+function importSummary(out) {
+  const results = out?.results || [];
+  const notes = results.filter((result) => result.task && result.note);
+  const refused = results.filter((result) => result.error);
+  const parts = [];
+  if (notes.length) parts.push(`${notes.length} kept the id as the title (${notes.map((result) => `${result.input}: ${result.note}`).join('; ')})`);
+  if (refused.length) parts.push(`${refused.length} refused (${refused.map((result) => `${result.input}: ${result.code || result.error}`).join('; ')})`);
+  return parts.join(' · ');
+}
+
 // CaptureBox is the burst capture at the end of the list: Enter adds the
 // line and keeps the focus for the next one; a pasted list adds one task per
 // line; a line that is only an awb, Linear or GitHub id becomes a task with
@@ -301,15 +314,15 @@ function CaptureBox({ group, actions, wizard }) {
   const [note, setNote] = useState('');
   const added = useRef(0);
   const add = async (value) => {
-    if (!captureLines(value).length) return;
+    const lines = captureLines(value);
+    if (!lines.length) return;
+    if (lines.length > 1 || isTrackerLine(lines[0])) setNote('looking up titles…');
     const out = await actions.run('capture', 'Capture', (api) => api.capture(group.name, value, { next }));
-    if (!out) return;
-    const refused = (out.results || []).filter((result) => result.error);
+    if (!out) { setNote(''); return; }
     added.current += out.created || 0;
     const where = next ? 'queued' : (wizard ? 'visions' : 'ideas');
-    setNote(`burst: ${added.current} ${where} added${refused.length
-      ? ` · ${refused.length} refused (${refused.map((result) => `${result.input}: ${result.code || result.error}`).join('; ')})`
-      : ''}`);
+    const more = importSummary(out);
+    setNote(`burst: ${added.current} ${where} added${more ? ` · ${more}` : ''}`);
     setText('');
   };
   const onKeyDown = (event) => {
@@ -355,13 +368,12 @@ function ImportPanel({ group, actions, onClose }) {
   const refs = importRefs(kind, ids);
   const submit = async () => {
     if (!refs.length) return;
+    setNote(`looking up ${refs.length} title${refs.length === 1 ? '' : 's'}…`);
     const out = await actions.run('import', 'Import', (api) => api.importRefs(group.name, refs, { next }));
-    if (!out) return;
-    const refused = (out.results || []).filter((result) => result.error);
-    const untitled = (out.results || []).filter((result) => result.task && result.note);
-    if (!refused.length && !untitled.length) { onClose(); return; }
-    setNote(`${out.created || 0} added${untitled.length ? ` · ${untitled.length} kept the id as the title` : ''}${refused.length
-      ? ` · refused: ${refused.map((result) => `${result.input} (${result.code || result.error})`).join(', ')}` : ''}`);
+    if (!out) { setNote(''); return; }
+    const more = importSummary(out);
+    if (!more) { onClose(); return; }
+    setNote(`${out.created || 0} added · ${more}`);
     setIds('');
   };
   return html`<div class="tb-import" data-taskboard-import=${group.name}>

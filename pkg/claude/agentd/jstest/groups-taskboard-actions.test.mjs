@@ -181,6 +181,19 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
   ]);
   assert.ok(sent.every((s) => /^[0-9a-f-]{36}$/.test(s.key)), 'every write carries a key');
 
+  // A long import goes in batches of 50 and the results merge in order.
+  sent.length = 0;
+  const lines = Array.from({ length: 120 }, (_, i) => `task ${i}`).join('\n');
+  const batched = createTaskboardApi({ fetchImpl: async (path, init) => {
+    const body = JSON.parse(init.body);
+    sent.push(body.lines.length);
+    return { ok: true, status: 200, json: async () => ({ created: body.lines.length, results: body.lines.map((input) => ({ input, task: {} })) }) };
+  } });
+  const out = await batched.capture('crew', lines);
+  assert.deepEqual(sent, [50, 50, 20]);
+  assert.equal(out.created, 120);
+  assert.equal(out.results[119].input, 'task 119');
+
   const refusing = createTaskboardApi({ fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'cap', message: 'board is full' }) }) });
   await assert.rejects(refusing.status('tk_00000001', 'done'), (err) => err.message === 'board is full' && err.status === 409);
 });
