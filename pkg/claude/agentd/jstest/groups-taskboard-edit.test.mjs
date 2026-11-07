@@ -54,6 +54,13 @@ test('the save plan writes only what changed, in an order the routes accept', as
   const done = task({ status: 'done', stage: 'idea' });
   assert.deepEqual(names(editPlan(done, setWhere(draftOf(done), 'next'))), ['reopen', 'into Next']);
   assert.deepEqual(names(editPlan(open, { ...setWhere(draftOf(open), 'dropped'), reason: 'parked in awb' })), ['drop']);
+  // A blocked idea stays an idea: blocking keeps the stage, and so does any
+  // other edit of it.
+  const blockedIdea = task({ stage: 'idea', status: 'blocked', block_reason: 'QA' });
+  assert.deepEqual(editPlan(blockedIdea, draftOf(blockedIdea)), [], 'an untouched blocked idea writes nothing');
+  assert.deepEqual(names(editPlan(blockedIdea, { ...draftOf(blockedIdea), title: 'renamed' })), ['title']);
+  // A done task blocked: reopened first, as a closed task cannot be blocked.
+  assert.deepEqual(names(editPlan(done, { ...setWhere(draftOf(done), 'blocked'), reason: 'QA' })), ['reopen', 'block']);
   // Files: one removed, two added.
   const filed = task({ attachments: [{ id: 7, name: 'shot.png' }] });
   assert.deepEqual(names(editPlan(filed, draftOf(filed), { remove: [7], add: [{ name: 'a.md' }, { name: 'b.md' }] })),
@@ -202,7 +209,8 @@ test('a screenshot pasted into the New task form goes with the add', async (t) =
   assert.equal(group, 'crew');
   assert.equal(fields.title, 'Checkout button overlaps');
   assert.equal(fields.files.length, 1);
-  assert.equal(fields.files[0], shot);
+  assert.equal(fields.files[0].file, shot);
+  assert.match(fields.files[0].name, /^pasted-\d+\.png$/, 'a nameless screenshot is sent under the name it was listed with');
 });
 
 test('the board context has no brief: the form reads the task in full', async (t) => {
@@ -230,4 +238,44 @@ test('a brief the form could not read is left as it is', async (t) => {
   await other.harness.input(other.dialog.querySelector('.tb-edit-title'), 'renamed');
   await other.save();
   assert.deepEqual(failing.calls, [['edit', 'tk_00000001', { title: 'renamed' }]], 'the brief is left as it is');
+});
+
+test('what others change while the form is open stands: Save writes only the form\'s changes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { EditTaskDialog } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
+  const api = fakeApi();
+  let setLive;
+  function Board() {
+    const [live, set] = harness.hooks.useState(task());
+    setLive = set;
+    return harness.html`<${EditTaskDialog} group=${{ name: 'crew', members: [] }} entry=${{ tasks: [live] }} task=${live}
+      api=${api} canAssign=${true} members=${[{ agent_id: 'agt_dev', title: 'dev', online: true }]} onClose=${() => {}} />`;
+  }
+  await harness.mount(harness.html`<${Board} />`);
+  const dialog = harness.document.querySelector('#taskboard-edit-modal');
+  await harness.input(dialog.querySelector('.tb-edit-title'), 'Release 2.4 notes');
+  // Meanwhile an agent takes the task and adds a dependency (the board polls).
+  await harness.act(() => setLive(task({ assignee: { agent_id: 'agt_dev' }, depends_on: ['tk_00000002'] })));
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-edit-save'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['edit', 'tk_00000001', { title: 'Release 2.4 notes' }]],
+    'the agent keeps the task, and its dependency stays');
+});
+
+test('a dirty Ask an agent dialog asks before it closes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AskAgentDialog } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  let closed = false;
+  const group = { name: 'crew', members: [{ agent_id: 'agt_dev', title: 'dev', online: true }] };
+  await harness.mount(harness.html`<${AskAgentDialog} group=${group} entry=${{ tasks: [] }} api=${fakeApi()} members=${group.members}
+    onClose=${() => { closed = true; }} />`);
+  const dialog = harness.document.querySelector('#taskboard-ask-modal');
+  const prompt = dialog.querySelector('textarea');
+  await harness.input(prompt, 'split the release notes into tasks');
+  const cancel = [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel');
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  await harness.act(async () => { harness.fireEvent(cancel, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(shellState.confirmation.value?.title, 'Discard input?', 'typed input is not dropped without asking');
+  assert.equal(closed, false);
+  await harness.act(async () => { shellState.resolveConfirmation(true); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(closed, true, 'the dialog closes once the discard is confirmed');
 });

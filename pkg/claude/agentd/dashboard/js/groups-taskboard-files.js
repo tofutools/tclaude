@@ -29,10 +29,22 @@ function base64Blob(data, type) {
   return new Blob([bytes], { type: type || 'application/octet-stream' });
 }
 
-// readFile reads a stored file into a Blob through the board's api.
+// SHOWN_TYPES are the types a file opens as in a tab, by its extension. The
+// type is never taken from the reply: a linked node is not trusted, and a
+// blob: URL has this dashboard's origin, so a file claimed as an image but
+// sent as text/html would run here. Anything else is a download.
+const SHOWN_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
+
+function shownType(name) {
+  const dot = String(name || '').lastIndexOf('.');
+  return dot > 0 ? SHOWN_TYPES[String(name).slice(dot + 1).toLowerCase()] || '' : '';
+}
+
+// readFile reads a stored file into a Blob through the board's api: an image
+// or a PDF (by its name) as that type, anything else as plain bytes.
 export async function readFile(api, taskId, attachment) {
   const out = await api.fileData(taskId, attachment.id);
-  return base64Blob(out?.data, out?.content_type || attachment.content_type);
+  return base64Blob(out?.data, shownType(attachment.name) || 'application/octet-stream');
 }
 
 // useThumb is a stored image's thumbnail URL, read once per content.
@@ -60,7 +72,7 @@ async function openFile(api, taskId, attachment) {
   const a = document.createElement('a');
   a.href = url;
   a.rel = 'noopener';
-  if (attachment.image || /pdf/.test(attachment.content_type || '')) a.target = '_blank';
+  if (blob.type !== 'application/octet-stream') a.target = '_blank';
   else a.download = attachment.name;
   document.body.appendChild(a);
   a.click();

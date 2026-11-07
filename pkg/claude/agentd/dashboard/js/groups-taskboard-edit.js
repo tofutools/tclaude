@@ -121,12 +121,14 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   // An assignment takes an open task: a blocked or closed one opens first,
   // and is blocked or closed again after.
   let open = status === 'open';
-  if (!open && (openTarget || assigning)) {
+  // A closed task is blocked by reopening it first.
+  if (!open && (openTarget || assigning || (where === 'blocked' && CLOSED.has(status)))) {
     steps.push({ name: CLOSED.has(status) ? 'reopen' : 'unblock', run: (api) => api.status(task.id, 'open') });
     open = true;
   }
   if (unassigning) steps.push({ name: 'unassign', run: (api) => api.unassign(task.id) });
-  const stage = where === 'idea' ? 'idea' : CLOSED.has(where) ? '' : 'next';
+  // Blocked, done and dropped keep the stage the task is in.
+  const stage = where === 'idea' ? 'idea' : where === 'next' || where === 'progress' ? 'next' : '';
   // An assignment puts an idea in Next on its own.
   if (stage && stage !== (task.stage || 'idea') && !(stage === 'next' && assigning)) {
     steps.push({ name: stage === 'idea' ? 'back to the ideas' : 'into Next', run: (api) => api.stage(task.id, stage) });
@@ -213,7 +215,12 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   // The board's context carries no brief: the form reads the task in full,
   // and the brief field waits for it.
   const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
-  const base = brief.state === 'ready' ? { ...task, body: brief.body } : task;
+  // Save writes what the form changed since it opened (or since the last
+  // Save), so changes others make meanwhile (an agent taking the task,
+  // reporting it done) stand: the plan compares the draft with this
+  // snapshot, not with the live row.
+  const [opened, setOpened] = useState(task);
+  const base = brief.state === 'ready' ? { ...opened, body: brief.body } : opened;
   const start = draftOf(base);
   const [draft, setDraft] = useState(start);
   useEffect(() => {
@@ -242,7 +249,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const tasks = entry?.tasks || [];
   const n = tasks.findIndex((t) => t.id === task.id) + 1;
-  const steps = editPlan(base, draft, { add: pending.map((p) => p.file), remove: removed, bodyKnown: brief.state === 'ready' });
+  const steps = editPlan(base, draft, { add: pending.map(({ file, name }) => ({ file, name })), remove: removed, bodyKnown: brief.state === 'ready' });
   const missing = missingOf(draft);
   const dirty = steps.length > 0;
   const save = async () => {
@@ -260,10 +267,19 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
         return;
       }
       setError(`${out.saved.length ? `Saved: ${out.saved.join(', ')}. ` : ''}Not saved: ${out.refused.map((r) => `${r.name} (${r.message})`).join('; ')}`);
-      // What landed is no longer a change: the files attached or removed
-      // go from the form, so a second Save does not send them again.
-      if (out.saved.some((name) => name.startsWith('attach'))) setPending([]);
-      setRemoved((before) => before.filter((id) => !out.saved.includes(`remove ${(task.attachments || []).find((a) => a.id === id)?.name || `#${id}`}`)));
+      // What landed is no longer a change: the form compares with the task
+      // as it is now, and the files attached or removed go from the form, so
+      // a second Save does not send them again.
+      const now = await api.task?.(task.id).catch(() => null);
+      if (now) {
+        setOpened(now);
+        if (brief.state === 'ready') setBrief({ state: 'ready', body: now.body || '' });
+      }
+      if (out.saved.some((name) => name.startsWith('attach'))) {
+        for (const p of pending) if (p.url) URL.revokeObjectURL(p.url);
+        setPending([]);
+      }
+      setRemoved((before) => before.filter((id) => !out.saved.includes(`remove ${(opened.attachments || []).find((a) => a.id === id)?.name || `#${id}`}`)));
     } finally {
       sending.current = false;
       setBusy(false);

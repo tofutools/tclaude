@@ -264,7 +264,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     setBusy(true);
     setError('');
     try {
-      const out = await submitNewTask(api, group.name, draft, listMode ? [] : files.map((f) => f.file));
+      const out = await submitNewTask(api, group.name, draft, listMode ? [] : files.map(({ file, name }) => ({ file, name })));
       if (out.warning) shellToast(out.warning, true);
       else if (out.task) shellToast(`Added ${out.task.id} to ${group.name}`);
       else shellToast(`Added ${out.created} to ${group.name}`);
@@ -378,7 +378,7 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
     setBusy(true);
     setError('');
     try {
-      if (files.length) await api.ask(group.name, picked.agent_id, prompt.trim(), files.map((f) => f.file));
+      if (files.length) await api.ask(group.name, picked.agent_id, prompt.trim(), files.map(({ file, name }) => ({ file, name })));
       else await api.ask(group.name, picked.agent_id, prompt.trim());
       shellToast(`Asked ${picked.title || picked.agent_id}; it replies when the ${wizard ? 'quests' : 'tasks'} are on the board`);
       onClose();
@@ -391,8 +391,8 @@ export function AskAgentDialog({ group, entry, api, wizard = false, initial = {}
   };
   const noun = wizard ? 'quests' : 'tasks';
   return html`<${Dialog} id="taskboard-ask-modal" title=${wizard ? `Ask a hero · ${group.name}` : `Ask an agent · ${group.name}`}
-    onClose=${onClose} busy=${busy} dirty=${files.length > 0 || (prompt.trim().length > 0 && prompt !== opening)} confirmDiscard
-    ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}=${shellConfirmDiscard}
+    onClose=${onClose} busy=${busy} dirty=${files.length > 0 || (prompt.trim().length > 0 && prompt !== opening)} confirmDiscard=${shellConfirmDiscard}
+    ...${intake.handlers} dialogClass=${intake.dragOver ? 'files-drag-over' : ''}
     initialFocusRef=${promptRef} onSubmitHotkey=${() => void submit()} resizeKey="tclaude.dash.modalSize.taskboard-ask" error=${error}
     cancel="Cancel"
     footerStart=${html`<span class="ui-hint tb-new-cli"><code>tclaude agent taskboard ask ${group.name} --to … "…"${files.length ? ' --attach …' : ''}</code></span>`}
