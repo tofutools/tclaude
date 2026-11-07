@@ -895,3 +895,47 @@ func TestBoardsUndoIsPerActorAndServerSide(t *testing.T) {
 	}
 	assert.True(t, undo(false).Empty, "the agent's steps were not recorded")
 }
+
+// The Groups tab's Ctrl/Cmd-drag copies a board into a group: a new board
+// holding the source's live drawing (not what was erased), linked to the
+// group, while the source stays as it was. A taken id is refused and leaves
+// nothing behind.
+func TestBoardsCopyIntoAGroup(t *testing.T) {
+	f := newFlow(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	f.HaveGroup("ops")
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "plan", "title": "Plan"}).Code)
+	gone := rect("gone", 2, 1, 0)
+	gone["isDeleted"] = true
+	require.Equal(t, http.StatusOK, serve(http.MethodPatch, "/api/boards/plan", map[string]any{"elements": []any{rect("a", 1, 1, 5), rect("b", 1, 1, 9), rect("gone", 1, 1, 0)}}).Code)
+	require.Equal(t, http.StatusOK, serve(http.MethodPatch, "/api/boards/plan", map[string]any{"elements": []any{gone}}).Code)
+
+	rec := serve(http.MethodPost, "/api/boards/plan/copy", map[string]any{"group": "ops", "id": "plan-copy", "title": "Plan (copy)"})
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	copied := decodeBoard(t, serve(http.MethodGet, "/api/boards/plan-copy", nil))
+	assert.Equal(t, "Plan (copy)", copied.Title)
+	ids := []string{}
+	for _, e := range copied.Elements {
+		ids = append(ids, e.ID)
+	}
+	assert.Equal(t, []string{"a", "b"}, ids, "the live drawing, in its order, without what was erased")
+	boards, err := db.ListCollabBoards()
+	require.NoError(t, err)
+	ops, err := db.GetAgentGroupByName("ops")
+	require.NoError(t, err)
+	groupOf := map[string]int64{}
+	for _, b := range boards {
+		groupOf[b.ID] = b.GroupID
+	}
+	assert.Equal(t, ops.ID, groupOf["plan-copy"], "the copy is linked to the group")
+	assert.Zero(t, groupOf["plan"], "the source stays where it was")
+	assert.Len(t, decodeBoard(t, serve(http.MethodGet, "/api/boards/plan", nil)).Elements, 2)
+
+	require.Equal(t, http.StatusConflict, serve(http.MethodPost, "/api/boards/plan/copy", map[string]any{"group": "ops", "id": "plan-copy"}).Code)
+	require.Equal(t, http.StatusNotFound, serve(http.MethodPost, "/api/boards/nope/copy", map[string]any{"group": "ops", "id": "x"}).Code)
+	_, err = db.GetCollabBoard("x")
+	assert.Error(t, err, "a failed copy leaves no board")
+}

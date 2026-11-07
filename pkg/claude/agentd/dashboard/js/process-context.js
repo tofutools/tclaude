@@ -376,6 +376,12 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
       }, fetchImpl);
     },
+    // copyBoard copies a board into group as a new board (id, title).
+    async copyBoard(id, group, title, newId) {
+      return processRequest(`/api/boards/${encodeURIComponent(id)}/copy`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, title, id: newId }),
+      }, fetchImpl);
+    },
     // deleteGroupPage closes a page if open and removes it from its group.
     async deleteGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);

@@ -1,14 +1,17 @@
-// resource-dnd.js -- dragging a board or a page row of a group's Resources
+// resource-dnd.js -- dragging a board, page or saved-process row of a
+// group's Resources
 // (groups-resources.js, [data-dnd-resource]) onto another group's box in the
 // Groups tab moves it there (tcl-eq8pq9); a board dropped on Ungrouped
-// leaves every group. The move is the ⚙ → Move to group one
+// leaves every group. With Ctrl/Cmd held, as for an agent's clone, a board
+// or a process is copied there instead (resource-moves.js copyResource).
+// The move is the ⚙ → Move to group one
 // (resource-moves.js), so the drag offers only what that menu would. A row
 // with a 🗑 (a board, a page, a running shell) shows the shared #dnd-trash
 // bin while it is dragged, and a drop there is that 🗑: the row registered
 // its remover (registerResourceRemover), which confirms first. It rides its
 // own MIME type, which the member drag (dnd.js) ignores.
 
-import { RESOURCE_DRAG_MIME, canMoveResource, moveResource } from './resource-moves.js';
+import { RESOURCE_DRAG_MIME, canCopyResource, canMoveResource, copyResource, moveResource } from './resource-moves.js';
 import { clearDropBox, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext, processRunApi } from './process-context.js';
@@ -61,11 +64,16 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   // binShown is whether this drag showed the bin, so its end hides it even
   // when a move to a group box already let go of dragged.
   let binShown = false;
-  const mark = (box) => {
-    if (over === box) return;
+  // painted is the copy tint the last dragover showed: macOS Chrome clears
+  // metaKey on the drop itself, as the agents' clone drag (dnd.js) found.
+  let painted = false;
+  let overCopy = false;
+  const mark = (box, copy = false) => {
+    if (over === box && overCopy === copy) return;
     clearDropBox(over);
     over = box;
-    if (box) markDropBox(box, 'move');
+    overCopy = copy;
+    if (box) markDropBox(box, copy ? 'clone' : 'move');
   };
   // A press on a control in the row (its buttons, the rename field) is a
   // click, not a drag: the row stops being draggable until the press ends.
@@ -88,7 +96,8 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     dragged = readResource(row);
     if (!dragged) return;
     e.dataTransfer?.setData(RESOURCE_DRAG_MIME, JSON.stringify(dragged));
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
+    painted = false;
     row.classList.add('dnd-source-row');
     if (removerOf(dragged)) {
       // The bin says Delete (its template mode), not the agents' Retire.
@@ -99,11 +108,17 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     row.addEventListener('dragend', end, { once: true });
   };
   const ours = (e) => !!e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes(RESOURCE_DRAG_MIME);
-  const target = (e) => {
+  // target is what a drop here would do: { box, to, copy }. Ctrl/Cmd held
+  // copies (a board or a process into a real group), as it clones an agent;
+  // otherwise it moves.
+  const target = (e, onDrop = false) => {
     if (!dragged || !ours(e)) return null;
     const box = e.target.closest?.(TARGET_SEL) || null;
     const to = dropGroupOf(box);
-    return to !== null && canMoveResource(dragged, to, snapshot()) ? { box, to } : null;
+    if (to === null) return null;
+    const copy = !!e.ctrlKey || !!e.metaKey || (onDrop && (painted || e.dataTransfer?.dropEffect === 'copy'));
+    if (copy) return canCopyResource(dragged, to, snapshot()) ? { box, to, copy: true } : null;
+    return canMoveResource(dragged, to, snapshot()) ? { box, to, copy: false } : null;
   };
   const dragover = (e) => {
     const trash = dragged && ours(e) && removerOf(dragged) ? trashOf(e) : null;
@@ -115,10 +130,11 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
       return;
     }
     const hit = target(e);
-    mark(hit?.box || null);
+    mark(hit?.box || null, hit?.copy);
+    painted = !!hit?.copy;
     if (!hit) return;
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (e.dataTransfer) e.dataTransfer.dropEffect = hit.copy ? 'copy' : 'move';
   };
   const drop = (e) => {
     const remove = dragged && ours(e) && trashOf(e) ? removerOf(dragged) : null;
@@ -129,14 +145,15 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
       void remove();
       return;
     }
-    const hit = target(e);
+    const hit = target(e, true);
     const resource = dragged;
     mark(null);
+    painted = false;
     if (!hit) return;
     e.preventDefault();
     e.stopPropagation();
     dragged = null;
-    void moveResource(resource, hit.to, { api, notify, refresh });
+    void (hit.copy ? copyResource : moveResource)(resource, hit.to, { api, notify, refresh });
   };
   const end = () => {
     if (binShown) binOf(doc)?.classList.remove('show', 'dnd-drop-over', 'dnd-trash-template-mode');

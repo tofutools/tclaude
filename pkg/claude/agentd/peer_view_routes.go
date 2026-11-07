@@ -366,9 +366,9 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
 	// A collab board's live socket and presence, the operator's activity mail
 	// and undo, its rendered snapshot, inviting agents, ending their sessions
-	// and deleting it stay this node's own dashboard's; reading and editing
-	// one have peer routes (peer_boards.go).
-	"DELETE /api/boards/{id}",
+	// and deleting or copying it stay this node's own dashboard's; reading and
+	// editing one have peer routes (peer_boards.go).
+	"DELETE /api/boards/{id}", "POST /api/boards/{id}/copy",
 	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",
 	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view",
 	"DELETE /api/boards/{id}/sessions",

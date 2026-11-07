@@ -261,3 +261,83 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
   assert.equal(bin.classList.contains('show'), false, 'the bin hides after a move too');
   assert.equal(bin.classList.contains('dnd-trash-template-mode'), false);
 });
+
+test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies a board or a process', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/resource-moves.js');
+  const snap = { ...SNAP, group_resources: [{ kind: 'process', id: 'review', group_id: 2 }] };
+  const proc = { kind: 'process', id: 'review', label: 'Review', group: 'crew' };
+  assert.equal(m.canMoveResource(proc, 'ops', snap), true);
+  assert.equal(m.canMoveResource(proc, 'lab', snap), false, 'not to a group that already lists it');
+  assert.equal(m.canMoveResource(proc, '', snap), false, 'a process is always some group\'s');
+  assert.equal(m.canCopyResource(proc, 'ops', snap), true);
+  assert.equal(m.canCopyResource(proc, 'lab', snap), false);
+  const board = { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' };
+  assert.equal(m.canCopyResource(board, 'crew', snap), true, 'a board copies into its own group too, as a second board');
+  assert.equal(m.canCopyResource(board, '', snap), false, 'a copy goes into a group');
+  assert.equal(m.canCopyResource({ kind: 'page', id: 'p', group: 'crew', owner: 'agt_a' }, 'lab', snap), false, 'a page does not copy');
+  assert.equal(m.canCopyResource({ kind: 'shell', id: 'crew', group: 'crew' }, 'lab', snap), false, 'nor a shell');
+
+  const calls = [];
+  const notes = [];
+  const api = {
+    pinProcess: async (...a) => calls.push(['pin', ...a]),
+    unpinProcess: async (...a) => calls.push(['unpin', ...a]),
+    boardIds: async () => ['plan', 'plan-copy'],
+    copyBoard: async (...a) => { calls.push(['copyBoard', ...a]); return { id: a[3], title: a[2] }; },
+  };
+  const notify = (msg) => notes.push(msg);
+  assert.equal(await m.moveResource(proc, 'ops', { api, notify }), true);
+  assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review'], ['unpin', 'crew', 'review']], 'pinned there before it is unpinned here');
+  assert.equal(await m.copyResource(proc, 'ops', { api, notify }), true);
+  assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review']], 'a copy only pins');
+  assert.equal(await m.copyResource(board, 'ops', { api, notify }), true);
+  assert.deepEqual(calls.splice(0), [['copyBoard', 'plan', 'ops', 'Plan (copy)', 'plan-copy-2']], 'a free id for the copy');
+  assert.deepEqual(notes, ['Moved Review to ops', 'Added Review to ops', 'Copied Plan to ops as Plan (copy)']);
+});
+
+test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone; a plain one moves', async (t) => {
+  const harness = await createPreactHarness(t);
+  const dnd = await harness.importDashboardModule('js/resource-dnd.js');
+  const doc = harness.document;
+  const box = (name) => {
+    const el = doc.body.appendChild(doc.createElement('details'));
+    el.setAttribute('data-dnd-target-group', name);
+    return el.appendChild(doc.createElement('div'));
+  };
+  const crew = box('crew');
+  const ops = box('ops');
+  const row = crew.appendChild(doc.createElement('div'));
+  row.setAttribute('data-dnd-resource', JSON.stringify({ kind: 'process', id: 'review', label: 'Review', group: 'crew' }));
+  row.draggable = true;
+  const calls = [];
+  const api = { pinProcess: async (...a) => calls.push(['pin', ...a]), unpinProcess: async (...a) => calls.push(['unpin', ...a]) };
+  t.after(dnd.bindResourceDnd(doc, { api, notify: () => {}, snapshot: () => SNAP, refresh: () => {} }));
+  const fire = (type, target, keys = {}) => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    const transfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    for (const [k, v] of Object.entries(keys)) Object.defineProperty(event, k, { value: v });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  fire('dragstart', row);
+  const over = fire('dragover', ops, { ctrlKey: true });
+  assert.equal(over.defaultPrevented, true);
+  assert.equal(over.dataTransfer.dropEffect, 'copy');
+  assert.ok(ops.parentElement.classList.contains('dnd-effect-clone'), 'the box wears the clone tint');
+  // macOS clears the modifier on the drop itself: the tint decides.
+  fire('drop', ops);
+  await settle();
+  assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review']], 'a copy pins it there and leaves it here');
+  fire('dragend', row);
+
+  fire('dragstart', row);
+  assert.equal(fire('dragover', ops).dataTransfer.dropEffect, 'move');
+  assert.equal(ops.parentElement.classList.contains('dnd-effect-clone'), false);
+  fire('drop', ops);
+  await settle();
+  assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review'], ['unpin', 'crew', 'review']], 'a plain drop moves it');
+});
