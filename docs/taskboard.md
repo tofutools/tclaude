@@ -64,7 +64,7 @@ tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
-tclaude agent taskboard move-to-group <task> <group> [--clone] [--stage idea|next]
+tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage idea|next]
 tclaude agent taskboard promote <task>     # idea → end of the queue
 tclaude agent taskboard demote <task>      # next → top of the ideas
 tclaude agent taskboard block <task> --reason "waiting on CI"
@@ -409,6 +409,48 @@ layer is reported first:
 `GET /api/node-summary` carries `taskboard`, the summed counts of the boards
 the reader may see.
 
+### Moving a task to another node
+
+`move-to-group <task> <group>@<peer>` moves a task of this node to a group on
+a linked node, and `--clone` copies it there. The linked node must give this
+node the peer grant `taskboard.transfer` on that group:
+
+```bash
+tclaude federation grant alice taskboard.transfer --scope group=crew   # on bob: alice may move tasks into crew
+```
+
+A move happens in two steps, so a failure never leaves a silent duplicate.
+First, the drop's permissions are checked here. If this node would refuse
+the drop, nothing is created anywhere. Then:
+
+1. The linked node creates the task (`transfer-in`), with the same title,
+   brief and ref, in the ideas or in next. Its history notes where it came
+   from (`moved from alice/web tk_…`), and the node name is the one the
+   linked node knows the caller by. In a move between two linked nodes,
+   driven from a third, the source node is the caller's claim, marked with
+   who sent it (`moved from carol/web tk_… (via alice)`). If this step is
+   refused, nothing changes. If it times out, the target may have the task
+   already, so check it before you retry.
+2. Only then is the original dropped here, with the reason
+   `moved to bob/crew`. Its assignee, if any, is told. This takes the same
+   source-side permission as a local move. If this step fails for a
+   transient reason, it is retried once. A retry that finds the original
+   already closed counts as done. If it still fails, the command says so
+   and names both copies, and the original is left for you to drop.
+
+The task's history, assignee and dependencies stay behind with the dropped
+original. A clone runs only the first step. Only an open or blocked task moves
+to another node; a done or dropped one can be cloned.
+
+An agent running the command also needs its own grant for the linked node,
+as for any `--peer` verb: `taskboard.transfer` scoped with
+`--scope peer=bob/crew`.
+
+In the fleet view the dashboard does the same when a task is dragged onto a
+group on another node, from this node to a linked one, back, or between two
+linked nodes. Its confirmation says it is a move across nodes. If the drop
+fails, a warning toast names both copies.
+
 ## Lifecycle and retention
 
 A done or dropped task leaves the default list at once. An hourly sweep then:
@@ -505,7 +547,9 @@ a CLI verb:
   - A clone is a new task with the same title, brief and ref, and no assignee
     or dependencies. The original stays, and each task's history notes the
     other.
-  - A group on another node is not a target yet.
+  - In the fleet view a group on another node is a target too: the task is
+    created there first and only then dropped here (see
+    [Moving a task to another node](#moving-a-task-to-another-node)).
 - Each agent's row in the Agents section shows the tasks assigned to it
   (`☰ 2 tasks · first title`), in amber when one of them is blocked.
 
@@ -602,6 +646,7 @@ those drags aren't accepted in the lanes.
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
+| `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |

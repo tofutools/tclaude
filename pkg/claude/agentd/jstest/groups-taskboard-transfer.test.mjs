@@ -38,15 +38,34 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   transfer.transferDeps.toast = (text) => toasts.push(text);
   t.after(() => Object.assign(transfer.transferDeps, saved));
   const calls = [];
+  const remote = [];
+  let awayFails = 0;
+  let awayStatus = 0;
+  let checkRefuses = false;
+  transfer.transferDeps.nodeApi = async (node) => ({
+    transferIn: async (...args) => { remote.push([node, 'transferIn', ...args]); return { id: 'tk_000000aa' }; },
+  });
   const api = {
     moveToGroup: async (...args) => { calls.push(args); return { task: { id: args[0] }, group: args[1], dropped_dependents: ['tk_00000002'] }; },
+    movedAway: async (id, to, opts) => {
+      if (opts?.check) {
+        calls.push(['check', id]);
+        if (checkRefuses) throw Object.assign(new Error('requires taskboard.manage'), { status: 403 });
+        return { ok: true };
+      }
+      const args = [id, to];
+      calls.push(['movedAway', ...args]);
+      if (awayFails > 0) { awayFails--; throw new Error('node offline'); }
+      if (awayStatus) { const status = awayStatus; awayStatus = 0; throw Object.assign(new Error(`status ${status}`), { status }); }
+      return { id: args[0], status: 'dropped' };
+    },
     move: async () => ({}), assign: async () => ({}), status: async () => ({}), stage: async () => ({}),
   };
   const source = { context: harness.signals.signal({ groups: [board('tbt-a', [1, 2]), board('tbt-b', [3, 4])] }),
     status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const card = (name, node = '') => {
     const group = { name, members: members() };
-    return harness.html`<details open data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined}>
+    return harness.html`<details open data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined} data-fleet-node-name=${node ? 'other' : undefined}>
       <summary>${name}</summary>
       <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />
     </details>`;
@@ -63,7 +82,9 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
   };
   const section = (name) => c.querySelector(`[data-fused-taskboard="${name}"]`);
   const summary = (name) => c.querySelector(`details[data-group-key="${name}"] > summary`);
-  return { harness, c, calls, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; }, transfer };
+  return { harness, c, calls, remote, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; },
+    failAway: (n) => { awayFails = n; }, refuseCheck: () => { checkRefuses = true; },
+    awayAnswers: (status) => { awayStatus = status; }, transfer };
 }
 
 test('a task dropped on another group\'s board moves there after the confirmation', async (t) => {
@@ -118,15 +139,100 @@ test('a drop on another group\'s Next cell lands it in next', async (t) => {
   assert.deepEqual(calls, [['tk_00000001', 'tbt-b', { clone: false, stage: 'next' }]]);
 });
 
-test('its own board, a virtual group and a group on another node are not targets', async (t) => {
-  const { calls, c, dt, start, over, drop, summary } = await mountTwo(t, { otherNode: 'nd_other' });
+test('its own board and a virtual group are not targets', async (t) => {
+  const { calls, c, dt, start, over, drop, summary } = await mountTwo(t);
   const data = dt();
   await start('tk_00000001', data);
   assert.equal(over(summary('tbt-a'), data).defaultPrevented, false, 'its own group');
-  assert.equal(over(c.querySelector('details[data-group-key="virtual:ungrouped"] > summary'), data).defaultPrevented, false, 'a virtual group');
-  assert.equal(over(summary('tbt-b'), data).defaultPrevented, false, 'another node: a separate step');
-  await drop(summary('tbt-b'), data);
+  const virtual = c.querySelector('details[data-group-key="virtual:ungrouped"] > summary');
+  assert.equal(over(virtual, data).defaultPrevented, false, 'a virtual group');
+  await drop(virtual, data);
   assert.deepEqual(calls, []);
+});
+
+test('a drop on a group on another node creates it there first, then drops the original', async (t) => {
+  const { calls, remote, confirms, toasts, dt, start, over, drop, summary } = await mountTwo(t, { otherNode: 'nd_other' });
+  const data = dt();
+  await start('tk_00000001', data);
+  assert.equal(over(summary('tbt-b'), data).defaultPrevented, true, 'another node\'s group takes it');
+  await drop(summary('tbt-b'), data);
+  assert.equal(confirms[0].title, 'Move task to another node?');
+  assert.match(confirms[0].body, /created there in Ideas.*only then closed here as dropped \("moved to other\/tbt-b"\)/);
+  assert.deepEqual(remote, [['nd_other', 'transferIn', 'tbt-b', { title: 'tbt-a first', body: '', ref: '', refLabel: '',
+    stage: 'idea', clone: false, origin: { node: '', group: 'tbt-a', task: 'tk_00000001' } }]], 'the target node creates it');
+  assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
+    'the drop\'s gates first, then the source drops it, naming the new task');
+  assert.match(toasts[0], /Moved "tbt-a first" to tbt-b on other/);
+});
+
+test('a clone to another node only creates; a failed drop is retried once, then warns of both copies', async (t) => {
+  const { calls, remote, toasts, dt, start, drop, summary, failAway } = await mountTwo(t, { otherNode: 'nd_other' });
+  let data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data, { ctrlKey: true });
+  assert.equal(remote.length, 1);
+  assert.equal(remote[0][3].clone, true);
+  assert.deepEqual(calls, [], 'a clone leaves the original alone');
+
+  failAway(1);
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2, 'one retry');
+  assert.match(toasts.at(-1), /Moved/);
+
+  failAway(2);
+  calls.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2);
+  assert.match(toasts.at(-1), /could not be closed here \(node offline\): both copies are live, drop this one by hand/);
+});
+
+test('a drop the source would refuse is known before anything is created; a lost answer is not a duplicate', async (t) => {
+  const { calls, remote, toasts, dt, start, drop, summary, refuseCheck, awayAnswers, failAway } = await mountTwo(t, { otherNode: 'nd_other' });
+  // A first try that landed but whose answer was lost: the retry finds the
+  // task closed (409), and that is the move done.
+  failAway(1);
+  awayAnswers(409);
+  let data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 2);
+  assert.match(toasts.at(-1), /^Moved/, 'a lost answer then 409 is a move done');
+
+  // A refusal on the drop is not retried.
+  awayAnswers(403);
+  calls.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.equal(calls.filter((c) => c[0] === 'movedAway').length, 1, 'a 403 is not retried');
+
+  refuseCheck();
+  remote.length = 0;
+  data = dt();
+  await start('tk_00000001', data);
+  await drop(summary('tbt-b'), data);
+  assert.deepEqual(remote, [], 'refused up front: nothing is created on the other node');
+});
+
+test('a done task does not move to another node, so no copy is left behind', async (t) => {
+  const harness = await createPreactHarness(t);
+  const transfer = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const saved = { ...transfer.transferDeps };
+  t.after(() => Object.assign(transfer.transferDeps, saved));
+  const toasts = [];
+  let created = 0;
+  transfer.transferDeps.toast = (text) => toasts.push(text);
+  transfer.transferDeps.confirm = async () => true;
+  transfer.transferDeps.nodeApi = async () => ({ transferIn: async () => { created++; return { id: 'tk_x' }; } });
+  const out = await transfer.runCrossTransfer({ task: { id: 'tk_1', title: 'shipped', status: 'done' }, group: { name: 'a' },
+    actions: { run: async (_k, _l, fn) => fn({ movedAway: async () => ({}) }) }, to: 'b', node: 'nd_other', nodeName: 'other', stage: 'idea', clone: false });
+  assert.equal(out, null);
+  assert.equal(created, 0);
+  assert.match(toasts[0], /only an open or blocked task moves to another node/);
 });
 
 test('the confirmation says what a move keeps and undoes', async (t) => {

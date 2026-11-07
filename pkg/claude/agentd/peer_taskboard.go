@@ -9,6 +9,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // A group's task board over federation (tcl-0jgecz, docs/taskboard.md): a
@@ -44,6 +45,8 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	group("GET /v1/groups/{name}/taskboard", read)
 	group("POST /v1/groups/{name}/taskboard/tasks", write)
 	group("POST /v1/groups/{name}/taskboard/ask", write)
+	// A task moved or cloned in from another node (taskboard.transfer).
+	group("POST /v1/groups/{name}/taskboard/transfer-in", peerViewRule{feature: "groups.taskboard.transfer-in", requires: PermTaskboardTransfer, group: true})
 
 	context := read
 	context.serve = servePeerTaskboardContext
@@ -66,6 +69,10 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	assign := peerViewRule{feature: "groups.taskboard.assign", requires: PermTaskboardAssign, group: true, write: servePeerTaskboardTask}
 	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
+	// The source side of a move to another node: the holder's write, or
+	// manage on the task's group; the handler tells them apart.
+	rules["POST /v1/taskboard/tasks/{id}/moved-away"] = peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite,
+		orGrants: []string{PermTaskboardManage}, group: true, write: servePeerTaskboardTask}
 	// Moving or cloning a task to another group of this node: the board's
 	// read opens the route, and the handler asks for taskboard.transfer on
 	// the target and taskboard.manage on the source (a move).
@@ -82,11 +89,33 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 // history and an assignment's brief name it rather than this operator.
 type taskboardPeerAuthorKey struct{}
 
+// taskboardPeerIDKey carries the linked node's instance id alongside it.
+type taskboardPeerIDKey struct{}
+
 // peerTaskboardAsLocal is an unrestricted peer's request as this node's
 // operator, its author attached.
 func peerTaskboardAsLocal(r *http.Request, v *peerView) *http.Request {
 	local := peerAsLocalRequest(r)
-	return local.WithContext(context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID)))
+	ctx := context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID))
+	return local.WithContext(context.WithValue(ctx, taskboardPeerIDKey{}, v.peer.InstanceID))
+}
+
+// taskboardPeerNode names the linked node behind a request as this node
+// lists it, or "" for a local caller.
+func taskboardPeerNode(r *http.Request) string {
+	id := ""
+	if a := peerGrantFromRequest(r); a != nil {
+		id = a.peer
+	} else {
+		id, _ = r.Context().Value(taskboardPeerIDKey{}).(string)
+	}
+	if id == "" {
+		return ""
+	}
+	if p, err := db.GetFederationPeer(id); err == nil && p != nil {
+		return proto.SafeName(peerDisplay(p), false)
+	}
+	return id
 }
 
 // taskboardPeerAuthor names the linked node behind a request, or "" for a
