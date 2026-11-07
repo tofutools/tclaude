@@ -326,6 +326,15 @@ test('a list row drags as a whole, as an agent row does: the grab cursor, contro
   assert.equal(row.draggable, true, 'a press on the title starts a drag');
   harness.fireEvent(harness.document, 'pointerup', {});
 
+  // A drag of a link in the row stays the browser's URL drag.
+  const link = harness.document.createElement('a');
+  link.setAttribute('href', 'https://example.test/SHOP-1');
+  row.querySelector('.tb-title-cell').append(link);
+  const linkData = dt();
+  await harness.act(async () => { harness.fireEvent(link, 'dragstart', { dataTransfer: linkData }); });
+  assert.equal(linkData.effectAllowed, '', 'a link drag is not a task drag');
+  link.remove();
+
   // A drag from the row itself, dropped on another group's board.
   const data = dt();
   await harness.act(async () => { harness.fireEvent(row, 'dragstart', { dataTransfer: data }); });

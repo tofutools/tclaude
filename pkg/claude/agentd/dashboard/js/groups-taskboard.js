@@ -348,6 +348,10 @@ function RowForm({ task, mode, actions, onClose }) {
 }
 
 const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another group to move it (Ctrl/Cmd: clone)';
+// linkDrag is a drag of a link in the row (the 🔗 ref): the browser's own
+// URL drag, not the task's.
+const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
+
 function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form, onForm }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
@@ -360,7 +364,7 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form
   const draggable = !!actions && !closed && !!drag;
   const row = html`<tr class=${`tb-row tb-row-${state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
       draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? DRAG_TITLE : undefined}
-      onDragStart=${draggable ? (event) => drag.start(event, task) : undefined} onDragEnd=${draggable ? drag.end : undefined}
+      onDragStart=${draggable ? (event) => { if (!linkDrag(event)) drag.start(event, task); } : undefined} onDragEnd=${draggable ? drag.end : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
     <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle"
         aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
