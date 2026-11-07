@@ -19,12 +19,12 @@
 // are this viewer's own (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { Button, Input } from './ui-components.js';
 import {
-  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
+  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
@@ -363,9 +363,21 @@ function layoutKey(group) {
 function useLaneOrder(group, groups, by, onChange) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
+  // refocus is the head an Alt+arrow just moved: the re-render moves its
+  // row in the DOM, which drops focus, so it is focused again.
+  const refocus = useRef(null);
+  useLayoutEffect(() => {
+    const target = refocus.current;
+    if (!target) return;
+    refocus.current = null;
+    const grid = [...document.querySelectorAll('[data-taskboard-lanes]')].find((el) => el.getAttribute('data-taskboard-lanes') === group.name);
+    const attr = target.kind === 'lane' ? 'data-lane-agent' : 'data-lane-group';
+    const el = grid && [...grid.querySelectorAll(`[${attr}]`)].find((node) => node.getAttribute(attr) === target.key);
+    if (el && document.activeElement !== el) el.focus();
+  });
   const groupOf = (laneId) => groups.find((g) => g.lanes.some((lane) => lane.id === laneId));
   const apply = (kind, moving, target, after) => {
-    if (kind === 'lane') moveLane(layoutKey(group), groups, moving, target, after);
+    if (kind === 'lane') moveLane(layoutKey(group), groups, by, moving, target, after);
     else moveHead(layoutKey(group), groups, by, moving, target, after);
     onChange();
   };
@@ -417,13 +429,14 @@ function useLaneOrder(group, groups, by, onChange) {
       const j = event.key === 'ArrowUp' ? i - 1 : i + 1;
       if (i < 0 || j < 0 || j >= list.length) return;
       event.preventDefault();
+      refocus.current = { kind, key };
       apply(kind, key, list[j], event.key === 'ArrowDown');
     },
   });
   return {
     over,
     laneProps: (lane) => props('lane', lane.id, () => (groupOf(lane.id)?.lanes || []).map((l) => l.id)),
-    headProps: (lg) => props('head', lg.key, () => groups.filter((g) => g.key !== 'former').map((g) => g.key)),
+    headProps: (lg) => props('head', lg.key, () => headedGroups(groups).map((g) => g.key)),
   };
 }
 
@@ -541,7 +554,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       ${groups.map((lg) => {
         const folded = lg.offline && !unfolded[lg.key];
         const head = lg.label || lg.offline;
-        const movable = lg.key !== 'former' && groups.filter((g) => g.key !== 'former').length > 1;
+        const movable = !!lg.label && lg.key !== 'former' && headedGroups(groups).length > 1;
         const marker = order.over?.kind === 'head' && order.over.key === lg.key ? (order.over.after ? ' tb-order-after' : ' tb-order-before') : '';
         return [
           head && html`<div key=${`${lg.key}-head`} class=${`tb-lane-group${marker}`} data-lane-group=${lg.key} ...${movable ? order.headProps(lg) : {}}>

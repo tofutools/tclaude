@@ -820,3 +820,59 @@ test('the covered-by hint honours stored denies the sudo picks do not override',
   assert.equal(umbrellaCover(viaDefault[0], by(viaDefault), picks({}), scopeOf), null,
     'a config default of an umbrella is not a source its step reads');
 });
+
+// Board access for another node's group (tcl-7nzhoq): a group grant of
+// taskboard.read scoped peer=<node>/<group>. The peer= picker loads the linked
+// nodes and the groups each shows this node, reads them by label, and saves
+// the stored instance-id form.
+const TB_READ = { slug: 'taskboard.read', description: 'read a board', scope_dims: ['group', 'peer'] };
+
+test('the peer= drawer offers linked nodes\' groups by label and saves the instance-id form', async (t) => {
+  const harness = await createPreactHarness(t);
+  const loads = [];
+  const saved = [];
+  const { host } = await openEditor(harness, scopeSnapshot({
+    slugs: [TB_READ], dimOptions: { group: { values: ['crew'] }, peer: {} },
+  }), {
+    ...noopActions,
+    loadScopeValues: async (descriptor, dim) => {
+      loads.push(dim);
+      return dim === 'peer' ? [
+        { kind: 'peer', id: 'inst_bob', value: 'inst_bob', title: 'bob (whole node)', node: 'bob' },
+        { kind: 'peer', id: 'inst_bob/crew', value: 'inst_bob/crew', title: 'bob / crew', node: 'bob' },
+      ] : [];
+    },
+    savePermissions: async (descriptor, selection, scopes) => saved.push(scopes),
+  });
+  await harness.act(() => host.querySelector('[data-slug="taskboard.read"] button.perm-scope-twisty').click());
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(loads, ['peer'], 'only the served dimension loads');
+  const box = dimInput(host, 'peer');
+  await harness.act(() => harness.fireEvent(box, 'focus'));
+  await harness.input(box, 'crew');
+  const option = dimBox(host, 'peer').querySelector('[role="option"]');
+  assert.equal(option.dataset.key, 'inst_bob/crew');
+  await harness.act(() => harness.fireEvent(option, 'mousedown'));
+  assert.match(dimBox(host, 'peer').querySelector('.perm-scope-chip').textContent, /bob \/ crew/, 'the chip reads by label');
+  await harness.input(box, '');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], { 'taskboard.read': { peer: ['inst_bob/crew'] } });
+});
+
+test('a typed node/group is kept as typed even when a longer catalogue row matches', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host } = await openEditor(harness, scopeSnapshot({ slugs: [TB_READ], dimOptions: { peer: {} } }), {
+    ...noopActions,
+    loadScopeValues: async () => [{ kind: 'peer', id: 'inst_bob/crewops', value: 'inst_bob/crewops', title: 'bob / crewops', node: 'bob' }],
+    savePermissions: async (descriptor, selection, scopes) => saved.push(scopes),
+  });
+  await harness.act(() => host.querySelector('[data-slug="taskboard.read"] button.perm-scope-twisty').click());
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const box = dimInput(host, 'peer');
+  await harness.act(() => harness.fireEvent(box, 'focus'));
+  await harness.input(box, 'bob/crew');
+  await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter' }));
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], { 'taskboard.read': { peer: ['bob/crew'] } }, 'the daemon resolves the label on save');
+});

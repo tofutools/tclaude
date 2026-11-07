@@ -62,7 +62,7 @@ test('a stored order sorts lanes and headings; a lane it does not list appends a
     { key: 'role:dev', lanes: [{ id: 'b' }, { id: 'c' }, { id: 'new' }] },
     { key: 'former', lanes: [{ id: 'gone' }] },
   ];
-  const out = applyLaneOrder(groups, { lanes: ['c', 'b'], heads: { role: ['former', 'role:dev', 'role:lead'] } }, 'role');
+  const out = applyLaneOrder(groups, { lanes: { role: ['c', 'b'] }, heads: { role: ['former', 'role:dev', 'role:lead'] } }, 'role');
   assert.deepEqual(out.map((g) => [g.key, g.lanes.map((l) => l.id)]),
     [['role:dev', ['c', 'b', 'new']], ['role:lead', ['a']], ['former', ['gone']]], 'former members stay last');
   assert.deepEqual(moveBefore(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
@@ -77,7 +77,7 @@ test('dragging a lane head reorders the lanes, remembered per group; Unassigned 
   assert.equal(await dragOnto(head('agt_writer'), head('agt_builder')), true);
   assert.deepEqual(lanes(), ['unassigned', 'agt_writer', 'agt_builder', 'agt_lead', 'agt_tester']);
   assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-order.tbo-lanes')).lanes,
-    ['agt_writer', 'agt_builder', 'agt_lead', 'agt_tester']);
+    { agent: ['agt_writer', 'agt_builder', 'agt_lead', 'agt_tester'] }, 'kept for lanes by agent');
   // A task drag over a lane head is not a lane drag.
   const over = harness.fireEvent(head('agt_lead'), 'dragover', { dataTransfer: { types: ['application/x-tclaude-task'] } });
   assert.equal(over.defaultPrevented, false);
@@ -92,6 +92,13 @@ test('Alt+arrow moves a focused lane; reset order puts the default back', async 
   assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer']);
   await harness.act(async () => { harness.fireEvent(head('agt_tester'), 'keydown', { key: 'ArrowUp' }); });
   assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer'], 'without Alt nothing moves');
+
+  // Focus stays on the moved head, so Alt+↑ can be pressed again.
+  head('agt_writer').focus();
+  await harness.act(async () => { harness.fireEvent(head('agt_writer'), 'keydown', { key: 'ArrowUp', altKey: true }); });
+  assert.equal(harness.document.activeElement, head('agt_writer'), 'the moved head keeps the focus');
+  await harness.act(async () => { harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'ArrowUp', altKey: true }); });
+  assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_writer', 'agt_builder', 'agt_lead']);
 
   const reset = c.querySelector('.tb-lanes-reset');
   assert.ok(reset);
@@ -111,6 +118,25 @@ test('by role, lanes reorder within their heading and the headings reorder among
   assert.equal(await dragOnto(group('role:docs'), group('role:lead')), true);
   assert.deepEqual(heads(), ['role:docs', 'role:lead', 'role:dev']);
   assert.deepEqual(lanes(), ['unassigned', 'agt_writer', 'agt_lead', 'agt_tester', 'agt_builder']);
+});
+
+test('an order by role leaves the order by agent alone', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { moveLane, laneOrder, applyLaneOrder } = await harness.importDashboardModule('js/groups-taskboard-lanes-layout.js');
+  const byRole = [{ key: 'role:lead', label: 'lead', lanes: [{ id: 'lead' }] },
+    { key: 'role:dev', label: 'dev', lanes: [{ id: 'builder' }, { id: 'tester' }] }];
+  moveLane('tbo-split', byRole, 'role', 'tester', 'builder');
+  const byAgent = [{ key: 'agents', lanes: [{ id: 'builder' }, { id: 'lead' }, { id: 'tester' }] }];
+  assert.deepEqual(applyLaneOrder(byAgent, laneOrder('tbo-split'), 'agent')[0].lanes.map((l) => l.id), ['builder', 'lead', 'tester']);
+  assert.deepEqual(applyLaneOrder(byRole, laneOrder('tbo-split'), 'role')[1].lanes.map((l) => l.id), ['tester', 'builder']);
+});
+
+test('by agent, the offline heading is not a heading to reorder', async (t) => {
+  const offline = members().map((m) => (m.agent_id === 'agt_writer' ? { ...m, online: false } : m));
+  const { c } = await mountLanes(t, 'tbo-offline', { groupMembers: offline });
+  const heading = [...c.querySelectorAll('[data-lane-group]')];
+  assert.ok(heading.length >= 1, 'the offline lanes have their heading');
+  for (const el of heading) assert.equal(el.getAttribute('draggable'), null, `${el.getAttribute('data-lane-group')} stays put`);
 });
 
 test('a column edge resizes from the keyboard, is stored per group, and a double-click resets it', async (t) => {
