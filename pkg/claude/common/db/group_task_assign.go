@@ -194,7 +194,11 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 				return err
 			}
 			out.Blocked = true
-			return addGroupTaskEventTx(tx, id, actor, GroupTaskEventBlocked, reason, now)
+			if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventBlocked, reason,
+				statusChange(t.Status, GroupTaskBlocked), now); err != nil {
+				return err
+			}
+			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentBlock, reason, now)
 		}
 		return nil
 	})

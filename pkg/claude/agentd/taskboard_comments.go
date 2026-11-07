@@ -58,7 +58,9 @@ var taskboardResourceActions = map[string]bool{
 func commentView(e *db.GroupTaskEvent, files []db.GroupTaskAttachment, labels *taskboardLabeler) *taskboardCommentView {
 	v := &taskboardCommentView{ID: e.ID, Kind: e.CommentKind, Body: e.Body, Key: e.ClientKey, Author: e.Actor,
 		At: rfc3339(e.At), EditedAt: rfc3339(e.EditedAt), DeletedAt: rfc3339(e.DeletedAt)}
-	if labels != nil {
+	if name := peerPrincipalName(e.Actor); name != "" {
+		v.AuthorName = name
+	} else if labels != nil {
 		if name := labels.actor(e.Actor); name != e.Actor {
 			v.AuthorName = name
 		}
@@ -87,6 +89,9 @@ func taskboardActivityEntries(t *db.GroupTask, g *db.AgentGroup) ([]taskboardEve
 	for _, e := range events {
 		v := taskboardEventView{ID: e.ID, At: rfc3339(e.At), Actor: e.Actor, Kind: e.Kind, Detail: e.Detail,
 			ActorName: labels.actor(e.Actor)}
+		if name := peerPrincipalName(e.Actor); name != "" {
+			v.ActorName = name
+		}
 		if text := labels.detail(e.Kind, e.Detail); text != e.Detail {
 			v.DetailText = text
 		}
@@ -234,7 +239,7 @@ func handleTaskboardCommentAdd(w http.ResponseWriter, r *http.Request, t *db.Gro
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	actor := taskboardActor(r)
+	actor := taskboardCommentAuthor(r)
 	atts, ok := storeTaskUploadsOrFail(w, files, actor)
 	if !ok {
 		return
@@ -281,7 +286,7 @@ func handleTaskboardCommentEdit(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	c, err := db.EditGroupTaskComment(t.ID, cid, taskboardActor(r), text)
+	c, err := db.EditGroupTaskComment(t.ID, cid, taskboardCommentAuthor(r), text)
 	if err != nil {
 		writeTaskboardCommentError(w, err)
 		return
@@ -296,7 +301,7 @@ func handleTaskboardCommentDelete(w http.ResponseWriter, r *http.Request, t *db.
 	if !ok || !requireTaskboardCommenter(w, r, g) {
 		return
 	}
-	c, err := db.DeleteGroupTaskComment(t.ID, cid, taskboardActor(r))
+	c, err := db.DeleteGroupTaskComment(t.ID, cid, taskboardCommentAuthor(r))
 	if err != nil {
 		writeTaskboardCommentError(w, err)
 		return

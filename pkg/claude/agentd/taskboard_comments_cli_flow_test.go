@@ -131,7 +131,8 @@ func TestPeerTaskboardCommentsCLI(t *testing.T) {
 	comments, err := db.ListGroupTaskComments(task.ID)
 	require.NoError(t, err)
 	require.Len(t, comments, 1)
-	assert.Contains(t, comments[0].Actor, "peer: ")
+	// Authorship keys on the node's instance id, not its changeable name.
+	assert.Equal(t, "peer:"+fh.peer.id.ID(), comments[0].Actor)
 
 	rc, out, errOut = run("comment", "edit", task.ID, "#"+tbID(comments[0].ID), "from afar, edited", "--peer", "bob")
 	require.Equal(t, 0, rc, "the peer edits its own comment: out=%s err=%s", out, errOut)
@@ -139,5 +140,6 @@ func TestPeerTaskboardCommentsCLI(t *testing.T) {
 	rc, out, errOut = run("activity", task.ID, "--peer", "bob")
 	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
 	assert.Contains(t, out, "from afar, edited")
+	assert.Contains(t, out, "the operator of linked node", "the author is named, not numbered")
 	assert.Contains(t, out, "untrusted content")
 }
