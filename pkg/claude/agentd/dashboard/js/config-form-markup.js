@@ -1207,7 +1207,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Start directory" forId="cfg-steward-dir" wide k="steward.dir"
           summary="The directory a new Steward starts in. Unset, it starts in the shared scribe directory, ~/.tclaude/scribe. A running Steward stays where it started."
-          more="An absolute path or one under ~/, and it must exist when the Steward is summoned. Point it at a repository and the Steward's harness reads that repository's project instructions and memory, and the folder is pre-trusted for the Steward's harness. A sandbox profile that denies the directory refuses the summon.">
+          more="An absolute path or one under ~/, and it must exist when the Steward is summoned. Point it at a repository and the Steward's harness reads that repository's project instructions and memory, and the folder is pre-trusted for the Steward's harness, unless it is your home directory or above it. A sandbox profile that denies the directory refuses the summon.">
           <${StewardDirInput} />
         </${Setting}>
       </${Group}>

@@ -507,7 +507,9 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	// detached pane comes up without a folder-trust prompt (JOH-369). The
 	// harness comes from the resolution above, so the seed and the launch
 	// agree by construction.
-	seedScribeDirTrust(harnessOrDefault(p.Harness), cwd)
+	if stewardDir == "" || !trustsTooWide(stewardDir) {
+		seedScribeDirTrust(harnessOrDefault(p.Harness), cwd)
+	}
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {
 		return nil, false, spawnFail
@@ -650,7 +652,28 @@ func configuredStewardDir() (string, *spawnFailure) {
 		return "", &spawnFailure{http.StatusUnprocessableEntity, "steward_dir",
 			fmt.Sprintf("the Steward's start directory %s is not a directory on this machine: change it in Config > Steward", dir)}
 	}
+	// The harness sees the resolved cwd, so the trust seed and the sandbox
+	// check key on it too.
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	return dir, nil
+}
+
+// trustsTooWide reports a directory whose pre-trust would reach well past the
+// Steward: the home directory or one of its ancestors. A harness may treat an
+// ancestor's trust as covering every folder under it, so these are not seeded;
+// the pane may ask once instead.
+func trustsTooWide(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir == string(filepath.Separator)
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	rel, err := filepath.Rel(dir, home)
+	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
 // ensureScribeWorkdir resolves and creates the shared scribe workdir. 0700:
