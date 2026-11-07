@@ -57,6 +57,7 @@ tclaude agent taskboard move tk_… --top | --before tk_… | --after tk_…
 tclaude agent taskboard promote tk_…   ;   tclaude agent taskboard demote tk_…
 tclaude agent taskboard block tk_… --reason "waiting on review"   ;   unblock tk_…
 tclaude agent taskboard drop tk_… --reason "parked in awb"
+tclaude agent taskboard move-to-group tk_… <other-group> [--clone] [--stage next]
 ```
 
 New tasks land in the ideas unless you pass `--next`. Keep the board short.
@@ -81,6 +82,11 @@ reply to the message with the task ids.
 - Assigning another agent, taking a task back from it, and closing a task
   assigned to someone else need `taskboard.assign`. Group owners have it for
   their groups.
+- Moving a task to another group needs `taskboard.transfer` on that group (its
+  owners have it) and, on the source, `taskboard.write` for your own task or
+  `taskboard.manage` for someone else's. `--clone` needs only read on the
+  source. A move drops the task's dependencies and unassigns an assignee who
+  is not a member of the new group.
 - Another group's board needs `taskboard.read` / `taskboard.write`, scoped with
   `--scope group=<name>`. Without access, a task id from that group is reported
   as not found.
