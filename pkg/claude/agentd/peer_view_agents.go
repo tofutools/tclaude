@@ -212,8 +212,12 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/taskboard/tasks/{id}/move-to-group": {slugs: []string{PermTaskboardTransfer}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/assign":        {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/unassign":      {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"GET /v1/groups/{name}/taskboard/writers":     {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"POST /v1/groups/{name}/taskboard/writers":    {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	// A move or clone across nodes (taskboard_transfer.go): create on the
+	// target, then drop the original on its source with a note.
+	"POST /v1/groups/{name}/taskboard/transfer-in": {slugs: []string{PermTaskboardTransfer}, target: agentViewGroup},
+	"POST /v1/taskboard/tasks/{id}/moved-away":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"GET /v1/groups/{name}/taskboard/writers":      {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/writers":     {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
