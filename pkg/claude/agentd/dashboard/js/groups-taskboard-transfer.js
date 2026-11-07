@@ -51,6 +51,9 @@ export function cloneGesture(event) {
 function realGroupBox(el) {
   const box = el?.closest?.('details[data-group-key]');
   if (!box || !(box.hasAttribute('data-dnd-target-group') || box.hasAttribute('data-fleet-node'))) return null;
+  // The fleet view marks a virtual group (Ungrouped, Retired) with its node
+  // too; it is no group a task can go to.
+  if (box.classList.contains('group-virtual')) return null;
   return box;
 }
 

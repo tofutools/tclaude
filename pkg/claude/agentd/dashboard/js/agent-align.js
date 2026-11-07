@@ -3,7 +3,7 @@
 // (groups-taskboard.js) take the agents table's Name, State, Last and Age
 // column widths, so those columns run straight down the group's card.
 
-import { useEffect, useLayoutEffect } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 
 // ALIGNED_COLS are the agents table's headers (data-sort-col) a Resources
 // table lines its own up under, in order, each with this table's width
@@ -45,21 +45,40 @@ export function agentColumns(table) {
   return out;
 }
 
+// agentHeads are the elements whose size moves the agents table's columns:
+// the section, and its members table's header cells (a column can widen as
+// its rows fill in while the section keeps its size).
+function agentHeads(table) {
+  const agents = table?.closest?.('[data-fused-section]')?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"]');
+  if (!agents) return [];
+  const head = agents.querySelector('thead th[data-sort-col="title"]')?.closest('thead');
+  return [agents, ...(head ? head.querySelectorAll('th') : [])];
+}
+
 // useAgentColumns calls apply(table, agentColumns(table)) on every render and
-// whenever the agents table above changes size, for the table to set its
-// column widths from.
+// whenever the agents table above changes its columns, for the table to set
+// its column widths from. The table may come and go (a board's list is drawn
+// only once it has tasks), so the watch starts once it is there, and follows
+// the agents table's header as it is redrawn.
 export function useAgentColumns(ref, apply) {
+  const watch = useRef({ observer: null, watched: [] });
+  const latest = useRef(apply);
+  latest.current = apply;
   const run = () => {
     const table = ref.current;
-    if (table) apply(table, agentColumns(table));
+    if (table) latest.current(table, agentColumns(table));
   };
-  useLayoutEffect(run);
-  useEffect(() => {
-    const table = ref.current;
-    const agents = table?.closest?.('[data-fused-section]')?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"]');
-    if (!agents || typeof ResizeObserver !== 'function') return undefined;
-    const observer = new ResizeObserver(() => run());
-    observer.observe(agents);
-    return () => observer.disconnect();
-  }, []);
+  useLayoutEffect(() => {
+    run();
+    const heads = agentHeads(ref.current);
+    const state = watch.current;
+    if (heads.length === state.watched.length && heads.every((el, i) => el === state.watched[i])) return;
+    state.observer?.disconnect();
+    state.observer = null;
+    state.watched = heads;
+    if (!heads.length || typeof ResizeObserver !== 'function') return;
+    state.observer = new ResizeObserver(() => run());
+    for (const el of heads) state.observer.observe(el);
+  });
+  useEffect(() => () => watch.current.observer?.disconnect(), []);
 }

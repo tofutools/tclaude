@@ -13,7 +13,8 @@ const html = htm.bind(h);
 // RowMenu is a row's ⋯: what is rarely wanted, and what cannot be undone
 // behind a confirm. An item with children opens them in its place (Move to
 // group lists the groups), with a way back; children may be a function,
-// read only when the item is picked. A disabled item is a note.
+// read only when the item is picked. A disabled item is a note. key tells
+// apart items with the same label (two members with one title).
 export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more', keepSlot = false }) {
   const [open, setOpen] = useState(false);
   const [sub, setSub] = useState(null);
@@ -34,7 +35,7 @@ export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass =
     <${Button} size="sm" variant=${keepSlot ? undefined : 'link'} icon=${keepSlot} class=${keepSlot ? buttonClass : `gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${title || `More for ${label}`} aria-label=${title || `More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>${glyph}<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu">
-      ${shown.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} disabled=${item.disabled} ...${item.attrs || {}}
+      ${shown.map((item) => html`<${MenuItem} key=${item.key || item.label} danger=${item.danger} disabled=${item.disabled} ...${item.attrs || {}}
         onClick=${() => pick(item)}>${item.children ? `${item.label} ›` : item.label}<//>`)}
     <//>`}
   </span>`;

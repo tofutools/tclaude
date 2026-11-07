@@ -268,6 +268,7 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
         return members.map((member) => {
           const here = task.assignee?.agent_id === member.agent_id;
           return item(`assign-to`, `${member.title || member.agent_id}${member.online ? '' : ' (offline)'}${here ? ' ✓' : ''}`, `taskboard assign --to ${member.agent_id}`, {
+            key: member.agent_id,
             disabled: here,
             run: () => actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, member.agent_id))
               .then((ok) => { if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [member.agent_id] }); }),
@@ -289,6 +290,7 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
       const found = transferTargets(group.shownName || group.name);
       if (!found.length) return [{ label: 'No other group on this page', disabled: true }];
       return found.map((target) => item('to', target.shown, `taskboard move-to-group ${task.id} ${target.group}${clone ? ' --clone' : ''}`, {
+        key: target.shown,
         run: () => (target.cross
           ? runCrossTransfer({ task, group, actions, to: target.group, node: target.node, nodeName: target.nodeName, fromNodeName: target.fromNodeName, stage, clone })
           : runTransfer({ task, group, tasks, actions, to: target.group, stage, clone })),
@@ -383,7 +385,7 @@ function TaskRow({ task, n, numbers, group, snapshot, tasks, actions, drag, form
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
     <td class="tb-ref-cell"><${RefChip} task=${task} /></td>
     <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} numbers=${numbers} />` : html`<span class="tb-none">—</span>`}</td>
-    <td class="tb-c">${files ? html`<span class="tb-files" title=${`${files} file${files === 1 ? '' : 's'} on this task`}>📎 ${files}</span>` : html`<span class="tb-none">—</span>`}</td>
+    <td class="tb-files-cell">${files ? html`<span class="tb-files" title=${`${files} file${files === 1 ? '' : 's'} on this task`}>📎 ${files}</span>` : html`<span class="tb-none">—</span>`}</td>
   </tr>`;
   if (!form || !actions) return row;
   return [row, html`<${RowForm} key=${`${task.id}-form`} task=${task} mode=${form} actions=${actions} onClose=${() => onForm(task.id, null)} />`];
@@ -670,9 +672,9 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
-  const table = tasks.length ? html`<table class="ui-compact tb-table" ref=${tableRef} onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+  const table = tasks.length ? html`<table class="tb-table" ref=${tableRef} onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
-        <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th class="tb-c">Files</th></tr></thead>
+        <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
         ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} form=${forms[task.id]} ...${rowProps} />`)}
         ${ideasBand}
@@ -689,7 +691,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
-    ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="ui-compact tb-table tb-closed-table">${COLUMNS}<tbody>
+    ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} form=${null} ...${rowProps} />`)}
     </tbody></table>`}
   </div>`;

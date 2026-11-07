@@ -70,7 +70,7 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
       <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />
     </details>`;
   };
-  const mounted = await harness.mount(harness.html`<div>${card('tbt-a')}${card('tbt-b', otherNode)}<details data-group-key="virtual:ungrouped"><summary>Ungrouped</summary></details></div>`);
+  const mounted = await harness.mount(harness.html`<div>${card('tbt-a')}${card('tbt-b', otherNode)}<details class="group-virtual" data-group-key="virtual:ungrouped" data-fleet-node=${otherNode || undefined}><summary>Ungrouped</summary></details></div>`);
   const c = mounted.container;
   const dt = () => ({ setData() {}, setDragImage() {}, effectAllowed: '', dropEffect: '' });
   const handle = (id) => c.querySelector(`tr[data-task-id="${id}"] .tb-handle`) || c.querySelector(`.tb-card[data-task-id="${id}"]`);
@@ -115,6 +115,10 @@ test('a list row\'s ⋯ moves or clones a task to the groups a drag reaches, aft
 
 test('a list row\'s ⋯ moves a task to a group on another node as a drop does', async (t) => {
   const { harness, c, calls, remote } = await mountTwo(t, { otherNode: 'nd_other' });
+  await pickMenu(harness, c, 'tk_00000001', 'Move to group');
+  assert.deepEqual([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].map((b) => b.textContent.trim()), ['‹ Back', 'tbt-b'],
+    'the fleet view\'s virtual groups carry a node too, and are still no target');
+  await harness.act(async () => { harness.fireEvent(c.querySelector('tr[data-task-id="tk_00000001"] .tb-act-more'), 'click'); });
   await pickMenu(harness, c, 'tk_00000001', 'Move to group', 'tbt-b');
   assert.equal(remote[0][0], 'nd_other', 'the target node creates it');
   assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]]);
