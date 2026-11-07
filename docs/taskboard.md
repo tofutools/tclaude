@@ -8,9 +8,9 @@ has one board. The operator and the group's agents read and change it with
 > The task board is in development and is off by default. Turn it on with
 > `"features": {"taskboard": true}` in `~/.tclaude/config.json`. While it is
 > off, its routes answer 404, but stored tasks are kept. So far there is the
-> store, the CLI, the API and a read-only dashboard section. Assigning tasks to
-> agents, importing refs from trackers, and editing in the dashboard come in
-> later slices.
+> store, the CLI, the API, importing refs from trackers, assigning tasks to
+> agents and a read-only dashboard section. Editing in the dashboard comes in
+> a later slice.
 
 ## What the board is for, and what it is not
 
@@ -55,7 +55,7 @@ remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 ## Commands
 
 ```bash
-tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--json]
+tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--mine] [--json]
 tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard history <task>
@@ -71,6 +71,14 @@ tclaude agent taskboard block <task> --reason "waiting on CI"
 tclaude agent taskboard unblock <task>
 tclaude agent taskboard drop <task> [--reason "parked in awb"]
 tclaude agent taskboard done <task>
+
+tclaude agent taskboard assign <task> --to <agent>
+tclaude agent taskboard unassign <task>
+tclaude agent taskboard take <task>
+tclaude agent taskboard release <task>
+tclaude agent taskboard report done|failed [--task <task>] [--note "…"]
+
+tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --show
 ```
 
 - If you leave out the group in `ls`, it lists your own group's board. This only
@@ -83,12 +91,103 @@ tclaude agent taskboard done <task>
   moved task is promoted or demoted in the same write.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
   id. `LIN-123` is read as a Linear id, and a lower-case `tcl-a1b2c3` as an awb
-  id. Prefix the id with `awb:` or `linear:` to say which one you mean. A bare id
-  is stored with no link for now; a later slice resolves it through the tracker
-  proxies.
+  id. Prefix the id with `awb:` or `linear:` to say which one you mean. On a
+  single `add`, a bare id is stored with no link. An import (below) resolves it.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
+
+## Importing from a tracker
+
+```bash
+tclaude agent taskboard add <group> --from-awb tcl-a1b2c3,tcl-d4e5f6 [--next]
+tclaude agent taskboard add <group> --from-linear LIN-1,LIN-2
+tclaude agent taskboard add <group> --from-github owner/repo#12,https://github.com/owner/repo/pull/34
+printf 'try the fused card\ntcl-a1b2c3\nLIN-7\n' | tclaude agent taskboard add <group> --lines-file -
+```
+
+An import adds one task per ref or line. Like any `add`, it lands in the ideas
+unless you pass `--next`.
+
+- **Titles come from the tracker.** The daemon looks each ref up through the
+  matching [proxy](proxies.md): awb `issue show`, Linear `issue view`, or GitHub
+  `issue view` / `pr view`. It does this as you, so you need the same rights a
+  direct proxy read needs: `proxy.awb.read`, `proxy.linear.read` or
+  `proxy.github.read`, within the operator's workspace, team and remote
+  allow-lists. Each lookup is audited as your own proxy read. The GitHub proxy
+  reads only the repository your working directory's remote points at, so a
+  GitHub ref in another repository is not looked up.
+- **A failed lookup still adds the task.** When no proxy is configured, the
+  lookup is refused, or the tracker has no such item, the id becomes the title.
+  The output says why for each item. Fix the title later with `edit --title`.
+  The fallback title is the tracker id, `owner/repo#n` for GitHub, or the whole
+  URL for a plain link. All lookups in one import share a one-minute budget;
+  refs left over when it runs out keep their id as the title.
+- **The link is filled in.** An awb ref links to the issue on the configured awb
+  server, and a Linear ref to the URL Linear returns.
+- **Duplicates are refused one by one.** A ref that is already on the board
+  (open or blocked, in either stage) is refused, and so is a repeat within the
+  same import. The rest of the import still lands. A GitHub ref is matched by
+  repository and number, so `owner/repo#12` and the issue URL count as the same.
+  An awb or Linear ref is matched by its id, and any other link by its whole URL.
+- **`owner/repo#n`** is looked up as an issue first, then as a pull request.
+- **Lines.** `--lines-file` adds one task per non-empty line. A line that is
+  only an awb, Linear or GitHub id (or URL) becomes a task with that ref, and
+  is looked up like the `--from-*` refs. Any other line is the title.
+- An import holds at most 50 items. It takes only `--next`, not `--body`,
+  `--ref`, `--after` or a position. The exit code is non-zero when any item was
+  refused, and `--json` prints the result for each item.
 - Titles are one line of UTF-8, up to 200 bytes, with no control characters.
   A body can be up to 8 KiB.
+
+## Assigning and reporting
+
+A task has at most one assignee. The assignee must be an active member of the
+task's group.
+
+- `assign --to <agent>` gives the task to a member. If the task is an idea, it
+  is promoted to the end of the queue first. The assignee gets an inbox message
+  from you, `[taskboard] <group> · tk_… "title" — assigned to you by <you>`,
+  with the brief, the ref and the exact report commands. It is ordinary inbox
+  mail, delivered like any agent message. A short, paste-safe message is
+  shown inline in the agent's pane.
+- `take` assigns a task to yourself. You can only take a task that is queued
+  (`next`), open and unassigned. `release` gives back a task that is assigned
+  to you. It never takes a task away from someone else.
+- `unassign` takes a task back from its assignee. The assignee is told by inbox
+  mail.
+- `report done` closes the task. `report failed` counts a failure and gives the
+  task back. After three failures the task is blocked with the reason
+  "3 failed attempts". Unblocking or reopening the task resets the count. If an agent assigned the task, that agent is told about
+  every report.
+- Only the current assignee can report. A report from someone who has been
+  unassigned, or whose task was reassigned, is refused with `not_assignee`
+  (409). Sending the same report twice is acknowledged without being applied
+  again. `--task` may be left out when exactly one live task is assigned to you.
+- An assignment never retires, releases or stops the agent. `done` leaves the
+  agent where it is, ready to take the next task. Retiring an agent unassigns
+  its live tasks; the history records "assignee retired". Reincarnation keeps
+  the assignment, because the agent id is stable. A clone does not inherit it.
+- `ls --mine` lists the live tasks assigned to you, in every group you are
+  still an active member of.
+- Reassigning a task takes it away from its current holder, so it needs the
+  right to do both: assign the new agent, and take the task back from the old
+  one. A change gated against one holder is refused with `assignee_changed`
+  if the task changed hands in the meantime.
+
+Assigned tasks show `@<agent>` in `ls`, and their history records who
+assigned whom.
+
+## The writer lock
+
+By default, every member of a group may change its board and take its tasks.
+`groups set-taskboard-writers <group> <agent>…` narrows this to the listed
+members. Owners of the group, the operator, and agents with an explicit
+unscoped or group-scoped `taskboard.write` or `taskboard.assign` grant are not
+affected. An assign grant that is also scoped to target agents does not pass
+the lock. With no agents
+listed, the board is locked to owners only. `--members` opens it to every
+member again, and `--show` prints the current lock. A locked change is refused
+with `taskboard_locked`. Reporting on your own task is never locked, because
+whoever assigned it already authorised the work.
 
 ## Permissions
 
@@ -98,8 +197,13 @@ The operator passes every gate. For agents:
 |---|---|---|
 | `taskboard.read` | `ls`, `show`, `history` | Members and owners of the group |
 | `taskboard.write` | Everything that changes a task. Implies read. | Members and owners of the group |
-| `taskboard.manage` | The writer lock and retention (later slice) | Owners of the group |
-| `self.taskboard` | Taking, releasing and reporting on your own tasks (later slice) | Default-granted |
+| `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
+| `taskboard.manage` | The writer lock | Owners of the group |
+| `self.taskboard` | Taking and releasing a task for yourself, and reporting on your own task | Default-granted |
+
+Closing a task (`done` or `drop`) that is unassigned needs `taskboard.write`.
+Closing your own task needs `self.taskboard`. Closing a task assigned to
+someone else needs `taskboard.assign`.
 
 None of the `taskboard.*` slugs are default-granted. Access to another group's
 board is an ordinary scoped grant:
@@ -107,6 +211,7 @@ board is an ordinary scoped grant:
 ```bash
 tclaude agent permissions grant steward taskboard.read taskboard.write --scope group=tclaude,website
 tclaude agent permissions grant steward taskboard.read   # unscoped: every group, including future ones
+tclaude agent permissions grant lead taskboard.assign --scope group=tclaude --scope target_agent=@descendants
 ```
 
 An explicit deny wins over membership and ownership, as it does everywhere.
@@ -190,14 +295,33 @@ peer node's groups don't show their boards yet.
 | `ls` (own group) | `GET /v1/taskboard` |
 | `show` / `history` | `GET /v1/taskboard/tasks/{id}` / `…/events` |
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` |
+| `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
+| `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
+| `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
+| `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
+| `ls --mine` | `GET /v1/taskboard/mine` |
 | `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
+| `groups set-taskboard-writers` | `GET` / `POST /v1/groups/{g}/taskboard/writers {"agents":[…]}\|{"members":true}` |
+
+The group listing also returns `locked`, and `writers` when the board is
+locked. Each task carries `assignee` (`agent_id`, `name`), `assigned_by`,
+`assigned_at`, `outcome`, `outcome_note` and `failures` when they are set.
+Every change is recorded in the audit log as `taskboard.<verb>`, with the
+group, the task id and, for an assignment, the target agent.
 
 `status` also accepts `{"status":"open"}` on a done or dropped task. This
 reopens the task in the stage and position it had before.
+
+An import answers 200 with `{"group", "created", "results":[…]}`, with one
+result per item in input order. Each result carries `input`, and either `task`
+(with `resolved: true`, or a `note` saying why the title is the id) or `error`
+and `code` (`duplicate`, `invalid_arg`, `cap`). The `refs` entries take the same
+forms as `--ref`. The CLI prefixes `--from-awb` ids with `awb:` and
+`--from-linear` ids with `linear:`.
 
 `GET /v1/taskboard/context` is what the dashboard reads. For every group whose
 board the caller can read, it returns the counts, up to 50 live rows (without

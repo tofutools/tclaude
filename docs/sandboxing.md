@@ -165,7 +165,7 @@ the *relaunch* will resolve, and probes cgroup
 creation for implementations that cannot launch without one. It needs the
 `agent.sandbox-impl` permission, which group ownership deliberately does not
 confer and which is not granted by default. The dashboard equivalent is
-**🧩 sandbox implementation…** in the agent's row menu, which restarts a
+**🧩 sandbox implementation / profile…** in the agent's row menu, which restarts a
 running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
@@ -209,6 +209,44 @@ the posture you want.
 The dashboard's restart without sandbox is refused while the conversation is in
 private state, because a one-off restart should not move it. Assign the
 implementation you want instead.
+
+### Changing an existing agent's sandbox profile
+
+```bash
+tclaude agent sandbox-impl set <agent> --sandbox-profile strict --restart
+tclaude agent sandbox-impl set <agent> --no-sandbox-profile
+tclaude agent sandbox-impl set <agent> tclaude-layer --sandbox-profile strict
+```
+
+The same assignment replaces the agent's **explicit** sandbox profile (the
+one its spawn named with `--sandbox-profile`), alone or together with the
+implementation, in one restart. The global and group tiers are not the
+agent's to change here: they keep following the workspace and group
+assignments. The same rules apply as for the implementation: a stopped agent
+is assigned and left stopped, a running one needs `--restart`, the
+`agent.sandbox-impl` permission is required, and every launch gate is run now
+against the chain the new profile gives, so a profile the agent's posture
+cannot carry is refused here rather than at wake time. The agent's explicit
+harness-config posture, group environment and deny overlay must still apply
+over the new chain.
+
+The change is recorded beside the policy stored at the last launch, not in
+it. `show` reports the profile as assigned until a launch applies it. If the
+relaunch cannot use the new profile (it was deleted meanwhile, say), it falls
+back to the stored policy with a warning, as for any unusable profile, and
+the assignment stays pending for the launch after. Under a relaunch policy
+that reuses stored profile contents, a changed profile is re-read, exactly as
+a changed group assignment is. Choosing the profile the agent last launched
+under again cancels a pending change. An agent whose launches omit sandbox
+profiles has no explicit profile to change and is refused. In the dashboard,
+the same dialog has a **Sandbox profile** picker beside the implementations,
+and shows the global and group profiles that also apply. It starts on **keep
+current**, which changes nothing. **Default** removes the agent's explicit
+profile, so it resolves like a spawn that names none: the global profile,
+then the group's (`--no-sandbox-profile` on the command line).
+
+A peer with restricted trust cannot change a profile: its sandbox-impl
+requests carry only an implementation.
 
 ### Imported agents
 

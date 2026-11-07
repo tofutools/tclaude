@@ -29,22 +29,9 @@ const (
 	taskboardDoneWindow        = 7 * 24 * time.Hour
 )
 
-// taskboardContextAssignee is who holds a task. The dashboard names the
-// agent from its snapshot.
-type taskboardContextAssignee struct {
-	AgentID string `json:"agent_id"`
-}
-
-// taskboardContextTask is a task row without its body, plus its assignment
-// and last report under the same keys as the assign slice's task view.
-type taskboardContextTask struct {
-	taskboardTaskView
-	Assignee   *taskboardContextAssignee `json:"assignee,omitempty"`
-	AssignedBy string                    `json:"assigned_by,omitempty"`
-	AssignedAt string                    `json:"assigned_at,omitempty"`
-	Outcome    string                    `json:"outcome,omitempty"`
-	Failures   int                       `json:"failures,omitempty"`
-}
+// taskboardContextTask is a task row without its body. The task view
+// carries the assignment and the last report.
+type taskboardContextTask = taskboardTaskView
 
 // taskboardCounts are a board's counts. Live is every open or blocked task;
 // the stage buckets split the open ones: InProgress is assigned, Next and
@@ -193,24 +180,16 @@ func buildTaskboardGroupContext(g *db.AgentGroup, now time.Time) (taskboardGroup
 }
 
 // taskboardContextTasks is taskboardViews without the bodies (a row shows
-// none), plus each task's assignee and last report.
+// none).
 func taskboardContextTasks(group string, tasks []*db.GroupTask) ([]taskboardContextTask, error) {
 	views, err := taskboardViews(group, tasks)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]taskboardContextTask, 0, len(views))
-	for i, v := range views {
-		t := tasks[i]
-		v.Body = ""
-		row := taskboardContextTask{taskboardTaskView: v, Outcome: t.Outcome, Failures: t.Failures}
-		if t.AssigneeID != "" {
-			row.Assignee = &taskboardContextAssignee{AgentID: t.AssigneeID}
-			row.AssignedBy, row.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
-		}
-		out = append(out, row)
+	for i := range views {
+		views[i].Body = ""
 	}
-	return out, nil
+	return views, nil
 }
 
 // dashboardTaskboardRoutes are the board's write routes the Groups tab's

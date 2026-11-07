@@ -12,7 +12,8 @@ test('resource model: this browser\'s places win, then what the server says runs
       { kind: 'board', board: 'b_both', minimized: false },
       { id: 'process:tpl_min', kind: 'process', template: 'tpl_min', minimized: true },
       { kind: 'terminal', paneKey: 'groupterm:side', minimized: false },
-      { kind: 'terminal', paneKey: 'term:abc', minimized: false },
+      { kind: 'terminal', paneKey: 'term:ag_1:start:', minimized: true },
+      { kind: 'terminal', paneKey: 'window:ag_1', minimized: false },
     ],
   });
   const state = (kind, id, server) => m.resourceState({ kind, id, state: server }, places);
@@ -27,7 +28,8 @@ test('resource model: this browser\'s places win, then what the server says runs
   assert.equal(state('shell', 'other', 'running'), 'background');
   assert.equal(state('page', 'pg_shut', 'closed'), 'closed');
   assert.equal(state('board', 'b_rest', 'closed'), 'closed');
-  assert.equal(places.size, 6, 'only resource panes count');
+  assert.equal(state('shell', 'term:ag_1:start:', 'running'), 'minimized', "an agent's shell is a shell resource too");
+  assert.equal(places.size, 7, 'only resource panes count');
 });
 
 test('resource model: a group\'s resources from the snapshot', async (t) => {

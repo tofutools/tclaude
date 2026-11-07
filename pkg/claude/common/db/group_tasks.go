@@ -37,11 +37,11 @@ const (
 	GroupTaskEventDetailMax = 512
 )
 
-// Event kinds written by this slice. The assign/report kinds (assigned,
-// unassigned, taken, released, reported, stalled) and imported arrive with the
-// slices that write them.
+// Event kinds written so far. The assign/report kinds (assigned, unassigned,
+// taken, released, reported, stalled) arrive with the slice that writes them.
 const (
 	GroupTaskEventCreated   = "created"
+	GroupTaskEventImported  = "imported"
 	GroupTaskEventEdited    = "edited"
 	GroupTaskEventMoved     = "moved"
 	GroupTaskEventPromoted  = "promoted"
@@ -172,6 +172,9 @@ type NewGroupTask struct {
 	DependsOn []string
 	Position  GroupTaskPosition
 	Actor     string
+	// Imported records the task's first event as imported (a ref import)
+	// rather than created.
+	Imported bool
 }
 
 type taskTx interface {
@@ -403,7 +406,11 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
 	}
-	if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventCreated, detail, now); err != nil {
+	kind := GroupTaskEventCreated
+	if in.Imported {
+		kind = GroupTaskEventImported
+	}
+	if err := addGroupTaskEventTx(tx, id, in.Actor, kind, detail, now); err != nil {
 		return nil, err
 	}
 	out, err := getGroupTaskTx(tx, id)
@@ -662,7 +669,27 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 // unblock a live task, close it as done or dropped, or reopen a closed one
 // where it was, in its stage and rank.
 func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
+	return SetGroupTaskStatusFor(id, status, reason, actor, AnyAssignee)
+}
+
+// AnyAssignee is the expectAssignee of a change that does not depend on who
+// holds the task.
+const AnyAssignee = "\x00any"
+
+// errAssigneeChanged is a change gated against an assignee that no longer
+// holds the task.
+func errAssigneeChanged(id string) error {
+	return taskConflict("assignee_changed", "task %s changed hands meanwhile; look again and retry", id)
+}
+
+// SetGroupTaskStatusFor is SetGroupTaskStatus for a caller authorised against
+// expectAssignee ("" for unassigned): it refuses when the task is held by
+// someone else by the time it is changed.
+func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
+			return errAssigneeChanged(id)
+		}
 		if t.Status == status && status != GroupTaskBlocked {
 			return nil
 		}
@@ -685,8 +712,15 @@ func SetGroupTaskStatus(id, status, reason, actor string) (*GroupTask, error) {
 				kind = GroupTaskEventReopened
 				detail = "was " + t.Status
 			}
+			// Unblocking or reopening gives the task a fresh run of attempts.
 			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', closed_at = NULL,
-				archived_at = NULL WHERE id = ?`, id); err != nil {
+				archived_at = NULL, failures = 0 WHERE id = ?`, id); err != nil {
+				return err
+			}
+			// A task closed while assigned comes back without an assignee that
+			// has since been retired (the retire trigger only covers live tasks).
+			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL
+				WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
 				return err
 			}
 			if kind == GroupTaskEventReopened {

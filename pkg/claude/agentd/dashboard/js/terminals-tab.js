@@ -132,6 +132,15 @@ export function openGroupWebTermPane(group, label, options) {
   }, options);
 }
 
+// openShellResource opens a shell resource's terminal: an agent's shell in
+// the directory it was opened in (its id is the pane key
+// term:<agent>:<which>:<group>), or the group's own shell.
+export function openShellResource(shell, label) {
+  if (!shell.agent) return openGroupWebTermPane(shell.id, label);
+  const group = String(shell.id).split(':').slice(3).join(':');
+  return openWebTermPane(shell.agent, label, shell.which || 'current', { group });
+}
+
 // waitForTerminalSettled resolves once the terminal opened under key has
 // attached and drawn its first screen (true), or false on timeout / when no
 // terminal shell is mounted.

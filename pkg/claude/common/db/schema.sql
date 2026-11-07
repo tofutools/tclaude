@@ -666,6 +666,17 @@ CREATE TRIGGER external_steward_retired
 
 CREATE INDEX idx_agents_active ON agents(agent_id) WHERE retired_at IS NULL;
 
+CREATE TRIGGER group_tasks_unassign_on_retire
+		AFTER UPDATE OF retired_at ON agents
+		WHEN NEW.retired_at IS NOT NULL AND OLD.retired_at IS NULL
+		BEGIN
+			INSERT INTO group_task_events (task_id, at, actor, kind, detail)
+				SELECT id, NEW.retired_at, 'system:retire', 'unassigned', 'assignee retired'
+				FROM group_tasks WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
+			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = NEW.retired_at
+				WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
+		END;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
@@ -2392,6 +2403,8 @@ CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank)
 
 CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
 
+CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
+
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
 			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2411,3 +2424,10 @@ CREATE TABLE group_task_events (
 		) STRICT;
 
 CREATE INDEX idx_group_task_events_task ON group_task_events(task_id, id);
+
+CREATE TABLE group_taskboard_locks (
+			group_id   INTEGER PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+			writers    TEXT NOT NULL DEFAULT '[]',
+			set_by     TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		) STRICT;

@@ -205,7 +205,7 @@ Items only appear when they apply to that agent.
 |---|---|
 | Look | `view messages`, `terminals & windows…`, `summary…` (online agents), `export debug info` |
 | Change | `edit`, `make owner` / `revoke owner`, `permissions`, `+ sudo`, notify on/off, remote on/off, `⚡ enable fast mode` (Codex), `⏰ schedule…`, `💰 usage budget…` |
-| Restart | `reincarnate`, `↻ restart`, `⚠ restart without sandbox` / `🔒 restore sandbox + restart`, `🧩 sandbox implementation…` |
+| Restart | `reincarnate`, `↻ restart`, `⚠ restart without sandbox` / `🔒 restore sandbox + restart`, `🧩 sandbox implementation / profile…` |
 | Send elsewhere | `move to…`, `teleport to…`, `clone to…` (`clone…` without a fleet), `📸 snapshot…`, `⤓ export (PAF)…`, `morph…`, `⌂ recall home…` (when visiting) |
 | Remove | In a group: `remove`, `retire`. Ungrouped: `retire`, `delete`. |
 
@@ -489,12 +489,14 @@ form, which runs a saved process or, with *or build a new one ▸*, opens
 - **Boards:** the collab boards linked to the group.
 - **Pages:** the live pages its members showed into it, including closed
   ones saved with the group.
-- **Shell:** the group's terminal, in its default directory. It lists only
-  while it runs: once it exits (or is killed) the row goes away, and the
-  **＋** menu starts a new one.
+- **Shells:** the group's terminal, in its default directory, and every
+  shell opened in a member's directory (**Shell in its directory**). An
+  agent's shell lists under the group it was opened from, or else the
+  agent's own group. A shell lists only while it runs: once it exits (or is
+  killed) the row goes away, and the **＋** menu starts a new group shell.
 
 A kind with nothing in it is hidden. The section's count is its saved
-processes, boards, pages and shell (runs are not counted), and a section with
+processes, boards, pages and shells (runs are not counted), and a section with
 nothing at all says *No resources yet*.
 The **＋** menu starts a process for the group or for one agent, adds a new board
 linked to the group or a blank live page, or opens the group's shell (once the
