@@ -491,11 +491,16 @@ export function permissionFilterActive(filter) {
 // permissionRowMatches tests one editor row against the facets. state says
 // what the editor knows about the row beyond the catalogue: effect (the
 // draft's Default/Grant/Deny), baseline (what it opened with), held (the row
-// reads as held, umbrella cover included) and scopeChanged.
-export function permissionRowMatches(row, filter, { effect = 'default', baseline = 'default', held = false, scopeChanged = false } = {}) {
+// reads as held, umbrella cover included), scopeChanged, and fromLevels (a
+// Steward's Reads and Writes grant: stored as an override, but set in Config,
+// so it is inherited rather than set here).
+export function permissionRowMatches(row, filter, {
+  effect = 'default', baseline = 'default', held = false, scopeChanged = false, fromLevels = false,
+} = {}) {
   const set = filter?.set || 'any';
-  if (set === 'here' && effect === 'default') return false;
-  if (set === 'here-or-inherited' && effect === 'default' && !held) return false;
+  const setHere = effect !== 'default' && !fromLevels;
+  if (set === 'here' && !setHere) return false;
+  if (set === 'here-or-inherited' && !setHere && !held) return false;
   if (set === 'unsaved' && effect === baseline && !scopeChanged) return false;
   const access = filter?.access || 'any';
   if (access === 'yes' && !held) return false;

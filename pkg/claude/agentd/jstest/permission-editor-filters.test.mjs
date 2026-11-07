@@ -90,3 +90,12 @@ test('facets compose: set here, inherited, holds, kind, flags and the text filte
   assert.deepEqual(slugs(), ['groups.roster.read'], 'the text filter ANDs with the facets');
   await mounted.unmount();
 });
+
+test('a Steward\'s Reads and Writes grant counts as inherited, not set here', async (t) => {
+  const { permissionRowMatches } = await import('../dashboard/js/message-access-dialog-model.js');
+  const row = { slug: 'fleet.read', read_only: true };
+  const levels = { effect: 'grant', baseline: 'grant', held: true, fromLevels: true };
+  assert.equal(permissionRowMatches(row, { set: 'here', flags: [] }, levels), false);
+  assert.equal(permissionRowMatches(row, { set: 'here-or-inherited', flags: [] }, levels), true);
+  assert.equal(permissionRowMatches(row, { set: 'here', flags: [] }, { ...levels, fromLevels: false }), true);
+});

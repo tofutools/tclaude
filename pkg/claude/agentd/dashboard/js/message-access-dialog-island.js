@@ -834,6 +834,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     && (!permissionFilterActive(facets) || permissionRowMatches(row, facets, {
       effect: currentEffect(row.slug), baseline: baselineEffect(row.slug), held: rowHeld(row),
       scopeChanged: scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}),
+      fromLevels: !!stewardAccess?.config.has(row.slug) && currentEffect(row.slug) === 'grant',
     })));
   const visible = sudoMode ? rowsByArea(matching) : matching;
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
