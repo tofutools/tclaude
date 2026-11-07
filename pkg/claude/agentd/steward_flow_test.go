@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -527,6 +529,76 @@ func TestSteward_ProfileFromConfig(t *testing.T) {
 	g, err := db.GetAgentGroupByName("steward")
 	require.NoError(t, err)
 	assert.Empty(t, g.DefaultProfile, "the scribe profile is not the Steward's")
+}
+
+// steward.dir moves where a new Steward starts, pre-trusted for its harness; a
+// set directory that is missing refuses the summon instead of starting the
+// Steward somewhere else, and other scribes keep the shared workdir.
+func TestSteward_StartsInConfiguredDir(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	summon := func(body map[string]any) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", body)))
+	}
+	steward := map[string]any{"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help."}
+	setDir := func(dir string) {
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		cfg.Steward = &config.StewardConfig{Dir: dir}
+		require.NoError(t, config.Save(cfg))
+	}
+	cwdOf := func(rec *httptest.ResponseRecorder) string {
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		sessions, err := db.FindSessionsByConvID(decodeScribeResp(t, rec).ConvID)
+		require.NoError(t, err)
+		require.NotEmpty(t, sessions)
+		return sessions[0].Cwd
+	}
+
+	setDir("~/missing")
+	rec := summon(steward)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), filepath.Join(f.World.HomeDir, "missing"))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(f.World.HomeDir, "repo"), 0o755))
+	repo, err := filepath.EvalSymlinks(filepath.Join(f.World.HomeDir, "repo"))
+	require.NoError(t, err)
+	setDir("~/repo")
+	assert.Equal(t, repo, cwdOf(summon(steward)))
+	assert.True(t, claudeDirTrusted(t, filepath.Join(f.World.HomeDir, ".claude", ".claude.json"), repo),
+		"the Steward's directory is pre-trusted for its harness")
+
+	other := map[string]any{"name": "circle-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "Edit."}
+	assert.Equal(t, filepath.Join(f.World.HomeDir, ".tclaude", "scribe"), cwdOf(summon(other)),
+		"steward.dir is the Steward's alone")
+}
+
+// The home directory is a fine place for a Steward to start, but pre-trusting
+// it could reach every folder under it, so it is not seeded.
+func TestSteward_HomeDirIsNotPreTrusted(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Steward = &config.StewardConfig{Dir: "~"}
+	require.NoError(t, config.Save(cfg))
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help."})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	sessions, err := db.FindSessionsByConvID(decodeScribeResp(t, rec).ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	home, err := filepath.EvalSymlinks(f.World.HomeDir)
+	require.NoError(t, err)
+	assert.Equal(t, home, sessions[0].Cwd)
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude", ".claude.json")
+	if _, err := os.Stat(claudeJSON); err == nil {
+		assert.False(t, claudeDirTrusted(t, claudeJSON, home), "the home directory is not pre-trusted")
+	} else {
+		require.ErrorIs(t, err, os.ErrNotExist, "nothing seeded the trust store")
+	}
 }
 
 // A Steward lists what the operator lists, from a group of its own, and seeing

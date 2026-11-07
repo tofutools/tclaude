@@ -91,7 +91,11 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentRename(w, r, convID)
 	case "remote-control":
 		handleAgentRemoteControl(w, r, convID)
+	case "sandbox":
+		handleAgentSandboxImplementation(w, r, convID)
 	case "sandbox-impl":
+		// Deprecated spelling of "sandbox", kept for older clients.
+		markDeprecatedRoute(w, "/v1/agent/{selector}/sandbox")
 		handleAgentSandboxImplementation(w, r, convID)
 	case "clone":
 		handleAgentClone(w, r, convID)

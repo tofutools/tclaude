@@ -701,6 +701,13 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// one task per ref or line, refused per item.
 		Refs  []string `json:"refs"`
 		Lines []string `json:"lines"`
+		// The task's start state, in this one create: status open (the
+		// default), blocked (with block_reason) or done (logged after the
+		// fact); to is its assignee: who holds it (in progress, so next) or,
+		// done, who did it.
+		Status      string `json:"status"`
+		BlockReason string `json:"block_reason"`
+		To          string `json:"to"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -710,7 +717,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || len(files) > 0 {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
@@ -741,9 +748,37 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if err == nil && body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
 		err = errors.New("stage is idea or next")
 	}
+	status := strings.TrimSpace(body.Status)
+	reason := strings.TrimSpace(body.BlockReason)
+	if err == nil {
+		switch {
+		case status != "" && status != db.GroupTaskOpen && status != db.GroupTaskBlocked && status != db.GroupTaskDone:
+			err = errors.New("a new task's status is open, blocked or done")
+		case status == db.GroupTaskBlocked && reason == "":
+			err = errors.New("a blocked task needs block_reason")
+		case reason != "" && status != db.GroupTaskBlocked:
+			err = errors.New("block_reason is for status blocked")
+		}
+	}
+	if err == nil && reason != "" {
+		reason, err = validateTaskText("the block reason", reason, maxTaskReasonLen)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
+	}
+	// The assignee is gated as an assign is: the caller itself (taking it)
+	// on its own self.taskboard, anyone else on taskboard.assign; it must be
+	// an active member.
+	var assignee, assigneeConv string
+	if to := strings.TrimSpace(body.To); to != "" {
+		if assignee, assigneeConv, err = resolveTaskboardMember(g, to); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		if !requireTaskboardAssigneeAction(w, r, g, assignee, true) {
+			return
+		}
 	}
 	if body.ResolveRef {
 		refURL = resolveTaskboardRefLink(r, kind, refURL, refLabel)
@@ -754,12 +789,24 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		return
 	}
 	t, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
-		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor, Attachments: atts})
+		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
+		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Attachments: atts})
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
+	// Someone else's new task is briefed as an assign is; work logged as
+	// done tells nobody.
+	if self, _ := callerAgentID(r); assignee != "" && assignee != self && t.Status != db.GroupTaskDone {
+		setAuditTargetConv(r, assigneeConv)
+		by := taskboardCallerName(r)
+		brief := taskboardBrief(g, t, by)
+		if t.Status == db.GroupTaskBlocked {
+			brief = "It starts blocked: " + t.BlockReason + "\n" + brief
+		}
+		mailTaskboard(r, g, assigneeConv, taskboardSubject(g, t, "assigned to you by "+by), brief)
+	}
 	writeTaskboardTask(w, http.StatusCreated, g, t)
 }
 

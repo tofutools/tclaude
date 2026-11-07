@@ -670,8 +670,9 @@ daemon, and `--repair` recreates your own deleted startup directory
   tracked flag. Claude Code only — see [Remote](remote.md).
 - `interrupt` interrupts an active Codex app-server turn;
   `codex-app-server status` shows drive diagnostics.
-- `sandbox-impl show|set` reads or assigns the durable sandbox
-  implementation an agent relaunches under; `set --restart` applies it to a
+- `sandbox show|set` (formerly `sandbox-impl`, now a deprecated alias)
+  reads or assigns the durable sandbox implementation and sandbox profile
+  an agent relaunches under; `set --restart` applies it to a
   running, idle agent by stopping, assigning and resuming it. Its slug
   (`agent.sandbox-impl`) is deliberately not owner-conferred and not
   default-granted — effectively human-only. See

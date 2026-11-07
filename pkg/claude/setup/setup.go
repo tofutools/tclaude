@@ -567,7 +567,7 @@ func installDefaultSandboxImplementation() {
 		fmt.Println("✓ New agents default to tclaude's own sandbox")
 	case !decided:
 		fmt.Println("  Agents still use each harness's own sandbox. tclaude's sandbox is the default for new installs;")
-		fmt.Println("  choose on the dashboard's Diagnostics › Doctor view, or run `tclaude agent sandbox-impl default set tclaude-layer`.")
+		fmt.Println("  choose on the dashboard's Diagnostics › Doctor view, or run `tclaude agent sandbox default set tclaude-layer`.")
 		return
 	case value == db.SandboxDefaultHarness:
 		fmt.Println("✓ New agents use each harness's own sandbox (your choice) — leaving it unchanged")

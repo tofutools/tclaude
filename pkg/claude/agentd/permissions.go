@@ -64,6 +64,9 @@ type PermSlug struct {
 	Umbrella string `json:"umbrella,omitempty"`
 	// Risky marks a slug the editors call out: see riskySlugs.
 	Risky bool `json:"risky,omitempty"`
+	// ReadOnly marks a slug that only looks: see readOnlySlug. The editors
+	// filter on it, so this is display guidance, not a gate.
+	ReadOnly bool `json:"read_only,omitempty"`
 	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
 	Countable bool `json:"countable,omitempty"`
 	// NotCountableWhy says why it cannot, for the editor to show.
@@ -82,6 +85,7 @@ func initPermissionRegistry() {
 func initPermissionRegistryEntries(registry []PermSlug) {
 	for i := range registry {
 		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
+		registry[i].ReadOnly = readOnlySlug(registry[i].Slug)
 		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
 		registry[i].NotCountableWhy = sudoUseLimitRefusal(registry[i].Slug)
 		registry[i].Umbrella = permissionUmbrellaFor(registry[i].Slug)
@@ -151,6 +155,22 @@ var riskySlugs = []string{
 	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll,
 	PermGroupsOwnersManage, PermGroupsAdmin, PermSandboxProfilesManage, PermSandboxHarnessConfig, PermRelaunchPolicyManage,
 	PermPermissionsGrant, PermPermissionsRevoke,
+}
+
+// readOnlyWatchSlugs are the slugs that only look but whose name does not
+// end in ".read".
+var readOnlyWatchSlugs = []string{
+	PermAgentContextInfo, PermGroupsMembersContextInfo,
+	PermAgentInboxWatch, PermGroupsMembersInboxWatch,
+	PermSessionsWatch, PermDashboardCapture,
+}
+
+// readOnlySlug says whether a slug only reads: it shows the holder something
+// and changes nothing, in tclaude or outside it. The permission editors offer
+// it as a "read" filter and everything else as "write". An export counts as a
+// write: it produces something. Display guidance, not a gate.
+func readOnlySlug(slug string) bool {
+	return strings.HasSuffix(slug, ".read") || slices.Contains(readOnlyWatchSlugs, slug)
 }
 
 // permissionRegistry is the single source of truth for known slugs. It's
@@ -598,7 +618,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermAgentSandboxImplementation,
-		Description: "Assign the durable sandbox implementation and explicit sandbox profile an EXISTING agent relaunches under (tclaude agent sandbox-impl set). " +
+		Description: "Assign the durable sandbox implementation and explicit sandbox profile an EXISTING agent relaunches under (tclaude agent sandbox set). " +
 			"It can move an agent onto an implementation with no OS-level access confinement, or onto a wider profile, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
 	},
 	{

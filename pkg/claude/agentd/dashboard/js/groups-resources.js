@@ -8,7 +8,7 @@
 // (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
@@ -30,6 +30,12 @@ import { openGroupWebTermPane, openShellResource } from './terminals-tab.js';
 import { killShell } from './background-terminals.js';
 import { EyeIcon, TrashIcon } from './row-icons.js';
 import { registerResourceRemover } from './resource-dnd.js';
+import { askResourceName } from './resource-name-dialog.js';
+import { groupContextEntry } from './process-context.js';
+import { agentColumns, useAgentColumns } from './agent-align.js';
+import { RowMenu } from './row-menu.js';
+
+export { agentColumns, RowMenu };
 
 export { LockChip };
 
@@ -94,67 +100,14 @@ export function sortResourceRows(rows) {
   return applySortState(rows, RESOURCE_ACCESSORS, tableSortState(RESOURCE_SORT, RESOURCE_COLS));
 }
 
-// ALIGNED_COLS are the agents table's headers (data-sort-col) a Resources
-// table lines its own up under, in order, each with this table's width
-// variable: the controls take whatever lies left of Name.
-const ALIGNED_COLS = Object.freeze([
-  { col: 'title', key: 'name', min: 60 },
-  { col: 'state', key: 'state', min: 40 },
-  { col: 'last', key: 'last', min: 30 },
-  { col: 'age', key: 'age', min: 30 },
-]);
-
-// agentColumns finds, for a Resources table, where the agents table above it
-// in the same group starts its Name, State, Last and Age columns, as widths
-// for this table's controls, Name, State, Last and Age columns ({ ctl, name,
-// state, last, age }, 0 for one not to set); null when there is no agents
-// table to line up with (folded, or none). A column runs to where the next
-// of these starts, so one the agents table shows between them (Process) is
-// taken in and the next still lines up; without that next one (hidden), it
-// is its header's own width.
-export function agentColumns(table) {
-  const section = table?.closest?.('[data-fused-section]');
-  // The members table, by its Name header: a pending-spawns table may come
-  // first in the section.
-  const name = section?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"] thead th[data-sort-col="title"]');
-  const head = name?.closest('thead');
-  if (!head) return null;
-  const left = table.getBoundingClientRect().left;
-  const nameLeft = name?.getBoundingClientRect().left;
-  if (!name || !(nameLeft > left)) return null;
-  const out = { ctl: Math.round(nameLeft - left) };
-  const rects = ALIGNED_COLS.map(({ col }) => (col === 'title' ? name : head.querySelector(`th[data-sort-col="${col}"]`))?.getBoundingClientRect() || null);
-  ALIGNED_COLS.forEach(({ key, min }, i) => {
-    const own = rects[i];
-    const next = rects[i + 1];
-    // Name has no width of its own to fall back to: the table's rest takes it.
-    const width = !own ? 0 : next ? Math.round(next.left - own.left) : key === 'name' ? 0 : Math.round(own.width);
-    out[key] = width > min ? width : 0;
-  });
-  return out;
-}
-
-// useAgentAlignment keeps table's controls, Name, State, Last and Age columns
-// as wide as the agents table's above it, so those line up across the two:
-// on every render and whenever the agents table changes size.
+// useAgentAlignment keeps the table's controls, Name, State, Last and Age
+// columns as wide as the agents table's above it (agent-align.js).
 function useAgentAlignment(ref) {
-  const apply = () => {
-    const table = ref.current;
-    if (!table) return;
-    const cols = agentColumns(table);
+  useAgentColumns(ref, (table, cols) => {
     // Not narrower than the row's own controls (light, 👁 🗑 ⚙).
     table.style.setProperty('--gr-ctl-w', cols?.ctl >= 100 ? `${cols.ctl}px` : '');
     for (const key of ['name', 'state', 'last', 'age']) table.style.setProperty(`--gr-${key}-w`, cols?.[key] ? `${cols[key]}px` : '');
-  };
-  useLayoutEffect(apply);
-  useEffect(() => {
-    const table = ref.current;
-    const agents = table?.closest?.('[data-fused-section]')?.parentElement?.querySelector?.(':scope > [data-fused-section="agents"]');
-    if (!agents || typeof ResizeObserver !== 'function') return undefined;
-    const observer = new ResizeObserver(() => apply());
-    observer.observe(agents);
-    return () => observer.disconnect();
-  }, []);
+  });
 }
 
 // ResourceTable is a group's resources as a table like the agents table:
@@ -190,38 +143,9 @@ function primaryLabel(kind, view) {
   return PRIMARY[view] || 'Open';
 }
 
-// RowMenu is a row's ⋯: what is rarely wanted, and what cannot be undone
-// behind a confirm. An item with children opens them in its place (Move to
-// group lists the groups), with a way back.
-export function RowMenu({ label, items, glyph = '⋯', title = '', buttonClass = 'gr-more', keepSlot = false }) {
-  const [open, setOpen] = useState(false);
-  const [sub, setSub] = useState(null);
-  const ref = useRef(null);
-  const close = () => { setOpen(false); setSub(null); };
-  useDismissablePopover(ref, open, (why) => { if (why !== 'away') close(); });
-  if (!items.length) {
-    return keepSlot ? html`<${Button} size="sm" icon=${true} class=${buttonClass} disabled aria-label=${`Nothing more for ${label}`}>${glyph}<//>` : null;
-  }
-  const shown = sub ? [{ label: '‹ Back', attrs: { 'data-menu-back': '' }, back: true }, ...sub.children] : items;
-  const pick = (item) => {
-    if (item.back) return setSub(null);
-    if (item.children) return setSub(item);
-    close();
-    void item.run();
-  };
-  return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant=${keepSlot ? undefined : 'link'} icon=${keepSlot} class=${keepSlot ? buttonClass : `gq-link ${buttonClass}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${title || `More for ${label}`} aria-label=${title || `More for ${label}`} onClick=${() => (open ? close() : setOpen(true))}>${glyph}<//>
-    ${open && html`<${Menu} size="sm" class="gr-add-menu">
-      ${shown.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} ...${item.attrs || {}}
-        onClick=${() => pick(item)}>${item.children ? `${item.label} ›` : item.label}<//>`)}
-    <//>`}
-  </span>`;
-}
-
 // RenameField edits a row's name in place: Enter saves, Escape or leaving
 // it keeps the name.
-export function RenameField({ value, label, onSave, onDone }) {
+export function RenameField({ value, label, onSave, onDone, class: extra = '' }) {
   const ref = useRef(null);
   useEffect(() => { ref.current?.focus(); ref.current?.select?.(); }, []);
   const key = (event) => {
@@ -232,7 +156,7 @@ export function RenameField({ value, label, onSave, onDone }) {
     onDone();
     if (next && next !== value) void onSave(next);
   };
-  return html`<input ref=${ref} class="gr-rename" data-resource-rename-input="" aria-label=${`New name for ${label}`}
+  return html`<input ref=${ref} class=${extra ? `gr-rename ${extra}` : 'gr-rename'} data-resource-rename-input="" aria-label=${`New name for ${label}`}
     value=${value} onKeyDown=${key} onBlur=${onDone} />`;
 }
 
@@ -307,9 +231,12 @@ export function resourceMenu(resource, { groupId = 0, snapshotValue, api, source
     { label: 'Delete…', danger: true, attrs: { [page ? 'data-page-delete' : 'data-drawing-board-delete']: id }, run: remove }];
 }
 
-// renameResource sets a drawing board's or page's title, as its Rename… field saves it.
-export function renameResource(resource, { api, source, notify }) {
-  const call = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameDrawingBoard(resource.id, title);
+// renameResource sets a drawing board's or page's title, as its Rename… field
+// saves it (a row's, or a Collab tab's, tab-resource-rename.js). onRenamed(title)
+// hears of a rename that took.
+export function renameResource(resource, { api, source, notify, onRenamed = null }) {
+  const set = resource.kind === 'page' ? (title) => api.renameGroupPage(resource.id, title) : (title) => api.renameDrawingBoard(resource.id, title);
+  const call = async (title) => { await set(title); onRenamed?.(title); };
   return rowAction(resource.label, source, notify)('rename', call, (title) => `Renamed ${resource.label} to ${title}`);
 }
 
@@ -483,37 +410,61 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
-// addGroupDrawingBoard creates a drawing board linked to group, named for it, and opens it
-// as a tab. The Groups tab's ＋ and the Collab panel's ＋ New both make one.
+// addGroupDrawingBoard asks for the name of a drawing board to link to group
+// (resource-name-dialog.js), prefilled "<group> drawing board", then creates
+// it and opens it as a tab. The Groups tab's ＋, the Collab panel's ＋ New and
+// the palette all make one through here. A refusal stays in the dialog; it
+// resolves to the drawing board, or null when the operator cancelled.
 export async function addGroupDrawingBoard(group, { api, notify = defaultNotify, source } = {}) {
-  const title = `${group.name} drawing board`;
-  try {
-    // Drawing board ids are node-wide, so the free one is chosen among them all.
-    const taken = await api.drawingBoardIds();
-    const drawingBoard = await api.createGroupDrawingBoard(group.name, title, freeDrawingBoardId(title, taken));
-    notify(`Created ${drawingBoard.title || title} in ${group.name}`);
-    void source?.refresh?.();
-    openDrawingBoardPane(drawingBoard.id, drawingBoard.title || title);
-    return drawingBoard;
-  } catch (cause) {
-    notify(`Could not create the drawing board: ${cause.message}`, true);
-    return null;
-  }
+  return askResourceName({
+    kind: 'drawing_board', group: group.name, value: `${group.name} drawing board`,
+    create: async (title) => {
+      // Drawing board ids are node-wide, so the free one is chosen among them all.
+      const taken = await api.drawingBoardIds();
+      const drawingBoard = await api.createGroupDrawingBoard(group.name, title, freeDrawingBoardId(title, taken));
+      notify(`Created ${drawingBoard.title || title} in ${group.name}`);
+      void source?.refresh?.();
+      openDrawingBoardPane(drawingBoard.id, drawingBoard.title || title);
+      return drawingBoard;
+    },
+  });
 }
 
-// addGroupPage creates a blank page group owns; it opens, focused, when the
-// snapshot lists it (page-place.js).
+// pageNameTaken reports a refusal because the group already has a page by
+// that handle (POST /api/pages, 409 exists).
+const pageNameTaken = (cause) => cause?.status === 409 && (cause.body?.code === 'exists' || /already has a page named/.test(cause.message || ''));
+
+// addGroupPage asks for the name of a blank page group owns, prefilled with
+// the free sketch name, then creates it with that name as its title; it opens,
+// focused, when the snapshot lists it (page-place.js). The handle (sketch,
+// sketch-2, …) is free among pages when the dialog opened; one taken since is
+// refused, and the create reads the group's pages again (source) and tries
+// the next free handle once.
 export async function addGroupPage(group, pages = [], { api, notify = defaultNotify, source } = {}) {
-  try {
-    const page = await api.createGroupPage(group.name, freePageName(pages));
-    notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
-    void source?.refresh?.();
-    expectPage(page.id);
-    return page;
-  } catch (cause) {
-    notify(`Could not create the page: ${cause.message}`, true);
-    return null;
-  }
+  const taken = new Set(pages.map((page) => page.name));
+  const freeHandle = () => freePageName([...taken].map((name) => ({ name })));
+  const create = async (title, retry = true) => {
+    const name = freeHandle();
+    try {
+      return await api.createGroupPage(group.name, name, title);
+    } catch (cause) {
+      if (!retry || !pageNameTaken(cause)) throw cause;
+      taken.add(name);
+      await Promise.resolve(source?.refresh?.()).catch(() => {});
+      for (const page of groupContextEntry(source?.context?.value, group)?.pages || []) taken.add(page.name);
+      return create(title, false);
+    }
+  };
+  return askResourceName({
+    kind: 'page', group: group.name, value: freeHandle(),
+    create: async (title) => {
+      const page = await create(title);
+      notify(`Created a live page in ${group.name}: it starts blank. Sketch what you want on it, and a member serves the real page there`);
+      void source?.refresh?.();
+      expectPage(page.id);
+      return page;
+    },
+  });
 }
 
 // addGroupShell opens group's shell, or brings forward the overlay holding it.

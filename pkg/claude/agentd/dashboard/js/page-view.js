@@ -303,9 +303,15 @@ export function PagePane({ pane, active, solo = false, manageTitle = false, acti
   useEffect(() => {
     if (onScreen) markPageSeen(id);
   }, [onScreen, id]);
+  // The tab follows the snapshot's title when that changes, and only then: a
+  // rename from the tab sets its label first (tab-resource-rename.js), and
+  // the snapshot still holding the old title must not write it back.
+  const syncedLabel = useRef('');
   useEffect(() => {
-    if (label && label !== pane.label) actions.setPaneLabel?.(pane.key, label);
-  }, [label, pane.label]);
+    if (!label || label === syncedLabel.current) return;
+    syncedLabel.current = label;
+    if (label !== pane.label) actions.setPaneLabel?.(pane.key, label);
+  }, [label]);
   useEffect(() => {
     if (active && manageTitle) document.title = `${label ? `${label} — ` : ''}tclaude page`;
   }, [active, manageTitle, label]);

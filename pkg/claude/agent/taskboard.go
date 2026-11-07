@@ -628,6 +628,10 @@ type taskboardAddParams struct {
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
+	// Start state: the task is created in it, in one call.
+	Assignee string `long:"assignee" optional:"true" help:"Assign it as it is created (name or id of an active member): it starts in progress, in next; with --done, who did it. Someone else needs taskboard.assign"`
+	Blocked  string `long:"blocked" optional:"true" help:"Start it blocked, with this reason"`
+	Done     bool   `long:"done" help:"Log work already done: it is created done, in done this week (with --assignee, who did it; nobody is mailed)"`
 	// Import flags: one task per ref or line, titles looked up through the
 	// tracker proxies.
 	FromAWB    string   `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
@@ -693,8 +697,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if len(p.Attach) > 0 {
-			fmt.Fprintln(stderr, "Error: --attach is for one task, not an import")
+		if p.Assignee != "" || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --blocked, --done and --attach are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -712,6 +716,10 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		fmt.Fprintln(stderr, "Error: give --top or --before, not both")
 		return rcInvalidArg
 	}
+	if p.Done && strings.TrimSpace(p.Blocked) != "" {
+		fmt.Fprintln(stderr, "Error: give --blocked or --done, not both")
+		return rcInvalidArg
+	}
 	req := map[string]any{"title": p.Title, "body": body, "ref": p.Ref, "ref_label": p.RefLabel,
 		"after": splitTaskIDs(p.After), "position": map[string]any{"top": p.Top, "before": p.Before}}
 	if p.Next {
@@ -719,6 +727,15 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	if p.ResolveRef {
 		req["resolve_ref"] = true
+	}
+	if a := strings.TrimSpace(p.Assignee); a != "" {
+		req["to"] = a
+	}
+	switch {
+	case strings.TrimSpace(p.Blocked) != "":
+		req["status"], req["block_reason"] = "blocked", strings.TrimSpace(p.Blocked)
+	case p.Done:
+		req["status"] = "done"
 	}
 	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
 	if len(p.Attach) == 0 {

@@ -17,18 +17,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// sandboxImplCmd is `tclaude agent sandbox-impl` — read or reassign the sandbox
-// IMPLEMENTATION an existing agent will relaunch under.
+// sandboxCmd is `tclaude agent sandbox` — read or reassign the sandbox
+// IMPLEMENTATION and sandbox PROFILE an existing agent will relaunch under.
 //
 // There is no self-targeted form. The implementation is applied by a launch, so
 // the target is another agent named positionally — stopped, or idle with
 // `set --restart` — rather than the `--target` flag the self-defaulting
 // lifecycle verbs use.
-func sandboxImplCmd() *cobra.Command {
+func sandboxCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:     "sandbox-impl",
-		Aliases: []string{"sandbox-implementation"},
-		Short:   "Show or assign the sandbox implementation and profile an agent relaunches under",
+		Use:   "sandbox",
+		Short: "Show or assign the sandbox implementation and profile an agent relaunches under",
 		Long: "Reads and rewrites the durable sandbox implementation recorded for an existing agent — " +
 			"the layer that owns OS-level confinement for its launches.\n\n" +
 			"The implementation is normally frozen when an agent is spawned. `set` is how an agent " +
@@ -38,11 +37,33 @@ func sandboxImplCmd() *cobra.Command {
 			"The assignment takes effect on the next launch. A stopped agent is assigned and left " +
 			"stopped; a running agent needs `set --restart`, which stops the idle agent, assigns and " +
 			"resumes it. `set --sandbox-profile` changes the agent's explicit sandbox profile the same way, " +
-			"alone or together with the implementation. Both subcommands require the `agent.sandbox-impl` permission, " +
+			"alone or together with the implementation, and `set --omit-sandbox-profiles` drops every " +
+			"sandbox profile. Both subcommands require the `agent.sandbox-impl` permission, " +
 			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd(), sandboxImplDefaultCmd()},
 	}.ToCobra()
+}
+
+// sandboxImplLegacyCmd is the deprecated `tclaude agent sandbox-impl` spelling
+// of sandboxCmd, from before the command also changed the sandbox profile. It
+// keeps working, hidden from help, and every use prints where it moved.
+func sandboxImplLegacyCmd() *cobra.Command {
+	cmd := sandboxCmd()
+	cmd.Use = "sandbox-impl"
+	cmd.Aliases = []string{"sandbox-implementation"}
+	markDeprecated(cmd, "tclaude agent sandbox")
+	return cmd
+}
+
+// markDeprecated deprecates cmd and every subcommand under it, since cobra
+// only warns about the command that actually runs.
+func markDeprecated(cmd *cobra.Command, replacement string) {
+	cmd.Deprecated = "use `" + replacement + "` instead"
+	cmd.Hidden = true
+	for _, sub := range cmd.Commands() {
+		markDeprecated(sub, replacement+" "+sub.Name())
+	}
 }
 
 type sandboxImplShowParams struct {
@@ -70,6 +91,7 @@ type sandboxImplSetParams struct {
 	Implementation string `pos:"true" optional:"true" help:"harness-builtin | tclaude-layer | resource-only | off. Omit it to change only the sandbox profile."`
 	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Replace the agent's explicit sandbox profile with this registry profile. The global and group tiers still apply."`
 	NoProfile      bool   `long:"no-sandbox-profile" optional:"true" help:"Remove the agent's explicit sandbox profile, leaving only the global and group tiers."`
+	OmitProfiles   bool   `long:"omit-sandbox-profiles" optional:"true" help:"Make the agent's launches omit every tclaude sandbox profile (global, group and explicit). --sandbox-profile or --no-sandbox-profile brings them back."`
 	Sandbox        string `long:"sandbox" optional:"true" help:"Pin the harness-builtin sandbox mode recorded alongside the implementation. Omitted, the agent's recorded mode is carried through the same resolution a launch applies."`
 	Restart        bool   `long:"restart" optional:"true" help:"If the agent is running, stop it (it must be idle), assign, and resume the same conversation under the new implementation. Without it, a running agent is refused."`
 	Yes            bool   `long:"yes" short:"y" optional:"true" help:"Accept moving an OpenCode agent out of private state, which is otherwise refused with what the move does."`
@@ -98,8 +120,10 @@ func sandboxImplSetCmd() *cobra.Command {
 			"this host can actually create the per-agent cgroup, since a relaunch would only degrade " +
 			"to a notice.\n\n" +
 			"--sandbox-profile <name> (or --no-sandbox-profile) replaces the agent's explicit-tier sandbox " +
-			"profile, with or without an implementation; the same gates judge the chain it gives. An " +
-			"agent whose launches omit sandbox profiles has none to change.\n\n" +
+			"profile, with or without an implementation; the same gates judge the chain it gives. On an " +
+			"agent whose launches omit sandbox profiles, either one lifts the omission, so the next launch " +
+			"applies the global, group and explicit tiers again. --omit-sandbox-profiles makes the agent's " +
+			"launches omit every tier instead.\n\n" +
 			"Moving an OpenCode agent out of private state is refused without --yes: the refusal " +
 			"says how many conversations move, who can read them afterwards, and what is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -183,8 +207,8 @@ func runSandboxImplShow(p *sandboxImplShowParams, stdout, stderr io.Writer) int 
 		return rc
 	}
 	var resp sandboxImplResp
-	if err := DaemonRequest(http.MethodGet,
-		sandboxImplPath(target), nil, &resp, DaemonOpts{}); err != nil {
+	if err := sandboxDaemonRequest(http.MethodGet,
+		target, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -202,13 +226,19 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	}
 	implementation := strings.TrimSpace(p.Implementation)
 	profile := strings.TrimSpace(p.SandboxProfile)
-	if profile != "" && p.NoProfile {
-		fmt.Fprintln(stderr, "Error: give --sandbox-profile or --no-sandbox-profile, not both.")
+	profileFlags := 0
+	for _, set := range []bool{profile != "", p.NoProfile, p.OmitProfiles} {
+		if set {
+			profileFlags++
+		}
+	}
+	if profileFlags > 1 {
+		fmt.Fprintln(stderr, "Error: give one of --sandbox-profile, --no-sandbox-profile or --omit-sandbox-profiles.")
 		return rcInvalidArg
 	}
 	profileChange := profile != "" || p.NoProfile
-	if implementation == "" && !profileChange {
-		fmt.Fprintf(stderr, "Error: give an implementation (%s), --sandbox-profile, or both.\n",
+	if implementation == "" && !profileChange && !p.OmitProfiles {
+		fmt.Fprintf(stderr, "Error: give an implementation (%s), a profile change (--sandbox-profile, --no-sandbox-profile or --omit-sandbox-profiles), or both.\n",
 			strings.Join(sandboxImplementationChoices(), " | "))
 		return rcInvalidArg
 	}
@@ -236,12 +266,15 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	if profileChange {
 		body["sandbox_profile"] = profile
 	}
+	if p.OmitProfiles {
+		body["omit_sandbox_profiles"] = true
+	}
 	if p.Yes {
 		body["confirm_move_out"] = true
 	}
 	var resp sandboxImplResp
-	if err := DaemonRequest(http.MethodPost,
-		sandboxImplPath(target), body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
+	if err := sandboxDaemonRequest(http.MethodPost,
+		target, body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		var daemonErr *DaemonError
 		if errors.As(err, &daemonErr) && daemonErr.Code == sandboxMoveOutConfirmCode {
@@ -252,8 +285,28 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	return printSandboxImpl(&resp, p.JSON, stdout, stderr)
 }
 
-func sandboxImplPath(target string) string {
+func sandboxPath(target string) string {
+	return "/v1/agent/" + url.PathEscape(target) + "/sandbox"
+}
+
+// sandboxLegacyPath is the deprecated route the daemon still serves; a daemon
+// older than the /sandbox route serves only it.
+func sandboxLegacyPath(target string) string {
 	return "/v1/agent/" + url.PathEscape(target) + "/sandbox-impl"
+}
+
+// sandboxDaemonRequest calls the agent's /sandbox route, and the deprecated
+// /sandbox-impl one when the daemon is too old to know the new verb (a CLI
+// upgraded before its daemon was restarted). An unknown verb is refused before
+// any work, so the retry cannot repeat an assignment.
+func sandboxDaemonRequest(method, target string, body any, out any, opts DaemonOpts) error {
+	err := DaemonRequest(method, sandboxPath(target), body, out, opts)
+	var daemonErr *DaemonError
+	if errors.As(err, &daemonErr) && daemonErr.Status == http.StatusNotFound &&
+		strings.Contains(daemonErr.Msg, "unknown verb sandbox ") {
+		return DaemonRequest(method, sandboxLegacyPath(target), body, out, opts)
+	}
+	return err
 }
 
 // printSandboxImpl renders one posture, naming what an assignment replaced and
@@ -282,11 +335,11 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		return name
 	}
 	switch {
+	case resp.SandboxProfilesOmitted:
+		fmt.Fprintln(stdout, "  sandbox profiles: omitted (the agent's launches omit every tclaude sandbox profile)")
 	case resp.PreviousSandboxProfile != nil && *resp.PreviousSandboxProfile != resp.SandboxProfile:
 		fmt.Fprintf(stdout, "  explicit sandbox profile: %s → %s\n",
 			profileName(*resp.PreviousSandboxProfile), profileName(resp.SandboxProfile))
-	case resp.SandboxProfilesOmitted:
-		fmt.Fprintln(stdout, "  explicit sandbox profile: omitted (the agent's launches omit sandbox profiles)")
 	case resp.SandboxProfileUnchangeable == "":
 		line := "  explicit sandbox profile: " + profileName(resp.SandboxProfile)
 		if resp.SandboxProfilePending {

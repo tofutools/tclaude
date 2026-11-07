@@ -75,9 +75,13 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// every group of the agent; a restricted peer only adds confinement
 	// (peer_agent_sandbox_impl.go).
 	impl := peerViewRule{feature: "members.sandbox-impl", requires: PermAgentSandboxImplementation, group: true}
+	// The feature name stays: it is what peers' grants and listings carry.
+	// /sandbox-impl is the deprecated spelling an older peer's dashboard calls.
 	impl.write = servePeerAgentSandboxImpl
+	rules["POST /api/agents/{id}/sandbox"] = impl
 	rules["POST /api/agents/{id}/sandbox-impl"] = impl
 	impl.write, impl.serve = nil, servePeerAgentSandboxImpl
+	rules["GET /api/agents/{id}/sandbox"] = impl
 	rules["GET /api/agents/{id}/sandbox-impl"] = impl
 	// An agent's fast mode reaches what no peer grant hands out yet: only
 	// unrestricted trust holds it, through this node's own handler. So does

@@ -13,7 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// sandboxImplDefaultCmd is `tclaude agent sandbox-impl default` — the
+// sandboxImplDefaultCmd is `tclaude agent sandbox default` — the
 // install-wide sandbox implementation new agents get when neither the spawn nor
 // any spawn profile chooses one. Existing agents are never affected: they
 // relaunch under the implementation recorded when they were spawned.

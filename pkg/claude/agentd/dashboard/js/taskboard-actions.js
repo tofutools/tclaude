@@ -130,13 +130,19 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     // create adds one task from the New task form (`add` with its flags);
     // resolveRef links a bare awb or Linear id through its tracker
     // (`--resolve-ref`). Fields left empty are not sent.
-    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false }) {
+    // create adds one task in its start state, in one call: status open
+    // (the default), blocked (blockReason) or done, and `to` its assignee
+    // (in progress, or who did it).
+    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '' }) {
       const payload = { title };
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
       if (ref && resolveRef) payload.resolve_ref = true;
       if (stage === 'next') payload.stage = 'next';
       if (after.length) payload.after = after;
+      if (status && status !== 'open') payload.status = status;
+      if (status === 'blocked') payload.block_reason = blockReason;
+      if (to) payload.to = to;
       return call('POST', boardPath(group), payload);
     },
     // ask mails a member a prose request to turn into tasks on the board.

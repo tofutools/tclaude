@@ -721,6 +721,7 @@ function populateConfigForm(cfg) {
   $('#cfg-steward-external-enabled').checked = !!(cfg.steward || {}).external_enabled;
   $('#cfg-steward-external-max-children').value = (cfg.steward || {}).external_max_children || '';
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
+  $('#cfg-steward-dir').value = (cfg.steward || {}).dir || '';
   $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
   const lr = cfg.log_rotation || {};
@@ -1183,6 +1184,8 @@ function assembleConfig() {
   if (stewardSource && stewardSource !== 'ask') steward.source_download = stewardSource; else delete steward.source_download;
   const stewardProfile = controlValue($('#cfg-steward-profile')).trim();
   if (stewardProfile) steward.profile = stewardProfile; else delete steward.profile;
+  const stewardDir = controlValue($('#cfg-steward-dir')).trim();
+  if (stewardDir) steward.dir = stewardDir; else delete steward.dir;
   const stewardName = controlValue($('#cfg-steward-name')).trim();
   if (stewardName) steward.name = stewardName; else delete steward.name;
   const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
