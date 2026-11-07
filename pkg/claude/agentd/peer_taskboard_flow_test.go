@@ -69,6 +69,8 @@ func TestPeerTaskboardReadAndWriteUnderGroupGrants(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code, "read does not write: %s", body)
 	code, body = call("POST", "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "from bob"})
 	assert.Equal(t, http.StatusForbidden, code, body)
+	code, body = call("POST", "/v1/groups/crew/taskboard/ask", map[string]any{"to": "nobody", "prompt": "tasks please"})
+	assert.Equal(t, http.StatusForbidden, code, "asking for tasks takes write: %s", body)
 
 	// The node summary carries the counts of the boards the peer reads.
 	code, body = call("GET", "/api/node-summary", nil)
@@ -93,6 +95,21 @@ func TestPeerTaskboardReadAndWriteUnderGroupGrants(t *testing.T) {
 	assert.Contains(t, added.CreatedBy, "peer: the operator of")
 	code, body = call("POST", "/v1/taskboard/tasks/"+added.ID+"/stage", map[string]any{"stage": "next"})
 	require.Equal(t, http.StatusOK, code, body)
+	// Ask a member of crew here for tasks: inbox mail named as the peer's.
+	const asked = "tb-peer-asked-1111"
+	fh.f.HaveConvWithTitle(asked, asked)
+	_, _, err = db.EnsureAgentForConv(asked, "test")
+	require.NoError(t, err)
+	fh.f.HaveMember("crew", asked)
+	code, body = call("POST", "/v1/groups/crew/taskboard/ask", map[string]any{"to": asked, "prompt": "tasks please"})
+	require.Equal(t, http.StatusOK, code, body)
+	askedID, err := db.AgentIDForConv(asked)
+	require.NoError(t, err)
+	inbox, err := db.ListInboxForActor(asked, askedID, 10)
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	assert.Contains(t, inbox[0].Subject, "task request from the operator of")
+	assert.False(t, inbox[0].OperatorAuthored, "a linked node's request is never this node's operator's")
 	code, body = call("POST", "/v1/taskboard/tasks/"+crewTask.ID+"/status", map[string]any{"status": "done"})
 	require.Equal(t, http.StatusOK, code, body)
 	// An import works too; the title lookups run as the peer, which holds no

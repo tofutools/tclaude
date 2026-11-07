@@ -8,8 +8,9 @@
 // Actions (taskboard-actions.js), each the route of a CLI verb: drag a row by
 // its handle to reorder it (across the Ideas band it is promoted or demoted),
 // ✓ Next, Done, Block / Unblock with a reason, Edit, Drop and Reopen on the
-// row; the capture box adds a line or a pasted list; "+ from awb/Linear…"
-// imports tracker ids. Assigning and the lanes view come in later slices.
+// row; "+ New task" (groups-taskboard-new.js) writes a task in a form, asks
+// an agent to write them, or imports tracker ids; the lanes view's capture
+// line adds a line or a pasted list.
 //
 // Data comes from GET /v1/taskboard/context (taskboard-context.js). While
 // features.taskboard is off, or for a group this viewer cannot read, nothing
@@ -32,6 +33,7 @@ import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes } from './groups-taskboard-lanes.js';
+import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -498,16 +500,14 @@ function importSummary(out) {
   return parts.join(' · ');
 }
 
-// CaptureBox is the burst capture at the end of the list: Enter adds the
-// line and keeps the focus for the next one; a pasted list adds one task per
+// CaptureBox is the lanes view's burst capture line: Enter adds the line
+// and keeps the focus for the next one; a pasted list adds one task per
 // line; a line that is only an awb, Linear or GitHub id becomes a task with
-// that ref, titled from the tracker. Everything lands at the end of the ideas
-// (or the queue, with "capture as next"); drag to prioritise.
-function CaptureBox({ group, actions, wizard, line = false }) {
+// that ref, titled from the tracker. Everything lands in Ideas · Unassigned;
+// drag to prioritise. (The list view adds through "+ New task".)
+function CaptureBox({ group, actions, wizard }) {
   const [text, setText] = useState('');
-  const [nextPick, setNext] = useState(false);
-  // The lanes' one-line box always lands in Ideas · Unassigned.
-  const next = nextPick && !line;
+  const next = false;
   const [note, setNote] = useState('');
   const added = useRef(0);
   const sending = useRef(false);
@@ -557,34 +557,17 @@ function CaptureBox({ group, actions, wizard, line = false }) {
     event.preventDefault();
     void add(pasted, { fromBox: false });
   };
-  if (line) {
-    return html`<div class="tb-capture tb-capture-line" data-taskboard-capture=${group.name}>
-      <${Input} size="sm" class="tb-capture-input" aria-label=${wizard ? 'Capture a quest' : 'Capture a task'} value=${text}
-        placeholder="+ capture… (Enter adds to Ideas · unassigned; paste a list for a burst; awb/Linear ids become refs)"
-        onInput=${(event) => setText(event.currentTarget.value)} onKeyDown=${onKeyDown} onPaste=${onPaste} />
-      ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
-      <${Button} size="sm" variant="primary" busy=${actions.busy === 'capture'} disabled=${!captureLines(text).length || !!actions.busy}
-        onClick=${() => void add(text)}>Add<//>
-    </div>`;
-  }
-  return html`<div class="tb-capture" data-taskboard-capture=${group.name}>
-    <div class="tb-capture-head">
-      <span class="ui-eyebrow">Capture · lands in ${next ? 'the queue' : 'ideas'}</span>
-      <${Check} checked=${next} onChange=${(event) => setNext(event.currentTarget.checked)}>capture as next<//>
-      ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
-    </div>
-    <${Textarea} size="sm" class="tb-capture-input" rows="2" aria-label=${wizard ? 'Capture a quest' : 'Capture a task'} value=${text}
-      placeholder='next task… (a line that is only an awb, Linear or GitHub id becomes a ref: "tcl-fb0bfz", "LIN-231")'
+  return html`<div class="tb-capture tb-capture-line" data-taskboard-capture=${group.name}>
+    <${Input} size="sm" class="tb-capture-input" aria-label=${wizard ? 'Capture a quest' : 'Capture a task'} value=${text}
+      placeholder="+ capture… (Enter adds to Ideas · unassigned; paste a list for a burst; awb/Linear ids become refs)"
       onInput=${(event) => setText(event.currentTarget.value)} onKeyDown=${onKeyDown} onPaste=${onPaste} />
-    <div class="tb-capture-foot">
-      <span class="ui-hint"><kbd>Enter</kbd> adds, stays here · paste a list → one task per line · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> done</span>
-      <${Button} size="sm" variant="primary" busy=${actions.busy === 'capture'} disabled=${!captureLines(text).length || !!actions.busy}
-        onClick=${() => void add(text)}>Add<//>
-    </div>
+    ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
+    <${Button} size="sm" variant="primary" busy=${actions.busy === 'capture'} disabled=${!captureLines(text).length || !!actions.busy}
+      onClick=${() => void add(text)}>Add<//>
   </div>`;
 }
 
-// ImportPanel is "+ from awb/Linear…": paste tracker ids, one task per id,
+// ImportPanel is "+ New task › From awb/Linear/GitHub…": paste tracker ids, one task per id,
 // titled from the tracker (taskboard add --from-awb / --from-linear /
 // --from-github).
 function ImportPanel({ group, actions, onClose }) {
@@ -674,9 +657,9 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
         ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${numbers.get(task.id)} form=${forms[task.id]} ...${rowProps} />`)}
       </tbody>
     </table>` : html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
-      ? ' Capture one below.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
+      ? (wizard ? ' Add one with + New quest above.' : ' Add one with + New task above.') : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
-    ${actions && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} line=${view === 'lanes'} />`}
+    ${actions && view === 'lanes' && html`<${CaptureBox} group=${group} actions=${actions} wizard=${wizard} />`}
     <${HistoryLine} entry=${entry} open=${history} wizard=${wizard} onToggle=${() => setHistory(!history)} />
     ${history && (entry.closed || []).length > 0 && html`<table class="ui-compact tb-table tb-closed">${COLUMNS}<tbody>
       ${(entry.closed || []).map((task) => html`<${TaskRow} key=${task.id} task=${task} n=${0} form=${null} ...${rowProps} />`)}
@@ -731,6 +714,8 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   const [importing, setImporting] = useState(false);
+  // adding is the open "+ New task" dialog: 'form' or 'ask'.
+  const [adding, setAdding] = useState('');
   const prefs = useViewPrefs(group.name);
   // Once the section has opened on its own (something needed the
   // operator), it stays open for this page, so clearing the last blocked
@@ -741,10 +726,15 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const wizard = isWizardActive();
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
+  const choose = (what) => { if (what === 'import') setImporting(true); else setAdding(what); };
   const head = html`<${ViewSelector} prefs=${prefs} />
-    ${api && html`<${Button} size="sm" class="tb-import-open" pressed=${importing} title="taskboard add --from-awb / --from-linear / --from-github"
-      onClick=${() => setImporting(!importing)}>+ from awb/Linear…<//>`}`;
-  return html`<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
+    ${api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`}`;
+  const closeAdding = () => setAdding('');
+  const dialog = !api ? null : adding === 'form'
+    ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)}
+        members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
+    : adding === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} onClose=${closeAdding} />` : null;
+  return html`${dialog}<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
       actions=${head} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}

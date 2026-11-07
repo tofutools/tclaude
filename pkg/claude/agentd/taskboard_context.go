@@ -59,6 +59,11 @@ type taskboardGroupContext struct {
 	Closed  []taskboardContextTask `json:"closed"`
 	// Truncated says the live rows stop short of Counts.Live.
 	Truncated bool `json:"truncated,omitempty"`
+	// Locked says the writer lock narrows the board; Writers then lists the
+	// active members (agent ids) who may still change it, which "+ New task ›
+	// Ask an agent" picks from. Without the lock every member may.
+	Locked  bool     `json:"locked,omitempty"`
+	Writers []string `json:"writers,omitempty"`
 }
 
 type taskboardContextView struct {
@@ -77,7 +82,7 @@ func handleTaskboardContext(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	view := taskboardContextView{Groups: make([]taskboardGroupContext, 0, len(groups))}
 	for _, g := range groups {
-		entry, err := buildTaskboardGroupContext(g, now)
+		entry, err := buildTaskboardGroupContext(r, g, now)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
@@ -125,8 +130,14 @@ func taskboardContextGroups(w http.ResponseWriter, r *http.Request) ([]*db.Agent
 	return out, true
 }
 
-func buildTaskboardGroupContext(g *db.AgentGroup, now time.Time) (taskboardGroupContext, error) {
+func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time) (taskboardGroupContext, error) {
 	entry := taskboardGroupContext{GroupID: g.ID, Group: g.Name, Tasks: []taskboardContextTask{}, Closed: []taskboardContextTask{}}
+	// A nil request wants only the counts (the node summary).
+	if r != nil {
+		if err := taskboardContextWriters(r, g, &entry); err != nil {
+			return entry, err
+		}
+	}
 	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Closed: true})
 	if err != nil {
 		return entry, err
@@ -205,6 +216,7 @@ var dashboardTaskboardRoutes = []struct {
 }{
 	{"GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList)},
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
+	{"POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk)},
 	{"GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow)},
 	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
 	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardWriteAccess, handleTaskboardEdit)},
@@ -221,4 +233,29 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 	for _, route := range dashboardTaskboardRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
+}
+
+// taskboardContextWriters fills Locked and Writers: with the lock set, the
+// active members who pass it.
+func taskboardContextWriters(r *http.Request, g *db.AgentGroup, entry *taskboardGroupContext) error {
+	lock, err := db.GetTaskboardLock(g.ID)
+	if err != nil || !lock.Locked {
+		return err
+	}
+	entry.Locked = true
+	entry.Writers = []string{}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		id, err := db.AgentIDForConv(m.ConvID)
+		if err != nil || id == "" || activeGroupMember(g, id) == "" {
+			continue
+		}
+		if taskboardMemberWrites(r, g, m.ConvID) {
+			entry.Writers = append(entry.Writers, id)
+		}
+	}
+	return nil
 }

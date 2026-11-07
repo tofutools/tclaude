@@ -151,7 +151,7 @@ test('a linked node\'s group reads its board from that node, read-only without t
   assert.deepEqual(local.calls, [], 'this node\'s context is not read for a peer group');
   assert.ok(mounted.container.querySelector('[data-fused-taskboard="tb-peer"]'), 'the peer group draws its board');
   assert.ok(mounted.container.querySelector('[data-taskboard-chip="tb-peer"]'));
-  assert.equal(mounted.container.querySelector('.tb-import-open'), null, 'no peer view with taskboard.write: read-only');
+  assert.equal(mounted.container.querySelector('[data-taskboard-new]'), null, 'no peer view with taskboard.write: read-only');
 
   assert.equal(peerWrites(null, 'crew'), false);
   assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.read'] } }, 'crew'), false);

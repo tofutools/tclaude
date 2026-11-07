@@ -64,6 +64,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardWriteAccess, handleTaskboardStage))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
 	registerTaskboardAssignRoutes(mux)
 }
 
@@ -108,30 +109,45 @@ func requireTaskboardUnlocked(w http.ResponseWriter, r *http.Request, g *db.Agen
 	if conv == "" {
 		return true
 	}
-	lock, err := db.GetTaskboardLock(g.ID)
+	passes, err := taskboardLockPasses(r, g, conv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return false
 	}
-	if !lock.Locked {
+	if passes {
 		return true
+	}
+	writeError(w, http.StatusForbidden, "taskboard_locked",
+		"the "+g.Name+" task board is locked to its listed writers; ask a group owner to add you (tclaude agent groups set-taskboard-writers)")
+	return false
+}
+
+// taskboardLockPasses reports whether the agent behind conv passes g's writer
+// lock: the board is open, or the agent is a listed writer, an owner of the
+// group, or holds the write or assign slug through an explicit grant whose
+// scope the group alone satisfies.
+func taskboardLockPasses(r *http.Request, g *db.AgentGroup, conv string) (bool, error) {
+	lock, err := db.GetTaskboardLock(g.ID)
+	if err != nil {
+		return false, err
+	}
+	if !lock.Locked {
+		return true, nil
 	}
 	if agentID, err := db.AgentIDForConv(conv); err == nil && agentID != "" && slices.Contains(lock.Writers, agentID) {
-		return true
+		return true, nil
 	}
 	if owner, err := db.IsAgentGroupOwner(g.ID, conv); err == nil && owner {
-		return true
+		return true, nil
 	}
 	ctx := ActionContext{Group: g.Name}
 	for _, slug := range []string{PermTaskboardWrite, PermTaskboardAssign} {
 		v := resolvePermissionVerdictForRequest(r, conv, slug)
 		if v.Resolution == permAllow && evalPermissionScope(v, conv, ctx).Satisfied {
-			return true
+			return true, nil
 		}
 	}
-	writeError(w, http.StatusForbidden, "taskboard_locked",
-		"the "+g.Name+" task board is locked to its listed writers; ask a group owner to add you (tclaude agent groups set-taskboard-writers)")
-	return false
+	return false, nil
 }
 
 // taskboardActor names the caller in a task's history. A linked node's
@@ -641,8 +657,10 @@ func handleTaskboardListOwnGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/groups/{name}/taskboard/tasks {title, body, ref, ref_label, stage,
-// after:[deps], position:{top|bottom|before|after}} — capture lands in ideas
-// unless stage is next. {refs:[…]} and/or {lines:[…]} (with an optional stage)
+// after:[deps], position:{top|bottom|before|after}, resolve_ref} — capture
+// lands in ideas unless stage is next. resolve_ref fills the link of a bare
+// awb or Linear id through the tracker proxy, as an import does (the title
+// stays the one given). {refs:[…]} and/or {lines:[…]} (with an optional stage)
 // import a batch instead; see handleTaskboardImport.
 func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) || !requireGroupActive(w, g) {
@@ -656,6 +674,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		Stage    string                `json:"stage"`
 		After    []string              `json:"after"`
 		Position taskboardPositionBody `json:"position"`
+		// ResolveRef looks a bare awb or Linear id up, as the caller, to fill
+		// its link (`taskboard add --resolve-ref`).
+		ResolveRef bool `json:"resolve_ref"`
 		// Refs and Lines make the request an import (taskboard_import.go):
 		// one task per ref or line, refused per item.
 		Refs  []string `json:"refs"`
@@ -666,7 +687,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after and position are for one task")
 			return
@@ -700,6 +721,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
+	}
+	if body.ResolveRef {
+		refURL = resolveTaskboardRefLink(r, kind, refURL, refLabel)
 	}
 	t, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: taskboardActor(r)})

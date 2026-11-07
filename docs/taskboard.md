@@ -57,8 +57,9 @@ tclaude agent taskboard ls --summary [--json]   # counts for every board you can
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard history <task>
 
-tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id]
+tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
+tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt-file f
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
@@ -94,7 +95,16 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
   id. `LIN-123` is read as a Linear id, and a lower-case `tcl-a1b2c3` as an awb
   id. Prefix the id with `awb:` or `linear:` to say which one you mean. On a
-  single `add`, a bare id is stored with no link. An import (below) resolves it.
+  single `add`, a bare id is stored with no link, unless you pass
+  `--resolve-ref`: then a bare awb or Linear id is looked up through its proxy,
+  as an import does, and gets its link. The title stays yours. An import
+  (below) always resolves it.
+- `ask` mails a member of the group a request in your own words. The member
+  is told to turn it into tasks with `taskboard add`, to reply when it is
+  done, and not to start the work. The request is inbox mail, never keys sent
+  into its pane. You need `taskboard.write` on the group, as for `add`. The
+  member must be an active member who may change the board, so a
+  [writer lock](#the-writer-lock) limits who can be asked.
 - Every changing verb accepts `--ask-human <timeout>` and `--json`.
 
 ## Importing from a tracker
@@ -276,7 +286,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | Peer grant | What the linked node may do on the group's board |
 |---|---|
 | `taskboard.read` | List it, show a task and its history, see it in the fused view, and count it in the node summary |
-| `taskboard.write` | Add and import tasks, edit, move, promote, demote, block, unblock, drop and close them |
+| `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock |
 
@@ -298,7 +308,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
   grant here, so each ref keeps its id as its title.
 
 From the CLI, add `--peer <node>` to any verb: `ls <group>`, `ls --summary`,
-`show`, `history`, `add` (including imports), `edit`, `move`, `promote`,
+`show`, `history`, `add` (including imports), `ask`, `edit`, `move`, `promote`,
 `demote`, `block`, `unblock`, `drop`, `done`, `assign`, `unassign`, and
 `groups set-taskboard-writers`. `take`, `release` and `report` act on
 yourself, so they have no `--peer`.
@@ -356,9 +366,11 @@ a CLI verb:
 
 | In the section | CLI |
 |---|---|
-| Type a line in the capture box and press Enter | `add <group> "title"` |
-| Paste a list into the capture box | `add <group> --lines-file -` |
-| *+ from awb/Linear…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
+| *+ New task › Write it myself* | `add <group> "title" --body … --ref … --resolve-ref [--next] --after …`, then `assign <task> --to <agent>` when an assignee is picked |
+| A pasted list in *Write it myself* | `add <group> --lines-file -` |
+| *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
+| *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
+| Type a line in the lanes view's capture line and press Enter | `add <group> "title"` |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | *✓ Next* on an idea | `promote <task>` |
@@ -370,12 +382,26 @@ a CLI verb:
 | *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
 
-- **The capture box** stays focused after each Enter, so you can add a burst of
-  ideas in a row. Shift+Enter starts a new line. A line that is only an awb,
-  Linear or GitHub id becomes a task with that ref, titled from the tracker
-  (as in an import from a tracker). New tasks land at the end of the
-  ideas. Tick *capture as next* to add them to the queue instead. Then drag
-  them where you want them.
+- **+ New task** (in wizard mode, *+ New quest*) in the section head is the
+  one way in, in both views. It opens a menu:
+  - *Write it myself* opens a form: a title (required, one line, as for
+    `add`), a brief, a ref, the stage (*Idea*, the default, or *Next*),
+    dependencies picked from the board's live tasks, and, if you may assign,
+    an assignee from the group's members. A bare awb or Linear ref gets its
+    link, as with `--resolve-ref`. If you paste a list into the title, the
+    form adds one task per line instead. A title that is only an awb, Linear
+    or GitHub id becomes that ref, titled from the tracker. Enter or
+    Ctrl+Enter adds the task, and Esc or *Cancel* closes the form.
+  - *Ask an agent* sends a request in your own words to a member, as `ask`
+    does. It picks the group's owner when one is online. You can pick any
+    other online member who may change the board. With no such member
+    online, the item is off, and says why.
+  - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
+- **The capture line** in the lanes view stays focused after each Enter, so
+  you can add a burst of ideas in a row. A pasted list adds one task per line.
+  A line that is only an awb, Linear or GitHub id becomes a task with that
+  ref, titled from the tracker. New tasks land at the end of the ideas. Then
+  drag them where you want them.
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.

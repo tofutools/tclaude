@@ -18683,16 +18683,31 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-form { display: flex; align-items: center; gap: 6px; }
 .tb-form .tb-form-title, .tb-form .tb-form-reason { flex: 2; min-width: 0; }
 .tb-form .tb-form-ref { flex: 1; min-width: 0; }
-.tb-capture, .tb-import { margin: 8px 8px 0; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
-.tb-import { margin: 0 8px 8px; }
-.tb-capture-head, .tb-capture-foot, .tb-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.tb-capture-head { margin-bottom: 6px; }
-.tb-capture-foot { margin-top: 6px; justify-content: space-between; }
+.tb-import { margin: 0 8px 8px; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.tb-capture-line { margin: 8px 8px 0; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+/* "+ New task" (groups-taskboard-new.js): the Resources ＋ menu's button
+   with its label, and the New task / Ask an agent dialogs. */
+.tb-new-btn { gap: 4px; }
+.tb-new-menu.gr-new-menu { left: auto; right: 0; }
+#taskboard-new-modal > .ui-dialog, #taskboard-ask-modal > .ui-dialog { width: min(640px, calc(100vw - 32px)); }
+.tb-new-row { margin-top: 8px; }
+.tb-new-row .cron-create-label { flex-basis: 72px; }
+.tb-new-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tb-new-field > .ui-input, .tb-new-field > .ui-textarea, .tb-new-field > .ui-select { width: 100%; box-sizing: border-box; }
+.tb-new-field > .ui-textarea { resize: vertical; }
+.tb-new-hint { font-size: 11px; }
+.tb-new-stage { display: inline-flex; gap: 14px; padding-top: 5px; }
+.tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.tb-new-deps { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; padding: 4px 6px;
+  border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
+.tb-new-dep-n { color: var(--ui-muted-text); font-variant-numeric: tabular-nums; }
+.tb-new-single { align-self: flex-start; }
+.tb-new-cli code { font-size: 11px; }
+.tb-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tb-import-row { margin-top: 6px; }
 .tb-capture-input, .tb-import-ids { width: 100%; box-sizing: border-box; resize: vertical; }
 .tb-import-row .tb-import-ids { flex: 1; width: auto; }
 .tb-capture-note { color: #3fb950; font-size: 11.5px; }
-.tb-capture-foot kbd { font-size: 10.5px; padding: 0 4px; border: 1px solid #30363d; border-radius: 3px; background: #161b22; }
 .tb-spacer { flex: 1; }
 .tb-view { margin-right: 6px; }
 .tb-unassign-drop { margin: 0 8px 6px; padding: 6px 10px; border: 1px dashed #58a6ff; border-radius: 6px; color: #58a6ff; font-size: 11.5px; text-align: center; }

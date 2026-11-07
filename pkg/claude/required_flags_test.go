@@ -62,6 +62,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude agent snapshot board":                   "board",
 		"claude agent taskboard block":                  "reason",
 		"claude agent taskboard assign":                 "to",
+		"claude agent taskboard ask":                    "to",
 		"claude agent board patch":                      "file",
 		"claude agent guide fill":                       "form set",
 		"claude agent board snapshot":                   "output",

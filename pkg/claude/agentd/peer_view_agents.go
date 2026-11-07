@@ -201,6 +201,7 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	// decide the task's own group.
 	"GET /v1/groups/{name}/taskboard":          {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
 	"POST /v1/groups/{name}/taskboard/tasks":   {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/ask":     {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
 	"GET /v1/taskboard/context":                {slugs: []string{PermTaskboardRead}, target: agentViewNode},
 	"GET /v1/taskboard/tasks/{id}":             {slugs: []string{PermTaskboardRead}, target: agentViewNode},
 	"GET /v1/taskboard/tasks/{id}/events":      {slugs: []string{PermTaskboardRead}, target: agentViewNode},

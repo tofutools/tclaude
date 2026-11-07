@@ -1,0 +1,246 @@
+// "+ New task" (groups-taskboard-new.js, tcl-kp5ngc): the add menu, the
+// Write it myself form and its submit, and Ask an agent.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], ...extra });
+
+function board(group, extra = {}) {
+  return {
+    group, group_id: 1,
+    counts: { live: 2, next: 1, ideas: 1 },
+    tasks: [row('tk_00000001', 'first'), row('tk_00000002', 'an idea', { stage: 'idea' })],
+    closed: [],
+    ...extra,
+  };
+}
+
+const members = () => [
+  { agent_id: 'agt_dev', title: 'dev', role: 'dev', online: true },
+  { agent_id: 'agt_lead', title: 'lead', role: 'lead', online: true, owner: true },
+  { agent_id: 'agt_away', title: 'away', online: false },
+];
+
+// fakeApi records each write as [verb, ...args]; `hold` makes create wait
+// until released, `refuse` makes the named verb throw.
+function fakeApi({ hold = false, refuse = '' } = {}) {
+  const calls = [];
+  let release = () => {};
+  const answer = (verb, value) => async (...args) => {
+    calls.push([verb, ...args]);
+    if (refuse === verb) throw new Error(`${verb} refused`);
+    if (verb === 'create' && hold) await new Promise((resolve) => { release = resolve; });
+    return value(...args);
+  };
+  return {
+    calls, release: () => release(),
+    create: answer('create', (group, task) => ({ id: 'tk_00000009', title: task.title })),
+    capture: answer('capture', (group, text) => ({ created: text.split('\n').length, results: text.split('\n').map((input, i) => ({ input, task: { id: `tk_0000001${i}` } })) })),
+    edit: answer('edit', (id) => ({ id })),
+    assign: answer('assign', () => ({})),
+    ask: answer('ask', () => ({ message_id: 7 })),
+    importRefs: answer('importRefs', () => ({ created: 0, results: [] })),
+    move: answer('move', () => ({})), stage: answer('stage', () => ({})), status: answer('status', () => ({})), unassign: answer('unassign', () => ({})),
+  };
+}
+
+// selectValue picks an option as a browser does (LinkeDOM's select.value
+// has no setter).
+async function selectValue(harness, select, value) {
+  for (const option of select.querySelectorAll('option')) { option.removeAttribute('selected'); option.selected = false; }
+  const picked = select.querySelector(`option[value="${value}"]`);
+  picked.setAttribute('selected', '');
+  picked.selected = true;
+  await harness.act(() => harness.fireEvent(select, 'change'));
+}
+
+async function mountBoard(t, name, { api = fakeApi(), entry = board(name), groupMembers = members() } = {}) {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem(`tclaude.dash.fused.${name}.taskboard`, 'open');
+  let refreshes = 0;
+  const source = {
+    context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'),
+    attach: () => () => {}, refresh: async () => { refreshes += 1; },
+  };
+  const group = { name, members: groupMembers };
+  const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
+  const c = mounted.container;
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const click = (el) => harness.act(async () => { harness.fireEvent(el, 'click'); await settle(); });
+  const choose = async (what) => {
+    await click(c.querySelector('[data-taskboard-new]'));
+    await click(c.querySelector(`[data-taskboard-new-${what}]`));
+  };
+  const dialog = () => c.querySelector('#taskboard-new-modal');
+  return { harness, c, api, click, choose, dialog, settle, refreshes: () => refreshes };
+}
+
+test('"+ New task" opens a menu of three ways to add, modelled on the Resources ＋ menu', async (t) => {
+  const { c, click } = await mountBoard(t, 'tbn-menu');
+  const button = c.querySelector('[data-taskboard-new]');
+  assert.match(button.textContent, /New task/);
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(c.querySelector('.tb-import-open'), null, 'the import moved into the menu');
+  await click(button);
+  assert.equal(c.querySelector('[data-taskboard-new]').getAttribute('aria-expanded'), 'true');
+  const names = [...c.querySelectorAll('.tb-new-menu .gr-new-name')].map((el) => el.textContent);
+  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From awb/Linear/GitHub…']);
+  assert.equal(c.querySelector('[data-taskboard-new-ask]').disabled, false);
+});
+
+test('Ask an agent is off, with the reason, when no member who may write is online', async (t) => {
+  const offline = await mountBoard(t, 'tbn-off', { groupMembers: [{ agent_id: 'agt_away', title: 'away', online: false }] });
+  await offline.click(offline.c.querySelector('[data-taskboard-new]'));
+  const ask = offline.c.querySelector('[data-taskboard-new-ask]');
+  assert.equal(ask.disabled, true);
+  assert.match(ask.textContent, /No member of this group is online/);
+});
+
+test('the writer lock narrows who Ask an agent may mail', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { askableMembers, askUnavailable, defaultAskee } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const group = { name: 'crew', members: members() };
+  assert.deepEqual(askableMembers(group, board('crew')).map((m) => m.agent_id), ['agt_dev', 'agt_lead'], 'online members, unlocked');
+  assert.equal(defaultAskee(askableMembers(group, board('crew'))).agent_id, 'agt_lead', 'the owner leads');
+  const locked = board('crew', { locked: true, writers: ['agt_dev', 'agt_away'] });
+  assert.deepEqual(askableMembers(group, locked).map((m) => m.agent_id), ['agt_dev']);
+  assert.match(askUnavailable(group, board('crew', { locked: true, writers: [] })), /writer lock/);
+});
+
+test('Write it myself sends every field through the add route, then assigns', async (t) => {
+  const { harness, c, api, choose, dialog, click, refreshes } = await mountBoard(t, 'tbn-form');
+  await choose('form');
+  assert.ok(dialog(), 'the form opens as a dialog');
+  assert.equal(dialog().querySelector('[role="dialog"]').getAttribute('aria-labelledby'), 'taskboard-new-title');
+  const submit = () => dialog().querySelector('#taskboard-new-submit');
+  assert.equal(submit().disabled, true, 'the title is required');
+  await harness.input(dialog().querySelector('.tb-new-title'), 'Port the sweep');
+  await harness.input(dialog().querySelector('.tb-new-body'), 'see the review notes');
+  await harness.input(dialog().querySelector('.tb-new-ref'), 'tcl-a1b2c3');
+  await harness.act(async () => { harness.fireEvent(dialog().querySelector('input[name="tb-new-stage"][value="next"]'), 'change'); });
+  await harness.act(async () => { harness.fireEvent(dialog().querySelector('[data-dep="tk_00000001"]'), 'change'); });
+  const assignee = dialog().querySelector('.tb-new-assignee');
+  assert.deepEqual([...assignee.querySelectorAll('option')].map((o) => o.value), ['', 'agt_dev', 'agt_lead', 'agt_away']);
+  await selectValue(harness, assignee, 'agt_dev');
+  await click(submit());
+  assert.deepEqual(api.calls, [
+    ['create', 'tbn-form', { title: 'Port the sweep', body: 'see the review notes', ref: 'tcl-a1b2c3', stage: 'next', after: ['tk_00000001'], resolveRef: true }],
+    ['assign', 'tk_00000009', 'agt_dev'],
+  ]);
+  assert.equal(dialog(), null, 'closes when the task landed');
+  assert.ok(refreshes() > 0, 'the board is read again');
+});
+
+test('the assignee picker shows only with can.assign', async (t) => {
+  const api = fakeApi();
+  api.can = { assign: false };
+  const { dialog, choose } = await mountBoard(t, 'tbn-noassign', { api });
+  await choose('form');
+  assert.ok(dialog().querySelector('.tb-new-title'));
+  assert.equal(dialog().querySelector('.tb-new-assignee'), null);
+});
+
+test('submit is single-flight and busy', async (t) => {
+  const api = fakeApi({ hold: true });
+  const { harness, dialog, choose, click, settle } = await mountBoard(t, 'tbn-busy', { api });
+  await choose('form');
+  await harness.input(dialog().querySelector('.tb-new-title'), 'once');
+  const title = dialog().querySelector('.tb-new-title');
+  await harness.act(async () => { harness.fireEvent(title, 'keydown', { key: 'Enter' }); await settle(); });
+  await harness.act(async () => { harness.fireEvent(title, 'keydown', { key: 'Enter' }); await settle(); });
+  assert.equal(api.calls.length, 1, 'Enter twice sends once');
+  assert.equal(dialog().querySelector('#taskboard-new-submit').disabled, true, 'busy while it is in flight');
+  assert.match(dialog().querySelector('#taskboard-new-submit').textContent, /Adding/);
+  await harness.act(async () => { api.release(); await settle(); });
+  assert.equal(dialog(), null);
+});
+
+test('a refusal stays in the form as an error', async (t) => {
+  const refusing = await mountBoard(t, 'tbn-refuse', { api: fakeApi({ refuse: 'create' }) });
+  await refusing.choose('form');
+  await refusing.harness.input(refusing.dialog().querySelector('.tb-new-title'), 'nope');
+  await refusing.click(refusing.dialog().querySelector('#taskboard-new-submit'));
+  assert.ok(refusing.dialog(), 'the form stays open');
+  assert.equal(refusing.dialog().querySelector('[role="alert"]').textContent, 'create refused');
+  assert.equal(refusing.dialog().querySelector('#taskboard-new-submit').disabled, false, 'and can be sent again');
+  assert.equal(refusing.dialog().querySelector('.tb-new-title').value, 'nope', 'the input is kept');
+});
+
+test('Cancel closes a clean form', async (t) => {
+  const { dialog, choose, click } = await mountBoard(t, 'tbn-cancel');
+  await choose('form');
+  await click(dialog().querySelector('#taskboard-new-cancel'));
+  assert.equal(dialog(), null);
+});
+
+test('a pasted list is one task per line, and a title that is only a tracker id becomes that ref', async (t) => {
+  const { harness, api, dialog, choose, click } = await mountBoard(t, 'tbn-list');
+  await choose('form');
+  const title = dialog().querySelector('.tb-new-title');
+  await harness.act(async () => {
+    harness.fireEvent(title, 'onpaste' in title ? 'paste' : 'Paste', { clipboardData: { getData: () => 'one\ntcl-fb0bfz\n' } });
+  });
+  const list = dialog().querySelector('.tb-new-list');
+  assert.equal(list.value, 'one\ntcl-fb0bfz\n');
+  assert.equal(dialog().querySelector('.tb-new-body'), null, 'a list takes no brief');
+  assert.match(dialog().querySelector('#taskboard-new-submit').textContent, /Add 2 tasks/);
+  await click(dialog().querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls, [['capture', 'tbn-list', 'one\ntcl-fb0bfz', { next: false }]]);
+
+  api.calls.length = 0;
+  await choose('form');
+  await harness.input(dialog().querySelector('.tb-new-title'), 'LIN-231');
+  assert.equal(dialog().querySelector('.tb-new-ref').disabled, true, 'the title is the ref');
+  await harness.input(dialog().querySelector('.tb-new-body'), 'brief');
+  await click(dialog().querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls, [
+    ['capture', 'tbn-list', 'LIN-231', { next: false }],
+    ['edit', 'tk_00000010', { body: 'brief', addDeps: undefined }],
+  ]);
+});
+
+test('Ask an agent mails the lead by default, and any online member who may write can be picked', async (t) => {
+  const { harness, c, api, choose, click } = await mountBoard(t, 'tbn-ask');
+  await choose('ask');
+  const modal = () => c.querySelector('#taskboard-ask-modal');
+  assert.ok(modal());
+  const to = modal().querySelector('.tb-ask-to');
+  assert.deepEqual([...to.querySelectorAll('option')].map((o) => o.value), ['agt_dev', 'agt_lead'], 'online members only');
+  assert.equal(modal().querySelector('#taskboard-ask-submit').disabled, true, 'the request is required');
+  await harness.input(modal().querySelector('.tb-ask-prompt'), '  the three follow-ups from the review  ');
+  await click(modal().querySelector('#taskboard-ask-submit'));
+  assert.deepEqual(api.calls, [['ask', 'tbn-ask', 'agt_lead', 'the three follow-ups from the review']], 'the owner is the default');
+  assert.equal(modal(), null);
+
+  // Another member can be picked.
+  api.calls.length = 0;
+  await choose('ask');
+  await selectValue(harness, modal().querySelector('.tb-ask-to'), 'agt_dev');
+  await harness.input(modal().querySelector('.tb-ask-prompt'), 'more');
+  await click(modal().querySelector('#taskboard-ask-submit'));
+  assert.deepEqual(api.calls, [['ask', 'tbn-ask', 'agt_dev', 'more']]);
+});
+
+test('the client sends create and ask to their routes with only the fields given', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTaskboardApi } = await harness.importDashboardModule('js/taskboard-actions.js');
+  const sent = [];
+  const api = createTaskboardApi({ fetchImpl: async (path, init) => {
+    sent.push([init.method, path, JSON.parse(init.body)]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  await api.create('crew', { title: 'plain' });
+  await api.create('crew', { title: 't', body: 'b', ref: 'tcl-a1b2c3', stage: 'next', after: ['tk_00000001'], resolveRef: true });
+  await api.edit('tk_00000001', { body: 'b', addDeps: ['tk_00000002'] });
+  await api.ask('my crew', 'agt_lead', 'make tasks');
+  assert.deepEqual(sent, [
+    ['POST', '/v1/groups/crew/taskboard/tasks', { title: 'plain' }],
+    ['POST', '/v1/groups/crew/taskboard/tasks', { title: 't', body: 'b', ref: 'tcl-a1b2c3', resolve_ref: true, stage: 'next', after: ['tk_00000001'] }],
+    ['PATCH', '/v1/taskboard/tasks/tk_00000001', { body: 'b', add_deps: ['tk_00000002'] }],
+    ['POST', '/v1/groups/my%20crew/taskboard/ask', { to: 'agt_lead', prompt: 'make tasks' }],
+  ]);
+});
