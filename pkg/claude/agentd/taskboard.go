@@ -598,6 +598,9 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		out["writers"] = lock.Writers
 		// writer_names reads the same list as a person would say it.
 		labels := newTaskboardLabeler(g)
+		for _, id := range lock.Writers {
+			labels.learn(id)
+		}
 		names := make([]string, 0, len(lock.Writers))
 		for _, id := range lock.Writers {
 			names = append(names, labels.label(id))
@@ -721,9 +724,12 @@ func handleTaskboardEvents(w http.ResponseWriter, _ *http.Request, t *db.GroupTa
 	out := make([]taskboardEventView, 0, len(events))
 	labels := newTaskboardLabeler(g)
 	for _, e := range events {
+		labels.learnEvent(e.Actor, e.Kind, e.Detail)
+	}
+	for _, e := range events {
 		v := taskboardEventView{At: rfc3339(e.At), Actor: e.Actor, Kind: e.Kind, Detail: e.Detail,
 			ActorName: labels.actor(e.Actor)}
-		if text := labels.text(e.Detail); text != e.Detail {
+		if text := labels.detail(e.Kind, e.Detail); text != e.Detail {
 			v.DetailText = text
 		}
 		out = append(out, v)

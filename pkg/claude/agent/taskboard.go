@@ -260,11 +260,14 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		// No group: an agent in one group lists that board; anyone else (the
 		// operator, or an agent in several groups) gets every board it can
-		// read, briefly.
+		// read, briefly. Only a plain `ls` falls back: with --stage, --all or
+		// --json the caller asked for one board's rows, and with no filter the
+		// own-group route's only invalid_arg is "no single group".
 		var de *DaemonError
 		if strings.TrimSpace(p.Group) == "" && strings.TrimSpace(p.Peer) == "" &&
+			p.Stage == "" && !p.All && !p.JSON &&
 			errors.As(err, &de) && de.Code == "invalid_arg" {
-			return runTaskboardOverview(p.JSON, stdout, stderr)
+			return runTaskboardOverview(stdout, stderr)
 		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -351,7 +354,7 @@ const taskboardOverviewRows = 5
 
 // runTaskboardOverview is `ls` with no group for a caller with no single
 // group: every board it can read, its counts and its first live rows.
-func runTaskboardOverview(asJSON bool, stdout, stderr io.Writer) int {
+func runTaskboardOverview(stdout, stderr io.Writer) int {
 	var resp struct {
 		Groups []struct {
 			Group  string          `json:"group"`
@@ -362,9 +365,6 @@ func runTaskboardOverview(asJSON bool, stdout, stderr io.Writer) int {
 	if err := DaemonGet("/v1/taskboard/context", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
-	}
-	if asJSON {
-		return writeJSONTo(stdout, resp)
 	}
 	if len(resp.Groups) == 0 {
 		fmt.Fprintln(stdout, "no task boards you can read")

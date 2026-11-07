@@ -100,4 +100,20 @@ func TestTaskboardCLIReadsLikeTheDashboard(t *testing.T) {
 	assert.Contains(t, out, "ops: 0")
 	assert.Contains(t, out, "One board in full: tclaude agent taskboard ls <group>")
 
+	// Only a plain ls falls back: asked for one board's rows or JSON, it
+	// still says to name the group.
+	for _, args := range [][]string{{"ls", "--json"}, {"ls", "--stage", "next"}, {"ls", "--all"}} {
+		rc, out, errOut = run(args...)
+		assert.NotEqual(t, 0, rc, "%v: %s", args, out)
+		assert.Contains(t, errOut, "name a group", "%v", args)
+	}
+
+	// A note is the writer's own text: an agent id in it is left alone.
+	worker := tbAgentID(t, h.worker)
+	code, body = h.post("", q2.ID, "status", map[string]any{"status": "blocked", "reason": "ask " + worker})
+	require.Equal(t, http.StatusOK, code, body)
+	rc, out, errOut = run("history", q2.ID)
+	require.Equal(t, 0, rc, errOut)
+	assert.Contains(t, out, "ask "+worker)
+
 }
