@@ -9,8 +9,8 @@ has one board. The operator and the group's agents read and change it with
 > `"features": {"taskboard": true}` in `~/.tclaude/config.json`. While it is
 > off, its routes answer 404, but stored tasks are kept. So far there is the
 > store, the CLI, the API, importing refs from trackers, assigning tasks to
-> agents and a read-only dashboard section. Editing in the dashboard comes in
-> a later slice.
+> agents, the dashboard section, and reaching a linked node's boards over
+> federation.
 
 ## What the board is for, and what it is not
 
@@ -219,6 +219,57 @@ If an agent asks for a task in a group whose board it cannot read, the answer
 is 404 with "no such task". This way the reply does not reveal that the task
 exists.
 
+## Across linked nodes
+
+A board works across [federation](federation.md) the same way it works
+locally, but under **peer grants** that this node's operator gives a linked
+node. A linked node holds none of them by default:
+
+```bash
+tclaude federation grant bob taskboard.read --scope group=crew
+tclaude federation grant bob taskboard.write --scope group=crew
+tclaude federation grant bob taskboard.assign --scope group=crew
+tclaude federation grant bob taskboard.manage --scope group=crew
+```
+
+| Peer grant | What the linked node may do on the group's board |
+|---|---|
+| `taskboard.read` | List it, show a task and its history, see it in the fused view, and count it in the node summary |
+| `taskboard.write` | Add and import tasks, edit, move, promote, demote, block, unblock, drop and close them |
+| `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
+| `taskboard.manage` | Set the writer lock |
+
+- Any of these grants also lets the node read the board.
+- A grant covers only the groups in its scope. A task in another group answers
+  404, so its existence does not leak.
+- Unrestricted trust acts as this node's operator does.
+- Taking, releasing and reporting stay with this node's own agents.
+- History records a linked node's change as `peer: the operator of <node>` (or
+  its agent), and so does an assignment's inbox brief. This node's audit log
+  records each write as `federation.peer_view`. The calling node records its
+  own operator's writes as `federation.peer_view.out`, and its agents' as
+  `federation.peer_view.agent.out`.
+- An import's title lookups run as the linked node, which holds no proxy
+  grant here, so each ref keeps its id as its title.
+
+From the CLI, add `--peer <node>` to any verb: `ls <group>`, `ls --summary`,
+`show`, `history`, `add` (including imports), `edit`, `move`, `promote`,
+`demote`, `block`, `unblock`, `drop`, `done`, `assign`, `unassign`, and
+`groups set-taskboard-writers`. `take`, `release` and `report` act on
+yourself, so they have no `--peer`.
+
+An agent on the calling node also needs its own grant for the linked node. It
+needs the same slug, scoped with `--scope peer=<node>/<group>`. A verb that
+names only a task id (`show`, `edit`, `assign` and the like) has no group in
+its path, so it needs a node-wide grant there: `--scope peer=<node>`. In either
+case, the linked node's own peer grants decide which groups it reaches. As
+everywhere in federation, a missing peer grant is a refusal, not a popup on
+the linked node. Its operator grants the access, either up front or in answer
+to an [access request](federation.md).
+
+`GET /api/node-summary` carries `taskboard`, the summed counts of the boards
+the reader may see.
+
 ## Lifecycle and retention
 
 A done or dropped task leaves the default list at once. An hourly sweep then:
@@ -284,8 +335,10 @@ a CLI verb:
   a later slice. Until then only *List* works.
 
 The dashboard shows a board only to someone who can read it. The operator sees
-every group. The section is missing while `features.taskboard` is off, and a
-peer node's groups don't show their boards yet.
+every group. The section is missing while `features.taskboard` is off. A
+linked node's groups, in the fused view or on that node's page, show the
+boards that node lets you read. Their actions appear only where it granted
+you `taskboard.write` (see [Across linked nodes](#across-linked-nodes)).
 
 ## API
 
