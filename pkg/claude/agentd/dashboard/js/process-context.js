@@ -211,6 +211,7 @@ async function processRequest(path, init, fetchImpl) {
     // names the version it did store ({id, ref}).
     const error = new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
     error.body = body;
+    error.status = response.status;
     throw error;
   }
   return body;

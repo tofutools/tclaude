@@ -29,9 +29,10 @@ export const COPYABLE_KINDS = Object.freeze(['board', 'process']);
 
 const realGroup = (snapshotValue, name) => (snapshotValue?.groups || []).find((g) => g?.id > 0 && g.name === name) || null;
 
-// pinnedIn is whether group (a snapshot group) already lists process id.
+// pinnedIn is whether group (a snapshot group) has process id saved to it.
+// A group also lists a process it only has a run of; that one is not pinned.
 const pinnedIn = (snapshotValue, group, id) => (snapshotValue?.group_resources || [])
-  .some((r) => r?.kind === 'process' && r.id === id && r.group_id === group.id);
+  .some((r) => r?.kind === 'process' && r.id === id && r.group_id === group.id && r.pinned);
 
 // moveTargets are the groups a resource can move to: the others, and for an
 // agent's page only those its agent is a member of.
@@ -51,8 +52,11 @@ export function canMoveResource(resource, to, snapshotValue) {
   if (resource.kind === 'board') return !to || !!realGroup(snapshotValue, to);
   if (!to) return false;
   if (resource.kind === 'process') {
+    // Only a process saved to its group moves out of it; one the group only
+    // runs is copied (pinned) instead.
     const group = realGroup(snapshotValue, to);
-    return !!group && !!from && !pinnedIn(snapshotValue, group, resource.id);
+    const source = realGroup(snapshotValue, from);
+    return !!group && !!source && pinnedIn(snapshotValue, source, resource.id) && !pinnedIn(snapshotValue, group, resource.id);
   }
   // A group's own page (no agent owner) moves only while closed.
   if (!resource.owner && !resource.closed) return false;
@@ -70,7 +74,8 @@ export async function moveResource(resource, to, { api, notify, refresh = () => 
     else if (resource.kind === 'process') {
       // Pinned there first, so a failed unpin leaves it in both, not neither.
       await api.pinProcess(to, resource.id);
-      await api.unpinProcess(resource.group, resource.id);
+      // Already gone here (unpinned meanwhile) is still a move.
+      await api.unpinProcess(resource.group, resource.id).catch((cause) => { if (cause?.status !== 404) throw cause; });
     } else await api.moveGroupPage(resource.id, to);
     notify(to ? `Moved ${label} to ${to}` : `Moved ${label} out of its group`);
     void refresh();

@@ -265,10 +265,18 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
 test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies a board or a process', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/resource-moves.js');
-  const snap = { ...SNAP, group_resources: [{ kind: 'process', id: 'review', group_id: 2 }] };
+  const snap = { ...SNAP, group_resources: [
+    { kind: 'process', id: 'review', group_id: 1, pinned: true },
+    { kind: 'process', id: 'review', group_id: 2, pinned: true },
+    { kind: 'process', id: 'deploy', group_id: 1 },
+    { kind: 'process', id: 'deploy', group_id: 3 },
+  ] };
   const proc = { kind: 'process', id: 'review', label: 'Review', group: 'crew' };
   assert.equal(m.canMoveResource(proc, 'ops', snap), true);
-  assert.equal(m.canMoveResource(proc, 'lab', snap), false, 'not to a group that already lists it');
+  assert.equal(m.canMoveResource(proc, 'lab', snap), false, 'not to a group that already has it saved');
+  const runOnly = { kind: 'process', id: 'deploy', label: 'Deploy', group: 'crew' };
+  assert.equal(m.canMoveResource(runOnly, 'lab', snap), false, 'a process the group only runs is not saved there, so it does not move out');
+  assert.equal(m.canCopyResource(runOnly, 'ops', snap), true, 'a group that only runs it can still have it saved');
   assert.equal(m.canMoveResource(proc, '', snap), false, 'a process is always some group\'s');
   assert.equal(m.canCopyResource(proc, 'ops', snap), true);
   assert.equal(m.canCopyResource(proc, 'lab', snap), false);
@@ -289,11 +297,15 @@ test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies
   const notify = (msg) => notes.push(msg);
   assert.equal(await m.moveResource(proc, 'ops', { api, notify }), true);
   assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review'], ['unpin', 'crew', 'review']], 'pinned there before it is unpinned here');
+  const gone = { ...api, unpinProcess: async (...a) => { calls.push(['unpin', ...a]); throw Object.assign(new Error('not saved'), { status: 404 }); } };
+  assert.equal(await m.moveResource(proc, 'ops', { api: gone, notify }), true, 'already unpinned here is still a move');
+  calls.splice(0);
+  notes.splice(0);
   assert.equal(await m.copyResource(proc, 'ops', { api, notify }), true);
   assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review']], 'a copy only pins');
   assert.equal(await m.copyResource(board, 'ops', { api, notify }), true);
   assert.deepEqual(calls.splice(0), [['copyBoard', 'plan', 'ops', 'Plan (copy)', 'plan-copy-2']], 'a free id for the copy');
-  assert.deepEqual(notes, ['Moved Review to ops', 'Added Review to ops', 'Copied Plan to ops as Plan (copy)']);
+  assert.deepEqual(notes, ['Added Review to ops', 'Copied Plan to ops as Plan (copy)']);
 });
 
 test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone; a plain one moves', async (t) => {
@@ -312,7 +324,8 @@ test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone
   row.draggable = true;
   const calls = [];
   const api = { pinProcess: async (...a) => calls.push(['pin', ...a]), unpinProcess: async (...a) => calls.push(['unpin', ...a]) };
-  t.after(dnd.bindResourceDnd(doc, { api, notify: () => {}, snapshot: () => SNAP, refresh: () => {} }));
+  const snap = { ...SNAP, group_resources: [{ kind: 'process', id: 'review', group_id: 1, pinned: true }] };
+  t.after(dnd.bindResourceDnd(doc, { api, notify: () => {}, snapshot: () => snap, refresh: () => {} }));
   const fire = (type, target, keys = {}) => {
     const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
     const transfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
