@@ -244,6 +244,10 @@ tclaude federation grant bob taskboard.manage --scope group=crew
   404, so its existence does not leak.
 - Unrestricted trust acts as this node's operator does.
 - Taking, releasing and reporting stay with this node's own agents.
+- The [writer lock](#the-writer-lock) does not apply to a linked node. Its
+  peer grant is an explicit grant, like a local agent's scoped
+  `taskboard.write` grant, which the lock does not narrow either. To stop a
+  linked node from changing the board, revoke its grant.
 - History records a linked node's change as `peer: the operator of <node>` (or
   its agent), and so does an assignment's inbox brief. This node's audit log
   records each write as `federation.peer_view`. The calling node records its

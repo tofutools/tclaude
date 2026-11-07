@@ -175,6 +175,10 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		}
 		return runTaskboardSummary(p.Peer, p.JSON, stdout, stderr)
 	}
+	if strings.TrimSpace(p.Peer) != "" && p.Mine {
+		fmt.Fprintln(stderr, "Error: --mine lists your own tasks on this node; it takes no --peer")
+		return rcInvalidArg
+	}
 	if strings.TrimSpace(p.Peer) != "" && strings.TrimSpace(p.Group) == "" {
 		fmt.Fprintln(stderr, "Error: --peer needs the group whose board to list")
 		return rcInvalidArg
@@ -311,6 +315,7 @@ func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int
 	if asJSON {
 		return writeJSONTo(stdout, resp)
 	}
+	printRemoteScheduleBanner(stdout, peer, "task boards")
 	if len(resp.Groups) == 0 {
 		fmt.Fprintln(stdout, "no task boards you can read")
 		return rcOK
@@ -374,6 +379,7 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		return writeJSONTo(stdout, t)
 	}
+	printRemoteScheduleBanner(stdout, p.Peer, "task")
 	fmt.Fprintf(stdout, "%s  %s\n", t.ID, t.Title)
 	fmt.Fprintf(stdout, "  group:   %s\n  stage:   %s\n  status:  %s\n", t.Group, t.Stage, t.Status)
 	if t.BlockReason != "" {
@@ -440,6 +446,7 @@ func runTaskboardHistory(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		return writeJSONTo(stdout, resp)
 	}
+	printRemoteScheduleBanner(stdout, p.Peer, "task history")
 	fmt.Fprintf(stdout, "%s  %s\n", resp.ID, resp.Title)
 	for _, e := range resp.Events {
 		line := fmt.Sprintf("  %s  %-9s  %s", e.At, e.Kind, e.Actor)

@@ -90,16 +90,22 @@ func activeGroupMember(g *db.AgentGroup, agentID string) string {
 // resolveTaskboardMember resolves a selector (name, agent id, conv id or
 // prefix) to an active member of g.
 func resolveTaskboardMember(g *db.AgentGroup, selector string) (agentID, conv string, err error) {
+	// One answer whether the agent is missing or only outside the group, so
+	// a caller who assigns in one group (a linked node, say) cannot probe
+	// for agents elsewhere on this node.
+	notMember := func() error {
+		return fmt.Errorf("%s is not an active member of %s; an assignee must be", guideText(selector, 60), g.Name)
+	}
 	res, _, rerr := agent.ResolveSelector(selector)
 	if rerr != nil || res.ConvID == "" {
-		return "", "", fmt.Errorf("no agent %q", guideText(selector, 60))
+		return "", "", notMember()
 	}
 	agentID, _ = db.AgentIDForConv(res.ConvID)
 	if agentID == "" {
-		return "", "", fmt.Errorf("%q is not an agent", guideText(selector, 60))
+		return "", "", notMember()
 	}
 	if conv = activeGroupMember(g, agentID); conv == "" {
-		return "", "", fmt.Errorf("%s is not an active member of %s; an assignee must be", guideText(selector, 60), g.Name)
+		return "", "", notMember()
 	}
 	return agentID, conv, nil
 }
@@ -107,8 +113,8 @@ func resolveTaskboardMember(g *db.AgentGroup, selector string) (agentID, conv st
 // taskboardCallerName is how the caller is named in mail; a linked node's
 // change is named as its own.
 func taskboardCallerName(r *http.Request) string {
-	if a := peerGrantFromRequest(r); a != nil {
-		return a.author
+	if author := taskboardPeerAuthor(r); author != "" {
+		return author
 	}
 	if id, conv := callerAgentID(r); id != "" {
 		if t := agent.CachedTitle(conv); t != "" && t != agent.UnknownTitle {
@@ -125,7 +131,7 @@ func taskboardCallerName(r *http.Request) string {
 func mailTaskboard(r *http.Request, g *db.AgentGroup, toConv, subject, body string) {
 	from := confirmedAgentConv(r)
 	m := &db.AgentMessage{GroupID: g.ID, FromConv: from, ToConv: toConv, Subject: subject, Body: body,
-		ToRecipients: []string{toConv}, OperatorAuthored: from == "" && callerIsHuman(r)}
+		ToRecipients: []string{toConv}, OperatorAuthored: from == "" && callerIsHuman(r) && taskboardPeerAuthor(r) == ""}
 	if _, err := queueAgentMessage(m); err != nil {
 		slog.Warn("taskboard: mail failed", "to", toConv, "error", err)
 	}

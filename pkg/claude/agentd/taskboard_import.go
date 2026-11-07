@@ -41,6 +41,10 @@ const maxTaskboardImportItems = 50
 // lookups may take together. The CLI waits longer than this.
 const taskboardImportLookupBudget = 60 * time.Second
 
+// taskboardImportPeerLookupBudget is the budget for a linked node's import,
+// which must answer within the peer exchange's own timeout.
+const taskboardImportPeerLookupBudget = 8 * time.Second
+
 // taskboardImportMu serialises the duplicate check and the creates of an
 // import, so two concurrent imports cannot both add the same ref. Lookups run
 // before it is taken.
@@ -166,7 +170,12 @@ func handleTaskboardImport(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	// Resolve titles first, outside the lock: each lookup may reach a tracker.
 	// The lookups share one time budget, so a batch answers in bounded time;
 	// a ref past it keeps its id as the title.
-	ctx, cancel := context.WithTimeout(r.Context(), taskboardImportLookupBudget)
+	budget := taskboardImportLookupBudget
+	if taskboardPeerAuthor(r) != "" {
+		// A linked node waits fedPeerViewTimeout for the whole exchange.
+		budget = taskboardImportPeerLookupBudget
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 	lookupReq := r.WithContext(ctx)
 	for i := range items {

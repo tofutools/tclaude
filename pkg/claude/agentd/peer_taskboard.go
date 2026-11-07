@@ -32,12 +32,17 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	write := peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite, group: true}
 
 	invoke := &peerInvokeSpec{param: "name", extra: peerTaskboardImpliedGates}
-	list := read
-	list.invoke = invoke
-	rules["GET /v1/groups/{name}/taskboard"] = withPeerInvoke("GET /v1/groups/{name}/taskboard", list)
-	create := write
-	create.invoke = invoke
-	rules["POST /v1/groups/{name}/taskboard/tasks"] = withPeerInvoke("POST /v1/groups/{name}/taskboard/tasks", create)
+	group := func(pattern string, rule peerViewRule) {
+		rule.invoke = invoke
+		if strings.HasPrefix(pattern, "GET ") {
+			rule.serve = servePeerTaskboardGroup
+		} else {
+			rule.write = servePeerTaskboardGroup
+		}
+		rules[pattern] = rule
+	}
+	group("GET /v1/groups/{name}/taskboard", read)
+	group("POST /v1/groups/{name}/taskboard/tasks", write)
 
 	context := read
 	context.serve = servePeerTaskboardContext
@@ -60,11 +65,42 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	assign := peerViewRule{feature: "groups.taskboard.assign", requires: PermTaskboardAssign, group: true, write: servePeerTaskboardTask}
 	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
-	writers := read
-	writers.invoke = invoke
-	rules["GET /v1/groups/{name}/taskboard/writers"] = withPeerInvoke("GET /v1/groups/{name}/taskboard/writers", writers)
-	manage := peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true, invoke: invoke}
-	rules["POST /v1/groups/{name}/taskboard/writers"] = withPeerInvoke("POST /v1/groups/{name}/taskboard/writers", manage)
+	group("GET /v1/groups/{name}/taskboard/writers", read)
+	group("POST /v1/groups/{name}/taskboard/writers", peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true})
+}
+
+// taskboardPeerAuthorKey carries, on an unrestricted peer's request (which
+// runs as this node's operator), who the linked node's actor is, so a task's
+// history and an assignment's brief name it rather than this operator.
+type taskboardPeerAuthorKey struct{}
+
+// peerTaskboardAsLocal is an unrestricted peer's request as this node's
+// operator, its author attached.
+func peerTaskboardAsLocal(r *http.Request, v *peerView) *http.Request {
+	local := peerAsLocalRequest(r)
+	return local.WithContext(context.WithValue(local.Context(), taskboardPeerAuthorKey{}, peerFollowUpAuthor(v, v.peer.InstanceID)))
+}
+
+// taskboardPeerAuthor names the linked node behind a request, or "" for a
+// local caller.
+func taskboardPeerAuthor(r *http.Request) string {
+	if a := peerGrantFromRequest(r); a != nil {
+		return a.author
+	}
+	author, _ := r.Context().Value(taskboardPeerAuthorKey{}).(string)
+	return author
+}
+
+// servePeerTaskboardGroup serves a route addressed by a group:
+// servePeerInvoke under the peer's grants, or as this node's operator under
+// unrestricted trust, with the peer named in the board's history.
+func servePeerTaskboardGroup(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if v.unrestricted() {
+		v.groupName = r.PathValue("name")
+		peerDashboardMux().ServeHTTP(w, peerTaskboardAsLocal(r, v))
+		return
+	}
+	servePeerInvoke(w, r, v, rule)
 }
 
 // peerTaskboardSlugs are the board's peer grants; any of them in a group
@@ -97,7 +133,8 @@ func peerTaskboardReads(peer string, groupID int64) bool {
 // local handler under the peer's grants there.
 func servePeerTaskboardTask(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	if v.unrestricted() {
-		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
+		v.auditDetail = "task=" + guideText(r.PathValue("id"), 40)
+		peerDashboardMux().ServeHTTP(w, peerTaskboardAsLocal(r, v))
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))

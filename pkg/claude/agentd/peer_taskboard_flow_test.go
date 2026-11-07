@@ -165,4 +165,12 @@ func TestPeerTaskboardUnrestricted(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	code, body = h.call("POST", "/v1/taskboard/tasks/"+task.ID+"/status", map[string]any{"status": "done"})
 	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.call("POST", "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "from bob"})
+	require.Equal(t, http.StatusCreated, code, body)
+	var added tbTask
+	require.NoError(t, json.Unmarshal([]byte(body), &added))
+	assert.Contains(t, added.CreatedBy, "peer: the operator of", "unrestricted trust still names the peer in history")
+	code, body = h.call("GET", "/v1/taskboard/tasks/"+task.ID+"/events", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Contains(t, body, "peer: the operator of")
 }
