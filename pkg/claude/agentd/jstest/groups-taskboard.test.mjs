@@ -62,8 +62,9 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.match(section.querySelector('.gf-label').textContent, /Task board/);
   assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(), '5', 'the head shows the total only');
   assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 needs you/, 'the breakdown is in its tooltip');
-  const headActions = [...section.querySelector('.gf-section-actions').querySelectorAll('[data-taskboard-new], .tb-view')];
-  assert.ok(headActions.length >= 2 && headActions[0].matches('[data-taskboard-new]'), 'the add button comes before the view switch');
+  assert.equal(section.querySelector('.gf-section-actions'), null, 'open, the title line carries only the label and the total');
+  const toolbar = [...section.querySelector('.gf-title-row').querySelectorAll('[data-taskboard-new], .tb-view')];
+  assert.ok(toolbar.length >= 2 && toolbar[0].matches('[data-taskboard-new]'), 'the toolbar row: the add button, then the view switch');
   assert.equal(container.querySelector('[data-taskboard-chip="tb-open"]').textContent.replace(/\s+/g, ' ').trim(),
     'task board: 1 needs you · 1 in progress · 2 next · 1 idea');
 
@@ -100,6 +101,9 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   await harness.act(() => harness.fireEvent(section.querySelector('.gf-section-toggle'), 'click'));
   assert.equal(section.querySelector('.tb-table'), null, 'folded, the rows are gone');
   assert.ok(section.querySelector('.tb-counts'), 'the counts stay on the line');
+  assert.equal(section.querySelector('.gf-title-row'), null, 'folded, no toolbar row');
+  assert.ok(section.querySelector('.gf-section-actions [data-taskboard-new]'), 'folded, the add button rides the section line');
+  assert.equal(section.querySelector('.gf-section-actions .tb-view'), null, 'but not the view switch');
 });
 
 test('a quiet board starts folded; the wizard calls it the Quest board', async (t) => {

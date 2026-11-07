@@ -45,7 +45,7 @@ async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
-  dashPrefs.setItem(`tclaude.dash.fused.${name}.taskboard`, 'open');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   if (by) dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by);
   const source = {
     context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),
@@ -209,7 +209,7 @@ test("a linked node's group shows that node's board in lanes", async (t) => {
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbl-peer', 'lanes');
-  dashPrefs.setItem('tclaude.dash.fused.tbl-peer.taskboard', 'open');
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbl-peer', '1');
   const peer = board('tbl-peer');
   peer.tasks = [row('tk_000000p1', 'on the peer')];
   peer.closed = [];

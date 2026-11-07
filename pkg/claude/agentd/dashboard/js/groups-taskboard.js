@@ -727,9 +727,11 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
   const choose = (what) => { if (what === 'import') setImporting(true); else setAdding(what); };
-  // The add button sits right after the count, before the view switch.
-  const head = html`${api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`}
-    <${ViewSelector} prefs=${prefs} />`;
+  // As Agents and Resources: open, the controls are a toolbar row heading
+  // the section (＋▾, then the view switch); folded, the ＋▾ rides the
+  // section line.
+  const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
+  const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} /></div>`;
   const closeAdding = () => setAdding('');
   const dialog = !api ? null : adding === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)}
@@ -737,7 +739,8 @@ export function TaskboardSection({ group, snapshot, source: ownSource = taskboar
     : adding === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} onClose=${closeAdding} />` : null;
   return html`${dialog}<${FusedSection} group=${group.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
-      actions=${head} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
+      closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': group.name }}>
+    ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null}
       importing=${importing} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by} />
   <//>`;
