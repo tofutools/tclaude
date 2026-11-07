@@ -16,6 +16,7 @@ import { clearDropBox, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext, processRunApi } from './process-context.js';
 import { defaultNotify } from './groups-quickstart.js';
+import { shellConfirm } from './shell-state.js';
 
 // removers maps a resource key (<kind>:<id>) to its row's 🗑, while the row
 // is mounted.
@@ -59,6 +60,8 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
   const notify = deps.notify || defaultNotify;
   const snapshot = deps.snapshot || (() => dashboardState.snapshot.value);
   const refresh = deps.refresh || (() => processContext.refresh());
+  // A drop asks first, as an agent's drop does.
+  const confirm = deps.confirm || shellConfirm;
   let dragged = null;
   let over = null;
   // binShown is whether this drag showed the bin, so its end hides it even
@@ -153,7 +156,7 @@ export function bindResourceDnd(doc = globalThis.document, deps = {}) {
     e.preventDefault();
     e.stopPropagation();
     dragged = null;
-    void (hit.copy ? copyResource : moveResource)(resource, hit.to, { api, notify, refresh });
+    void (hit.copy ? copyResource : moveResource)(resource, hit.to, { api, notify, refresh, confirm });
   };
   const end = () => {
     if (binShown) binOf(doc)?.classList.remove('show', 'dnd-drop-over', 'dnd-trash-template-mode');

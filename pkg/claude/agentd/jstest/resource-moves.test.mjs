@@ -111,7 +111,7 @@ test('the Collab panel moves an agent through the Groups tab\'s drop operations,
   ]);
   const moved = [];
   const api = { moveBoard: async (...args) => moved.push(args) };
-  await a.railItemToGroup({ kind: 'board' }, { to: 'ops', resource: { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' } }, { api });
+  await a.railItemToGroup({ kind: 'board' }, { to: 'ops', resource: { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' } }, { api, confirm: async () => true });
   assert.deepEqual(moved, [['plan', 'ops']]);
 });
 
@@ -126,7 +126,7 @@ test('a rail drag over another group\'s section outlines it, and the drop there 
   const item = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: { kind: 'board', id: 'plan', state: 'closed' } };
   const data = new Map();
   const dataTransfer = { setData: (k, v) => data.set(k, v), dropEffect: 'none', effectAllowed: 'all' };
-  a.startRailDrag({ currentTarget: source, dataTransfer }, item, { snapshot: { value: SNAP }, notify: () => {} });
+  a.startRailDrag({ currentTarget: source, dataTransfer }, item, { snapshot: { value: SNAP }, notify: () => {}, confirm: async () => true });
   const fire = (type, target) => {
     const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
@@ -168,7 +168,10 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   row.draggable = true;
   const moved = [];
   const notes = [];
-  const unbind = dnd.bindResourceDnd(doc, { api: { moveBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {} });
+  const asked = [];
+  let answer = true;
+  const unbind = dnd.bindResourceDnd(doc, { api: { moveBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {},
+    confirm: async (opts) => { asked.push(opts.title); return answer; } });
   t.after(unbind);
   const dataTransfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
   const member = { setData: () => {}, types: ['application/x-tclaude-member', 'text/plain'], dropEffect: 'none', effectAllowed: 'all' };
@@ -192,6 +195,17 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(moved, [['plan', 'ops']]);
   assert.deepEqual(notes, [['Moved Plan to ops']]);
+  assert.deepEqual(asked, ['Move drawing board to another group?'], 'the drop asks first, as an agent\'s does');
+  fire('dragend', row);
+  // Cancelled, nothing moves.
+  answer = false;
+  fire('dragstart', row);
+  fire('dragover', ungrouped);
+  fire('drop', ungrouped);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(moved, [['plan', 'ops']], 'a cancelled drop moves nothing');
+  assert.equal(asked.at(-1), 'Take drawing board out of its group?');
+  answer = true;
   fire('dragend', row);
   assert.equal(doc.querySelector('.dnd-drop-over'), null);
 
@@ -223,7 +237,7 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
   const board = rowOf({ kind: 'board', id: 'plan', label: 'Plan', group: 'crew' });
   const removed = [];
   t.after(dnd.registerResourceRemover('shell:term:ag_1:start:', async () => removed.push('shell')));
-  const unbind = dnd.bindResourceDnd(doc, { api: {}, notify: () => {}, snapshot: () => SNAP, refresh: () => {} });
+  const unbind = dnd.bindResourceDnd(doc, { api: {}, notify: () => {}, snapshot: () => SNAP, refresh: () => {}, confirm: async () => true });
   t.after(unbind);
   const transfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
   const fire = (type, target) => {
@@ -325,7 +339,8 @@ test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone
   const calls = [];
   const api = { pinProcess: async (...a) => calls.push(['pin', ...a]), unpinProcess: async (...a) => calls.push(['unpin', ...a]) };
   const snap = { ...SNAP, group_resources: [{ kind: 'process', id: 'review', group_id: 1, pinned: true }] };
-  t.after(dnd.bindResourceDnd(doc, { api, notify: () => {}, snapshot: () => snap, refresh: () => {} }));
+  const asked = [];
+  t.after(dnd.bindResourceDnd(doc, { api, notify: () => {}, snapshot: () => snap, refresh: () => {}, confirm: async (o) => { asked.push(o.okLabel); return true; } }));
   const fire = (type, target, keys = {}) => {
     const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
     const transfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
@@ -345,6 +360,7 @@ test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone
   fire('drop', ops);
   await settle();
   assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review']], 'a copy pins it there and leaves it here');
+  assert.deepEqual(asked, ['Add'], 'a copy asks first too, as an agent clone does');
   fire('dragend', row);
 
   fire('dragstart', row);
