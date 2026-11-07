@@ -367,6 +367,9 @@ var dashboardAgentVerbs = map[string]dashboardAgentVerb{
 	"fast-mode/disable": {postOnly, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
 		dashboardSetCodexFastModeAgent(w, r, sel, false)
 	}},
+	"sandbox": {[]string{http.MethodGet, http.MethodPost}, bySelector(dashboardSandboxImplementationAgent)},
+	// Deprecated spelling of "sandbox"; an older dashboard reaching this
+	// node over federation still calls it.
 	"sandbox-impl": {[]string{http.MethodGet, http.MethodPost}, bySelector(dashboardSandboxImplementationAgent)},
 	"clone":        {postOnly, dashboardAgentTwin(dashboardCloneAgent)},
 	// The operator's morph: the same handler and body as

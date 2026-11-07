@@ -969,7 +969,7 @@ group, so at import that means the global tiers and the install default.
 Nothing in the file sets it, so a source that ran without a sandbox cannot
 bring that here. A sandbox profile assigned to the group later binds the
 member's next launch, like any other member's; its sandbox implementation
-stays what the import resolved until `sandbox-impl set` changes it.
+stays what the import resolved until `sandbox set` changes it.
 
 `--dry-run`, the import result and the dashboard preview state each member's
 implementation, sandbox profiles and the tiers that chose them. A posture this
@@ -983,7 +983,7 @@ posture it is the shared store, shared with other unsandboxed OpenCode agents.
 
 Members imported by an earlier version are left as they are, running or not:
 they keep the baseline posture, with no tclaude sandbox. Move one with
-[`sandbox-impl set`](sandboxing.md#reassigning-an-existing-agent). An OpenCode
+[`sandbox set`](sandboxing.md#reassigning-an-existing-agent). An OpenCode
 member moved onto tclaude's sandbox takes its conversation with it.
 
 `tclaude paf inspect`, `validate` and `render` also read group export zips,

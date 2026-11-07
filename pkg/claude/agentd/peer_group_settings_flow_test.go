@@ -474,6 +474,8 @@ func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 		{"POST", "/api/agents/" + keep + "/reincarnate"},
 		{"GET", "/api/agents/" + keep + "/sandbox-impl"},
 		{"POST", "/api/agents/" + keep + "/sandbox-impl"},
+		{"GET", "/api/agents/" + keep + "/sandbox"},
+		{"POST", "/api/agents/" + keep + "/sandbox"},
 		{"GET", "/api/agents/" + keep + "/debug-export"},
 	} {
 		code, body := call(req.method, req.path, nil)

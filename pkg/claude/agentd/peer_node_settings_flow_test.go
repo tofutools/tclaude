@@ -28,7 +28,7 @@ func TestPeerAgentSandboxImplOnlyAddsConfinement(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
 	local(string(sandboxpolicy.ImplementationOff))
-	path := "/api/agents/" + agentIDOf(t, spawn.ConvID) + "/sandbox-impl"
+	path := "/api/agents/" + agentIDOf(t, spawn.ConvID) + "/sandbox"
 	set := func(body map[string]any) (int, string) { return h.call("POST", path, body) }
 
 	h.grant(t, agentd.PermGroupsRosterRead, "group=crew")
@@ -55,6 +55,9 @@ func TestPeerAgentSandboxImplOnlyAddsConfinement(t *testing.T) {
 	}
 	code, body = set(map[string]any{"implementation": "harness-builtin"})
 	require.Equal(t, 200, code, "the same implementation: %s", body)
+	// An older peer's dashboard still calls the deprecated spelling.
+	code, body = h.call("GET", "/api/agents/"+agentIDOf(t, spawn.ConvID)+"/sandbox-impl", nil)
+	require.Equal(t, 200, code, "the deprecated route: %s", body)
 
 	h.trustUnrestricted(t)
 	code, body = set(map[string]any{"implementation": "off"})

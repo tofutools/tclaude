@@ -17,18 +17,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// sandboxImplCmd is `tclaude agent sandbox-impl` — read or reassign the sandbox
-// IMPLEMENTATION an existing agent will relaunch under.
+// sandboxCmd is `tclaude agent sandbox` — read or reassign the sandbox
+// IMPLEMENTATION and sandbox PROFILE an existing agent will relaunch under.
 //
 // There is no self-targeted form. The implementation is applied by a launch, so
 // the target is another agent named positionally — stopped, or idle with
 // `set --restart` — rather than the `--target` flag the self-defaulting
 // lifecycle verbs use.
-func sandboxImplCmd() *cobra.Command {
+func sandboxCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:     "sandbox-impl",
-		Aliases: []string{"sandbox-implementation"},
-		Short:   "Show or assign the sandbox implementation and profile an agent relaunches under",
+		Use:   "sandbox",
+		Short: "Show or assign the sandbox implementation and profile an agent relaunches under",
 		Long: "Reads and rewrites the durable sandbox implementation recorded for an existing agent — " +
 			"the layer that owns OS-level confinement for its launches.\n\n" +
 			"The implementation is normally frozen when an agent is spawned. `set` is how an agent " +
@@ -38,11 +37,33 @@ func sandboxImplCmd() *cobra.Command {
 			"The assignment takes effect on the next launch. A stopped agent is assigned and left " +
 			"stopped; a running agent needs `set --restart`, which stops the idle agent, assigns and " +
 			"resumes it. `set --sandbox-profile` changes the agent's explicit sandbox profile the same way, " +
-			"alone or together with the implementation. Both subcommands require the `agent.sandbox-impl` permission, " +
+			"alone or together with the implementation, and `set --omit-sandbox-profiles` drops every " +
+			"sandbox profile. Both subcommands require the `agent.sandbox-impl` permission, " +
 			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd(), sandboxImplDefaultCmd()},
 	}.ToCobra()
+}
+
+// sandboxImplLegacyCmd is the deprecated `tclaude agent sandbox-impl` spelling
+// of sandboxCmd, from before the command also changed the sandbox profile. It
+// keeps working, hidden from help, and every use prints where it moved.
+func sandboxImplLegacyCmd() *cobra.Command {
+	cmd := sandboxCmd()
+	cmd.Use = "sandbox-impl"
+	cmd.Aliases = []string{"sandbox-implementation"}
+	markDeprecated(cmd, "tclaude agent sandbox")
+	return cmd
+}
+
+// markDeprecated deprecates cmd and every subcommand under it, since cobra
+// only warns about the command that actually runs.
+func markDeprecated(cmd *cobra.Command, replacement string) {
+	cmd.Deprecated = "use `" + replacement + "` instead"
+	cmd.Hidden = true
+	for _, sub := range cmd.Commands() {
+		markDeprecated(sub, replacement+" "+sub.Name())
+	}
 }
 
 type sandboxImplShowParams struct {
@@ -186,8 +207,8 @@ func runSandboxImplShow(p *sandboxImplShowParams, stdout, stderr io.Writer) int 
 		return rc
 	}
 	var resp sandboxImplResp
-	if err := DaemonRequest(http.MethodGet,
-		sandboxImplPath(target), nil, &resp, DaemonOpts{}); err != nil {
+	if err := sandboxDaemonRequest(http.MethodGet,
+		target, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -252,8 +273,8 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 		body["confirm_move_out"] = true
 	}
 	var resp sandboxImplResp
-	if err := DaemonRequest(http.MethodPost,
-		sandboxImplPath(target), body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
+	if err := sandboxDaemonRequest(http.MethodPost,
+		target, body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		var daemonErr *DaemonError
 		if errors.As(err, &daemonErr) && daemonErr.Code == sandboxMoveOutConfirmCode {
@@ -264,8 +285,28 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	return printSandboxImpl(&resp, p.JSON, stdout, stderr)
 }
 
-func sandboxImplPath(target string) string {
+func sandboxPath(target string) string {
+	return "/v1/agent/" + url.PathEscape(target) + "/sandbox"
+}
+
+// sandboxLegacyPath is the deprecated route the daemon still serves; a daemon
+// older than the /sandbox route serves only it.
+func sandboxLegacyPath(target string) string {
 	return "/v1/agent/" + url.PathEscape(target) + "/sandbox-impl"
+}
+
+// sandboxDaemonRequest calls the agent's /sandbox route, and the deprecated
+// /sandbox-impl one when the daemon is too old to know the new verb (a CLI
+// upgraded before its daemon was restarted). An unknown verb is refused before
+// any work, so the retry cannot repeat an assignment.
+func sandboxDaemonRequest(method, target string, body any, out any, opts DaemonOpts) error {
+	err := DaemonRequest(method, sandboxPath(target), body, out, opts)
+	var daemonErr *DaemonError
+	if errors.As(err, &daemonErr) && daemonErr.Status == http.StatusNotFound &&
+		strings.Contains(daemonErr.Msg, "unknown verb sandbox ") {
+		return DaemonRequest(method, sandboxLegacyPath(target), body, out, opts)
+	}
+	return err
 }
 
 // printSandboxImpl renders one posture, naming what an assignment replaced and
