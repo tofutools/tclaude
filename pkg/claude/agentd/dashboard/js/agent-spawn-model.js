@@ -1438,18 +1438,9 @@ export function groupHasContext(groups, groupName) {
   return text(findSpawnGroup(groups, groupName)?.default_context).trim() !== '';
 }
 
-export function attachKey(file) {
-  return `${file?.name || ''}|${file?.size || 0}|${file?.type || ''}`;
-}
-
-export function formatAttachmentSize(size) {
-  const value = Number(size) || 0;
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
-  }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
+// attachKey and formatAttachmentSize live in attachment-files.js, shared by
+// every dialog that takes files.
+export { attachKey, formatAttachmentSize } from './attachment-files.js';
 
 // The spawn form's record of where its values came from, flat, for a fill's undo
 // (form-fill.js): which fields are touched, set by the operator, or overrides

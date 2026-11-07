@@ -33,7 +33,6 @@ import {
   deriveSpawnNameFromMessage,
   findSpawnHarness,
   findSpawnProfile,
-  formatAttachmentSize,
   groupDefaultProfileName,
   groupDefaultPrompts,
   groupHasContext,
@@ -90,6 +89,7 @@ import {
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
 } from './resolved-defaults.js';
 import { shortcutText, withShortcut } from './keybindings.js';
+import { AttachmentList, useAttachmentIntake } from './attachment-intake.js';
 
 const html = htm.bind(h);
 // A harness change clears context trims, which no field shows, so a fill of it waits.
@@ -104,7 +104,6 @@ function liveUsageProfiles(frozen) {
   const live = dashboardState.snapshot.value?.usage?.budgets?.profiles;
   return live ? live.map((p) => p.name) : frozen;
 }
-const PASTE_REPEAT_MS = 1000;
 // One title for the auto-compaction window control, shared by the spawn dialog
 // and kept next to the hint logic it explains. The two consequences an operator
 // has to know are the cap and the status-line decoupling.
@@ -221,20 +220,6 @@ function storedQueuedAttachments(queued) {
   return stored.filter((entry) => entry?.name).map((entry, index) => ({
     id: -(index + 1), name: String(entry.name), size: Number(entry.size) || 0, url: '',
   }));
-}
-
-function AttachmentList({ attachments, remove, busy }) {
-  return html`<ul class="spawn-attachments-list" id="agent-spawn-attachments-list">
-    ${attachments.map((attachment) => html`<li key=${attachment.id}>
-      ${attachment.url
-        ? html`<img class="att-thumb" src=${attachment.url} alt="" />`
-        : html`<span class="att-icon">📄</span>`}
-      <span class="att-name" title=${attachment.name}>${attachment.name}</span>
-      <span class="att-size">${formatAttachmentSize(attachment.size)}</span>
-      <button data-ui-exempt type="button" class="att-remove" title="Remove" disabled=${busy}
-        aria-label=${`Remove ${attachment.name}`} onClick=${() => remove(attachment.id)}>✕</button>
-    </li>`)}
-  </ul>`;
 }
 
 function roleGrantSlug(grant) {
@@ -397,7 +382,6 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const [effectiveEnvironmentOpen, setEffectiveEnvironmentOpen] = useState(false);
   const wizard = useWizardTheme();
   const [inspectedRole, setInspectedRole] = useState('');
-  const [dragOver, setDragOver] = useState(false);
   const nameRef = useRef(null);
   const fileRef = useRef(null);
   const touched = useRef(new Set());
@@ -445,10 +429,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const directoryRequest = useRef(0);
   const worktreesRef = useRef(worktrees);
   const draftRef = useRef(draft);
-  const attachSequence = useRef(0);
   const attachmentsRef = useRef([]);
-  const pasteState = useRef({ at: 0, keys: new Set() });
-  const dragDepth = useRef(0);
   const uploaded = useRef({ key: '', paths: [] });
   const resolvedWorktree = useRef({ key: '', value: null });
 
@@ -908,97 +889,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const invalidateAttachmentUploads = () => {
     uploaded.current = { key: '', paths: [] };
   };
-  const addAttachments = (files) => {
-    if (busyRef.current) return;
-    const additions = [];
-    for (const file of files || []) {
-      if (!file) continue;
-      let name = file.name;
-      if (!name) {
-        const extension = (file.type && file.type.split('/')[1]) || 'png';
-        name = `pasted-${++attachSequence.current}.${extension}`;
-      }
-      additions.push({
-        id: ++attachSequence.current,
-        file,
-        name,
-        size: file.size,
-        url: (file.type || '').startsWith('image/') ? URL.createObjectURL(file) : '',
-      });
-    }
-    if (!additions.length) return;
-    invalidateAttachmentUploads();
-    setAttachments((before) => [...before, ...additions]);
-  };
-  const removeAttachment = (id) => {
-    if (busyRef.current) return;
-    invalidateAttachmentUploads();
-    setAttachments((before) => {
-      const removed = before.find((attachment) => attachment.id === id);
-      if (removed?.url) URL.revokeObjectURL(removed.url);
-      return before.filter((attachment) => attachment.id !== id);
-    });
-  };
-  const paste = (event) => {
-    if (busyRef.current) return;
-    const transfer = event.clipboardData;
-    if (!transfer) return;
-    const seen = new Set();
-    const collected = [];
-    const collect = (file) => {
-      if (!file) return;
-      const key = attachKey(file);
-      if (seen.has(key)) return;
-      seen.add(key);
-      collected.push(file);
-    };
-    for (let index = 0; index < (transfer.files?.length || 0); index += 1) {
-      collect(transfer.files[index]);
-    }
-    for (let index = 0; index < (transfer.items?.length || 0); index += 1) {
-      if (transfer.items[index].kind === 'file') collect(transfer.items[index].getAsFile());
-    }
-    if (!collected.length) return;
-    event.preventDefault();
-    const now = globalThis.performance?.now?.() || 0;
-    const repeating = now - pasteState.current.at < PASTE_REPEAT_MS;
-    const fresh = repeating
-      ? collected.filter((file) => !pasteState.current.keys.has(attachKey(file)))
-      : collected;
-    pasteState.current = { at: now, keys: new Set(collected.map(attachKey)) };
-    addAttachments(fresh);
-  };
-  const hasDraggedFiles = (event) => {
-    const types = event.dataTransfer?.types;
-    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
-  };
-  const dragEnter = (event) => {
-    if (!hasDraggedFiles(event)) return;
-    event.preventDefault();
-    if (busyRef.current) return;
-    dragDepth.current += 1;
-    setDragOver(true);
-  };
-  const dragOverEvent = (event) => {
-    if (!hasDraggedFiles(event)) return;
-    event.preventDefault();
-    if (busyRef.current) return;
-    event.dataTransfer.dropEffect = 'copy';
-  };
-  const dragLeave = (event) => {
-    if (!hasDraggedFiles(event)) return;
-    if (busyRef.current) return;
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (!dragDepth.current) setDragOver(false);
-  };
-  const drop = (event) => {
-    if (!hasDraggedFiles(event)) return;
-    event.preventDefault();
-    if (busyRef.current) return;
-    dragDepth.current = 0;
-    setDragOver(false);
-    addAttachments(event.dataTransfer.files);
-  };
+  // The picker, a drop and a paste share attachment-intake.js with the task
+  // board's forms.
+  const intake = useAttachmentIntake({
+    setAttachments, attachments, busy: () => busyRef.current, onChange: invalidateAttachmentUploads,
+  });
+  const { add: addAttachments, remove: removeAttachment, dragOver } = intake;
 
   const browse = async (kind) => {
     if (browseBusy) return;
@@ -1403,11 +1299,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     guardBackdropDrag=${true}
     initialFocusRef=${nameRef}
     dialogClass=${`cron-create-modal${dragOver ? ' spawn-drag-over' : ''}`}
-    onDragEnter=${dragEnter}
-    onDragOver=${dragOverEvent}
-    onDragLeave=${dragLeave}
-    onDrop=${drop}
-    onPaste=${paste} title=${html`${queued
+    onDragEnter=${intake.handlers.onDragEnter}
+    onDragOver=${intake.handlers.onDragOver}
+    onDragLeave=${intake.handlers.onDragLeave}
+    onDrop=${intake.handlers.onDrop}
+    onPaste=${intake.handlers.onPaste} title=${html`${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
       : requestOnly
         ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a hero" />`
@@ -1485,7 +1381,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             onChange=${(event) => { addAttachments(event.currentTarget.files); event.currentTarget.value = ''; }} />
           <span class="spawn-attachments-hint ui-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
         </div>
-        <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
+        <${AttachmentList} id="agent-spawn-attachments-list" attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
 		<div class="cron-create-row" id="agent-spawn-environment-row" data-remote-spawn-field="environment"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input data-capture-mask class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><${Button} size="sm" variant="ghost danger" icon=${true} aria-label="Remove variable" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×<//></div>`)}</div><div class="sbx-add-row-help"><${Button} size="sm" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}><${Words} plain="＋ add override" wizard="✦ bind override" /><//>${effectiveEnvironment.length ? html`<button data-ui-exempt type="button" class="sbx-effective-environment-toggle" id="agent-spawn-effective-environment-toggle" disabled=${busy} aria-expanded=${effectiveEnvironmentOpen ? 'true' : 'false'} aria-controls="agent-spawn-environment-preview" aria-label=${`${effectiveEnvironmentOpen ? 'Hide' : 'Show'} effective environment (${effectiveEnvironment.length} ${effectiveEnvironment.length === 1 ? 'variable' : 'variables'})`} onClick=${() => { setHelpOpen(''); setEffectiveEnvironmentOpen((value) => !value); }}>${effectiveEnvironmentOpen ? '▾' : '▸'} <${Words} plain="Effective env" wizard="Runes in force" /> (${effectiveEnvironment.length})</button>` : null}<${HelpDisclosure} id="agent-spawn-environment-help" label=${wizard ? 'Summoning rune overrides' : 'Environment overrides'} help=${wizard ? ENVIRONMENT_OVERRIDE_HELP_WIZARD : ENVIRONMENT_OVERRIDE_HELP} open=${helpOpen === 'agent-spawn-environment-help'} setOpen=${setHelpOpen} /></div>${effectiveEnvironment.length ? html`<div id="agent-spawn-environment-preview" class="sbx-effective-environment-help" hidden=${!effectiveEnvironmentOpen}><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span data-capture-mask class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><${HelpDisclosure} id="agent-spawn-effective-environment-help" label=${wizard ? 'Runes in force' : 'Effective environment'} help=${wizard ? EFFECTIVE_ENVIRONMENT_HELP_WIZARD : EFFECTIVE_ENVIRONMENT_HELP} open=${helpOpen === 'agent-spawn-effective-environment-help'} setOpen=${setHelpOpen} /></div>` : null}</div></div>
