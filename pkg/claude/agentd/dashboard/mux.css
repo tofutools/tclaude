@@ -677,6 +677,10 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
   color: #58a6ff; font-size: 12px; }
 .view-menu .view-menu-reset:disabled { color: var(--ui-muted-text); cursor: default; }
 .collab-rail .view-menu label.filter-toggle { cursor: pointer; color: var(--ui-body-text); user-select: none; }
+/* The Filter menu's two order dropdowns (tcl-zeawf9): a label, then its select. */
+.collab-rail .view-menu label.cr-order { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
+  padding: 3px 8px; font-size: 12px; color: var(--ui-body-text); }
+.collab-rail .view-menu .cr-order-select { min-width: 120px; }
 .collab-rail .cr-count { color: var(--ui-muted-text); font-size: 11px; font-variant-numeric: tabular-nums; }
 .collab-rail .cr-list { display: flex; flex-direction: column; gap: 6px; }
 .collab-rail .cr-section-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; }

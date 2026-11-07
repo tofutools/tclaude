@@ -286,7 +286,9 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   const { railItems } = await harness.importDashboardModule('js/collab-rail-model.js');
   const { railRowActions } = await harness.importDashboardModule('js/collab-rail-menu.js');
   const { sections } = railItems({ background: bg.backgroundTerminals.value, titleOf: (row) => row.label || row.group || row.tmux_session });
-  const listed = sections.flatMap((section) => section.items.map((item) => [section.name, item.key, item.row.node?.name || '']));
+  // What is listed, not its order (the panel's order setting decides that).
+  const listed = sections.flatMap((section) => section.items.map((item) => [section.name, item.key, item.row.node?.name || '']))
+    .sort((a, b) => a[1].localeCompare(b[1]));
   assert.deepEqual(listed, [
     ['Not in a group', 'bg::tmux-a', ''],
     ['Not in a group', 'bg:inst_forge:a', 'forge'],

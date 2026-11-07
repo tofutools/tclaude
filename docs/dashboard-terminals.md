@@ -78,20 +78,31 @@ this does anything on touch screens.
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
   Background, Open, Closed) and kinds (Agents, Shells, Drawing boards, Pages,
   Processes). Shells are every shell that is not an agent's own session: a
-  group's shell and the shells opened in an agent's directory. By default everything but Closed is listed. The button shows a
-  count of the boxes changed from the default, and **Reset** puts them back.
-  The browser remembers the filter. A search finds everything, whatever the
-  filter is. It also counts the [background sessions](#background-sessions).
+  group's shell and the shells opened in an agent's directory. By default everything but Closed is listed.
+  Under **Order**, two dropdowns set the order for every group:
+  - **Groups**: **Name A–Z** (the default), **Activity** (a group with an
+    agent that needs you first, then groups with something open here, then
+    groups with a live agent), or **Groups tab order** (the same order as the
+    Groups tab, a parent before its subgroups).
+  - **Within groups**: **Name A–Z** (the default), **Activity** (the agents
+    first, in the order needs you, working, idle, then by name; then what is
+    open here; closed items last), or **Kind** (the agents, then the
+    resources, each by name).
+
+  **Not in a group**, then **Other sessions**, always come last. Only
+  **Activity** reorders when you open, attach, or detach something. The button
+  shows a count of the boxes and dropdowns changed from the default, and
+  **Reset** puts them back. The browser remembers the filter and the order. A
+  search finds everything, whatever the filter is. It also counts the
+  [background sessions](#background-sessions).
 - **＋ New ▾** makes something: **Agent…** (the spawn dialog), **Shell…** and
   **Page…** (pick the group), **Drawing board…** (the drawing board list: open one, or create
   one), **Process…** (the process list, with Processes on) and **Import
   drawing board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
   the same menu for that group: a **Shell** in its directory, a **Drawing board** and a
   **Page** in the group, and an agent spawned into it.
-- In each group, the agents come first, in a fixed order: needs you, working
-  (green light), idle (amber), then by name. Closed items come last.
-- A group with an agent that needs you comes first, then groups with something
-  open here.
+- An agent's light says what it is doing: green for
+  working, amber for idle.
 - Each agent goes under one group: the group it was spawned into, or else its
   first group. Agents in no group are under **Not in a group**.
 - Click a group's header to fold it. The panel remembers which groups are

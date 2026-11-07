@@ -11,6 +11,7 @@
 // background sessions, and when each item was last used here.
 
 import { overlayResourceKey, resourceKey, resourceState, shellPaneKey, stripResourceKey } from './resource-model.js';
+import { buildGroupTree } from './groups-view-model.js';
 
 // The panel's filter (tcl-t1onur): which states and kinds it lists. Where an
 // item is (open here, in the background, closed) applies to everything; what
@@ -50,6 +51,39 @@ export function filterChanges(filter) {
   const differs = (list, base, all) => all.filter(([key]) => list.includes(key) !== base.includes(key)).length;
   return differs(filter.states, DEFAULT_FILTER.states, FILTER_STATES) + differs(filter.kinds, DEFAULT_FILTER.kinds, FILTER_KINDS);
 }
+
+// The panel's order (tcl-zeawf9): how its groups are ordered, and how the
+// items within a group are, one setting each for every group. Name A–Z is the
+// default for both, so attaching or detaching moves nothing; Activity is the
+// older rule, where what is in use comes first. Not in a group, then Other
+// sessions, always come last.
+export const GROUP_ORDERS = Object.freeze([
+  ['name', 'Name A–Z'], ['activity', 'Activity'], ['groups', 'Groups tab order'],
+]);
+export const ITEM_ORDERS = Object.freeze([
+  ['name', 'Name A–Z'], ['activity', 'Activity'], ['kind', 'Kind'],
+]);
+export const DEFAULT_ORDER = Object.freeze({ groups: 'name', items: 'name' });
+export const ACTIVITY_ORDER = Object.freeze({ groups: 'activity', items: 'activity' });
+
+// readOrder is a stored order ({ groups, items }); an unknown or unreadable
+// value reads as its default.
+export function readOrder(raw) {
+  let value = null;
+  try {
+    value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    value = null;
+  }
+  const pick = (key, known) => (known.some(([k]) => k === value?.[key]) ? value[key] : DEFAULT_ORDER[key]);
+  return { groups: pick('groups', GROUP_ORDERS), items: pick('items', ITEM_ORDERS) };
+}
+
+// orderChanges is how many of the two order settings differ from the
+// default: it adds to the count on the filter button.
+export const orderChanges = (order) => Number(order.groups !== DEFAULT_ORDER.groups) + Number(order.items !== DEFAULT_ORDER.items);
+
+const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
 // itemPlace, itemKind and itemActivity are the filter's view of an item.
 const itemPlace = (item) => (item.bucket === 'minimized' ? 'open' : item.bucket);
@@ -92,17 +126,26 @@ const agentRank = (item) => AGENT_RANK[item.status?.key] ?? 3;
 // needsYou is an agent waiting on the operator.
 export const needsYou = (item) => isAgentItem(item) && agentRank(item) === 0;
 
-// compareItems orders a group's items: agents (by agentRank, then name), then
-// live resources (open here first, then the snapshot's order), then closed
-// ones, the most recently used first. Opening a live item never moves it, so
-// the row under the pointer stays the one clicked.
-function compareItems(a, b) {
+// compareByActivity orders a group's items by what is in use (the Activity
+// setting): agents (by agentRank, then name), then live resources (open here
+// first, then the snapshot's order), then closed ones, the most recently used
+// first. Opening a live item never moves it, so the row under the pointer
+// stays the one clicked.
+function compareByActivity(a, b) {
   const tier = itemTier(a) - itemTier(b);
   if (tier) return tier;
   if (isAgentItem(a)) return agentRank(a) - agentRank(b) || a.title.localeCompare(b.title);
   if (a.bucket === 'closed') return b.usedAt - a.usedAt;
   return BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
 }
+
+// ITEM_COMPARE orders a group's items for each Within groups setting. Name
+// and Kind read nothing that opening, attaching or detaching changes.
+const ITEM_COMPARE = Object.freeze({
+  activity: compareByActivity,
+  name: (a, b) => byName(a.title, b.title),
+  kind: (a, b) => Number(!isAgentItem(a)) - Number(!isAgentItem(b)) || byName(a.title, b.title),
+});
 
 // itemState is the word or two an item's row ends with: what an agent is
 // doing when its light cannot say it, or where a resource is when that is not
@@ -154,11 +197,11 @@ export function agentGroupName(agent, names) {
 //   used is a Map of item key → the last time it was opened here.
 export function railItems({
   resources = [], groups = [], places = new Map(), panes = [], overlays = [], background = [],
-  titleOf = (row) => row.label || row.tmux_session, statusOf = () => null, used = new Map(),
+  titleOf = (row) => row.label || row.tmux_session, statusOf = () => null, used = new Map(), order: chosen = DEFAULT_ORDER,
 } = {}) {
+  const order = readOrder(chosen);
   const names = new Map(groups.map((g) => [g.id, g.name]));
   const byName = new Map(groups.map((g) => [g.name, g.id]));
-  const order = new Map(groups.map((g, index) => [g.id, index]));
   const byGroup = new Map();
   const add = (groupID, item) => {
     if (!byGroup.has(groupID)) byGroup.set(groupID, []);
@@ -280,27 +323,45 @@ export function railItems({
 
   const sections = [...byGroup.entries()].map(([id, items]) => {
     const sorted = items.map((item, index) => ({ item, index }))
-      .sort((a, b) => compareItems(a.item, b.item) || a.index - b.index)
+      .sort((a, b) => ITEM_COMPARE[order.items](a.item, b.item) || a.index - b.index)
       .map(({ item }) => item);
     const name = id === UNGROUPED.id ? UNGROUPED.name : id === OTHER_SESSIONS.id ? OTHER_SESSIONS.name : names.get(id);
     return { id, name, items: sorted };
   });
-  return { sections: sortSections(sections, order) };
+  return { sections: sortSections(sections, groups, order.groups) };
 }
 
-// sortSections puts a group with an agent that needs the operator first, then
-// one with something open here, then one with a live agent, then one with
-// anything active, then the rest; within each, the snapshot's group order
-// (Not in a group last). Recent use does not move a group, so a click never
-// shifts the list under the pointer.
-function sortSections(sections, order) {
+// groupsTabRank is each group's place in the Groups tab: its tree, parents
+// before their children, in the operator's order.
+function groupsTabRank(groups) {
+  const rank = new Map();
+  const walk = (nodes) => nodes.forEach((node) => { if (!rank.has(node.group.name)) rank.set(node.group.name, rank.size); walk(node.children); });
+  walk(buildGroupTree(groups.filter((g) => !g.virtual), () => true));
+  return new Map(groups.map((g) => [g.id, rank.get(g.name) ?? Infinity]));
+}
+
+// sortSections orders the groups by the Groups setting. Not in a group, then
+// Other sessions, come last whatever they hold. Activity puts a group with an
+// agent that needs the operator first, then one with something open here,
+// then one with a live agent, then one with anything active, then the rest;
+// within each, the snapshot's group order. Groups tab order and Name A–Z read
+// nothing that opening, attaching or detaching changes; recent use moves no
+// group in any order, so a click never shifts the list under the pointer.
+function sortSections(sections, groups, mode) {
   const live = (i) => i.bucket !== 'closed';
   const tier = (s) => (s.items.some(needsYou) ? 0 : s.items.some((i) => i.bucket === 'open') ? 1
     : s.items.some((i) => live(i) && isAgentItem(i)) ? 2 : s.items.some(live) ? 3 : 4);
-  const rank = (s) => (s.id === UNGROUPED.id ? Infinity : order.get(s.id) ?? Infinity);
-  // Other sessions belong to no group and come last, whatever they hold.
-  const last = (s) => (s.id === OTHER_SESSIONS.id ? 1 : 0);
-  return [...sections].sort((a, b) => last(a) - last(b) || tier(a) - tier(b) || rank(a) - rank(b));
+  const snapshotRank = new Map(groups.map((g, index) => [g.id, index]));
+  const tabRank = mode === 'groups' ? groupsTabRank(groups) : null;
+  const last = (s) => (s.id === OTHER_SESSIONS.id ? 2 : s.id === UNGROUPED.id ? 1 : 0);
+  // ahead compares two ranks, Infinity (a group not listed) included.
+  const ahead = (ranks, a, b) => { const x = ranks.get(a.id) ?? Infinity; const y = ranks.get(b.id) ?? Infinity; return x === y ? 0 : x < y ? -1 : 1; };
+  const compare = {
+    activity: (a, b) => tier(a) - tier(b) || ahead(snapshotRank, a, b),
+    groups: (a, b) => ahead(tabRank, a, b) || byName(a.name || '', b.name || ''),
+    name: (a, b) => byName(a.name || '', b.name || ''),
+  }[mode];
+  return [...sections].sort((a, b) => last(a) - last(b) || compare(a, b));
 }
 
 // matchesQuery is whether an item's title or group holds the query.
