@@ -173,7 +173,7 @@ func TestTaskboardGroupGrantReachesAPeersBoard(t *testing.T) {
 	fhGrant.grant(t, agentd.PermGroupsRosterRead, "group=crew")
 	rc, out = run(true, "ls", "crew", "--peer", "bob")
 	require.NotEqual(t, 0, rc, out)
-	assert.Contains(t, out, "a peer grant this node has not given your node")
+	assert.Contains(t, out, "a peer grant the node you called has not given your node")
 	assert.Contains(t, out, "--scope group=crew")
 
 	// Both layers: the board answers.

@@ -581,7 +581,8 @@ function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loa
         placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
         emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
         freeText=${(text) => text} commitOnBlur
-        literal=${dim === 'resource' ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:') : null}
+        literal=${dim === 'resource' ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:')
+          : dim === 'peer' ? (text) => /^\S+\/\S+$/.test(text) || /^inst_\S+$/.test(text) : null}
         onQuery=${(text) => {
     const typed = text.trim();
     const exact = typed && items.find((item) => item.key === typed

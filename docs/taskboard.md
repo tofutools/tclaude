@@ -351,20 +351,23 @@ node takes two grants, one on each node. Each one bounds the other:
    on. This decides which of this node's agents may use that reach.
 
 Every member of the local group can then run
-`tclaude agent taskboard ls crew --peer bob`, and with `taskboard.write` on
-both nodes also `add crew … --peer bob` and the other writes. A local `group=`
+`tclaude agent taskboard ls crew --peer bob`. With `taskboard.write` on both
+nodes it can also run `add crew … --peer bob` and the other writes. On this
+node, write does not imply read for a linked node's board, so give the group
+both slugs, each scoped `peer=bob/crew`. A local `group=`
 scope, an unscoped grant and group ownership never reach a linked node, and
 a `peer=` scope never reaches a local board. A verb that names only a task id
 (`show`, `edit`, `move`, `done` and the like) needs the node-wide scope
 `peer=bob` on this node, as described above.
 
-A refusal names the layer that is missing:
+A refusal names a missing layer. When both are missing, the linked node's
+layer is reported first:
 
 | What is missing | What the agent is told |
 |---|---|
 | The linked node grants this node nothing on the group | `bob has not granted this node anything on group "crew"`, with the `tclaude federation grant` command its operator would run |
-| The linked node grants other things on the group, but not this slug | `requires taskboard.read for group:crew, a peer grant this node has not given your node`, also with the command |
-| This node's grant | `caller is not granted permission "taskboard.read" for peer=<bob>/crew`, with the scope to grant |
+| The linked node grants other things on the group, but not this slug | `requires taskboard.read for group:crew, a peer grant the node you called has not given your node`, also with the command |
+| This node's grant | `caller is not granted permission "taskboard.read" for peer=<bob's instance id>/crew`, with the scope to grant |
 
 `GET /api/node-summary` carries `taskboard`, the summed counts of the boards
 the reader may see.

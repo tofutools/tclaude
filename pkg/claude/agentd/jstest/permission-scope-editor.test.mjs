@@ -858,3 +858,21 @@ test('the peer= drawer offers linked nodes\' groups by label and saves the insta
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0], { 'taskboard.read': { peer: ['inst_bob/crew'] } });
 });
+
+test('a typed node/group is kept as typed even when a longer catalogue row matches', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host } = await openEditor(harness, scopeSnapshot({ slugs: [TB_READ], dimOptions: { peer: {} } }), {
+    ...noopActions,
+    loadScopeValues: async () => [{ kind: 'peer', id: 'inst_bob/crewops', value: 'inst_bob/crewops', title: 'bob / crewops', node: 'bob' }],
+    savePermissions: async (descriptor, selection, scopes) => saved.push(scopes),
+  });
+  await harness.act(() => host.querySelector('[data-slug="taskboard.read"] button.perm-scope-twisty').click());
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const box = dimInput(host, 'peer');
+  await harness.act(() => harness.fireEvent(box, 'focus'));
+  await harness.input(box, 'bob/crew');
+  await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter' }));
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], { 'taskboard.read': { peer: ['bob/crew'] } }, 'the daemon resolves the label on save');
+});
