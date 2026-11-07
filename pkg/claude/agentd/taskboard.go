@@ -615,7 +615,8 @@ func handleTaskboardListOwnGroup(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/groups/{name}/taskboard/tasks {title, body, ref, ref_label, stage,
 // after:[deps], position:{top|bottom|before|after}} — capture lands in ideas
-// unless stage is next.
+// unless stage is next. {refs:[…]} and/or {lines:[…]} (with an optional stage)
+// import a batch instead; see handleTaskboardImport.
 func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) || !requireGroupActive(w, g) {
 		return
@@ -628,8 +629,26 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		Stage    string                `json:"stage"`
 		After    []string              `json:"after"`
 		Position taskboardPositionBody `json:"position"`
+		// Refs and Lines make the request an import (taskboard_import.go):
+		// one task per ref or line, refused per item.
+		Refs  []string `json:"refs"`
+		Lines []string `json:"lines"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	if len(body.Refs) > 0 || len(body.Lines) > 0 {
+		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
+			body.Position != (taskboardPositionBody{}) {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"an import (refs or lines) takes only stage; title, body, ref, after and position are for one task")
+			return
+		}
+		if body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
+			return
+		}
+		handleTaskboardImport(w, r, g, body.Refs, body.Lines, body.Stage)
 		return
 	}
 	title, err := validateTaskTitle(body.Title)

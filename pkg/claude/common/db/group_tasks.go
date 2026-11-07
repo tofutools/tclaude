@@ -37,11 +37,11 @@ const (
 	GroupTaskEventDetailMax = 512
 )
 
-// Event kinds written by this slice. The assign/report kinds (assigned,
-// unassigned, taken, released, reported, stalled) and imported arrive with the
-// slices that write them.
+// Event kinds written so far. The assign/report kinds (assigned, unassigned,
+// taken, released, reported, stalled) arrive with the slice that writes them.
 const (
 	GroupTaskEventCreated   = "created"
+	GroupTaskEventImported  = "imported"
 	GroupTaskEventEdited    = "edited"
 	GroupTaskEventMoved     = "moved"
 	GroupTaskEventPromoted  = "promoted"
@@ -172,6 +172,9 @@ type NewGroupTask struct {
 	DependsOn []string
 	Position  GroupTaskPosition
 	Actor     string
+	// Imported records the task's first event as imported (a ref import)
+	// rather than created.
+	Imported bool
 }
 
 type taskTx interface {
@@ -403,7 +406,11 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
 	}
-	if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventCreated, detail, now); err != nil {
+	kind := GroupTaskEventCreated
+	if in.Imported {
+		kind = GroupTaskEventImported
+	}
+	if err := addGroupTaskEventTx(tx, id, in.Actor, kind, detail, now); err != nil {
 		return nil, err
 	}
 	out, err := getGroupTaskTx(tx, id)

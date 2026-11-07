@@ -450,6 +450,11 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
 // default. Sending "" is what asks for that.
 const SANDBOX_IMPL_MODE_INHERIT = '';
 
+// SANDBOX_PROFILE_KEEP is the profile picker's initial "keep current" choice:
+// no profile change is sent. It is only a select value and never sent to the
+// server.
+const SANDBOX_PROFILE_KEEP = '__tclaude_keep_current_sandbox_profile__';
+
 // The one implementation that KEEPS the harness-builtin mode a launch is given.
 // Every other one derives its own, which is why the pin is offered only here.
 const SANDBOX_IMPL_HARNESS_BUILTIN = 'harness-builtin';
@@ -469,7 +474,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const [request, setRequest] = useState({ phase: 'loading', data: null, error: '' });
   const [choice, setChoice] = useState('');
   const [mode, setMode] = useState(SANDBOX_IMPL_MODE_INHERIT);
-  const [profile, setProfile] = useState('');
+  const [profile, setProfile] = useState(SANDBOX_PROFILE_KEEP);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // What the server says moving this OpenCode agent out of private state does,
@@ -485,7 +490,6 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       (data) => {
         setRequest({ phase: 'ready', data, error: '' });
         setChoice(String(data?.sandbox_implementation || ''));
-        setProfile(String(data?.sandbox_profile || ''));
       },
       (cause) => {
         if (cause?.name !== 'AbortError') {
@@ -520,7 +524,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const ambientTiers = (Array.isArray(posture.sandbox_profile_tiers) ? posture.sandbox_profile_tiers : [])
     .filter((tier) => tier?.scope !== 'explicit');
   const implChanged = choice !== current || pinned !== SANDBOX_IMPL_MODE_INHERIT;
-  const profileChanged = !profileLocked && profile !== currentProfile;
+  // "Default" ('') is no explicit profile: the regular resolution, global then
+  // group, as a spawn that names none gets.
+  const profileChanged = !profileLocked && profile !== SANDBOX_PROFILE_KEEP && profile !== currentProfile;
   // Dirty only once the operator has actually moved off the recorded posture, so
   // closing a dialog they merely looked at does not raise a discard prompt.
   const dirty = request.phase === 'ready' && (implChanged || profileChanged);
@@ -624,7 +630,8 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           <span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span>
           <${Select} id="sandbox-impl-profile" value=${profile} disabled=${busy || !!profileLocked}
             onChange=${(event) => setProfile(event.currentTarget.value)}>
-            <option value="">none</option>
+            <option value=${SANDBOX_PROFILE_KEEP}>— keep current (${currentProfile || 'default'}) —</option>
+            <option value="">— default (global + group profiles) —</option>
             ${profileChoices.map((name) => html`<option key=${name} value=${name}>${name}${name === currentProfile ? ' (current)' : ''}</option>`)}
           <//>
         </label>
