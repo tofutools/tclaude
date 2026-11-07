@@ -197,6 +197,13 @@ function useBoardActions(source, api) {
 // canAssign says whether the viewer may assign on this board. The api may
 // carry `can.assign` (a peer node's board sets it from its peer_view grants);
 // the local operator may always.
+// canClose reports whether the viewer may mark the task done or drop it: an
+// assigned task is closed by its assignee or an assigner (taskboard.assign),
+// as the status route checks; an unassigned one by any writer.
+export function canClose(task, actions) {
+  return !task?.assignee?.agent_id || canAssign(actions);
+}
+
 export function canAssign(actions) {
   return !!actions && actions.api?.can?.assign !== false;
 }
@@ -212,9 +219,9 @@ function RowActions({ task, actions, onForm }) {
     return b('reopen', 'Reopen', 'Put it back on the list where it was', go('reopen', 'Reopen', (api) => api.status(task.id, 'open')));
   }
   const edit = b('edit', 'Edit', 'taskboard edit: change the title or ref', () => onForm('edit'));
-  const drop = b('drop', 'Drop', 'taskboard drop: take it off the board (park it in the tracker first)', () => onForm('drop'), 'ghost danger');
+  const drop = !canClose(task, actions) ? null : b('drop', 'Drop', 'taskboard drop: take it off the board (park it in the tracker first)', () => onForm('drop'), 'ghost danger');
   if (state === 'blocked') {
-    return [b('unblock', 'Unblock', 'taskboard unblock', go('unblock', 'Unblock', (api) => api.status(task.id, 'open'))), edit, drop];
+    return [b('unblock', 'Unblock', 'taskboard unblock', go('unblock', 'Unblock', (api) => api.status(task.id, 'open'))), edit, drop].filter(Boolean);
   }
   const assign = !canAssign(actions) ? null : b('assign', 'Assign ▾', 'taskboard assign --to: give it to a member (or drag the row onto an agent)', () => onForm('assign'));
   if (task.stage === 'idea') {
@@ -225,7 +232,7 @@ function RowActions({ task, actions, onForm }) {
     : assign;
   return [
     holder,
-    b('done', 'Done', 'taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done'))),
+    canClose(task, actions) && b('done', 'Done', 'taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done'))),
     b('block', 'Block', 'taskboard block: with a reason', () => onForm('block')),
     edit, drop,
   ].filter(Boolean);
