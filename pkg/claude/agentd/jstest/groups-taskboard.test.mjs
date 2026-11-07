@@ -157,6 +157,9 @@ test('a linked node\'s group reads its board from that node, read-only without t
   assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.read'] } }, 'crew'), false);
   assert.equal(peerWrites({ level: 'restricted', groups: { crew: ['taskboard.write'] } }, 'crew'), true);
   assert.equal(peerWrites({ level: 'unrestricted' }, 'crew'), true);
+  const { peerHolds } = await harness.importDashboardModule('js/groups-taskboard.js');
+  assert.equal(peerHolds({ level: 'restricted', groups: { crew: ['taskboard.write'] } }, 'crew', 'taskboard.assign'), false);
+  assert.equal(peerHolds({ level: 'restricted', groups: { crew: ['taskboard.assign'] } }, 'crew', 'taskboard.assign'), true);
 });
 
 test('while the feature is off the source looks again only now and then', async (t) => {

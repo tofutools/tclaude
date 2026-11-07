@@ -54,13 +54,36 @@ export function nodeTaskboard(node) {
   return board;
 }
 
-// peerWrites reports whether a linked node's view lets this node change the
-// group's board: unrestricted trust, or its taskboard.write grant there.
-export function peerWrites(peerView, groupName) {
+// peerHolds reports whether a linked node's view grants this node slug on
+// the group: unrestricted trust, or that peer grant there (peer_view.groups
+// lists the taskboard write, assign and manage grants per group).
+export function peerHolds(peerView, groupName, slug) {
   if (!peerView) return false;
   if (peerView.level === 'unrestricted') return true;
   const held = peerView.groups?.[groupName];
-  return Array.isArray(held) && held.includes('taskboard.write');
+  return Array.isArray(held) && held.includes(slug);
+}
+
+// peerWrites reports whether a linked node's view lets this node change the
+// group's board.
+export function peerWrites(peerView, groupName) {
+  return peerHolds(peerView, groupName, 'taskboard.write');
+}
+
+// peerApis keeps one write client per (client, can) pair, so a peer group's
+// api is the same object from render to render.
+const peerApis = new WeakMap();
+
+// peerApi is api for a linked node's group: null without taskboard.write,
+// else api with can.assign set from taskboard.assign there.
+function peerApi(api, peerView, groupName) {
+  if (!api || !peerWrites(peerView, groupName)) return null;
+  const assign = peerHolds(peerView, groupName, 'taskboard.assign');
+  let byCan = peerApis.get(api);
+  if (!byCan) { byCan = new Map(); peerApis.set(api, byCan); }
+  const key = assign ? 'assign' : 'none';
+  if (!byCan.has(key)) byCan.set(key, { ...api, can: { ...(api.can || {}), assign } });
+  return byCan.get(key);
 }
 
 // boardOf picks the source and write client for group: this node's own, or
@@ -69,10 +92,10 @@ function boardOf(group, source, api, boards) {
   const node = group?.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   if (node) {
     const board = boards(node);
-    return { source: board.source, api: peerWrites(nodeSnapshot(node)?.peer_view, group.name) ? board.api : null };
+    return { source: board.source, api: peerApi(board.api, nodeSnapshot(node)?.peer_view, group.name) };
   }
   if (onPeerPage()) {
-    return { source, api: api && peerWrites(dashboardState.snapshot.value?.peer_view, group.name) ? api : null };
+    return { source, api: peerApi(api, dashboardState.snapshot.value?.peer_view, group.name) };
   }
   return { source, api };
 }
