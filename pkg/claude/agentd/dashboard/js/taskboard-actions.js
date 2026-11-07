@@ -18,6 +18,9 @@
 //   onto an agent
 //   Unassign / drag   unassign <task>
 //   onto "unassign"
+//   drag onto another move-to-group <task> <group> [--clone] [--stage next]
+//   group (Ctrl/Cmd
+//   clones)
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
@@ -165,6 +168,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     unassign(id) {
       return call('POST', taskPath(id, '/unassign'), {});
+    },
+    // moveToGroup moves the task to another group of its node, or with
+    // clone copies it there (groups-taskboard-transfer.js).
+    moveToGroup(id, group, { clone = false, stage = '' } = {}) {
+      return call('POST', taskPath(id, '/move-to-group'), { group, clone, ...(stage ? { stage } : {}) });
     },
   };
 }

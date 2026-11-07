@@ -63,6 +63,7 @@ tclaude agent taskboard ask <group> --to <agent> "what you want"   # or --prompt
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
+tclaude agent taskboard move-to-group <task> <group> [--clone] [--stage idea|next]
 tclaude agent taskboard promote <task>     # idea → end of the queue
 tclaude agent taskboard demote <task>      # next → top of the ideas
 tclaude agent taskboard block <task> --reason "waiting on CI"
@@ -249,8 +250,15 @@ The operator passes every gate. For agents:
 | `taskboard.read` | `ls`, `show`, `history` | Members and owners of the group |
 | `taskboard.write` | Everything that changes a task. Implies read. | Members and owners of the group |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
-| `taskboard.manage` | The writer lock | Owners of the group |
+| `taskboard.manage` | The writer lock, and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.transfer` | Moving or cloning a task into the group from another group. Scope it with the target `group`. | Owners of the group |
 | `self.taskboard` | Taking and releasing a task for yourself, and reporting on your own task | Default-granted |
+
+Moving a task to another group (`move-to-group`) needs `taskboard.transfer` on
+the target group. On the source it needs `taskboard.write` when the task is
+yours (assigned to you), or `taskboard.manage` when it is not. A clone
+(`--clone`) needs `taskboard.read` on the source and `taskboard.transfer` on
+the target.
 
 Closing a task (`done` or `drop`) that is unassigned needs `taskboard.write`.
 Closing your own task needs `self.taskboard`. Closing a task assigned to
@@ -312,6 +320,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock |
+| `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
 - Any of these grants also lets the node read the board.
 - A grant covers only the groups in its scope. A task in another group answers
@@ -439,6 +448,7 @@ a CLI verb:
 | *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
 | *Assign ▾*, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
+| Drag a task onto another group's Task board or header row (Ctrl/Cmd clones) | `move-to-group <task> <group> [--clone] [--stage next]` |
 
 - **＋ ▾** (*New task*; in wizard mode, *New quest*) in the section head is
   the one way in, in both views. It opens a menu:
@@ -460,6 +470,20 @@ a CLI verb:
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
+- **Dragging a task to another group**, a row from the list or a card from
+  the lanes, onto that group's Task board section or its header row moves it
+  there. Hold Ctrl (Cmd on macOS), as for the Groups view's other clones, to
+  clone it instead. Both ask first, in the Groups view's confirmation. The
+  task lands in the ideas, or in Next when dropped on a Next cell of the
+  other group's lanes.
+  - A move keeps the task and its history. Its dependencies are dropped both
+    ways, because they never cross groups, and the confirmation names them.
+    An assignee who is not a member of the other group is unassigned and told
+    so. Anything but a done task lands open, so a block is lifted.
+  - A clone is a new task with the same title, brief and ref, and no assignee
+    or dependencies. The original stays, and each task's history notes the
+    other.
+  - A group on another node is not a target yet.
 - Each agent's row in the Agents section shows the tasks assigned to it
   (`☰ 2 tasks · first title`), in amber when one of them is blocked.
 
@@ -546,6 +570,7 @@ those drags aren't accepted in the lanes.
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
+| `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |

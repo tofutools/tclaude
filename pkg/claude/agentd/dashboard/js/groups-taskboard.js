@@ -35,6 +35,7 @@ import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes } from './groups-taskboard-lanes.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
+import { listenForTransfer } from './groups-taskboard-transfer.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -429,6 +430,10 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
     };
   };
   useEffect(() => () => agentDrop.current.off?.(), []);
+  // A drop on another group's board or header moves the task there
+  // (groups-taskboard-transfer.js); its listeners too live for the drag.
+  const transferOff = useRef(null);
+  useEffect(() => () => transferOff.current?.(), []);
   const accept = (event) => {
     if (!dragged.current) return false;
     event.preventDefault();
@@ -436,7 +441,10 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     return true;
   };
-  const clear = () => { dragged.current = null; setOver(null); setDragging(''); agentDrop.current.off?.(); };
+  const clear = () => {
+    dragged.current = null; setOver(null); setDragging(''); agentDrop.current.off?.();
+    transferOff.current?.(); transferOff.current = null;
+  };
   const end = clear;
   return {
     over, dragging,
@@ -445,10 +453,13 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
       dragged.current = task;
       setDragging(task.id);
       event.dataTransfer?.setData(TASK_DRAG_TYPE, task.id);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      // copyMove: Ctrl/Cmd onto another group clones (groups-taskboard-transfer.js).
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
       const row = event.currentTarget.closest?.('tr');
       if (row && event.dataTransfer?.setDragImage) event.dataTransfer.setDragImage(row, 12, 12);
       listenForAgents();
+      transferOff.current?.();
+      if (group) transferOff.current = listenForTransfer({ task, group, tasks, actions, onDrop: clear });
     },
     // dropUnassign takes the dragged task back from its assignee.
     overUnassign(event) {
