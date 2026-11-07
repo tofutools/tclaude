@@ -529,7 +529,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const restart = !!posture.online;
 
   const submit = async () => {
-    if (submitGuard.current || !choice || request.phase !== 'ready' || !dirty) return;
+    if (submitGuard.current || (implChanged && !choice) || request.phase !== 'ready' || !dirty) return;
     submitGuard.current = true;
     setError('');
     setBusy(true);
