@@ -41,6 +41,11 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   refused (`not_assignee`).
 - Reporting never ends, retires or stops you. You stay in the group and can
   take the next task.
+- If you sit idle on an assigned task without reporting (5 minutes by
+  default), the task shows as stalled, whoever assigned it is told, and you
+  get a `[taskboard] … you went idle without reporting` nudge. Report, or carry
+  on if you are still on it; starting a new turn clears it. Nothing fails or
+  is taken from you.
 - You can only take a task from the queue (`next`), not an idea. If the right
   next step is an idea, ask whoever leads the group to promote it.
 

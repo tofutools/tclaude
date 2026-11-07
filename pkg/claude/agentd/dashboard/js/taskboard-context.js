@@ -2,7 +2,7 @@
 // every group task board this viewer can read (docs/taskboard.md):
 //
 //   { groups: [{ group_id, group, truncated,
-//                counts: { live, needs_you, in_progress, next, ideas, blocked, queued, done_this_week, dropped },
+//                counts: { live, needs_you, in_progress, next, ideas, blocked, stalled, queued, done_this_week, dropped },
 //                tasks: [row], closed: [row] }] }
 //
 // A row is the task view less its body, plus assignee: { agent_id },
@@ -119,11 +119,13 @@ export function taskboardCountsText(counts) {
 }
 
 // taskRowState is what a row's state column says, derived exactly as the
-// lanes are (docs/taskboard.md): blocked, in progress (assigned), queued
-// (open with an unmet dependency), idea, or open.
+// lanes are (docs/taskboard.md): blocked, stalled (assigned to an agent idle
+// past taskboard.idle_grace without reporting), in progress (assigned),
+// queued (open with an unmet dependency), idea, or open.
 export function taskRowState(task) {
   if (task.status === 'done' || task.status === 'dropped') return task.status;
   if (task.status === 'blocked') return 'blocked';
+  if (task.stalled && task.assignee?.agent_id) return 'stalled';
   if (task.assignee?.agent_id) return 'in-progress';
   if (task.queued) return 'queued';
   if (task.stage === 'idea') return 'idea';

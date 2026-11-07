@@ -34,10 +34,10 @@ const (
 type taskboardContextTask = taskboardTaskView
 
 // taskboardCounts are a board's counts. Live is every open or blocked task;
-// the stage buckets split the open ones: InProgress is assigned, Next and
-// Ideas are unassigned in that stage. Queued (open with an unmet dependency)
-// overlaps Next. NeedsYou is the blocked tasks for now; stalled assignments
-// join it with the idle-without-report slice.
+// the stage buckets split the open ones: Stalled is assigned to an agent idle
+// past taskboard.idle_grace without reporting, InProgress is the other
+// assigned ones, Next and Ideas are unassigned in that stage. Queued (open
+// with an unmet dependency) overlaps Next. NeedsYou is Blocked plus Stalled.
 type taskboardCounts struct {
 	Live         int `json:"live"`
 	NeedsYou     int `json:"needs_you"`
@@ -45,6 +45,7 @@ type taskboardCounts struct {
 	Next         int `json:"next"`
 	Ideas        int `json:"ideas"`
 	Blocked      int `json:"blocked"`
+	Stalled      int `json:"stalled"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -156,6 +157,9 @@ func buildTaskboardGroupContext(g *db.AgentGroup, now time.Time) (taskboardGroup
 		switch {
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
+			entry.Counts.NeedsYou++
+		case v.Stalled:
+			entry.Counts.Stalled++
 			entry.Counts.NeedsYou++
 		case v.Assignee != nil:
 			entry.Counts.InProgress++

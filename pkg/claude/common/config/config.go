@@ -1,6 +1,11 @@
 // Package config provides configuration loading for tclaude.
 package config
 
+import (
+	"strings"
+	"time"
+)
+
 // Config represents the tclaude configuration file structure.
 type Config struct {
 	StatusSnapshot  *StatusSnapshotConfig  `json:"status_snapshot,omitempty"`
@@ -236,6 +241,25 @@ type TaskboardConfig struct {
 	// RetentionDays defaults to 90 when absent or not positive. A value below
 	// the archive period is raised to it.
 	RetentionDays int `json:"retention_days,omitempty"`
+	// IdleGrace is how long an assignee may sit idle on an open task without
+	// reporting before the task is marked stalled: a Go duration ("5m",
+	// "90s"). Absent or unparsable means 5m; "0" turns the check off.
+	IdleGrace string `json:"idle_grace,omitempty"`
+}
+
+// DefaultTaskboardIdleGrace is taskboard.idle_grace's default.
+const DefaultTaskboardIdleGrace = 5 * time.Minute
+
+// TaskboardIdleGrace is the resolved taskboard.idle_grace; 0 means off.
+func (c *Config) TaskboardIdleGrace() time.Duration {
+	if c == nil || c.Taskboard == nil || strings.TrimSpace(c.Taskboard.IdleGrace) == "" {
+		return DefaultTaskboardIdleGrace
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.Taskboard.IdleGrace))
+	if err != nil || d < 0 {
+		return DefaultTaskboardIdleGrace
+	}
+	return d
 }
 
 // Default task board retention, in days.

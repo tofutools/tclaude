@@ -179,3 +179,21 @@ test('while the feature is off the source looks again only now and then', async 
   assert.equal(taskboardCountsText({ live: 9, needs_you: 1, in_progress: 2, next: 6, ideas: 3 }),
     '9 · 1 needs you · 2 in progress · 6 next · 3 ideas');
 });
+
+test('a stalled assignment shows amber with how long its agent has been idle', async (t) => {
+  const group = crew('tb-stalled');
+  const harness = await createPreactHarness(t);
+  const context = { groups: [{
+    group_id: 2, group: 'tb-stalled',
+    counts: { live: 1, needs_you: 1, in_progress: 0, next: 0, ideas: 0, blocked: 0, stalled: 1, queued: 0, done_this_week: 0, dropped: 0 },
+    tasks: [row('tk_00000011', 'Port the sweep', { assignee: { agent_id: 'agt_builder' }, assigned_by: 'human:operator',
+      assigned_at: ago(20), stalled: true, idle_since: ago(7) })],
+    closed: [],
+  }] };
+  const { container } = await mountSection(harness, { group, context });
+  const section = container.querySelector('[data-fused-taskboard="tb-stalled"]');
+  const state = section.querySelector('tr.tb-row-stalled .tb-state');
+  assert.ok(state, 'the row is drawn as stalled');
+  assert.ok(state.classList.contains('tb-state-stalled'));
+  assert.equal(state.textContent, 'stalled · idle 7m');
+});

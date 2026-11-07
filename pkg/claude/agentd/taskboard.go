@@ -289,10 +289,15 @@ type taskboardTaskView struct {
 	Outcome     string             `json:"outcome,omitempty"`
 	OutcomeNote string             `json:"outcome_note,omitempty"`
 	Failures    int                `json:"failures,omitempty"`
-	CreatedBy   string             `json:"created_by"`
-	CreatedAt   string             `json:"created_at"`
-	UpdatedAt   string             `json:"updated_at"`
-	ClosedAt    string             `json:"closed_at,omitempty"`
+	// Stalled marks an open task whose assignee has sat idle past
+	// taskboard.idle_grace without reporting; IdleSince is since when.
+	// Derived on read: a new turn or a report clears it.
+	Stalled   bool   `json:"stalled,omitempty"`
+	IdleSince string `json:"idle_since,omitempty"`
+	CreatedBy string `json:"created_by"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	ClosedAt  string `json:"closed_at,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -337,6 +342,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		return nil, err
 	}
 	out := make([]taskboardTaskView, 0, len(tasks))
+	staller := newTaskboardStaller(time.Now())
 	for _, t := range tasks {
 		v := taskboardTaskView{
 			ID: t.ID, Group: group, Title: t.Title, Body: t.Body, Stage: t.Stage, Status: t.Status, Rank: t.Rank,
@@ -360,6 +366,9 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 		}
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
+		if since, ok := staller.stalled(t); ok {
+			v.Stalled, v.IdleSince = true, rfc3339(since)
+		}
 		out = append(out, v)
 	}
 	return out, nil

@@ -176,6 +176,42 @@ task's group.
 Assigned tasks show `@<agent>` in `ls`, and their history records who
 assigned whom.
 
+### Idle without report
+
+An open task is **stalled** when its assignee has sat idle for
+`taskboard.idle_grace` (default 5 minutes) without reporting: its session is
+idle, with no subagents, background shells or monitors running, and has been
+since the later of its last activity and the start of its current stretch of
+work: the assignment, or the task being unblocked or reopened. Time spent
+blocked or closed does not count. Stalled is worked out
+on every read. It is not a status, and it clears as soon as the agent starts a
+new turn or reports.
+
+A sweep every 30 seconds announces each stall once per assignment (an unblock
+or a reopen starts a new stretch, which may be announced again):
+
+- the history records a `stalled` event;
+- the assigner is told, `[taskboard] <group> · tk_… "title" — <agent> went idle
+  on tk_… without reporting (7m)`: an agent by inbox mail, the operator in
+  Messages. A task the agent took for itself has no one else to tell;
+- the assignee gets an inbox nudge with its report commands. It is never sent
+  as keys into the pane.
+
+Stalled never fails, blocks or unassigns a task. Ask the agent how it is going,
+or take the task back with `unassign`.
+
+```json
+{ "taskboard": { "idle_grace": "5m" } }
+```
+
+`idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns the check off.
+
+Stalled and blocked tasks are what the board needs you for. `ls --summary`, the
+dashboard and the context route count them as *needs you*, and
+`tclaude agent fleet` (the Steward's brief) lists every group whose board has
+any, for example `crew board: 2 tasks need you (1 stalled, 1 blocked)`. The
+brief's JSON carries the same counts per group under `taskboards`.
+
 ## The writer lock
 
 By default, every member of a group may change its board and take its tasks.
@@ -296,7 +332,8 @@ the **Quest board**), below its Agents and Resources sections.
 
 - **Folded**, the section is one line of counts, for example
   `5 · 1 needs you · 1 in progress · 2 next · 1 idea`. *Needs you* counts the
-  blocked tasks, and *in progress* counts the assigned tasks. *Next* and
+  blocked and the stalled tasks, and *in progress* counts the other assigned
+  tasks. *Next* and
   *ideas* count the unassigned open tasks in each stage. The group's summary
   line carries the same counts, so a folded group still shows what is on its
   board.
