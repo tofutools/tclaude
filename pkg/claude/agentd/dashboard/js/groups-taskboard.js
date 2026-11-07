@@ -223,6 +223,12 @@ export function canAssign(actions) {
   return !!actions && actions.api?.can?.assign !== false;
 }
 
+// binDroppable says whether a dragged task may go in the groups view's bin:
+// a live task the viewer may drop, as ⋯ Drop… offers it.
+export function binDroppable(task, actions) {
+  return task?.status !== 'done' && task?.status !== 'dropped' && canClose(task, actions);
+}
+
 // canClose reports whether the viewer may mark the task done or drop it: an
 // assigned task is closed by its assignee or an assigner (taskboard.assign),
 // as the status route checks; an unassigned one by any writer.
@@ -511,7 +517,7 @@ function useRowDrag(tasks, actions, group = null, numbers = new Map()) {
       if (row && event.dataTransfer?.setDragImage) event.dataTransfer.setDragImage(row, 12, 12);
       listenForAgents();
       transferOff.current?.();
-      if (group) transferOff.current = listenForTransfer({ task, group, tasks, actions, onDrop: clear });
+      if (group) transferOff.current = listenForTransfer({ task, group, tasks, actions, droppable: binDroppable(task, actions), onDrop: clear });
     },
     // dropUnassign takes the dragged task back from its assignee.
     overUnassign(event) {

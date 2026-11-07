@@ -652,7 +652,7 @@ a CLI verb:
 | ✓ *Next* on an idea | `promote <task>` |
 | ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
 | ✓ *Done* | `done <task>` |
-| ⋯ *Drop…* (with an optional reason) | `drop <task> [--reason …]` |
+| ⋯ *Drop…* (with an optional reason), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
 | ✎ *Edit* (or double-click a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
@@ -696,10 +696,17 @@ a CLI verb:
 - **Dragging** a row above or below another row moves it there. If you drop it
   on the other side of the Ideas line, it is promoted or demoted in the same
   step.
+- **Dragging a task to the bin.** While a task is dragged, the Groups view's
+  bin shows, labelled *Drop*. A task dropped there is dropped, after a
+  confirmation: closed as dropped, it leaves the board and stays in history.
+  The bin shows only for a live task you may drop, the same gate as
+  ⋯ *Drop…*. Ctrl/Cmd means nothing there.
 - **Dragging a task to another group**, a row from the list or a card from
   the lanes, onto that group's Task board section or its header row moves it
   there. Hold Ctrl (Cmd on macOS), as for the Groups view's other clones, to
-  clone it instead. Both ask first, in the Groups view's confirmation. The
+  clone it instead: the target group turns to the green clone look while the
+  key is held, and back when you let go. Both ask first, in the Groups view's
+  confirmation. The
   task lands in the ideas, or in Next when dropped on a Next cell of the
   other group's lanes.
   - A move keeps the task and its history. Its dependencies are dropped both

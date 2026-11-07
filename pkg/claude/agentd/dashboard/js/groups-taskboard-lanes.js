@@ -28,7 +28,7 @@ import {
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
-import { DepChips, RefChip, assignableMembers, canAssign } from './groups-taskboard.js';
+import { DepChips, RefChip, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 
 const html = htm.bind(h);
@@ -293,7 +293,7 @@ function useLaneDrag(actions, group, tasks = []) {
       // copyMove: Ctrl/Cmd onto another group clones (groups-taskboard-transfer.js).
       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
       transferOff.current?.();
-      transferOff.current = listenForTransfer({ task, group, tasks, actions, onDrop: clear });
+      transferOff.current = listenForTransfer({ task, group, tasks, actions, droppable: binDroppable(task, actions), onDrop: clear });
     },
     end: clear,
     overCell(event, to) {
