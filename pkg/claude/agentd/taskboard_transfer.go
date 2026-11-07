@@ -83,9 +83,16 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	setAuditGroup(r, target.Name)
 	actor := taskboardActor(r)
 	if body.Clone {
+		// The clone shares the original's files: the rows are copied, the
+		// blobs are content-addressed.
+		files, err := db.ListGroupTaskAttachments(t.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
 		out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: target.ID, Title: t.Title, Body: t.Body, Stage: stage,
 			RefKind: t.RefKind, RefURL: t.RefURL, RefLabel: t.RefLabel, Actor: actor,
-			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name)})
+			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name), Attachments: files})
 		if err != nil {
 			writeTaskboardError(w, err)
 			return
@@ -193,7 +200,9 @@ func (o taskboardTransferOrigin) String() string {
 }
 
 // POST /v1/groups/{name}/taskboard/transfer-in {"title", "body", "ref",
-// "ref_label", "stage", "clone", "origin": {node, group, task}}.
+// "ref_label", "stage", "clone", "origin": {node, group, task}}. A task
+// with files comes as multipart: that JSON as the "task" part, and its
+// files as "file" parts, all landing in one transaction.
 func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireGroupActive(w, g) {
 		return
@@ -210,7 +219,8 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		Clone    bool                    `json:"clone"`
 		Origin   taskboardTransferOrigin `json:"origin"`
 	}
-	if !decodeTaskboardBody(w, r, &body) {
+	files, ok := decodeTaskboardRequest(w, r, &body)
+	if !ok {
 		return
 	}
 	title, err := validateTaskTitle(body.Title)
@@ -247,8 +257,13 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 	if body.Clone {
 		verb = "cloned from "
 	}
+	actor := taskboardActor(r)
+	atts, ok := storeTaskUploadsOrFail(w, files, actor)
+	if !ok {
+		return
+	}
 	out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: stage,
-		RefKind: kind, RefURL: refURL, RefLabel: refLabel, Actor: taskboardActor(r), Origin: verb + body.Origin.String()})
+		RefKind: kind, RefURL: refURL, RefLabel: refLabel, Actor: actor, Origin: verb + body.Origin.String(), Attachments: atts})
 	if err != nil {
 		writeTaskboardError(w, err)
 		return

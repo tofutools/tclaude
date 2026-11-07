@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -73,13 +76,19 @@ func resolveTaskboardAskee(g *db.AgentGroup, selector string) (agentID, conv str
 }
 
 // taskboardAskBrief is the inbox message the asked agent gets: what to do
-// with the request, then the request itself.
-func taskboardAskBrief(g *db.AgentGroup, by, prompt string) string {
+// with the request, then the request itself. files names the files the
+// request came with, attached to the message.
+func taskboardAskBrief(g *db.AgentGroup, by, prompt string, files []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s asks you to put tasks on the %s task board.\n\n", by, g.Name)
 	b.WriteString("Turn the request below into one or more well-formed tasks: a one-line title, a short brief, a ref where\n")
 	b.WriteString("there is one (awb/Linear id, owner/repo#n or URL), and the stage (an idea, unless it is clearly next):\n\n")
 	fmt.Fprintf(&b, "  tclaude agent taskboard add %s \"title\" --body \"brief\" [--ref <ref>] [--next] [--after tk_…]\n\n", g.Name)
+	if len(files) > 0 {
+		fmt.Fprintf(&b, "The request came with %d file(s), attached to this message: %s.\n", len(files), strings.Join(files, ", "))
+		b.WriteString("Save them (tclaude agent inbox attachment <this message id>) and put each on the task it belongs to\n")
+		b.WriteString("with --attach <file> on the add (repeatable), or later with: tclaude agent taskboard attach <task> <file>…\n\n")
+	}
 	b.WriteString("Only create the tasks: do not start the work. Reply to this message when you are done, with the task ids.\n\n")
 	b.WriteString("Request:\n")
 	b.WriteString(prompt)
@@ -90,6 +99,9 @@ func taskboardAskBrief(g *db.AgentGroup, by, prompt string) string {
 // POST /v1/groups/{name}/taskboard/ask {"to": "<agent>", "prompt": "…"} —
 // mail an active member (or owner) who may change the board a request to turn prose
 // into tasks. The caller needs taskboard.write on the group, as an add does.
+// Multipart carries files with the request (the JSON as the "task" part,
+// "file" parts), delivered as the mail's attachments under the task
+// attachments' caps and allow-list.
 func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) || !requireGroupActive(w, g) {
 		return
@@ -98,7 +110,8 @@ func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		To     string `json:"to"`
 		Prompt string `json:"prompt"`
 	}
-	if !decodeTaskboardBody(w, r, &body) {
+	files, ok := decodeTaskboardRequest(w, r, &body)
+	if !ok {
 		return
 	}
 	prompt, err := validateTaskText("the request", strings.TrimSpace(body.Prompt), maxTaskboardAskBytes)
@@ -124,17 +137,49 @@ func handleTaskboardAsk(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	}
 	by := taskboardCallerName(r)
 	from := confirmedAgentConv(r)
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
 	m := &db.AgentMessage{GroupID: g.ID, FromConv: from, ToConv: conv, ToRecipients: []string{conv},
 		Subject: fmt.Sprintf("[taskboard] task request from %s: %s", by, g.Name),
-		Body:    taskboardAskBrief(g, by, prompt),
+		Body:    taskboardAskBrief(g, by, prompt, names),
 		// As every taskboard notice: a linked node's request is its own,
 		// never this node's operator's.
 		OperatorAuthored: from == "" && callerIsHuman(r) && taskboardPeerAuthor(r) == ""}
-	id, err := queueAgentMessage(m)
+	var id int64
+	if len(files) == 0 {
+		id, err = queueAgentMessage(m)
+	} else {
+		id, err = queueTaskboardAskWithFiles(w, m, files)
+		if id == 0 && err == nil {
+			return // refused, and answered
+		}
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mail", err.Error())
 		return
 	}
 	setAuditDetail(r, fmt.Sprintf("asked %s for tasks on %s", agentID, g.Name))
 	writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "to": agentID, "message_id": id})
+}
+
+// queueTaskboardAskWithFiles queues an ask's mail with its files as the
+// message's attachments, in their own directory of the message store. A
+// full inbox is refused with the queue's answer (0, nil).
+func queueTaskboardAskWithFiles(w http.ResponseWriter, m *db.AgentMessage, files []taskboardUpload) (int64, error) {
+	rows, dir, err := storeMessageAttachments(filepath.Join(operatorMessageAttachmentsBase, convops.GenerateUUID()), taskAttachmentPayloads(files))
+	if err != nil {
+		return 0, err
+	}
+	id, _, err := queueRegularAgentMessageWithAttachments(m, rows)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		if full, ok := agentMessageQueueFull(err); ok {
+			writeQueueFull(w, m.ToConv, full)
+			return 0, nil
+		}
+		return 0, err
+	}
+	return id, nil
 }

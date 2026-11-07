@@ -79,6 +79,11 @@ func servePeerUploadFinish(w http.ResponseWriter, r *http.Request, v *peerView, 
 	}
 	peer := v.peer.InstanceID
 	finishPeerUpload(w, peerAsLocalRequest(r), peer, func(w http.ResponseWriter, sub *http.Request, pattern string) {
+		// A task board's upload runs through its route's own peer rule,
+		// which also names the peer in the task's history.
+		if servePeerTaskboardUpload(w, sub, v, pattern) {
+			return
+		}
 		if v.unrestricted() {
 			if pattern == "POST /api/groups/import" {
 				servePeerImportAudited(w, sub, peer, peerImportDropsOf(sub))
