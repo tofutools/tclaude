@@ -237,13 +237,23 @@ back to the stored policy with a warning, as for any unusable profile, and
 the assignment stays pending for the launch after. Under a relaunch policy
 that reuses stored profile contents, a changed profile is re-read, exactly as
 a changed group assignment is. Choosing the profile the agent last launched
-under again cancels a pending change. An agent whose launches omit sandbox
-profiles has no explicit profile to change and is refused. In the dashboard,
+under again cancels a pending change.
+
+An agent whose launches omit sandbox profiles (spawned with
+`--omit-sandbox-profiles`, or under a mode that cannot carry them) takes them
+back the same way: assigning a profile, or `--no-sandbox-profile`, lifts the
+omission, and the next launch applies the global, group and explicit tiers
+again. The implementation the agent relaunches under must be able to carry
+them, so an agent on `off` needs another implementation in the same
+assignment. `--omit-sandbox-profiles` goes the other way and makes every
+launch of the agent omit all tiers; it is refused for an agent that carries a
+deny overlay. In the dashboard,
 the same dialog has a **Sandbox profile** picker beside the implementations,
 and shows the global and group profiles that also apply. It starts on **keep
 current**, which changes nothing. **Default** removes the agent's explicit
 profile, so it resolves like a spawn that names none: the global profile,
-then the group's (`--no-sandbox-profile` on the command line).
+then the group's (`--no-sandbox-profile` on the command line). **None** omits every tclaude sandbox profile
+(`--omit-sandbox-profiles`).
 
 A peer with restricted trust cannot change a profile: its sandbox-impl
 requests carry only an implementation.

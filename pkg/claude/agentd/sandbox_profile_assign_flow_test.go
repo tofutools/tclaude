@@ -194,18 +194,104 @@ func TestSandboxProfileAssign_RestartAppliesImplementationAndProfileTogether(t *
 	assert.Equal(t, "new-profile", explicitApplied(launched))
 }
 
-func TestSandboxProfileAssign_RefusesAnAgentThatOmitsProfiles(t *testing.T) {
+// An agent spawned with every sandbox profile omitted can take them back: a
+// profile assignment lifts the omission, and the relaunch resolves the group
+// tier and the assigned explicit one.
+func TestSandboxProfileAssign_LiftsTheOmissionOfAnAgentThatOmitsProfiles(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
-	haveEnvProfile(t, "new-profile", "new")
+	newMark := haveEnvProfile(t, "new-profile", "new")
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker", "omit_sandbox_profiles": true})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	f.AsHuman().Stop(spawn.ConvID, false)
 
-	wire := getSandboxAssign(t, f, spawn.ConvID)
+	before := getSandboxAssign(t, f, spawn.ConvID)
+	assert.True(t, before.Omitted)
+	assert.Empty(t, before.Unchangeable, "an omission is changeable")
+
+	wire, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{"sandbox_profile": "new-profile"})
+	require.Equalf(t, http.StatusOK, code, "assign body=%s", body)
+	assert.False(t, wire.Omitted)
+	assert.Equal(t, "new-profile", wire.Profile)
+	assert.True(t, wire.Pending)
+
+	resume := f.AsHuman().Resume(spawn.ConvID)
+	f.AssertResumeSpawned(resume)
+	launched, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, launched.ProfilesOmitted)
+	assert.Contains(t, launched.Effective.Environment, newMark)
+	assert.Equal(t, "new-profile", explicitApplied(launched))
+	after := getSandboxAssign(t, f, spawn.ConvID)
+	assert.False(t, after.Omitted)
+	assert.False(t, after.Pending)
+}
+
+// "Default" lifts the omission too, with no explicit profile.
+func TestSandboxProfileAssign_DefaultLiftsTheOmission(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker", "omit_sandbox_profiles": true})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	wire, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{"sandbox_profile": ""})
+	require.Equalf(t, http.StatusOK, code, "assign body=%s", body)
+	assert.False(t, wire.Omitted)
+	assert.Empty(t, wire.Profile)
+
+	f.AssertResumeSpawned(f.AsHuman().Resume(spawn.ConvID))
+	launched, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+	require.True(t, ok)
+	assert.False(t, launched.ProfilesOmitted)
+	assert.False(t, getSandboxAssign(t, f, spawn.ConvID).Omitted)
+}
+
+// omit_sandbox_profiles takes an agent's profiles away, and the omission
+// survives the relaunch.
+func TestSandboxProfileAssign_OmitsTheProfilesOfAnAgent(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	oldMark := haveEnvProfile(t, "old-profile", "old")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker", "sandbox_profile": "old-profile"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	_, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{
+		"sandbox_profile": "old-profile", "omit_sandbox_profiles": true})
+	assert.Equal(t, http.StatusBadRequest, code, "the two are exclusive: %s", body)
+
+	wire, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{"omit_sandbox_profiles": true})
+	require.Equalf(t, http.StatusOK, code, "assign body=%s", body)
 	assert.True(t, wire.Omitted)
-	assert.NotEmpty(t, wire.Unchangeable)
+	require.NotNil(t, wire.PreviousProfile)
+	assert.Equal(t, "old-profile", *wire.PreviousProfile)
+
+	f.AssertResumeSpawned(f.AsHuman().Resume(spawn.ConvID))
+	launched, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
+	require.True(t, ok)
+	assert.True(t, launched.ProfilesOmitted)
+	assert.NotContains(t, launched.Effective.Environment, oldMark)
+	assert.Empty(t, explicitApplied(launched))
+	assert.True(t, getSandboxAssign(t, f, spawn.ConvID).Omitted)
+}
+
+// An agent whose implementation cannot carry profiles cannot take them back
+// without an implementation that can.
+func TestSandboxProfileAssign_RefusesLiftingTheOmissionUnderImplementationOff(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	haveEnvProfile(t, "new-profile", "new")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "sandbox_implementation": string(sandboxpolicy.ImplementationOff)})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+	require.True(t, getSandboxAssign(t, f, spawn.ConvID).Omitted)
+
 	_, code, body := postSandboxAssign(t, f, spawn.ConvID, map[string]any{"sandbox_profile": "new-profile"})
 	assert.Equal(t, http.StatusConflict, code)
-	assert.Contains(t, body, "omit sandbox profiles")
+	assert.Contains(t, body, "cannot carry sandbox profiles")
 }

@@ -379,14 +379,16 @@ export function createActionDialogActions({
     },
     // sandboxProfile, when given (a name, or '' for none), replaces the
     // agent's explicit sandbox profile; an empty implementation leaves the
-    // implementation alone.
-    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, sandboxProfile, restart = false, confirmMoveOut = false }, owner) {
+    // implementation alone. omitSandboxProfiles instead makes the agent's
+    // launches omit every tclaude sandbox profile.
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, sandboxProfile, omitSandboxProfiles = false, restart = false, confirmMoveOut = false }, owner) {
       const payload = await requestJSON(
         nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             implementation: implementation || '', sandbox: sandbox || '',
             ...(typeof sandboxProfile === 'string' ? { sandbox_profile: sandboxProfile } : {}),
+            ...(omitSandboxProfiles ? { omit_sandbox_profiles: true } : {}),
             ...(restart ? { restart: true } : {}),
             ...(confirmMoveOut ? { confirm_move_out: true } : {}),
           }),
@@ -401,6 +403,7 @@ export function createActionDialogActions({
       const note = payload.note ? `; ${payload.note}` : '';
       const changes = [];
       if (implementation) changes.push(`sandbox implementation → ${payload.sandbox_implementation}`);
+      if (omitSandboxProfiles) changes.push('sandbox profiles → none (omitted)');
       if (typeof sandboxProfile === 'string') changes.push(`sandbox profile → ${payload.sandbox_profile || 'default (global + group)'}`);
       const what = changes.join(', ') || `sandbox implementation → ${payload.sandbox_implementation}`;
       notify(payload.restart

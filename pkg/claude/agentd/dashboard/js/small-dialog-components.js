@@ -454,6 +454,10 @@ const SANDBOX_IMPL_MODE_INHERIT = '';
 // no profile change is sent. It is only a select value and never sent to the
 // server.
 const SANDBOX_PROFILE_KEEP = '__tclaude_keep_current_sandbox_profile__';
+// SANDBOX_PROFILE_OMIT is the picker's "none" choice: the agent's launches omit
+// every tclaude sandbox-profile tier. Profile names cannot contain "/", so it
+// cannot collide with one. It is sent as omit_sandbox_profiles, never as a name.
+const SANDBOX_PROFILE_OMIT = '/omit-all-tclaude-sandbox-profiles';
 
 // The one implementation that KEEPS the harness-builtin mode a launch is given.
 // Every other one derives its own, which is why the pin is offered only here.
@@ -515,11 +519,13 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const pinned = modes.length > 0 ? mode : SANDBOX_IMPL_MODE_INHERIT;
   // The explicit-tier profile. The global and group tiers are shown for
   // context only: they follow the workspace and group assignments.
-  const currentProfile = String(posture.sandbox_profile || '');
+  const profilesOmitted = !!posture.sandbox_profiles_omitted;
+  const currentProfile = profilesOmitted ? SANDBOX_PROFILE_OMIT : String(posture.sandbox_profile || '');
+  const currentProfileLabel = profilesOmitted ? 'none' : (currentProfile || 'default');
   const profileLocked = String(posture.sandbox_profile_unchangeable || '');
   const profileOptions = Array.isArray(posture.sandbox_profile_options) ? posture.sandbox_profile_options : [];
   // A recorded profile that has since been deleted still reads as current.
-  const profileChoices = currentProfile && !profileOptions.includes(currentProfile)
+  const profileChoices = currentProfile && !profilesOmitted && !profileOptions.includes(currentProfile)
     ? [currentProfile, ...profileOptions] : profileOptions;
   const ambientTiers = (Array.isArray(posture.sandbox_profile_tiers) ? posture.sandbox_profile_tiers : [])
     .filter((tier) => tier?.scope !== 'explicit');
@@ -548,7 +554,8 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         // be an assignment of its own, which re-derives the harness mode.
         implementation: implChanged ? choice : '',
         sandbox: implChanged ? pinned : '',
-        ...(profileChanged ? { sandboxProfile: profile } : {}),
+        ...(profileChanged && profile === SANDBOX_PROFILE_OMIT ? { omitSandboxProfiles: true } : {}),
+        ...(profileChanged && profile !== SANDBOX_PROFILE_OMIT ? { sandboxProfile: profile } : {}),
         restart,
         ...(moveOut ? { confirmMoveOut: true } : {}),
       }, descriptor);
@@ -630,13 +637,16 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           <span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span>
           <${Select} id="sandbox-impl-profile" value=${profile} disabled=${busy || !!profileLocked}
             onChange=${(event) => setProfile(event.currentTarget.value)}>
-            <option value=${SANDBOX_PROFILE_KEEP}>— keep current (${currentProfile || 'default'}) —</option>
-            <option value="">— default (global + group profiles) —</option>
+            <option value=${SANDBOX_PROFILE_KEEP}>— keep current (${currentProfileLabel}) —</option>
+            <option value="">— default (global + group profiles)${!profilesOmitted && !currentProfile ? ' (current)' : ''} —</option>
+            <option value=${SANDBOX_PROFILE_OMIT}>— none (omit all tclaude profile values)${profilesOmitted ? ' (current)' : ''} —</option>
             ${profileChoices.map((name) => html`<option key=${name} value=${name}>${name}${name === currentProfile ? ' (current)' : ''}</option>`)}
           <//>
         </label>
         <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-profile-hint">${profileLocked
           ? `The sandbox profile cannot be changed: ${profileLocked}.`
+          : profilesOmitted
+          ? `This agent's launches omit every tclaude sandbox profile (global, group and explicit). Pick a profile, or the default, to apply them from its next launch.`
           : html`The agent's own (explicit) profile. ${ambientTiers.length
             ? `Also applied, from the workspace and group assignments: ${ambientTiers.map((tier) => `${tier.scope} “${tier.name}”`).join(', ')}.`
             : 'No workspace or group profile applies.'}${posture.sandbox_profile_pending ? ' Reassigned since the last launch; applied by the next one.' : ''}`}</p>
