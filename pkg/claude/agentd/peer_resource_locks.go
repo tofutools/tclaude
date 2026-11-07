@@ -13,7 +13,7 @@ import (
 // from its own dashboard, but only as far as this node's grants to that peer
 // reach: the peer is never this node's operator. Two routes serve it:
 //
-//   - GET /api/groups/{name}/resources lists a group's processes, boards and
+//   - GET /api/groups/{name}/resources lists a group's processes, drawing boards and
 //     pages with their locks, for a peer holding groups.resources.read in the
 //     group (tcl-cpsepi). Locally the list is one rule, not one per kind, so
 //     one peer grant guards it.
@@ -35,10 +35,10 @@ const PermGroupsResourcesLock = "groups.resources.lock"
 
 // PermGroupsResourcesRead (group_resource_access.go) is also the federation
 // peer grant (group-scoped) to list the group's resources (its saved
-// processes, boards and live pages, with their locks) on the peer's dashboard.
+// processes, drawing boards and live pages, with their locks) on the peer's dashboard.
 // Unrestricted trust holds it.
 
-// resourceLockGroups returns the groups a resource belongs to: a board's
+// resourceLockGroups returns the groups a resource belongs to: a drawing board's
 // group, a page's group, or every group a process template is pinned to. It
 // reports false when there is no such resource.
 func resourceLockGroups(kind, id string) ([]*db.AgentGroup, bool) {
@@ -53,8 +53,8 @@ func resourceLockGroups(kind, id string) ([]*db.AgentGroup, bool) {
 		return []*db.AgentGroup{g}
 	}
 	switch kind {
-	case resourceKindBoard:
-		b, err := db.GetCollabBoard(id)
+	case resourceKindDrawingBoard:
+		b, err := db.GetCollabDrawingBoard(id)
 		if err != nil || b == nil {
 			return nil, false
 		}
@@ -103,9 +103,9 @@ func servePeerResourceLock(w http.ResponseWriter, r *http.Request, v *peerView, 
 		return
 	}
 	switch req.Kind {
-	case resourceKindProcess, resourceKindBoard, resourceKindPage:
+	case resourceKindProcess, resourceKindDrawingBoard, resourceKindPage:
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, board or page")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, drawing board or page")
 		return
 	}
 	groups, _ := resourceLockGroups(req.Kind, req.ID)
@@ -143,11 +143,11 @@ func servePeerResourceLock(w http.ResponseWriter, r *http.Request, v *peerView, 
 
 // peerGroupResources is one group's resources as a peer sees them.
 type peerGroupResources struct {
-	Group     string              `json:"group"`
-	Processes []peerGroupProcess  `json:"processes"`
-	Boards    []processGroupBoard `json:"boards"`
-	Pages     []processGroupPage  `json:"pages"`
-	CanLock   bool                `json:"canLock"`
+	Group         string                     `json:"group"`
+	Processes     []peerGroupProcess         `json:"processes"`
+	DrawingBoards []processGroupDrawingBoard `json:"drawingBoards"`
+	Pages         []processGroupPage         `json:"pages"`
+	CanLock       bool                       `json:"canLock"`
 }
 
 type peerGroupProcess struct {
@@ -173,16 +173,16 @@ func servePeerGroupResources(w http.ResponseWriter, r *http.Request, v *peerView
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for group:%s", rule.requires, g.Name))
 		return
 	}
-	boards, pages := groupResources()
+	drawingBoards, pages := groupResources()
 	out := peerGroupResources{
-		Group:     g.Name,
-		Processes: []peerGroupProcess{},
-		Boards:    boards[g.ID],
-		Pages:     pages[g.ID],
-		CanLock:   fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsResourcesLock),
+		Group:         g.Name,
+		Processes:     []peerGroupProcess{},
+		DrawingBoards: drawingBoards[g.ID],
+		Pages:         pages[g.ID],
+		CanLock:       fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsResourcesLock),
 	}
-	if out.Boards == nil {
-		out.Boards = []processGroupBoard{}
+	if out.DrawingBoards == nil {
+		out.DrawingBoards = []processGroupDrawingBoard{}
 	}
 	if out.Pages == nil {
 		out.Pages = []processGroupPage{}

@@ -74,8 +74,8 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 	left := make(chan struct{})
 	go func() {
 		defer close(left)
-		_ = ws.SetReadDeadline(time.Now().Add(boardLiveReadWait))
-		ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(boardLiveReadWait)) })
+		_ = ws.SetReadDeadline(time.Now().Add(drawingBoardLiveReadWait))
+		ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(drawingBoardLiveReadWait)) })
 		for {
 			kind, data, err := ws.ReadMessage()
 			if err != nil {
@@ -88,13 +88,13 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	send := func(kind string) bool {
-		_ = ws.SetWriteDeadline(time.Now().Add(boardLiveWriteWait))
+		_ = ws.SetWriteDeadline(time.Now().Add(drawingBoardLiveWriteWait))
 		return ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"`+kind+`"}`)) == nil
 	}
 	if !send(pageReachability(r.Context(), stage, start)) {
 		return
 	}
-	ping := time.NewTicker(boardLivePingEvery)
+	ping := time.NewTicker(drawingBoardLivePingEvery)
 	defer ping.Stop()
 	for {
 		select {
@@ -104,7 +104,7 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 			_ = send("gone")
 			return
 		case <-ping.C:
-			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(boardLiveWriteWait)); err != nil {
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(drawingBoardLiveWriteWait)); err != nil {
 				return
 			}
 		case <-reload:
@@ -112,7 +112,7 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case msg := <-view.out:
-			_ = ws.SetWriteDeadline(time.Now().Add(boardLiveWriteWait))
+			_ = ws.SetWriteDeadline(time.Now().Add(drawingBoardLiveWriteWait))
 			if ws.WriteMessage(websocket.TextMessage, msg) != nil {
 				return
 			}

@@ -1,6 +1,6 @@
 // overlay-expose.js -- every overlay window at once (tcl-vg45q5), as macOS
 // Mission Control shows them (tcl-ukrr3o): the open windows themselves move and
-// scale into a spread without overlap, live, terminals and boards still drawing,
+// scale into a spread without overlap, live, terminals and drawing boards still drawing,
 // over a dimmed page. Minimized windows and tabs on the dock are not mounted, so
 // they show as a row of cards along the bottom. Picking one raises it and
 // leaves; Escape or a click outside leaves with nothing changed. Entering and
@@ -21,8 +21,8 @@ const html = htm.bind(h);
 
 export const OVERLAY_EXPOSE_LABEL = 'Show all windows';
 
-const KIND_NAMES = { chat: 'Chat', board: 'Board', terminal: 'Terminal', start: 'Steward', decide: 'Decision' };
-const KIND_GLYPHS = { chat: '💬', board: '✎', terminal: '⌨', start: '✦', decide: '⚖' };
+const KIND_NAMES = { chat: 'Chat', drawing_board: 'Drawing board', terminal: 'Terminal', start: 'Steward', decide: 'Decision' };
+const KIND_GLYPHS = { chat: '💬', drawing_board: '✎', terminal: '⌨', start: '✦', decide: '⚖' };
 
 export const overlayExposeOpen = signal(false);
 

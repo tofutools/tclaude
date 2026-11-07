@@ -60,10 +60,10 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
   ] };
   const state = createCreditsState({ now: () => clock });
   const counterHost = harness.document.body.appendChild(harness.document.createElement('span'));
-  const board = harness.document.body.appendChild(harness.document.createElement('div'));
+  const drawingBoard = harness.document.body.appendChild(harness.document.createElement('div'));
   const islandCleanups = [];
   mountCreditsIsland({
-    counterHost, leaderboardHost: board, state,
+    counterHost, leaderboardHost: drawingBoard, state,
     registerCleanup: (task) => islandCleanups.push(task),
   });
   const registered = [];
@@ -79,7 +79,7 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:slopfx', { detail: { fx: 'win-idle', conv: 'conv-a' } },
   )));
-  const row = board.querySelector('[data-key="conv-a"]');
+  const row = drawingBoard.querySelector('[data-key="conv-a"]');
   const whoText = row.querySelector('.who').firstChild;
   assert.equal(row.querySelector('.who').textContent, 'Alice');
   assert.equal(state.view.value.credits, 100);
@@ -92,10 +92,10 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
       'tclaude:slopfx', { detail: { fx: 'win-pull', conv: 'conv-b' } },
     ));
   });
-  assertSameNode(board.querySelector('[data-key="conv-a"]'), row);
+  assertSameNode(drawingBoard.querySelector('[data-key="conv-a"]'), row);
   assertSameNode(row.querySelector('.who').firstChild, whoText,
     'a keyed rank reorder preserves the existing browser-selection anchor');
-  assert.equal(board.querySelector('li').dataset.key, 'conv-b', 'higher win count reorders by key');
+  assert.equal(drawingBoard.querySelector('li').dataset.key, 'conv-b', 'higher win count reorders by key');
 
   snapshot = { agents: [
     { conv_id: 'conv-a', title: 'Alicia' },
@@ -105,7 +105,7 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
   await harness.act(() => harness.document.dispatchEvent(
     new harness.window.CustomEvent('tclaude:snapshot'),
   ));
-  assertSameNode(board.querySelector('[data-key="conv-a"]'), row);
+  assertSameNode(drawingBoard.querySelector('[data-key="conv-a"]'), row);
   assert.equal(row.querySelector('.who').textContent, 'Alicia');
 
   cleanup();
@@ -116,5 +116,5 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
   assert.equal(state.view.value.credits, 250, 'removed event listener cannot mutate state');
   await harness.act(() => islandCleanups.forEach((task) => task()));
   counterHost.remove();
-  board.remove();
+  drawingBoard.remove();
 });

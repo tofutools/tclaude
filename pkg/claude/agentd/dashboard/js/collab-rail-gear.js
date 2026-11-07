@@ -3,7 +3,7 @@
 // gets its Groups row ⚙ (AgentGearMenu, with the group the panel lists it
 // under), plus Move to group, which goes through the Groups tab's drop
 // operations as a drag onto that group would (collab-rail-actions.js). A
-// board or page gets its Groups row ⋯ items: Rename…, Move to group ›,
+// drawing board or page gets its Groups row ⋯ items: Rename…, Move to group ›,
 // Delete… (groups-resources.js' resourceMenu). The row's ⋯ keeps what it
 // had: open, download, kill.
 
@@ -23,8 +23,8 @@ export function railGearKind(item) {
   if (railAgent(item)) return 'agent';
   const resource = railResource(item);
   // A page the panel lists with no group row (open here only) has no owner
-  // to say where it may go; a board needs none.
-  if (resource && (resource.kind === 'board' || item.resource)) return 'resource';
+  // to say where it may go; a drawing board needs none.
+  if (resource && (resource.kind === 'drawing_board' || item.resource)) return 'resource';
   return '';
 }
 

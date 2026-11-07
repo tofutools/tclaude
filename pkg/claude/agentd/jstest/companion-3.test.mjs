@@ -224,7 +224,7 @@ test('a reopened window fits the viewport and a larger browser restores its save
     node.dispatchEvent(event('pointerup', 100 + dx));
     await new Promise((r) => setTimeout(r, 0));
   });
-  await press(view.container.querySelector('.board-overlay-titlebar'), 0);
+  await press(view.container.querySelector('.drawing-board-overlay-titlebar'), 0);
   await press(view.container.querySelector('.window-resize-zone.e'), 0);
   assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')), saved, 'a click saves nothing');
   viewport(1800, 1000);
@@ -246,7 +246,7 @@ test('each look puts the window controls in native order, and keyboard order fol
   const names = ['Minimize (Ctrl .)', 'Maximize', 'Close alpha'];
   for (const [look, order] of [['macos', [names[2], names[0], names[1]]], ['windows', names], ['linux', names]]) {
     const { view } = await openLook(t, look);
-    const bar = view.container.querySelector('.board-overlay-titlebar');
+    const bar = view.container.querySelector('.drawing-board-overlay-titlebar');
     const group = bar.querySelector('.overlay-window-controls');
     assert.deepEqual(buttonNames(group), order, look);
     assert.ok(group.querySelectorAll('svg').length === 3, `${look} draws its symbols`);
@@ -260,9 +260,9 @@ test('each look puts the window controls in native order, and keyboard order fol
 
 test('the classic look has its one minimize', async (t) => {
   const { view, harness } = await openLook(t, 'classic');
-  const bar = view.container.querySelector('.board-overlay-titlebar');
+  const bar = view.container.querySelector('.drawing-board-overlay-titlebar');
   assert.equal(bar.querySelector('.overlay-window-controls'), null);
-  const minimize = bar.querySelector('.board-overlay-close[aria-label="Minimize alpha"]');
+  const minimize = bar.querySelector('.drawing-board-overlay-close[aria-label="Minimize alpha"]');
   assert.equal(minimize.textContent, '–');
   assert.equal(bar.querySelector('[aria-label="Maximize"]'), null);
   await harness.act(async () => { minimize.click(); await new Promise((r) => setTimeout(r, 0)); });
@@ -286,7 +286,7 @@ test('the standard look is − ⇄ × on the far right, and ⇄ opens the window
   const { view, harness, controller } = await setup(t, { prefs: store, snapshot: { ...snapshotWith(), window_controls: 'auto' }, openTerminalsPane: (...args) => opened.push(args) });
   await harness.act(() => controller().open(A));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  const bar = view.container.querySelector('.board-overlay-titlebar');
+  const bar = view.container.querySelector('.drawing-board-overlay-titlebar');
   assert.ok(bar.classList.contains('overlay-look-standard'));
   const group = bar.querySelector('.overlay-window-controls');
   assert.equal(bar.lastElementChild, group, 'on the far right');
@@ -312,7 +312,7 @@ test('the standard look\'s middle button maximizes where the window cannot go to
 test('a double click on the title bar\'s empty space maximizes and restores, in the standard look too', async (t) => {
   const { view, harness } = await openLook(t, 'auto');
   const section = () => view.container.querySelector('.chat-window');
-  const bar = () => view.container.querySelector('.board-overlay-titlebar');
+  const bar = () => view.container.querySelector('.drawing-board-overlay-titlebar');
   const dbl = (target) => harness.act(() => target.dispatchEvent(new harness.window.Event('dblclick', { bubbles: true })));
   await dbl(bar());
   assert.match(section().className, /snapped-max/);
@@ -324,7 +324,7 @@ test('a double click on the title bar\'s empty space maximizes and restores, in 
 
 test('minimize and close are their own actions, and close leaves the agent running', async (t) => {
   const { view, harness, requests } = await openLook(t, 'windows');
-  const bar = () => view.container.querySelector('.board-overlay-titlebar');
+  const bar = () => view.container.querySelector('.drawing-board-overlay-titlebar');
   await harness.act(() => bar().querySelector('.companion-tab-minimize').click());
   assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab went to the dock');
   assert.ok(!view.container.querySelector('.companion-window-warm'), 'the window stays for the other tab');
@@ -460,7 +460,7 @@ test('a click on the bar leaves a snapped window alone, and only a real move tea
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: stored });
   const { view, harness } = await openLook(t, 'linux', { prefs });
   const frame = () => view.container.querySelector('.companion-window');
-  const bar = view.container.querySelector('.board-overlay-titlebar');
+  const bar = view.container.querySelector('.drawing-board-overlay-titlebar');
   const press = (dx) => harness.act(async () => {
     const event = (type, x) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
     bar.dispatchEvent(event('pointerdown', 400));

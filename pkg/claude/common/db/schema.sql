@@ -653,11 +653,6 @@ CREATE TRIGGER usage_profile_assignments_agent_gone
 				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
 			END;
 
-CREATE TRIGGER collab_board_sessions_agent_retired
- AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
- DELETE FROM collab_board_sessions WHERE agent_id = NEW.agent_id;
-END;
-
 CREATE TRIGGER external_steward_retired
 		AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
 			UPDATE external_steward_credentials SET revoked_at = NEW.retired_at
@@ -676,6 +671,11 @@ CREATE TRIGGER group_tasks_unassign_on_retire
 			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = NEW.retired_at
 				WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
 		END;
+
+CREATE TRIGGER collab_drawing_board_sessions_agent_retired
+ AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+ DELETE FROM collab_drawing_board_sessions WHERE agent_id = NEW.agent_id;
+END;
 
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
@@ -2132,7 +2132,7 @@ CREATE TABLE agent_host_routes (
 
 CREATE INDEX idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state);
 
-CREATE TABLE collab_boards (
+CREATE TABLE "collab_drawing_boards" (
  id TEXT PRIMARY KEY,
  title TEXT NOT NULL,
  version INTEGER NOT NULL DEFAULT 0,
@@ -2143,29 +2143,29 @@ CREATE TABLE collab_boards (
  snapshot_at INTEGER
 , group_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL) STRICT;
 
-CREATE INDEX idx_collab_boards_group ON collab_boards(group_id);
+CREATE INDEX idx_collab_drawing_boards_group ON collab_drawing_boards(group_id);
 
-CREATE TABLE collab_board_elements (
- board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+CREATE TABLE "collab_drawing_board_elements" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
  element_id TEXT NOT NULL,
  element_version INTEGER NOT NULL,
  nonce INTEGER NOT NULL,
  server_version INTEGER NOT NULL,
  is_deleted INTEGER NOT NULL DEFAULT 0,
  body TEXT NOT NULL,
- PRIMARY KEY(board_id, element_id)
+ PRIMARY KEY(drawing_board_id, element_id)
 ) STRICT;
 
-CREATE INDEX idx_collab_board_elements_server_version ON collab_board_elements(board_id, server_version);
+CREATE INDEX idx_collab_drawing_board_elements_server_version ON collab_drawing_board_elements(drawing_board_id, server_version);
 
-CREATE TABLE collab_board_participants (
- board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+CREATE TABLE "collab_drawing_board_participants" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
  agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
  added_at INTEGER NOT NULL,
- PRIMARY KEY(board_id, agent_id)
+ PRIMARY KEY(drawing_board_id, agent_id)
 ) STRICT;
 
-CREATE INDEX idx_collab_board_participants_agent ON collab_board_participants(agent_id);
+CREATE INDEX idx_collab_drawing_board_participants_agent ON collab_drawing_board_participants(agent_id);
 
 CREATE TABLE held_context_reinjections (
 		session_id        TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
@@ -2173,25 +2173,25 @@ CREATE TABLE held_context_reinjections (
 		transcript_offset INTEGER NOT NULL
 	);
 
-CREATE TABLE collab_board_history (
+CREATE TABLE "collab_drawing_board_history" (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
  actor TEXT NOT NULL,
  stack TEXT NOT NULL CHECK (stack IN ('undo', 'redo')),
  body TEXT NOT NULL
 ) STRICT;
 
-CREATE INDEX idx_collab_board_history_stack ON collab_board_history(board_id, actor, stack, id);
+CREATE INDEX idx_collab_drawing_board_history_stack ON collab_drawing_board_history(drawing_board_id, actor, stack, id);
 
-CREATE TABLE collab_board_sessions (
- board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+CREATE TABLE "collab_drawing_board_sessions" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
  agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
  started_at INTEGER NOT NULL,
  last_active_at INTEGER NOT NULL,
- PRIMARY KEY(board_id, agent_id)
+ PRIMARY KEY(drawing_board_id, agent_id)
 ) STRICT;
 
-CREATE INDEX idx_collab_board_sessions_agent ON collab_board_sessions(agent_id);
+CREATE INDEX idx_collab_drawing_board_sessions_agent ON collab_drawing_board_sessions(agent_id);
 
 CREATE TABLE dashboard_marks (
  id INTEGER PRIMARY KEY AUTOINCREMENT,

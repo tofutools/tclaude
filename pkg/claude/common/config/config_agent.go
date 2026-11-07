@@ -250,7 +250,7 @@ const DefaultExternalStewardMaxChildren = 3
 const (
 	// StewardReadsOperator reads what the operator reads across tclaude.
 	StewardReadsOperator = "operator"
-	// StewardReadsFleet reads the fleet, the boards and the dashboard view.
+	// StewardReadsFleet reads the fleet, the drawing boards and the dashboard view.
 	StewardReadsFleet = "fleet"
 
 	// StewardSourceAsk asks the operator for each version with no source.

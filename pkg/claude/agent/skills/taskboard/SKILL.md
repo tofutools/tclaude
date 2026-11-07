@@ -9,7 +9,7 @@ description: >-
   operator or your lead says "put it on the board", "what's next for the group",
   "take the next task", or when you finish or give up on a task you were
   assigned. Not the backlog: long-term work belongs in the external tracker
-  (awb, Linear or similar). Not for Collab drawing boards (that is agent-board)
+  (awb, Linear or similar). Not for Collab drawing boards (that is agent-drawing-board)
   or the task-reference link (agent-task).
 ---
 

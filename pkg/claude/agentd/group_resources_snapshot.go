@@ -11,7 +11,7 @@ import (
 )
 
 // One resource state model for a group's things (tcl-1lth8e): the
-// snapshot's group_resources lists every group's pages, boards, processes and
+// snapshot's group_resources lists every group's pages, drawing boards, processes and
 // shells (its own and its agents' directory shells) in one shape, so the Groups tab and the Collab rail read one model
 // (resource-model.js). The server knows only whether something is live
 // (running) or exists with nothing live (closed); the browser layers what it
@@ -49,7 +49,7 @@ type groupResource struct {
 }
 
 // groupResourcesSnapshot lists the resources of every active group, and the
-// boards in none (group_id 0: the Groups tab's Ungrouped lists them, so one
+// drawing boards in none (group_id 0: the Groups tab's Ungrouped lists them, so one
 // made from the Collab panel can be moved into a group). alive is the
 // snapshot's set of live tmux sessions.
 func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) []groupResource {
@@ -60,9 +60,9 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 		}
 	}
 	out := groupPageResources(active)
-	out = append(out, groupBoardResources(active)...)
+	out = append(out, groupDrawingBoardResources(active)...)
 	out = append(out, groupProcessResources(active)...)
-	for _, kind := range []string{resourceKindBoard, resourceKindProcess} {
+	for _, kind := range []string{resourceKindDrawingBoard, resourceKindProcess} {
 		locked, err := db.GroupResourceLocks(kind)
 		if err != nil {
 			slog.Warn("group resources: locks unavailable", "kind", kind, "error", err)
@@ -230,29 +230,29 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 	return out
 }
 
-// groupBoardResources are the boards linked to a group. A board linked to
+// groupDrawingBoardResources are the drawing boards linked to a group. A drawing board linked to
 // none, or to a group that is archived, lists with group_id 0: it is the
-// operator's still, and nothing else reaches it. A board has nothing that
+// operator's still, and nothing else reaches it. A drawing board has nothing that
 // runs; who is editing it is its detail.
-func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
-	boards, err := db.ListCollabBoards()
+func groupDrawingBoardResources(active map[int64]*db.AgentGroup) []groupResource {
+	drawingBoards, err := db.ListCollabDrawingBoards()
 	if err != nil {
-		slog.Warn("group resources: boards unavailable", "error", err)
+		slog.Warn("group resources: drawing boards unavailable", "error", err)
 		return nil
 	}
 	editing := map[string]int{}
-	if sessions, err := db.ListCollabBoardSessions(); err == nil {
+	if sessions, err := db.ListCollabDrawingBoardSessions(); err == nil {
 		for _, s := range sessions {
-			editing[s.BoardID]++
+			editing[s.DrawingBoardID]++
 		}
 	}
 	var out []groupResource
-	for _, b := range boards {
+	for _, b := range drawingBoards {
 		groupID := b.GroupID
 		if active[groupID] == nil {
 			groupID = 0
 		}
-		r := groupResource{Kind: resourceKindBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed}
+		r := groupResource{Kind: resourceKindDrawingBoard, ID: b.ID, GroupID: groupID, Title: b.Title, State: resourceStateClosed}
 		if r.Title == "" {
 			r.Title = b.ID
 		}

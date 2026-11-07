@@ -84,7 +84,7 @@ it needs your taste, it sends a **decision**: a question with one button per opt
 
 !!! info "Go deeper"
     [Companion and Steward](../companion.md) covers the window, decisions, voice,
-    and what the Steward may do without asking. [Boards](../boards.md) are shared
+    and what the Steward may do without asking. [Drawing boards](../drawing-boards.md) are shared
     drawing boards for you and your agents.
 
 **Next:** [Set up your team](team-setup.md).

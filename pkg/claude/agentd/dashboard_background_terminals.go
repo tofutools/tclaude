@@ -51,15 +51,15 @@ type backgroundTerminal struct {
 	Killable     bool  `json:"killable,omitempty"`
 	LastActivity int64 `json:"last_activity,omitempty"`
 	Created      int64 `json:"created,omitempty"`
-	// Board and Agents are a board row's (kind board): one row per board with
-	// at least one board session. It has no tmux session. Key is its pane key,
-	// and DELETE /api/boards/{id}/sessions is what ends it.
-	Board  string                 `json:"board,omitempty"`
-	Agents []backgroundBoardAgent `json:"agents,omitempty"`
+	// Drawing board and Agents are a drawing board row's (kind drawing board): one row per drawing board with
+	// at least one drawing board session. It has no tmux session. Key is its pane key,
+	// and DELETE /api/drawing-boards/{id}/sessions is what ends it.
+	DrawingBoard string                        `json:"drawingBoard,omitempty"`
+	Agents       []backgroundDrawingBoardAgent `json:"agents,omitempty"`
 }
 
-// backgroundBoardAgent is one agent with a session on a board row's board.
-type backgroundBoardAgent struct {
+// backgroundDrawingBoardAgent is one agent with a session on a drawing board row's drawing board.
+type backgroundDrawingBoardAgent struct {
 	AgentID string `json:"agent_id"`
 	Title   string `json:"title"`
 }
@@ -95,34 +95,34 @@ func handleDashboardBackgroundTerminals(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "tmux", err.Error())
 		return
 	}
-	rows := append(classifyBackgroundTerminals(sessions), backgroundBoardRows()...)
+	rows := append(classifyBackgroundTerminals(sessions), backgroundDrawingBoardRows()...)
 	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: rows})
 }
 
-// backgroundBoardRows lists the boards with at least one board session, longest
-// idle first like the terminals. Boards stay with their own node, so this is
+// backgroundDrawingBoardRows lists the drawing boards with at least one drawing board session, longest
+// idle first like the terminals. Drawing boards stay with their own node, so this is
 // only for the node's own dashboard. A read error costs the rows, not the
 // terminals around them.
-func backgroundBoardRows() []backgroundTerminal {
-	sessions, err := db.ListCollabBoardSessions()
+func backgroundDrawingBoardRows() []backgroundTerminal {
+	sessions, err := db.ListCollabDrawingBoardSessions()
 	if err != nil {
-		slog.Warn("background terminals: list board sessions failed", "error", err)
+		slog.Warn("background terminals: list drawing board sessions failed", "error", err)
 		return nil
 	}
 	var out []backgroundTerminal
 	index := map[string]int{}
 	for _, s := range sessions {
-		i, seen := index[s.BoardID]
+		i, seen := index[s.DrawingBoardID]
 		if !seen {
 			i = len(out)
-			index[s.BoardID] = i
+			index[s.DrawingBoardID] = i
 			out = append(out, backgroundTerminal{
-				Kind: "board", Board: s.BoardID, Key: "board:" + s.BoardID, Label: s.BoardTitle, Killable: true,
+				Kind: "drawing_board", DrawingBoard: s.DrawingBoardID, Key: "drawing_board:" + s.DrawingBoardID, Label: s.DrawingBoardTitle, Killable: true,
 				Created: s.StartedAt.Unix(),
 			})
 		}
 		row := &out[i]
-		row.Agents = append(row.Agents, backgroundBoardAgent{AgentID: s.AgentID, Title: backgroundConvTitle(s.ConvID)})
+		row.Agents = append(row.Agents, backgroundDrawingBoardAgent{AgentID: s.AgentID, Title: backgroundConvTitle(s.ConvID)})
 		row.LastActivity = max(row.LastActivity, s.LastActiveAt.Unix())
 		row.Created = min(row.Created, s.StartedAt.Unix())
 	}

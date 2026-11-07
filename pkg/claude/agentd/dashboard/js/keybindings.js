@@ -24,14 +24,14 @@ export const SHORTCUT_SCOPES = Object.freeze([
   { id: 'terminal', title: 'Web terminals', summary: 'While a web terminal or its tab strip has focus.' },
   { id: 'dialog', title: 'Dialogs', summary: 'Inside the dialog or editor that has focus.' },
   { id: 'process', title: 'Process editor', summary: 'While a process template is open in the editor. The review keys work while reviewing changes.' },
-  { id: 'board', title: 'Boards', summary: 'While a board has focus.' },
+  { id: 'drawing_board', title: 'Drawing boards', summary: 'While a drawing board has focus.' },
   { id: 'viewer', title: 'Image viewer', summary: 'While an image or video is open in the viewer.' },
 ]);
 
 // terminal: does the chord still fire while a web terminal has focus?
 //   true, false, or 'setting' (only with an opt-in setting).
 // fixed: listed but not rebindable — owned by the browser or a widget
-//   convention, or (editor, board and viewer keys) matched inside their own
+//   convention, or (editor, drawing board and viewer keys) matched inside their own
 //   widget rather than through matchesShortcut.
 // also: further chords that do the same thing.
 const S = (id, scope, chord, label, extra = {}) => Object.freeze({ id, scope, chord, label, terminal: false, fixed: false, ...extra });
@@ -69,17 +69,17 @@ export const SHORTCUTS = Object.freeze([
   S('process-diff-next', 'process', 'KeyJ', 'Review changes: next', { fixed: true }),
   S('process-diff-prev', 'process', 'KeyK', 'Review changes: previous', { fixed: true }),
 
-  S('board-undo', 'board', 'Mod+KeyZ', 'Undo', { fixed: true }),
-  S('board-redo', 'board', 'Mod+Shift+KeyZ', 'Redo', { fixed: true, also: ['Mod+KeyY'] }),
-  S('board-select-all', 'board', 'Mod+KeyA', 'Select everything', { fixed: true }),
-  S('board-copy', 'board', 'Mod+KeyC', 'Copy the selection', { fixed: true }),
-  S('board-cut', 'board', 'Mod+KeyX', 'Cut the selection', { fixed: true }),
-  S('board-paste', 'board', 'Mod+KeyV', 'Paste', { fixed: true }),
-  S('board-duplicate', 'board', 'Mod+KeyD', 'Duplicate the selection', { fixed: true }),
-  S('board-zoom-in', 'board', 'Equal', 'Zoom in', { fixed: true }),
-  S('board-zoom-out', 'board', 'Minus', 'Zoom out', { fixed: true }),
-  S('board-zoom-reset', 'board', 'Shift+Digit0', 'Zoom to 100%', { fixed: true }),
-  S('board-fit', 'board', 'Shift+Digit1', 'Fit the board in view', { fixed: true }),
+  S('drawing-board-undo', 'drawing_board', 'Mod+KeyZ', 'Undo', { fixed: true }),
+  S('drawing-board-redo', 'drawing_board', 'Mod+Shift+KeyZ', 'Redo', { fixed: true, also: ['Mod+KeyY'] }),
+  S('drawing-board-select-all', 'drawing_board', 'Mod+KeyA', 'Select everything', { fixed: true }),
+  S('drawing-board-copy', 'drawing_board', 'Mod+KeyC', 'Copy the selection', { fixed: true }),
+  S('drawing-board-cut', 'drawing_board', 'Mod+KeyX', 'Cut the selection', { fixed: true }),
+  S('drawing-board-paste', 'drawing_board', 'Mod+KeyV', 'Paste', { fixed: true }),
+  S('drawing-board-duplicate', 'drawing_board', 'Mod+KeyD', 'Duplicate the selection', { fixed: true }),
+  S('drawing-board-zoom-in', 'drawing_board', 'Equal', 'Zoom in', { fixed: true }),
+  S('drawing-board-zoom-out', 'drawing_board', 'Minus', 'Zoom out', { fixed: true }),
+  S('drawing-board-zoom-reset', 'drawing_board', 'Shift+Digit0', 'Zoom to 100%', { fixed: true }),
+  S('drawing-board-fit', 'drawing_board', 'Shift+Digit1', 'Fit the drawing board in view', { fixed: true }),
 
   S('viewer-zoom-in', 'viewer', 'Equal', 'Zoom in', { fixed: true }),
   S('viewer-zoom-out', 'viewer', 'Minus', 'Zoom out', { fixed: true }),

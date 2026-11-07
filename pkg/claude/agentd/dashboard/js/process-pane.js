@@ -1,5 +1,5 @@
 // process-pane.js -- a process template's editor in a tab of the Collab strip
-// (tcl-tnbtwp), beside terminals and boards. Like an overlay tab
+// (tcl-tnbtwp), beside terminals and drawing boards. Like an overlay tab
 // (process-overlay.js), the tab shows the live editor from wherever it was
 // (process-editor-place.js): its mount, with the draft, undo, selection and
 // the version a save is checked against. A tab opened in the background opens

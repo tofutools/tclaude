@@ -426,7 +426,7 @@ test('a Classic chat can be minimized, and a pill brings it back with the keyboa
   const { view, harness, mounted } = await floated(t, { snapshot });
   const windows = await harness.importDashboardModule('js/overlay-instances.js');
   t.after(() => { windows.overlayWindows.value = []; });
-  await harness.act(() => view.container.querySelector('.chat-window [aria-label="Minimize alpha"].board-overlay-close').click());
+  await harness.act(() => view.container.querySelector('.chat-window [aria-label="Minimize alpha"].drawing-board-overlay-close').click());
   assert.ok(view.container.querySelector('.chat-window.companion-window-warm'));
   const focused = mounted.at(-1).focused;
   const tab = windows.overlayTabs.value[0];
@@ -551,8 +551,8 @@ test('a Steward out of the seat keeps its pill', async (t) => {
   const { harness, snap } = await setup(t, { snapshot });
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
   await harness.act(async () => { overlays.closeOverlayTab(`chat:${S}`); overlays.minimizeOverlayTab(`chat:${S2}`); });
-  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
-  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  const { DrawingBoardOverlay } = await harness.importDashboardModule('js/drawing-board-overlay.js');
+  const dock = await harness.mount(harness.html`<${DrawingBoardOverlay} snapshot=${snap} />`);
   const seated = (await harness.importDashboardModule('js/companion-model.js')).stewardAgent((await harness.importDashboardModule('js/companion-model.js')).companionAgents(snapshot)).agentId;
   assert.equal(dock.container.querySelectorAll('.overlay-dock-pill').length, seated === S2 ? 0 : 1);
 });
@@ -577,8 +577,8 @@ test('a minimized shell of the Steward keeps its pill', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S]) });
   const { harness, snap } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
-  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
-  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  const { DrawingBoardOverlay } = await harness.importDashboardModule('js/drawing-board-overlay.js');
+  const dock = await harness.mount(harness.html`<${DrawingBoardOverlay} snapshot=${snap} />`);
   await harness.act(async () => {
     overlays.openOverlayWindow({ id: 'term:s', kind: 'terminal', agent: S, paneKey: 'p', ws: '/x', label: 'shell' });
     overlays.minimizeOverlayWindow('term:s');

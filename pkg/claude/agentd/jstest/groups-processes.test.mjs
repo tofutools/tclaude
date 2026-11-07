@@ -591,13 +591,13 @@ test('Both links an agent to its steps, a step to its performers, and a run card
 });
 
 // tcl-dwzsq0: in Both, the group's section is Resources: its processes, then
-// the boards and pages attached to it, a kind only when it has any, each with
-// the operator's agent lock chip; one ＋▾ adds a process or a board.
-test('Both\'s Resources section lists the group\'s boards and pages with lock chips, hiding empty kinds', async (t) => {
+// the drawing boards and pages attached to it, a kind only when it has any, each with
+// the operator's agent lock chip; one ＋▾ adds a process or a drawing board.
+test('Both\'s Resources section lists the group\'s drawing boards and pages with lock chips, hiding empty kinds', async (t) => {
   const context = structuredClone(FIXTURE);
   const fe = context.groups.find((g) => g.group === 'frontend-squad');
   fe.processes = [{ templateId: 'ship', name: 'Ship', ref: 'r1', listed: true, steps: 3, params: [], programProfiles: [], agentsLocked: true }];
-  fe.boards = [{ id: 'sprint', title: 'Sprint board', editing: 2 }];
+  fe.drawingBoards = [{ id: 'sprint', title: 'Sprint drawing board', editing: 2 }];
   const infra = context.groups.find((g) => g.group === 'infra-crew');
   infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true },
     { id: 'pg2', name: 'sketch', title: 'sketch', owner: '', kind: 'scratch', groupOwned: true }];
@@ -605,8 +605,8 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   const created = [];
   const api = {
     setResourceLock: async (...args) => { calls.push(args); return {}; },
-    boardIds: async () => ['frontend-squad-board'],
-    createGroupBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
+    drawingBoardIds: async () => ['frontend-squad-drawing-board'],
+    createGroupDrawingBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
     createGroupPage: async (...args) => { created.push(['page', ...args]); return { id: 'pg_new', name: args[1], title: args[1] }; },
   };
   const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
@@ -614,31 +614,31 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
 
   const feSection = section(details('frontend-squad'));
   assert.equal(feSection.querySelector('.gf-label').textContent, 'Resources');
-  assert.equal(feSection.querySelector('.gf-count').textContent, '2', 'the line counts the resources: a process and a board');
+  assert.equal(feSection.querySelector('.gf-count').textContent, '2', 'the line counts the resources: a process and a drawing board');
   assert.ok(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'one ＋▾ add');
   const feRes = feSection.querySelector('[data-group-resources="frontend-squad"]');
-  assert.ok(feRes.querySelector('[data-resource-kind="boards"]'));
+  assert.ok(feRes.querySelector('[data-resource-kind="drawing_boards"]'));
   assert.equal(feRes.querySelector('[data-resource-kind="pages"]'), null, 'a kind with nothing in it is hidden');
-  const board = feRes.querySelector('[data-resource-board="sprint"]');
-  assert.match(board.textContent, /Sprint board/);
-  assert.match(board.textContent, /2 editing/);
-  assert.equal(board.querySelector('[data-resource-lock="board:sprint"]').textContent, '✎ agents can edit');
+  const drawingBoard = feRes.querySelector('[data-resource-drawing-board="sprint"]');
+  assert.match(drawingBoard.textContent, /Sprint drawing board/);
+  assert.match(drawingBoard.textContent, /2 editing/);
+  assert.equal(drawingBoard.querySelector('[data-resource-lock="drawing_board:sprint"]').textContent, '✎ agents can edit');
   assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
   // One style per kind: a heading, then rows ending in the lock chip; the
   // runs stay with the processes, above the other kinds.
   const shipRow = feSection.querySelector('[data-saved-process="ship"]');
   assert.equal(shipRow.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'process:ship', 'a process row has the lock column');
-  assert.equal(board.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'board:sprint', 'and so does a board row');
+  assert.equal(drawingBoard.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'drawing_board:sprint', 'and so does a drawing board row');
   assert.equal(feSection.querySelectorAll('thead').length, 1, 'the processes\' table and the resources\' table share one header row');
   assert.equal(shipRow.querySelector('.gr-kindcell').textContent, 'process', 'kind is a column, not a heading');
   const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
-  assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'boards follow the runs');
+  assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'drawing boards follow the runs');
 
   const infraSection = section(details('infra-crew'));
   assert.ok(infraSection.classList.contains('open'), 'a group with a resource opens its section');
   const page = section(details('infra-crew')).querySelector('[data-resource-page="pg1"]');
   assert.ok(page, 'a group with only a page lists it');
-  assert.equal(section(details('infra-crew')).querySelector('[data-resource-kind="boards"]'), null);
+  assert.equal(section(details('infra-crew')).querySelector('[data-resource-kind="drawing_boards"]'), null);
   assert.match(page.textContent, /live · infra-lead/, 'the page names its shower');
 
   const before = source.refreshes;
@@ -647,13 +647,13 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   assert.deepEqual(calls, [['page', 'pg1', false]], 'the chip unlocks a locked page');
   assert.ok(source.refreshes > before, 'and reloads the context');
 
-  // ＋▾ › Board picks an id free among every board, not only the group's.
+  // ＋▾ › Drawing board picks an id free among every drawing board, not only the group's.
   await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'click'));
-  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add-board]'), 'click'));
+  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add-drawing-board]'), 'click'));
   await settle(harness);
   assert.equal(created.length, 1);
   assert.equal(created[0][0], 'frontend-squad');
-  assert.notEqual(created[0][2], 'frontend-squad-board', 'a taken id elsewhere on the node is not reused');
+  assert.notEqual(created[0][2], 'frontend-squad-drawing-board', 'a taken id elsewhere on the node is not reused');
 
   // ＋▾ › Page creates a blank page the group owns, named free in the group.
   const infraNow = section(details('infra-crew'));
@@ -685,7 +685,7 @@ const PEER_GROUP = { name: 'crew@bob', fleet_node: { id: 'inst_bob1234', name: '
 const PEER_RESOURCES = {
   group: 'crew', canLock: true,
   processes: [{ templateId: 'ship', name: 'Ship', agentsLocked: true }],
-  boards: [{ id: 'plan', title: 'Plan' }],
+  drawingBoards: [{ id: 'plan', title: 'Plan' }],
   pages: [],
 };
 
@@ -704,15 +704,15 @@ test('a peer group lists its resources by its own name and toggles a lock under 
   const { harness, mod, root, peer, notes } = await mountPeerResources(t, PEER_RESOURCES);
   assert.equal(mod.peerGroupName(PEER_GROUP), 'crew');
   assert.equal(peer.calls[0].path, '/api/groups/crew/resources', 'read from the node by the group\'s own name');
-  assert.deepEqual([...root.querySelectorAll('[data-resource-kind]')].map((k) => k.dataset.resourceKind), ['processes', 'boards'], 'an empty kind is hidden');
-  const board = root.querySelector('[data-resource-lock="board:plan"]');
-  assert.equal(board.disabled, false);
+  assert.deepEqual([...root.querySelectorAll('[data-resource-kind]')].map((k) => k.dataset.resourceKind), ['processes', 'drawing-boards'], 'an empty kind is hidden');
+  const drawingBoard = root.querySelector('[data-resource-lock="drawing_board:plan"]');
+  assert.equal(drawingBoard.disabled, false);
   assert.equal(root.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
-  assert.equal(root.querySelector('[data-peer-resource="board:plan"] button.gr-name'), null, 'a peer board is named, not opened here');
-  await harness.act(() => harness.fireEvent(board, 'click'));
+  assert.equal(root.querySelector('[data-peer-resource="drawing_board:plan"] button.gr-name'), null, 'a peer drawing board is named, not opened here');
+  await harness.act(() => harness.fireEvent(drawingBoard, 'click'));
   await settle(harness);
   const lock = peer.calls.find((c) => c.path === '/api/resource-locks');
-  assert.deepEqual(lock.body, { kind: 'board', id: 'plan', locked: true });
+  assert.deepEqual(lock.body, { kind: 'drawing_board', id: 'plan', locked: true });
   assert.equal(lock.method, 'POST');
   assert.ok(peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length >= 2, 'the list is read again after a change');
   assert.deepEqual(notes.map((n) => n.error), [false]);
@@ -720,7 +720,7 @@ test('a peer group lists its resources by its own name and toggles a lock under 
 
 test('without the grant a peer lock chip is disabled and says why', async (t) => {
   const { root, peer } = await mountPeerResources(t, { ...PEER_RESOURCES, canLock: false });
-  const chip = root.querySelector('[data-resource-lock="board:plan"]');
+  const chip = root.querySelector('[data-resource-lock="drawing_board:plan"]');
   assert.equal(chip.disabled, true);
   assert.equal(chip.getAttribute('aria-disabled'), 'true');
   assert.match(chip.title, /bob does not grant you groups\.resources\.lock/);
@@ -737,7 +737,7 @@ const PER_TEMPLATE_RESOURCES = { ...PEER_RESOURCES, processes: [
 
 test('a peer template lock chip follows the template, not its group', async (t) => {
   const { root } = await mountPeerResources(t, PER_TEMPLATE_RESOURCES);
-  assert.equal(root.querySelector('[data-resource-lock="board:plan"]').disabled, false, 'the group grants its boards');
+  assert.equal(root.querySelector('[data-resource-lock="drawing_board:plan"]').disabled, false, 'the group grants its drawing boards');
   const shared = root.querySelector('[data-resource-lock="process:ship"]');
   assert.equal(shared.disabled, true, 'pinned where the node does not grant the lock');
   assert.match(shared.title, /bob does not grant you groups\.resources\.lock/);
@@ -820,16 +820,16 @@ async function withSnapshot(harness, value) {
   await settle(harness);
 }
 
-test('Both lays Ungrouped out as a real group: Agents, then Resources listing the boards in no group, which ⋯ moves into one', async (t) => {
+test('Both lays Ungrouped out as a real group: Agents, then Resources listing the drawing boards in no group, which ⋯ moves into one', async (t) => {
   const snap = {
     groups: [{ id: 1, name: 'frontend-squad', members: [] }, { id: 2, name: 'infra-crew', members: [] }],
     group_resources: [
-      { kind: 'board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed', detail: '2 editing' },
-      { kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
+      { kind: 'drawing_board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed', detail: '2 editing' },
+      { kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
     ],
   };
   const moved = [];
-  const api = { moveBoard: async (id, group) => { moved.push([id, group]); } };
+  const api = { moveDrawingBoard: async (id, group) => { moved.push([id, group]); } };
   const ungrouped = { name: 'Ungrouped', key: ' ungrouped-virtual', virtual: true, members: [{ conv_id: 'c9', agent_id: 'agt_doc', title: 'doc-bot', online: true }] };
   const { harness, details } = await mountFocus(t, { fused: true, api, groups: [GROUPS[0], GROUPS[1], ungrouped], allGroups: [GROUPS[0], GROUPS[1]] });
   await withSnapshot(harness, snap);
@@ -841,10 +841,10 @@ test('Both lays Ungrouped out as a real group: Agents, then Resources listing th
   assert.ok(resources.classList.contains('open'), 'Resources opens while it lists something');
   assert.equal(resources.querySelector('.gf-label').textContent, 'Resources');
   assert.equal(resources.querySelector('.gf-count').textContent, '1');
-  assert.deepEqual([...resources.querySelectorAll('[data-resource-board]')].map((row) => row.dataset.resourceBoard), ['sketch'], 'only the board in no group');
-  assert.match(resources.querySelector('[data-resource-board="sketch"] .gr-meta').textContent, /2 editing/);
+  assert.deepEqual([...resources.querySelectorAll('[data-resource-drawing-board]')].map((row) => row.dataset.resourceDrawingBoard), ['sketch'], 'only the drawing board in no group');
+  assert.match(resources.querySelector('[data-resource-drawing-board="sketch"] .gr-meta').textContent, /2 editing/);
   assert.equal(resources.querySelector('[data-resource-add]'), null, 'no ＋: what is made here belongs in a group');
-  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-board="sketch"] .gr-cog'), 'click'));
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-drawing-board="sketch"] .gr-cog'), 'click'));
   await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-move="sketch"]'), 'click'));
   assert.deepEqual([...resources.querySelectorAll('[data-move-to]')].map((item) => item.dataset.moveTo), ['frontend-squad', 'infra-crew'], 'every group is a target');
   await harness.act(() => harness.fireEvent(resources.querySelector('[data-move-to="infra-crew"]'), 'click'));
@@ -852,9 +852,9 @@ test('Both lays Ungrouped out as a real group: Agents, then Resources listing th
   assert.deepEqual(moved, [['sketch', 'infra-crew']]);
 });
 
-test('Both folds an empty Ungrouped Resources to its line and says where boards come from', async (t) => {
+test('Both folds an empty Ungrouped Resources to its line and says where drawing boards come from', async (t) => {
   const { harness, details } = await mountFocus(t, { fused: true });
-  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' }] });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' }] });
   const resources = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
   assert.equal(resources.classList.contains('open'), false);
   assert.equal(resources.querySelector('.gf-count').textContent, '0');
@@ -863,12 +863,12 @@ test('Both folds an empty Ungrouped Resources to its line and says where boards 
   assert.match(opened.querySelector('[data-resources-empty]').textContent, /^No resources outside groups\./);
 });
 
-test('another node\'s Ungrouped in Both lists none of this node\'s boards, and claims none of its own', async (t) => {
+test('another node\'s Ungrouped in Both lists none of this node\'s drawing boards, and claims none of its own', async (t) => {
   const peer = { name: 'Ungrouped@lab-b', key: ' ungrouped-virtual@lab-b', virtual: true, fleet_node: { id: 'n2', name: 'lab-b', local: false }, members: [] };
   const { harness, details } = await mountFocus(t, { fused: true, groups: [GROUPS[0], peer], allGroups: [GROUPS[0]] });
-  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed' }] });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'drawing_board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed' }] });
   const el = details(' ungrouped-virtual@lab-b');
   assert.ok(el.querySelector(':scope > .subtable > [data-fused-section="agents"]'));
   assert.equal(el.querySelector('[data-fused-section="processes"]'), null, 'no Resources section without runs');
-  assert.equal(el.querySelector('[data-resource-board]'), null);
+  assert.equal(el.querySelector('[data-resource-drawing-board]'), null);
 });

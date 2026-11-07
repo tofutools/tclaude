@@ -17,7 +17,7 @@ import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
 import { clickNavExactly } from './automations-nav.js';
 import { onPeerPage } from './node-api.js';
-import { peerBoardsShared } from './peer-boards.js';
+import { peerDrawingBoardsShared } from './peer-drawing-boards.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import { configLocation, setConfigPanel } from './config-panel.js';
@@ -41,7 +41,7 @@ import {
 // path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
 // set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'terminals', 'boards', 'collab-processes', 'jobs', 'processes', 'plugins', 'access',
+  'groups', 'terminals', 'drawing-boards', 'collab-processes', 'jobs', 'processes', 'plugins', 'access',
   'messages', 'usage', 'diagnostics', 'config', 'map', 'fleet-admin',
 ]);
 
@@ -72,9 +72,9 @@ let ready = false;
 // peer that does not offer Processes) decides whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
-  // Boards has no nav anchor: a board is a tab of the Terminals section.
-  // A peer's page has them only when the peer shares its boards (tcl-ug8bb8).
-  if (tab === 'boards') return !onPeerPage() || peerBoardsShared();
+  // Drawing boards has no nav anchor: a drawing board is a tab of the Terminals section.
+  // A peer's page has them only when the peer shares its drawing boards (tcl-ug8bb8).
+  if (tab === 'drawing-boards') return !onPeerPage() || peerDrawingBoardsShared();
   // Nor has a process template's Collab tab, which needs Processes too.
   if (tab === 'collab-processes') return !onPeerPage() && !document.body.classList.contains('hide-processes');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
@@ -191,8 +191,8 @@ function activeLocationFromDOM() {
     // Which terminal is being viewed is island state the DOM never spells out
     // (the active pane's agent selector), so ask the island — same reasoning as
     // Processes below. Absent island (asset failed to load, no pane ever
-    // opened) degrades to the bare /terminals. A board tab answers with its
-    // own /boards/<id> location.
+    // opened) degrades to the bare /terminals. A drawing board tab answers with its
+    // own /drawing-boards/<id> location.
     const island = featureState('terminals');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
@@ -225,7 +225,7 @@ function requestTerminalsLocation(loc) {
   }));
 }
 
-function requestBoardsLocation(loc) {
+function requestDrawingBoardsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
   }));
@@ -275,9 +275,9 @@ function activate(loc, { traversal = false } = {}) {
       setFleetAdminPage(loc.subtab || '');
       if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
     }
-    // /boards and /collab/processes routes show in the Terminals section, as a
+    // /drawing-boards and /collab/processes routes show in the Terminals section, as a
     // tab of its strip.
-    const navTab = loc.tab === 'boards' || loc.tab === 'collab-processes' ? 'terminals' : loc.tab;
+    const navTab = loc.tab === 'drawing-boards' || loc.tab === 'collab-processes' ? 'terminals' : loc.tab;
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === navTab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.
@@ -291,10 +291,10 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
-    } else if (loc.tab === 'boards' || loc.tab === 'collab-processes') {
-      // Always sent, bare /boards included: the terminal shell opens the
-      // board's tab, or offers the board list.
-      requestBoardsLocation(loc);
+    } else if (loc.tab === 'drawing-boards' || loc.tab === 'collab-processes') {
+      // Always sent, bare /drawing-boards included: the terminal shell opens the
+      // drawing board's tab, or offers the drawing board list.
+      requestDrawingBoardsLocation(loc);
     } else if (loc.tab === 'diagnostics') {
       // A bare /diagnostics (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.

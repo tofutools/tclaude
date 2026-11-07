@@ -254,7 +254,7 @@ export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null 
       bar.removeEventListener('drop', drop);
     };
   }, [window.id]);
-  // Ctrl+wheel over the title bar zooms a board.
+  // Ctrl+wheel over the title bar zooms a drawing board.
   const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
   const renderTab = (tab) => {
     const { label, lead, title } = viewOf(tab);

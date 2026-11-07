@@ -201,7 +201,7 @@ func TestFederation_AgentOfferLandsLossChain(t *testing.T) {
 }
 
 // Scenario: a snapshot is taken of an agent with a conversion record, then an
-// agent is spawned from it. A snapshot can reach another node on a board or in
+// agent is spawned from it. A snapshot can reach another node on a drawing board or in
 // custody, and it is signed, so it cannot be rewritten at that point.
 //
 // Expected: the snapshot holds the chain without the text.

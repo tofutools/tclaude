@@ -805,6 +805,9 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 // safe: an archive does not import lineage, so they naturally fail closed until
 // new post-import descendants are spawned.
 func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
+	// An archive from before the drawing-board rename names a drawing board
+	// as resource=board:<id>; the installed grants were migrated (v320).
+	raw = strings.ReplaceAll(raw, `"board:`, `"drawing_board:`)
 	canonical, err := canonicalPermissionScopeForSlug(slug, raw)
 	if err != nil || canonical == "" {
 		return canonical, err

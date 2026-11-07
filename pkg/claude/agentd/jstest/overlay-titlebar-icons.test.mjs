@@ -31,7 +31,7 @@ test('the tab – × and the standard − ⇄ × centre a drawn glyph with no pa
 
 test('the wizard skin keeps its gilded boxes on the title bar, centred', async () => {
   const all = await rules();
-  const wizard = all.find(({ selector }) => selector.startsWith('body.wizard .board-overlay-titlebar :is('));
+  const wizard = all.find(({ selector }) => selector.startsWith('body.wizard .drawing-board-overlay-titlebar :is('));
   assert.ok(wizard, 'a wizard rule for the overlay title bar');
   for (const cls of ['.overlay-window-controls button', '.companion-tab-minimize', '.companion-tab-close', '.companion-add']) {
     assert.ok(wizard.selector.includes(cls), `${cls} is covered`);

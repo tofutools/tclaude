@@ -123,7 +123,7 @@ test('a box drawn over the page is anchored at the frame\'s scroll and sent as t
   assert.equal(api.marks.marks.length, 1);
   const el = api.marks.marks[0].el;
   assert.deepEqual([el.type, el.x, el.y, el.width, el.height], ['rectangle', 20, 130, 200, 100], 'kept in page coordinates');
-  assert.ok(svg.querySelector('rect'), 'drawn with the boards\' renderer');
+  assert.ok(svg.querySelector('rect'), 'drawn with the drawing boards\' renderer');
   assert.equal(svg.querySelector('g').getAttribute('transform'), 'translate(0 -100)', 'shown at the frame\'s scroll');
 
   const ask = frame.posted.at(-1).data;
@@ -166,7 +166,7 @@ test('a box drawn over the page is anchored at the frame\'s scroll and sent as t
 test('a pen stroke and a text mark become pen and text marks', async (t) => {
   const harness = await createPreactHarness(t);
   const draw = await harness.importDashboardModule('js/page-draw.js');
-  const m = await harness.importDashboardModule('js/board-model.js');
+  const m = await harness.importDashboardModule('js/drawing-board-model.js');
   const pen = m.newElement('freedraw', { x: 10, y: 20, points: [[0, 0], [5, 5], [10, 0]], strokeColor: '#2f9e44' });
   assert.deepEqual(draw.elementToMark(pen), { kind: 'pen', color: '#2f9e44', points: [[10, 20], [15, 25], [20, 20]] });
   const text = m.newElement('text', { x: 3.4, y: 7.6, text: 'here' });
@@ -198,7 +198,7 @@ test('page text with control characters is cleaned, not refused, and long stroke
 test('a text mark is committed once, Escape commits nothing, and Send keeps marks drawn meanwhile', async (t) => {
   const harness = await createPreactHarness(t);
   const draw = await harness.importDashboardModule('js/page-draw.js');
-  const m = await harness.importDashboardModule('js/board-model.js');
+  const m = await harness.importDashboardModule('js/drawing-board-model.js');
   const added = [];
   const view = await harness.mount(harness.html`<${draw.PageDrawLayer} active=${true} tool="text" color="#e03131" marks=${[]}
     onMark=${(el) => added.push(el)} scroll=${{ x: 0, y: 0 }} />`);

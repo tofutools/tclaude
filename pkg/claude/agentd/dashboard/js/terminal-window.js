@@ -70,12 +70,12 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, more = null
   const toSeparateWindow = () => toWindow({ rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify });
   const title = html`${strip}
     ${look !== 'classic' ? more : html`
-    <${Button} size="sm" class="board-overlay-action" title="Move this terminal to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
-    <${Button} size="sm" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
+    <${Button} size="sm" class="drawing-board-overlay-action" title="Move this terminal to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
+    <${Button} size="sm" class="drawing-board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
-    titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}
+    titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}
     controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
     <div class="companion-body" id=${instance.id}>
       ${open && html`

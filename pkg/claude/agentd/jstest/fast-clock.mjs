@@ -1,7 +1,7 @@
 // A scaled clock for suites that wait on real production timers.
 //
 // Some dashboard islands debounce, retry and poll on second-scale timers
-// (the board's 3 s event retry, dictation's silence countdown), and their
+// (the drawing board's 3 s event retry, dictation's silence countdown), and their
 // suites check them by sleeping that long for real. Each of those suites ran
 // 50-80 s while its process sat almost idle, and set the jstest shard's
 // critical path.

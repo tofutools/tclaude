@@ -16,15 +16,15 @@ const SNAP = {
   ],
 };
 
-test('canMoveResource: a board anywhere or out of every group, a page only where it may live', async (t) => {
+test('canMoveResource: a drawing board anywhere or out of every group, a page only where it may live', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/resource-moves.js');
-  const board = { kind: 'board', id: 'b', group: 'crew' };
-  assert.equal(m.canMoveResource(board, 'ops', SNAP), true);
-  assert.equal(m.canMoveResource(board, '', SNAP), true, 'a board may leave every group');
-  assert.equal(m.canMoveResource(board, 'crew', SNAP), false, 'not to its own group');
-  assert.equal(m.canMoveResource(board, 'gone', SNAP), false, 'not to a group that is not listed');
-  assert.equal(m.canMoveResource({ kind: 'board', id: 'b', group: '' }, 'crew', SNAP), true, 'a loose board into a group');
+  const drawingBoard = { kind: 'drawing_board', id: 'b', group: 'crew' };
+  assert.equal(m.canMoveResource(drawingBoard, 'ops', SNAP), true);
+  assert.equal(m.canMoveResource(drawingBoard, '', SNAP), true, 'a drawing board may leave every group');
+  assert.equal(m.canMoveResource(drawingBoard, 'crew', SNAP), false, 'not to its own group');
+  assert.equal(m.canMoveResource(drawingBoard, 'gone', SNAP), false, 'not to a group that is not listed');
+  assert.equal(m.canMoveResource({ kind: 'drawing_board', id: 'b', group: '' }, 'crew', SNAP), true, 'a loose drawing board into a group');
   const page = { kind: 'page', id: 'p', group: 'crew', owner: 'agt_a', closed: false };
   assert.equal(m.canMoveResource(page, 'lab', SNAP), true, "an agent's page to a group its agent is in");
   assert.equal(m.canMoveResource(page, 'ops', SNAP), false, 'not to one it is not in');
@@ -40,11 +40,11 @@ test('moveResource calls the ⋯ menu\'s move and says how it went', async (t) =
   const m = await harness.importDashboardModule('js/resource-moves.js');
   const calls = [];
   const notes = [];
-  const api = { moveBoard: async (...a) => calls.push(['board', ...a]), moveGroupPage: async (...a) => { calls.push(['page', ...a]); throw new Error('not_member'); } };
+  const api = { moveDrawingBoard: async (...a) => calls.push(['drawing_board', ...a]), moveGroupPage: async (...a) => { calls.push(['page', ...a]); throw new Error('not_member'); } };
   const notify = (...a) => notes.push(a);
-  assert.equal(await m.moveResource({ kind: 'board', id: 'b', label: 'Plan' }, '', { api, notify }), true);
+  assert.equal(await m.moveResource({ kind: 'drawing_board', id: 'b', label: 'Plan' }, '', { api, notify }), true);
   assert.equal(await m.moveResource({ kind: 'page', id: 'p', label: 'App' }, 'lab', { api, notify }), false);
-  assert.deepEqual(calls, [['board', 'b', ''], ['page', 'p', 'lab']]);
+  assert.deepEqual(calls, [['drawing_board', 'b', ''], ['page', 'p', 'lab']]);
   assert.deepEqual(notes, [['Moved Plan out of its group'], ['Could not move App: not_member', true]]);
 });
 
@@ -60,7 +60,7 @@ function railSection(doc, id) {
 
 const agentItem = (agent, group) => ({ key: `pane:agent:${agent.agent_id}`, kind: 'terminal', title: agent.title, group, status: { agent } });
 
-test('the Collab panel: a drop on another group\'s section moves an agent, board or page; anything else is no move', async (t) => {
+test('the Collab panel: a drop on another group\'s section moves an agent, drawing board or page; anything else is no move', async (t) => {
   const harness = await createPreactHarness(t);
   const a = await harness.importDashboardModule('js/collab-rail-actions.js');
   const doc = harness.document;
@@ -79,8 +79,8 @@ test('the Collab panel: a drop on another group\'s section moves an agent, board
   assert.equal(a.railGroupDrop({ ...alpha, pane: { seed: { remote: { peer: 'p', agent: 'x' } } } }, lab, SNAP, false), null, "another node's agent");
   const loner = agentItem(SNAP.agents[1], '');
   assert.equal(a.railGroupDrop(loner, none, SNAP, false), null, 'an ungrouped agent onto Not in a group');
-  const board = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: { kind: 'board', id: 'plan', state: 'closed' } };
-  assert.deepEqual(a.railGroupDrop(board, none, SNAP, false).resource, { kind: 'board', id: 'plan', label: 'Plan', group: 'crew', owner: '', closed: true });
+  const drawingBoard = { key: 'drawing_board:plan', kind: 'drawing_board', title: 'Plan', group: 'crew', resource: { kind: 'drawing_board', id: 'plan', state: 'closed' } };
+  assert.deepEqual(a.railGroupDrop(drawingBoard, none, SNAP, false).resource, { kind: 'drawing_board', id: 'plan', label: 'Plan', group: 'crew', owner: '', closed: true });
   const page = { key: 'page:p1', kind: 'page', title: 'App', group: 'crew', resource: { kind: 'page', id: 'p1', owner: 'agt_a', state: 'running' } };
   assert.equal(a.railGroupDrop(page, lab, SNAP, false).to, 'lab', "an agent's page to its agent's other group");
   assert.equal(a.railGroupDrop(page, ops, SNAP, false), null, 'as the ⋯ menu would not offer');
@@ -88,7 +88,7 @@ test('the Collab panel: a drop on another group\'s section moves an agent, board
   assert.equal(a.railGroupDrop(shell, lab, SNAP, false), null, 'a group shell stays');
 });
 
-test('the Collab panel moves an agent through the Groups tab\'s drop operations, and a board as its ⋯ menu does', async (t) => {
+test('the Collab panel moves an agent through the Groups tab\'s drop operations, and a drawing board as its ⋯ menu does', async (t) => {
   const harness = await createPreactHarness(t);
   const a = await harness.importDashboardModule('js/collab-rail-actions.js');
   const calls = [];
@@ -110,8 +110,8 @@ test('the Collab panel moves an agent through the Groups tab\'s drop operations,
     ['add', { conv: 'cz', agent: 'agt_z', label: 'loner', sourceGroup: '', sourceUngrouped: true }, 'ops', 'ctx'],
   ]);
   const moved = [];
-  const api = { moveBoard: async (...args) => moved.push(args) };
-  await a.railItemToGroup({ kind: 'board' }, { to: 'ops', resource: { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' } }, { api, confirm: async () => true });
+  const api = { moveDrawingBoard: async (...args) => moved.push(args) };
+  await a.railItemToGroup({ kind: 'drawing_board' }, { to: 'ops', resource: { kind: 'drawing_board', id: 'plan', label: 'Plan', group: 'crew' } }, { api, confirm: async () => true });
   assert.deepEqual(moved, [['plan', 'ops']]);
 });
 
@@ -123,7 +123,7 @@ test('a rail drag over another group\'s section outlines it, and the drop there 
   const lab = railSection(doc, 2);
   const source = doc.body.appendChild(doc.createElement('div'));
   const moved = [];
-  const item = { key: 'board:plan', kind: 'board', title: 'Plan', group: 'crew', resource: { kind: 'board', id: 'plan', state: 'closed' } };
+  const item = { key: 'drawing_board:plan', kind: 'drawing_board', title: 'Plan', group: 'crew', resource: { kind: 'drawing_board', id: 'plan', state: 'closed' } };
   const data = new Map();
   const dataTransfer = { setData: (k, v) => data.set(k, v), dropEffect: 'none', effectAllowed: 'all' };
   a.startRailDrag({ currentTarget: source, dataTransfer }, item, { snapshot: { value: SNAP }, notify: () => {}, confirm: async () => true });
@@ -136,13 +136,13 @@ test('a rail drag over another group\'s section outlines it, and the drop there 
   const over = fire('dragover', lab);
   assert.equal(over.defaultPrevented, true, 'the section takes the drop');
   assert.ok(lab.parentElement.classList.contains('cr-drop-over'), 'and is outlined');
-  // The drop runs the board move; its API is the process run API, which a
+  // The drop runs the drawing board move; its API is the process run API, which a
   // test cannot reach, so the route itself is pinned by the test above. Here
   // the drop only has to be taken and the outline cleared.
   const { processRunApi } = await harness.importDashboardModule('js/process-context.js');
-  const real = processRunApi.moveBoard;
-  processRunApi.moveBoard = async (...args) => moved.push(args);
-  t.after(() => { processRunApi.moveBoard = real; });
+  const real = processRunApi.moveDrawingBoard;
+  processRunApi.moveDrawingBoard = async (...args) => moved.push(args);
+  t.after(() => { processRunApi.moveDrawingBoard = real; });
   const dropped = fire('drop', lab);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(dropped.defaultPrevented, true);
@@ -150,7 +150,7 @@ test('a rail drag over another group\'s section outlines it, and the drop there 
   assert.deepEqual(moved, [['plan', 'lab']]);
 });
 
-test('the Groups tab: a board or page row dragged onto another group\'s box moves it there', async (t) => {
+test('the Groups tab: a drawing board or page row dragged onto another group\'s box moves it there', async (t) => {
   const harness = await createPreactHarness(t);
   const dnd = await harness.importDashboardModule('js/resource-dnd.js');
   const doc = harness.document;
@@ -163,14 +163,14 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   const ops = box('data-dnd-target-group', 'ops');
   const ungrouped = box('data-dnd-target-ungrouped', '1');
   const row = crew.appendChild(doc.createElement('div'));
-  row.setAttribute('data-dnd-resource', JSON.stringify({ kind: 'board', id: 'plan', label: 'Plan', group: 'crew' }));
+  row.setAttribute('data-dnd-resource', JSON.stringify({ kind: 'drawing_board', id: 'plan', label: 'Plan', group: 'crew' }));
   const button = row.appendChild(doc.createElement('button'));
   row.draggable = true;
   const moved = [];
   const notes = [];
   const asked = [];
   let answer = true;
-  const unbind = dnd.bindResourceDnd(doc, { api: { moveBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {},
+  const unbind = dnd.bindResourceDnd(doc, { api: { moveDrawingBoard: async (...args) => moved.push(args) }, notify: (...a) => notes.push(a), snapshot: () => SNAP, refresh: () => {},
     confirm: async (opts) => { asked.push(opts.title); return answer; } });
   t.after(unbind);
   const dataTransfer = { setData: () => {}, types: ['application/x-tclaude-resource'], dropEffect: 'none', effectAllowed: 'all' };
@@ -189,7 +189,7 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   assert.equal(fire('dragover', crew).defaultPrevented, false, 'not its own group');
   assert.equal(fire('dragover', ops).defaultPrevented, true);
   assert.ok(ops.parentElement.classList.contains('dnd-drop-over'), 'the box is outlined');
-  assert.equal(fire('dragover', ungrouped).defaultPrevented, true, 'a board may leave every group');
+  assert.equal(fire('dragover', ungrouped).defaultPrevented, true, 'a drawing board may leave every group');
   assert.equal(ops.parentElement.classList.contains('dnd-drop-over'), false, 'one box at a time');
   fire('drop', ops);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -210,7 +210,7 @@ test('the Groups tab: a board or page row dragged onto another group\'s box move
   assert.equal(doc.querySelector('.dnd-drop-over'), null);
 
   // A resource drag whose row a re-render detached never reaches the
-  // document's dragend; a later member drag must not carry the board along.
+  // document's dragend; a later member drag must not carry the drawing board along.
   fire('dragstart', row);
   row.remove();
   const agentRow = ops.appendChild(doc.createElement('div'));
@@ -234,7 +234,7 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
     return row;
   };
   const shell = rowOf({ kind: 'shell', id: 'term:ag_1:start:', label: 'worker shell', group: 'crew' });
-  const board = rowOf({ kind: 'board', id: 'plan', label: 'Plan', group: 'crew' });
+  const drawingBoard = rowOf({ kind: 'drawing_board', id: 'plan', label: 'Plan', group: 'crew' });
   const removed = [];
   t.after(dnd.registerResourceRemover('shell:term:ag_1:start:', async () => removed.push('shell')));
   const unbind = dnd.bindResourceDnd(doc, { api: {}, notify: () => {}, snapshot: () => SNAP, refresh: () => {}, confirm: async () => true });
@@ -247,10 +247,10 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
     return event;
   };
 
-  fire('dragstart', board);
+  fire('dragstart', drawingBoard);
   assert.equal(bin.classList.contains('show'), false, 'a row with no remover registered gets no bin');
   assert.equal(fire('dragover', bin).defaultPrevented, false);
-  fire('dragend', board);
+  fire('dragend', drawingBoard);
 
   fire('dragstart', shell);
   assert.ok(bin.classList.contains('show'), 'the bin shows for a row with a 🗑');
@@ -263,20 +263,20 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
   assert.equal(bin.classList.contains('show'), false, 'the bin hides after the drop');
 
   // A drag that ends in a move (dragged already let go) still hides the bin.
-  t.after(dnd.registerResourceRemover('board:plan', async () => removed.push('board')));
+  t.after(dnd.registerResourceRemover('drawing_board:plan', async () => removed.push('drawing_board')));
   const ops = doc.body.appendChild(doc.createElement('details'));
   ops.setAttribute('data-dnd-target-group', 'ops');
   const opsBox = ops.appendChild(doc.createElement('div'));
-  fire('dragstart', board);
+  fire('dragstart', drawingBoard);
   assert.ok(bin.classList.contains('show'));
   fire('dragover', opsBox);
   fire('drop', opsBox);
-  fire('dragend', board);
+  fire('dragend', drawingBoard);
   assert.equal(bin.classList.contains('show'), false, 'the bin hides after a move too');
   assert.equal(bin.classList.contains('dnd-trash-template-mode'), false);
 });
 
-test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies a board or a process', async (t) => {
+test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies a drawing board or a process', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/resource-moves.js');
   const snap = { ...SNAP, group_resources: [
@@ -294,9 +294,9 @@ test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies
   assert.equal(m.canMoveResource(proc, '', snap), false, 'a process is always some group\'s');
   assert.equal(m.canCopyResource(proc, 'ops', snap), true);
   assert.equal(m.canCopyResource(proc, 'lab', snap), false);
-  const board = { kind: 'board', id: 'plan', label: 'Plan', group: 'crew' };
-  assert.equal(m.canCopyResource(board, 'crew', snap), true, 'a board copies into its own group too, as a second board');
-  assert.equal(m.canCopyResource(board, '', snap), false, 'a copy goes into a group');
+  const drawingBoard = { kind: 'drawing_board', id: 'plan', label: 'Plan', group: 'crew' };
+  assert.equal(m.canCopyResource(drawingBoard, 'crew', snap), true, 'a drawing board copies into its own group too, as a second drawing board');
+  assert.equal(m.canCopyResource(drawingBoard, '', snap), false, 'a copy goes into a group');
   assert.equal(m.canCopyResource({ kind: 'page', id: 'p', group: 'crew', owner: 'agt_a' }, 'lab', snap), false, 'a page does not copy');
   assert.equal(m.canCopyResource({ kind: 'shell', id: 'crew', group: 'crew' }, 'lab', snap), false, 'nor a shell');
 
@@ -305,8 +305,8 @@ test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies
   const api = {
     pinProcess: async (...a) => calls.push(['pin', ...a]),
     unpinProcess: async (...a) => calls.push(['unpin', ...a]),
-    boardIds: async () => ['plan', 'plan-copy'],
-    copyBoard: async (...a) => { calls.push(['copyBoard', ...a]); return { id: a[3], title: a[2] }; },
+    drawingBoardIds: async () => ['plan', 'plan-copy'],
+    copyDrawingBoard: async (...a) => { calls.push(['copyDrawingBoard', ...a]); return { id: a[3], title: a[2] }; },
   };
   const notify = (msg) => notes.push(msg);
   assert.equal(await m.moveResource(proc, 'ops', { api, notify }), true);
@@ -317,8 +317,8 @@ test('a process moves by pinning it there and unpinning it here; Ctrl/Cmd copies
   notes.splice(0);
   assert.equal(await m.copyResource(proc, 'ops', { api, notify }), true);
   assert.deepEqual(calls.splice(0), [['pin', 'ops', 'review']], 'a copy only pins');
-  assert.equal(await m.copyResource(board, 'ops', { api, notify }), true);
-  assert.deepEqual(calls.splice(0), [['copyBoard', 'plan', 'ops', 'Plan (copy)', 'plan-copy-2']], 'a free id for the copy');
+  assert.equal(await m.copyResource(drawingBoard, 'ops', { api, notify }), true);
+  assert.deepEqual(calls.splice(0), [['copyDrawingBoard', 'plan', 'ops', 'Plan (copy)', 'plan-copy-2']], 'a free id for the copy');
   assert.deepEqual(notes, ['Added Review to ops', 'Copied Plan to ops as Plan (copy)']);
 });
 

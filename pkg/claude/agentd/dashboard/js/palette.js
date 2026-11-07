@@ -1057,14 +1057,14 @@ export function buildCommands(snapshot) {
   // A drawing board, a live page or a process made in a named group, as the
   // group's ＋ makes them ("open drawing board in tclaude"). The group's
   // shell is §1's "Open terminal in group". Last, so a plain word they
-  // share with an older command (process, board, start) keeps its old first hit.
+  // share with an older command (process, drawing board, start) keeps its old first hit.
   const make = defaultNewContext();
   cmds.push(...buildResourceCreateCommands(groups, {
     wiz,
     processes: processesAvailable(snap),
     touch: recordGroupInteraction,
     make: {
-      board: make.board,
+      drawingBoard: make.drawingBoard,
       page: (g) => make.page(g, []),
       process: (g) => requestProcessStart({ group: g.name }, {
         prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],

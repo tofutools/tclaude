@@ -233,7 +233,7 @@ var peerViewLocalRoutes = []string{
 	"POST /api/plugins/{name}/steps/{idx}/run",
 	"POST /api/plugins/{name}/steps/{idx}/stop",
 	// The resource catalogue the permission editor's resource= picker
-	// searches: every board and template with its groups, like the editor.
+	// searches: every drawing board and template with its groups, like the editor.
 	"GET /api/permissions/scope-values",
 	"/api/power-on",
 	"/api/pr-checks",
@@ -361,14 +361,14 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
-	// A collab board's live socket and presence, the operator's activity mail
+	// A collab drawing board's live socket and presence, the operator's activity mail
 	// and undo, its rendered snapshot, inviting agents, ending their sessions
 	// and deleting or copying it stay this node's own dashboard's; reading and
-	// editing one have peer routes (peer_boards.go).
-	"DELETE /api/boards/{id}", "POST /api/boards/{id}/copy",
-	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",
-	"GET /api/boards/{id}/live", "POST /api/boards/{id}/undo", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view",
-	"DELETE /api/boards/{id}/sessions",
+	// editing one have peer routes (peer_drawing_boards.go).
+	"DELETE /api/drawing-boards/{id}", "POST /api/drawing-boards/{id}/copy",
+	"PUT /api/drawing-boards/{id}/snapshot", "GET /api/drawing-boards/{id}/snapshot",
+	"GET /api/drawing-boards/{id}/live", "POST /api/drawing-boards/{id}/undo", "POST /api/drawing-boards/{id}/participants", "POST /api/drawing-boards/{id}/events", "POST /api/drawing-boards/{id}/view",
+	"DELETE /api/drawing-boards/{id}/sessions",
 	// Live pages are this node's own agents' stage origins.
 	"POST /api/pages", "DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
 	"POST /api/pages/{id}/reopen", "POST /api/pages/{id}/delete", "POST /api/pages/{id}/reload",

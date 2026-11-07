@@ -74,7 +74,7 @@ export function describeElement(el, y = null) {
     text: field || masked ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
     id: control.id || '',
     ref: control.id ? `#${control.id}` : '',
-    board_element: el.closest?.('[data-element]')?.getAttribute?.('data-element') || '',
+    drawing_board_element: el.closest?.('[data-element]')?.getAttribute?.('data-element') || '',
   };
   return out;
 }
@@ -92,23 +92,23 @@ export function terminalRow(el, y) {
   }) || null;
 }
 
-// boardContext reads the open board and the region of it on screen from the
+// drawingBoardContext reads the open drawing board and the region of it on screen from the
 // live drawing, so it is as fresh as the image.
-export function boardContext(doc) {
-  const viewport = doc.querySelector?.('[data-board-viewport]');
-  const svg = viewport?.closest?.('[data-board-id]');
+export function drawingBoardContext(doc) {
+  const viewport = doc.querySelector?.('[data-drawing-board-viewport]');
+  const svg = viewport?.closest?.('[data-drawing-board-id]');
   if (!svg) return null;
-  const board = { id: svg.getAttribute('data-board-id') };
+  const drawingBoard = { id: svg.getAttribute('data-drawing-board-id') };
   const ctm = viewport.getScreenCTM?.();
   const rect = svg.getBoundingClientRect?.();
   if (ctm?.a && rect?.width) {
-    board.zoom = Math.round(ctm.a * 1000) / 1000;
-    board.region = {
+    drawingBoard.zoom = Math.round(ctm.a * 1000) / 1000;
+    drawingBoard.region = {
       x: Math.round((rect.left - ctm.e) / ctm.a), y: Math.round((rect.top - ctm.f) / ctm.d),
       width: Math.round(rect.width / ctm.a), height: Math.round(rect.height / ctm.d),
     };
   }
-  return board;
+  return drawingBoard;
 }
 
 export function captureContext({ win, tab, pointer, marks = [], now = Date.now() }) {
@@ -131,8 +131,8 @@ export function captureContext({ win, tab, pointer, marks = [], now = Date.now()
   if (active && active !== doc.body && active !== doc.documentElement) context.focus = describeElement(active);
   const selection = clip(selectedText(win), 400);
   if (selection && !selectionIsMasked(win)) context.selection = selection;
-  const board = boardContext(doc);
-  if (board) context.board = board;
+  const drawingBoard = drawingBoardContext(doc);
+  if (drawingBoard) context.drawingBoard = drawingBoard;
   if (marks.length) context.marks = marks;
   return context;
 }

@@ -59,7 +59,7 @@ Across the top, from left to right:
 | Tab | Use it to |
 |---|---|
 | [Groups](dashboard-groups.md) | See your agents, start new ones, open terminals |
-| [Collab](dashboard-terminals.md) | Work in terminals and [boards](boards.md) in the browser. |
+| [Collab](dashboard-terminals.md) | Work in terminals and [drawing boards](drawing-boards.md) in the browser. |
 | [Automations](dashboard-automations.md) | Schedule jobs, set standing orders and triggers, edit processes |
 | [Plugins](dashboard-automations.md#plugins) | Run shell-step plugins. Hidden until you have one. |
 | [Access](dashboard-access.md) | See and change permissions, grant sudo |
@@ -93,7 +93,7 @@ power, repository updates and every manager dialog.
 - `terminal <group>` or `shell <group>` opens a shell in the group's default
   directory.
 - `drawing board <group>` (or `whiteboard`, or a phrase such as `open drawing
-  board in tclaude`) makes a drawing board in that group and opens it.
+  drawing board in tclaude`) makes a drawing board in that group and opens it.
   `page <group>` makes a live page there, and `process <group>` opens the
   group's start form. The 🧙 words `slate`, `looking glass` and `rite` find
   them too, in either theme.
@@ -104,7 +104,7 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 ## Keyboard shortcuts
 
 **Config › Keyboard** lists every shortcut, including those of the process
-editor, boards and the image viewer, with its keys on Windows and Linux and on
+editor, drawing boards and the image viewer, with its keys on Windows and Linux and on
 macOS, and lets you [rebind](dashboard-config.md#keyboard) the dashboard-wide and
 terminal ones. The table below shows the defaults. Keys are written one name at a time: **Ctrl ,** is Ctrl and the comma
 key, not a plus. Shortcuts follow the key's position, so they sit on the same

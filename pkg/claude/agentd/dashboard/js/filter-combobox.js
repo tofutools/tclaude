@@ -11,7 +11,7 @@
 //   - opened with nothing typed over more than `cap` items, it shows a
 //     summary of the groups (counts, never members) instead of rows;
 //   - "kind:" and "group:" query prefixes narrow by kind or group, so
-//     "board:rel" or "group:infra rel" refine a long result.
+//     "drawing_board:rel" or "group:infra rel" refine a long result.
 //
 // Props:
 //   items        [{ key, label, hint?, kind?, group?, keywords?, disabled?, reason?, title? }]
@@ -69,8 +69,8 @@ const html = htm.bind(h);
 let nextComboboxID = 0;
 
 // parseComboQuery splits "kind:" and "group:" prefixes off a query. A prefix
-// that names no known kind stays part of the text, so a typed "board:plan"
-// both narrows to boards and searches for "plan".
+// that names no known kind stays part of the text, so a typed "drawing_board:plan"
+// both narrows to drawing boards and searches for "plan".
 export function parseComboQuery(query, kinds = []) {
   const out = { text: [], kind: '', group: '' };
   for (const token of String(query || '').trim().split(/\s+/).filter(Boolean)) {

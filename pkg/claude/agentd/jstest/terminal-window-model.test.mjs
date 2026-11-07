@@ -11,12 +11,12 @@ async function model(t) {
   return harness.importDashboardModule('js/terminal-window-model.js');
 }
 
-test('a directory or group shell floats; an agent, a board and a peer do not', async (t) => {
+test('a directory or group shell floats; an agent, a drawing board and a peer do not', async (t) => {
   const { overlayablePane } = await model(t);
   assert.equal(overlayablePane(shell), true);
   assert.equal(overlayablePane(groupShell), true);
   assert.equal(overlayablePane({ key: `window:${AGENT}`, seed: { ws: `/api/open-window-ws/${AGENT}`, agent: AGENT } }), false);
-  assert.equal(overlayablePane({ key: 'board:b', seed: { board: 'b' } }), false);
+  assert.equal(overlayablePane({ key: 'drawing_board:b', seed: { drawingBoard: 'b' } }), false);
   assert.equal(overlayablePane({ key: 'x', seed: { ws: shell.seed.ws, remote: { peer: 'p' } } }), false);
   assert.equal(overlayablePane(null), false);
 });

@@ -35,7 +35,7 @@ Before comparing, list what is already decided, so you do not raise it again:
 ## 2. Compare, one doc page at a time
 
 Cover the pages about the dashboard: `docs/dashboard*.md`, `docs/fleet-ui.md`,
-`docs/companion.md`, `docs/boards.md`, `docs/processes.md` and the dashboard parts of
+`docs/companion.md`, `docs/drawing-boards.md`, `docs/processes.md` and the dashboard parts of
 `docs/learn/`. Use a subagent per few pages, so one context holds no more than it
 can read closely. Read each doc beside the stops it describes, and the
 `pkg/claude/agentd/dashboard/js` source when the tour cannot settle it.

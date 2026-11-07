@@ -13,7 +13,7 @@
 // Pure: the seams in `make` do the work, so a node test drives it directly.
 
 // buildResourceCreateCommands is one command per group and kind. make holds
-// { board(group), page(group), process(group) }; processes is whether this
+// { drawingBoard(group), page(group), process(group) }; processes is whether this
 // node offers processes; wiz(regular, wizard) picks the theme's wording.
 export function buildResourceCreateCommands(groups = [], {
   wiz = (regular) => regular, processes = false, make = {}, touch = () => {},
@@ -29,7 +29,7 @@ export function buildResourceCreateCommands(groups = [], {
         `a slate the heroes of ${group} draw on with you`),
       keywords: `new create make add open start drawing board whiteboard white board sketch draw diagram canvas excalidraw resource group ${group}`
         + ' slate scrying map chart party',
-      run: run('board'),
+      run: run('drawingBoard'),
     });
     cmds.push({
       icon: wiz('▭', '🪞'),

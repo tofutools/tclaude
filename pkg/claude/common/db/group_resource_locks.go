@@ -9,8 +9,8 @@ import (
 
 // Group resource kinds a lock applies to.
 const (
-	GroupResourceProcess = "process" // a process template, by template id
-	GroupResourceBoard   = "board"   // a collab board, by board id
+	GroupResourceProcess      = "process"       // a process template, by template id
+	GroupResourceDrawingBoard = "drawing_board" // a collab drawing board, by drawing board id
 )
 
 // GroupResourceLocked reports whether the operator locked a resource against

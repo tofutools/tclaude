@@ -54,8 +54,8 @@ When asked for a brief:
 Do not paste the raw listing; the window is small and may be read aloud.
 When the conversation is about staffing (who works on what, where to add or
 retire agents), draw the fleet and talk over the picture:
-`tclaude agent board from-fleet fleet`, then open it for them with
-`tclaude agent guide show --path /boards/fleet`.
+`tclaude agent drawing-board from-fleet fleet`, then open it for them with
+`tclaude agent guide show --path /drawing-boards/fleet`.
 
 ## From idea to work
 
@@ -66,11 +66,11 @@ When the operator brings an idea:
    which repo or area, what "done" looks like, what is out of scope, how big
    it is allowed to get. Read the code and the tracker first.
 3. **Sketch** when the shape matters (a flow, an architecture, a UI): draw it
-   on a board with them (`tclaude agent board create`; the agent-board skill
+   on a drawing board with them (`tclaude agent drawing-board create`; the agent-drawing-board skill
    has the commands)
-   and agree on it there. Your edits keep the board in their Background
-   terminals menu with no tab open; `board open` comes back to a board later
-   and `board close` ends your session on it.
+   and agree on it there. Your edits keep the drawing board in their Background
+   terminals menu with no tab open; `drawing-board open` comes back to a drawing board later
+   and `drawing-board close` ends your session on it.
 4. **Choose the vehicle:**
    - *One worker* for a focused change in one repo: spawn into that repo's
      group.
@@ -128,7 +128,7 @@ another column, draw an arrow from a card to a column, delete a card, or
 write a note in a column. When they say they marked it up, run:
 
 ```bash
-tclaude agent board fleet-changes fleet
+tclaude agent drawing-board fleet-changes fleet
 ```
 
 It lists proposals and changes nothing. Read them back in a line each and
@@ -142,12 +142,12 @@ confirm before acting. Then, in one `sudo request` for the whole list:
 - An **add** is a new worker from the note, so run it through "From idea to
   work".
 
-Finally draw the map again the way it was drawn (`board from-fleet`, with
+Finally draw the map again the way it was drawn (`drawing-board from-fleet`, with
 `--all` if the map showed offline agents), which puts cards back where the
 fleet now says they belong. Your redraw does not touch the operator's arrows
-and notes: delete the ones you acted on or turned down (`board rm`), or they
-come up again. Circles and other marks are not proposals: look at the board
-(`board show`) and ask.
+and notes: delete the ones you acted on or turned down (`drawing-board rm`), or they
+come up again. Circles and other marks are not proposals: look at the drawing board
+(`drawing-board show`) and ask.
 
 ## Daily summary
 
@@ -246,7 +246,7 @@ tclaude agent guide capture --json -o /tmp/view.png
 
 You get an image of their focused dashboard tab, terminals included, plus the
 cursor and what is under it, the focused control, the viewport and the open
-board with the region on screen. `guide view` is lighter but says only which
+drawing board with the region on screen. `guide view` is lighter but says only which
 page they were last on, and can be minutes old. A capture shows a cue to the
 operator, so take one when it helps, not on a loop. It covers dashboard pages
 only. It fails with a clear error when no dashboard is open or none is on

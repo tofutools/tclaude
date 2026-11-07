@@ -17,7 +17,7 @@ import (
 // agent harness's user skill directory on demand, since `go install` strips the
 // source tree and we can't symlink something that's no longer on disk.
 //
-//go:embed skills/agent-board/SKILL.md
+//go:embed skills/agent-drawing-board/SKILL.md
 //go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-task/SKILL.md skills/agent-page/SKILL.md skills/present-pr-to-operator/SKILL.md skills/agent-lifecycle/SKILL.md skills/reincarnate/SKILL.md skills/agent-schedule/SKILL.md skills/agent-remote-control/SKILL.md skills/agent-dir/SKILL.md skills/agent-circles/SKILL.md skills/human-notify/SKILL.md skills/human-clipboard/SKILL.md skills/proxy-git/SKILL.md skills/proxy-linear/SKILL.md skills/proxy-awb/SKILL.md skills/proxy-http/SKILL.md skills/process-templates skills/tclaude-setup/SKILL.md skills/tclaude-fleet/SKILL.md
 //go:embed skills/process-runs/SKILL.md
 //go:embed skills/taskboard/SKILL.md
@@ -30,7 +30,7 @@ var bundledSkills = []string{
 	"agent-rename",
 	"agent-task",
 	"agent-page",
-	"agent-board",
+	"agent-drawing-board",
 	"present-pr-to-operator",
 	"agent-lifecycle",
 	"reincarnate",
@@ -204,6 +204,9 @@ func installTreesInRoot(root string, force bool, skills []string, write func(nam
 	var firstExistsErr error
 	for _, name := range skills {
 		dst := filepath.Join(root, name)
+		if err := removeRetiredSkills(root, name); err != nil {
+			return installed, err
+		}
 		if !force {
 			if _, err := os.Stat(dst); err == nil {
 				if firstExistsErr == nil {

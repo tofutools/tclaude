@@ -193,7 +193,7 @@ func TestStageStripsCredentialsGoingIn(t *testing.T) {
 		"Proxy-Foo":           "bar",
 		"X-Forwarded-For":     "10.0.0.1",
 		"Forwarded":           "for=10.0.0.1",
-		"Referer":             "http://127.0.0.1:" + e.port + "/boards",
+		"Referer":             "http://127.0.0.1:" + e.port + "/drawing-boards",
 	})
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	got := e.fake.last(t)

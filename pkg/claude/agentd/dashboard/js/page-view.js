@@ -365,12 +365,12 @@ export function PageOverlayWindow({ instance, overlay, strip, close, snapshot, f
   const tools = html`<${Button} size="sm" class="mux-btn" title="Move this page to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
     <${Button} size="sm" class="mux-btn" title="Move this page to a browser window of its own" onClick=${toWindow}>Pop out<//>`;
   const title = html`${strip}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
       onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
-    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
       onClick=${close.onClose}>×</button>`}`;
-  return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay page-overlay" frameClass="board-overlay-resize-frame"
-    titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Page ${label}`} title=${title}
+  return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="drawing-board-overlay page-overlay" frameClass="drawing-board-overlay-resize-frame"
+    titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Page ${label}`} title=${title}
     controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
     <${PageView} pageId=${instance.page} snapshot=${snapshot} tools=${tools} fetchImpl=${fetchImpl} notify=${notify} win=${win}
       onOpenSender=${(sender) => void openWebWindowPane(sender.agent, sender.name, { harness: sender.harness })} />

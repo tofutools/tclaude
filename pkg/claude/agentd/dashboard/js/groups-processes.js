@@ -364,7 +364,7 @@ function plural(n, word) {
 
 // RunControls is the Processes perspective's version of the Agents row
 // (spawn agent, power on, shutdown), in the same places: ＋ (`add`, a
-// process for the group or one agent, and in Both a board, page or shell),
+// process for the group or one agent, and in Both a drawing board, page or shell),
 // resume every paused run, pause every running one. Pause stands in for shutdown because
 // it is reversible: work in flight finishes, nothing new is dispatched until
 // resume. Ending runs (cancel) is deliberately not one click away. Pause and
@@ -571,7 +571,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       : !fused && fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
-  // In Both, ＋ also makes the boards, pages and shell its section lists.
+  // In Both, ＋ also makes the drawing boards, pages and shell its section lists.
   const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
     notify=${notify || defaultNotify} processesOnly=${!fused} open=${adding} onOpen=${setAdding} onAddProcess=${startScope} />`;
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
@@ -603,17 +603,17 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${!fused && !runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
-    ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
+    ${fused && html`<${GroupResources} group=${group} drawingBoards=${entry?.drawingBoards || []} pages=${entry?.pages || []} api=${api} source=${source}
       notify=${notify || defaultNotify} nameOf=${nameOf} head=${!savedProcesses.length} />`}`;
   if (fused) {
     const shell = groupShellsOf(dashboardState.snapshot.value, group).length;
-    const listed = savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell;
+    const listed = savedProcesses.length + (entry?.drawingBoards || []).length + (entry?.pages || []).length + shell;
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0 || listed > 0;
     // One line only when the section holds nothing at all: the count is
     // what it lists, and the ＋ menu is the one way to add (no "Get started ▸").
     const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
-      ? 'Nothing here yet. The ＋ menu adds a rite, board, page or shell.'
-      : 'No resources yet. The ＋ menu adds a process, board, page or shell.'}</div>`;
+      ? 'Nothing here yet. The ＋ menu adds a rite, drawing board, page or shell.'
+      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
@@ -741,17 +741,17 @@ function ungroupedRuns(perspective, group) {
   return memberRunEntries(perspective.context, group.members || [], perspective.filter);
 }
 
-// ungroupedBoards are the boards in no group, as the snapshot lists them
-// (group_id 0), in the shape GroupResources' board rows read.
-export function ungroupedBoards(snapshotValue) {
+// ungroupedDrawingBoards are the drawing boards in no group, as the snapshot lists them
+// (group_id 0), in the shape GroupResources' drawing board rows read.
+export function ungroupedDrawingBoards(snapshotValue) {
   return (snapshotValue?.group_resources || [])
-    .filter((r) => r && r.kind === 'board' && !r.group_id)
+    .filter((r) => r && r.kind === 'drawing_board' && !r.group_id)
     .map((r) => ({ id: r.id, title: r.title || r.id, editing: Number.parseInt(r.detail, 10) || 0, agentsLocked: !!r.locked }));
 }
 
 // UngroupedProcessBody is Ungrouped's body in Processes and Both. In Both it
 // is laid out as a real group's: an Agents section (`agents`, the member
-// table, and `count`), then Resources: the boards in no group, with the
+// table, and `count`), then Resources: the drawing boards in no group, with the
 // same rows and ⋯ menu (Move to group links one), then its agents' runs.
 // There is no ＋: what is made here belongs in a group.
 export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot = dashboardState.snapshot }) {
@@ -763,25 +763,25 @@ export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot
   const key = group.key || group.name;
   if (perspective.fused) {
     // The snapshot is this node's: another node's Ungrouped (the fused
-    // fleet view) lists none of its boards.
+    // fleet view) lists none of its drawing boards.
     const own = !group.fleet_node || group.fleet_node.local;
-    const boards = own ? ungroupedBoards(snapshot?.value) : [];
-    const shown = boards.length > 0 || entries.length > 0;
+    const drawingBoards = own ? ungroupedDrawingBoards(snapshot?.value) : [];
+    const shown = drawingBoards.length > 0 || entries.length > 0;
     const agentsSection = html`<${FusedSection} group=${key} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${count}>${agents}<//>`;
-    // Another node's boards are not read here, so its Ungrouped claims none:
+    // Another node's drawing boards are not read here, so its Ungrouped claims none:
     // Resources shows only for its agents' runs.
     if (!own && !entries.length) return agentsSection;
     return html`${agentsSection}
-      <${FusedSection} group=${key} section="processes" label="Resources" count=${boards.length} auto=${shown}
+      <${FusedSection} group=${key} section="processes" label="Resources" count=${drawingBoards.length} auto=${shown}
         attrs=${{ 'data-fused-processes': key }}>
         <div class="gp-group" data-process-group=${key}>
-          <${GroupResources} group=${{ id: 0, name: key }} boards=${boards} api=${perspective.api} source=${perspective.source}
+          <${GroupResources} group=${{ id: 0, name: key }} drawingBoards=${drawingBoards} api=${perspective.api} source=${perspective.source}
             notify=${perspective.notify || defaultNotify} snapshot=${snapshot} />
           <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
             onOpen=${(runId) => perspective.onFocusRun({ group: key, runId })} />
           ${!shown && own && html`<div class="gp-empty ui-empty" data-resources-empty=${key}>${wizard
-            ? 'Nothing here. A board made outside a party lands here; ⋯ binds it to one.'
-            : 'No resources outside groups. A board made outside a group lands here; its ⋯ moves it into one.'}</div>`}
+            ? 'Nothing here. A drawing board made outside a party lands here; ⋯ binds it to one.'
+            : 'No resources outside groups. A drawing board made outside a group lands here; its ⋯ moves it into one.'}</div>`}
         </div>
       <//>`;
   }

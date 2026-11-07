@@ -30,7 +30,7 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
-	// ScopeDimResource names specific resources as kind:id (board:plan,
+	// ScopeDimResource names specific resources as kind:id (drawing_board:plan,
 	// process_template:release), for the resources.read/write umbrellas.
 	ScopeDimResource ScopeDim = "resource"
 	// ScopeDimPeer identifies a trusted federation peer, optionally followed by /group.
@@ -230,7 +230,7 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 		kind, id, ok := strings.Cut(matcher, ":")
 		if !ok || !isResourceScopeKind(kind) || strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) {
 			return fmt.Errorf("permission scope dimension %q: %q is not kind:id with kind %s or %s "+
-				"(for example board:plan)", dim, matcher, resourceScopeKindBoard, resourceScopeKindProcessTemplate)
+				"(for example drawing_board:plan)", dim, matcher, resourceScopeKindDrawingBoard, resourceScopeKindProcessTemplate)
 		}
 	case permissionScopeMatchWorkspaceKey:
 		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB

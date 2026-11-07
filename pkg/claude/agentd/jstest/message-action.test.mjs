@@ -20,17 +20,17 @@ async function load(t) {
 function recorder() {
   const calls = [];
   const note = (name) => (target) => { calls.push([name, target]); return true; };
-  return { calls, openers: { terminal: note('terminal'), board: note('board'), url: note('url'), path: note('path') } };
+  return { calls, openers: { terminal: note('terminal'), drawingBoard: note('drawing_board'), url: note('url'), path: note('path') } };
 }
 
 test('what the daemon resolved is what runs, and nothing else', async (t) => {
   const { runMessageAction } = await load(t);
   const { calls, openers } = recorder();
   assert.equal(await runMessageAction({ kind: 'terminal', agent: 'agt_a', group: 'g' }, openers), true);
-  assert.equal(await runMessageAction({ kind: 'board', board: 'brd_1', title: 'Plan' }, openers), true);
+  assert.equal(await runMessageAction({ kind: 'drawing_board', drawingBoard: 'brd_1', title: 'Plan' }, openers), true);
   assert.equal(await runMessageAction({ kind: 'pr', url: 'https://github.com/o/r/pull/1' }, openers), true);
   assert.equal(await runMessageAction({ kind: 'tab', path: '/usage' }, openers), true);
-  assert.deepEqual(calls.map(([name]) => name), ['terminal', 'board', 'url', 'path']);
+  assert.deepEqual(calls.map(([name]) => name), ['terminal', 'drawing_board', 'url', 'path']);
 
   calls.length = 0;
   assert.equal(await runMessageAction({ kind: 'pr', url: 'javascript:alert(1)' }, openers), false);
@@ -78,11 +78,11 @@ test('a refused click says why and runs nothing', async (t) => {
   const { calls, openers } = recorder();
   const toasts = [];
   let refused = 0;
-  const fetchImpl = async () => ({ ok: false, status: 409, json: async () => ({ error: 'That board is gone.' }) });
+  const fetchImpl = async () => ({ ok: false, status: 409, json: async () => ({ error: 'That drawing board is gone.' }) });
   const { container: host } = await harness.mount(h(MessageAction, { message: terminal, fetchImpl, openers, onRefused: () => { refused += 1; }, toast: (text, error) => toasts.push([text, error]) }));
   await click(harness, host);
   assert.deepEqual(calls, []);
-  assert.deepEqual(toasts, [['That action did not run: That board is gone.', true]]);
+  assert.deepEqual(toasts, [['That action did not run: That drawing board is gone.', true]]);
   assert.equal(refused, 1);
 });
 
