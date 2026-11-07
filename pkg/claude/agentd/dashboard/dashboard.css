@@ -18689,7 +18689,9 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
    Name, with no width, takes the rest of the row. No column follows the
    agents table's widths: the tables share an order and a look, not pixels. */
 .tb-col-ctl, .tb-col-state, .tb-col-last, .tb-col-age, .tb-col-who, .tb-col-ref, .tb-col-deps, .tb-col-files { width: 1%; }
-.tb-table td:not(.tb-title-cell) { white-space: nowrap; }
+/* A task row's own cells keep to one line; the full-width rows (the Ideas
+   band, the history line, a row's form) wrap, so they never widen the table. */
+.tb-table tr.tb-row > td:not(.tb-title-cell) { white-space: nowrap; }
 .tb-table td.tb-who-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .tb-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tb-table .tb-t { color: #7d8590; font-size: 11.5px; font-variant-numeric: tabular-nums; }
