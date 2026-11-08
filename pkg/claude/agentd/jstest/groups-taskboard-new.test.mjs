@@ -137,7 +137,11 @@ test('Write it myself sends every field, the assignee included, in one add', asy
   await harness.input(dialog().querySelector('.tb-new-body'), 'see the review notes');
   await harness.input(dialog().querySelector('.tb-new-ref'), 'tcl-a1b2c3');
   await harness.act(async () => { harness.fireEvent(dialog().querySelector('input[name="tb-new-stage"][value="next"]'), 'change'); });
-  await harness.act(async () => { harness.fireEvent(dialog().querySelector('[data-dep="tk_00000001"]'), 'change'); });
+  // After: the type-to-filter list adds a dependency, shown as a chip.
+  const deps = dialog().querySelector('.tb-deps-picker input');
+  await harness.act(async () => { harness.fireEvent(deps, 'focus'); });
+  await harness.act(async () => { harness.fireEvent(dialog().querySelector('.tb-deps-picker [role="option"][data-key="tk_00000001"]'), 'mousedown'); });
+  assert.ok(dialog().querySelector('.tb-edit-dep[data-dep="tk_00000001"]'), 'the chosen dependency is a chip');
   const assignee = dialog().querySelector('.tb-new-assignee');
   assert.deepEqual([...assignee.querySelectorAll('option')].map((o) => o.value), ['', 'operator', 'agt_dev', 'agt_lead', 'agt_away']);
   await selectValue(harness, assignee, 'agt_dev');
@@ -372,4 +376,19 @@ test('a tracker id with a start state is one add with the id as its ref, so nobo
     kind: 'add', task: { title: 'tcl-a1b2c3', body: '', ref: 'tcl-a1b2c3', after: [], resolveRef: true, stage: 'idea', status: 'done', to: 'agt_dev' },
   });
   assert.equal(newTaskPlan({ title: 'tcl-a1b2c3', start: 'progress', to: 'agt_dev' }).task.to, 'agt_dev');
+});
+
+test('the After picker leaves out the task itself and the tasks that wait on it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { depChoices, waitersOf } = await harness.importDashboardModule('js/groups-taskboard-deps.js');
+  const tasks = [
+    { id: 'tk_a', title: 'a', depends_on: [] },
+    { id: 'tk_b', title: 'b', depends_on: ['tk_a'] },
+    { id: 'tk_c', title: 'c', depends_on: ['tk_b'] },
+    { id: 'tk_d', title: 'd', depends_on: [] },
+  ];
+  assert.deepEqual([...waitersOf('tk_a', tasks)].sort(), ['tk_b', 'tk_c']);
+  assert.deepEqual(depChoices(tasks, 'tk_a').map((item) => item.key), ['tk_d'], 'b and c wait on a: a cycle');
+  assert.deepEqual(depChoices(tasks, 'tk_c').map((item) => item.key), ['tk_a', 'tk_b', 'tk_d']);
+  assert.deepEqual(depChoices(tasks).map((item) => item.key), ['tk_a', 'tk_b', 'tk_c', 'tk_d'], 'a new task waits on any');
 });
