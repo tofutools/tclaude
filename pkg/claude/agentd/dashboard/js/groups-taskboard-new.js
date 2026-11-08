@@ -18,12 +18,13 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
-import { Button, Check, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
+import { Button, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { captureLines, isTrackerLine, taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { FilesField } from './groups-taskboard-files.js';
+import { DepsPicker } from './groups-taskboard-deps.js';
 
 const html = htm.bind(h);
 
@@ -233,17 +234,6 @@ function StartPick({ value, onChange, wizard, disabled, canAssign, listMode }) {
   </span>`;
 }
 
-// DepsPick lists the board's live tasks as checkboxes: `--after`.
-function DepsPick({ tasks, value, onChange, disabled }) {
-  if (!tasks.length) return html`<span class="ui-hint">No live tasks to wait on.</span>`;
-  const picked = new Set(value);
-  const toggle = (id) => onChange(picked.has(id) ? value.filter((v) => v !== id) : [...value, id]);
-  return html`<div class="tb-new-deps" role="group" aria-label="Depends on">
-    ${tasks.map((task) => html`<${Check} key=${task.id} checked=${picked.has(task.id)} disabled=${disabled}
-      data-dep=${task.id} onChange=${() => toggle(task.id)}>${task.title} <span class="tb-id">${task.id}</span><//>`)}
-  </div>`;
-}
-
 const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', start: 'idea', reason: '', after: [], to: '' };
 
 // NewTaskDialog is "Write it myself". `canAssign` shows the assignee
@@ -339,7 +329,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
       canAssign=${canAssign} listMode=${listMode} onChange=${set('start')} />`, missing || null)}
     ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Textarea} class="tb-new-reason" rows=${2} aria-label="Block reason" required maxLength=${400}
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
-    ${!listMode && row('After', html`<${DepsPick} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
+    ${!listMode && row('After', html`<${DepsPicker} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
     ${!listMode && row('Files', html`<${FilesField} intake=${intake} attachments=${files} busy=${busy} />`)}
     ${!listMode && canAssign && row('Assignee', html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
           <option value="">— unassigned —</option>

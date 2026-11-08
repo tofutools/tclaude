@@ -18814,8 +18814,13 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-new-field > .ui-textarea { resize: vertical; }
 .tb-new-stage { display: inline-flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 5px; }
 .tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-.tb-new-deps { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow: auto; padding: 4px 6px;
-  border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
+/* A task's dependencies (groups-taskboard-deps.js): the chosen ones as
+   chips, over the type-to-filter list, which scrolls at a capped height. */
+.tb-deps-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tb-deps-picker .filter-combobox { margin-top: 0; max-width: none; }
+.tb-deps-picker .filter-combobox .filter-combobox-input { padding: 5px 8px; font-size: 12.5px; }
+.tb-deps-picker .filter-combobox .filter-combobox-list { max-height: 168px; border-color: #30363d; }
+.tb-deps-picker .add-member-row .rowname { font-weight: 400; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-new-single { align-self: flex-start; }
 .tb-new-cli code { font-size: 11px; }
 .tb-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

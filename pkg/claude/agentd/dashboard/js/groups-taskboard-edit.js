@@ -25,6 +25,7 @@ import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { TaskFiles } from './groups-taskboard-files.js';
+import { DepsPicker } from './groups-taskboard-deps.js';
 import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
 
@@ -166,27 +167,6 @@ export async function runPlan(api, steps) {
     }
   }
   return { saved, refused };
-}
-
-// DepChips are the draft's dependencies as chips (✕ takes one off) and a
-// picker of the board's other live tasks.
-function DepsEdit({ task, tasks, closed = [], value, onChange, disabled }) {
-  // A dependency may be done already: its title is among the closed tasks.
-  const title = (id) => [...tasks, ...closed].find((t) => t.id === id)?.title || id;
-  const free = tasks.filter((t) => t.id !== task.id && !value.includes(t.id));
-  return html`<span class="tb-edit-deps">
-    ${value.map((id) => html`<span key=${id} class="tb-edit-dep" data-dep=${id}>
-      ${title(id)}
-      <button data-ui-exempt type="button" class="tb-edit-dep-rm" disabled=${disabled} aria-label=${`No longer after ${title(id)}`}
-        title="No longer wait for it" onClick=${() => onChange(value.filter((v) => v !== id))}>✕</button>
-    </span>`)}
-    ${free.length > 0 && html`<${Select} size="sm" class="tb-edit-dep-add" aria-label="Add a dependency" value="" disabled=${disabled}
-      onChange=${(event) => { const id = event.currentTarget.value; if (id) onChange([...value, id]); }}>
-      <option value="">＋ dependency</option>
-      ${free.map((t) => html`<option key=${t.id} value=${t.id}>${t.title}</option>`)}
-    <//>`}
-    ${!value.length && !free.length && html`<span class="ui-hint">No other live task to wait on.</span>`}
-  </span>`;
 }
 
 function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current }) {
@@ -341,7 +321,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       : html`<span>${task.assignee?.operator ? operatorOptionLabel(group) : task.assignee?.name || assignee}</span>`,
       canAssign && draft.to !== start.to ? (draft.to === 'operator' ? 'it waits on the operator, who closes it as done'
         : draft.to ? 'the brief goes to its inbox' : 'its assignee is told') : null)}
-    ${row('After', html`<${DepsEdit} task=${task} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
+    ${row('After', html`<${DepsPicker} taskId=${task.id} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}
     ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} />`,
