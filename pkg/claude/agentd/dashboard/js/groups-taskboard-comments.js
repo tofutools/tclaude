@@ -15,7 +15,7 @@ import { MarkdownDocument } from './markdown-document.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { isPageNode, onPeerPage, selfNodeID } from './node-api.js';
 import { taskFileLimits } from './taskboard-actions.js';
-import { FilesField, StoredTile } from './groups-taskboard-files.js';
+import { FilesField, StoredFiles } from './groups-taskboard-files.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -143,9 +143,8 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
             </span>
           </div>`
         : html`<div class="tb-comment-body"><${MarkdownDocument} source=${comment.body} className="markdown-document tb-comment-md" /></div>`}
-    ${!deleted && comment.attachments?.length > 0 && html`<div class="tb-files tb-comment-files">
-      ${comment.attachments.map((attachment) => html`<${StoredTile} key=${attachment.id} api=${api} taskId=${taskId} attachment=${attachment} />`)}
-    </div>`}
+    ${!deleted && comment.attachments?.length > 0 && html`<${StoredFiles} api=${api} taskId=${taskId} attachments=${comment.attachments}
+      class="tb-comment-files" surface=${`comment-${comment.id}`} />`}
   </li>`;
 }
 

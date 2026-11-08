@@ -11,6 +11,7 @@ import {
 import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
 import { attachmentNavigationStep, previewAttachments } from './attachment-navigation.js';
 import { attachmentSize } from './human-attachments.js';
+import { messageFileSource } from './attachment-source.js';
 
 const html = htm.bind(h);
 
@@ -20,13 +21,6 @@ const html = htm.bind(h);
 // whole image without upscaling it, recomputed as the stage resizes.
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 16;
-
-// A notification can publish several files, each with its own download URL.
-// Fall back to the legacy single-artifact route for a snapshot that predates
-// the per-file one.
-function attachmentURL(messageID, attachment) {
-  return attachment?.url || `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
-}
 
 function safeIDPart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -75,22 +69,46 @@ function useStageBox(stageRef, open) {
   return box;
 }
 
-// ImageAttachmentPreview owns the media viewer used by both the quick
-// notification drawer and Messages. The thumbnail remains in the attachment
-// card; only this overlay is shared between the two surfaces.
+// ImageAttachmentPreview is a notification file's thumbnail (or a video's
+// poster) in its attachment card, on both the quick notification drawer and
+// Messages; a click opens the media viewer on it.
+export function ImageAttachmentPreview({ messageID, attachment: launcherAttachment, siblings = [], surface = 'attachment', videoTrigger = false }) {
+  const [open, setOpen] = useState(false);
+  if (videoTrigger ? !launcherAttachment?.video : !launcherAttachment?.previewable) return null;
+  const source = messageFileSource(messageID);
+  const thumb = source.href(launcherAttachment);
+  return html`<${Fragment}>
+    <button data-ui-exempt type="button" class=${`human-attachment-preview-trigger${videoTrigger ? ' video-preview-trigger' : ''}`}
+      onClick=${() => setOpen(true)} aria-label=${`${videoTrigger ? 'Play' : 'Preview'} ${launcherAttachment.filename || 'attachment'}`}>
+      ${videoTrigger ? html`<${VideoPoster} href=${thumb} />
+        <span class="video-preview-play" aria-hidden="true">▶</span>`
+        : html`<img class="human-attachment-preview-thumb" src=${thumb} alt="" loading="lazy" decoding="async" />`}
+      <span class="human-attachment-preview-label">${videoTrigger ? 'Play' : 'Preview'}</span>
+    </button>
+    ${open && html`<${MediaViewer} source=${source} attachment=${launcherAttachment} siblings=${siblings}
+      surface=${surface} onClose=${() => setOpen(false)} />`}
+  </${Fragment}>`;
+}
+
+// MediaViewer is the attachment viewer for images and videos: the dialog
+// itself, open while it is mounted, on `attachment` among `siblings` (the
+// files it steps through with ‹ ›, those with a media viewer). `source`
+// (attachment-source.js) says where the files are read from: a message's
+// download routes, or a task's files through the board's api. onClose runs
+// on ×, Escape or a backdrop click.
 //
 // Zooming sizes the image in layout (width/height), not with a transform, so
 // the stage's scroll range is exactly the zoomed image and centring it with
 // auto margins stays safe when it overflows. Every zoom keeps one point still:
 // the pointer for a pinch / Ctrl+wheel / double-click, the middle otherwise.
-export function ImageAttachmentPreview({ messageID, attachment: launcherAttachment, siblings = [], surface = 'attachment', videoTrigger = false }) {
+export function MediaViewer({ source, attachment: launcherAttachment, siblings = [], surface = 'attachment', downloadTitle = 'Download this agent-published file', onClose }) {
   const [selected, setSelected] = useState(null);
   const items = previewAttachments(siblings.length ? siblings : [launcherAttachment]);
   const attachment = items[selected] || launcherAttachment;
   const index = items.indexOf(attachment);
   const video = Boolean(attachment?.video);
   const [meta, setMeta] = useState(null);
-  const [open, setOpen] = useState(false);
+  const open = true;
   const [loadState, setLoadState] = useState('idle');
   const [natural, setNatural] = useState(null);
   const [scale, setScale] = useState(null);
@@ -101,14 +119,17 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
   const imageRef = useRef(null);
   // The anchor a pending zoom must restore once the new size is laid out.
   const anchorRef = useRef(null);
-  const href = attachment ? attachmentURL(messageID, attachment) : '';
+  const href = attachment ? source.href(attachment) : '';
+  const fileKey = `${source.key}:${attachment?.id ?? ''}:${attachment?.url || ''}`;
   const filename = attachment?.filename || 'attachment';
   // Several previews can share a message, so the attachment id keeps the
   // dialog's labelling ids unique.
-  const titleID = `image-preview-title-${surface}-${safeIDPart(messageID)}-${safeIDPart(attachment?.id ?? 0)}`;
+  const titleID = `image-preview-title-${surface}-${safeIDPart(source.key)}-${safeIDPart(attachment?.id ?? 0)}`;
   const detailsID = `${titleID}-details`;
 
-  const close = useCallback(() => { setOpen(false); setSelected(null); }, []);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const close = useCallback(() => { onCloseRef.current?.(); }, []);
   const { dialogRef } = useDialogFocus({
     open,
     initialFocusRef: closeRef,
@@ -211,18 +232,15 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
     setMeta(null);
     anchorRef.current = null;
     if (stageRef.current) { stageRef.current.scrollLeft = 0; stageRef.current.scrollTop = 0; }
-    fetch(href, { method: 'HEAD', credentials: 'same-origin' })
-      .then((response) => {
-        if (!active) return;
-        if (response.status === 410) setLoadState('gone');
-        else if (!response.ok) setLoadState('error');
-        else setLoadState(video ? 'ready' : 'loading');
-      })
-      .catch(() => {
-        if (active) setLoadState('error');
-      });
+    // The source's check: a HEAD on a message's route, or reading a task's
+    // file into a blob: URL that href() then returns.
+    source.check(attachment).then((state) => {
+      if (!active) return;
+      if (state === 'ready') setLoadState(video ? 'ready' : 'loading');
+      else setLoadState(state === 'gone' ? 'gone' : 'error');
+    });
     return () => { active = false; };
-  }, [href, open, video]);
+  }, [fileKey, open, video]);
 
   // Double-click toggles between fit and a closer look at the clicked point:
   // actual pixels for an image that fit had to shrink, double size otherwise.
@@ -264,7 +282,7 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
     stage.addEventListener('pointercancel', onUp);
   };
 
-  if (videoTrigger ? !launcherAttachment?.video : !launcherAttachment?.previewable) return null;
+  if (!attachment) return null;
 
   const pannable = Boolean(natural && stageBox
     && (natural.w * effective > stageBox.w + 0.5 || natural.h * effective > stageBox.h + 0.5));
@@ -273,15 +291,7 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
     : undefined;
   const ready = loadState === 'ready';
 
-  return html`<${Fragment}>
-    <button data-ui-exempt type="button" class=${`human-attachment-preview-trigger${videoTrigger ? ' video-preview-trigger' : ''}`}
-      onClick=${() => { setSelected(null); setOpen(true); }} aria-label=${`${videoTrigger ? 'Play' : 'Preview'} ${launcherAttachment.filename || 'attachment'}`}>
-      ${videoTrigger ? html`<${VideoPoster} href=${attachmentURL(messageID, launcherAttachment)} />
-        <span class="video-preview-play" aria-hidden="true">▶</span>`
-        : html`<img class="human-attachment-preview-thumb" src=${attachmentURL(messageID, launcherAttachment)} alt="" loading="lazy" decoding="async" />`}
-      <span class="human-attachment-preview-label">${videoTrigger ? 'Play' : 'Preview'}</span>
-    </button>
-    ${open && html`<div ref=${overlayRef} class=${`modal-overlay show image-preview-overlay${video ? ' video-preview-overlay' : ''}`}
+  return html`<div ref=${overlayRef} class=${`modal-overlay show image-preview-overlay${video ? ' video-preview-overlay' : ''}`}
       onMouseDown=${(event) => {
         if (event.target === event.currentTarget && isTopmostOverlay(overlayRef.current)) {
           event.preventDefault();
@@ -306,8 +316,8 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
                 onClick=${() => navigate(1)} aria-label="Next attachment"
                 title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}>›</button>
             </div>`}
-            ${loadState !== 'gone' && html`<a class="image-preview-download" href=${href} download=${filename}
-              title="Download this agent-published file">Download</a>`}
+            ${loadState !== 'gone' && href && html`<a class="image-preview-download" href=${href} download=${filename}
+              title=${downloadTitle}>Download</a>`}
             <${ViewerDisplayButtons} ...${view} />
             <button data-ui-exempt ref=${closeRef} type="button" class="image-preview-close"
               onClick=${close} aria-label=${video ? 'Close video player' : 'Close image preview'} title="Close (Esc)">×</button>
@@ -354,6 +364,5 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
         </footer>`}
         <${DialogResizer} ...${resizerProps} label=${video ? 'Resize the video player' : 'Resize the image viewer'} />
       </div>
-    </div>`}
-  </${Fragment}>`;
+    </div>`;
 }

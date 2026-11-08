@@ -237,7 +237,12 @@ with the command to fetch them.
   files anywhere on the dialog, or Ctrl+V (Cmd+V on macOS) of copied files or
   a screenshot. A file over the limits or of a refused type is left out, and
   a note names it. The edit form shows a task's files as tiles (an image
-  with its thumbnail); click one to open it, and ✕ removes it on *Save*.
+  with its thumbnail), and ✕ removes one on *Save*. Click a tile to open it
+  in the attachment viewer the Messages tab uses: an image with zoom and
+  ‹ › to step through the task's other images, a Markdown file as the
+  rendered document with its source a toggle away. A file the viewer cannot
+  show opens as before: a PDF in a new tab, anything else as a download.
+  A comment's files work the same way.
   This works for a linked node's board too: the files go through this
   node's staged upload.
 
@@ -870,7 +875,8 @@ the **Quest board**), below its Agents and Resources sections.
   columns of the same names. After those come *Who* holds it (the tooltip
   says who assigned it, and when), *Ref* (a chip that links to the tracker),
   *Deps* (`after` and the task's title, amber until that task is done; the
-  tooltip has its whole title and id) and *Files*. A blocked
+  tooltip has its whole title and id) and *Files* (📎 and the count; a
+  click opens the task's first viewable file in the attachment viewer). A blocked
   task shows its reason under its title. The *history* line counts the tasks
   done this week and the dropped ones. Click *history* to list the recently
   closed tasks in the same table.

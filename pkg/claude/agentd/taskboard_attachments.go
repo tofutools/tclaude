@@ -310,6 +310,13 @@ type taskboardAttachmentView struct {
 	ContentType string `json:"content_type"`
 	SHA256      string `json:"sha256"`
 	Image       bool   `json:"image,omitempty"`
+	// Previewable, Markdown and Video are the verdicts a notification's
+	// files carry (dashboardHumanMessageAttachment), decided the same way
+	// from the stored bytes, so the dashboard opens a task's file in the
+	// same viewer the Messages tab does.
+	Previewable bool   `json:"previewable,omitempty"`
+	Markdown    bool   `json:"markdown,omitempty"`
+	Video       bool   `json:"video,omitempty"`
 	AddedBy     string `json:"added_by"`
 	AddedAt     string `json:"added_at"`
 }
@@ -317,8 +324,17 @@ type taskboardAttachmentView struct {
 func taskboardAttachmentViews(atts []db.GroupTaskAttachment) []taskboardAttachmentView {
 	out := make([]taskboardAttachmentView, 0, len(atts))
 	for _, a := range atts {
-		out = append(out, taskboardAttachmentView{ID: a.ID, Name: a.Name, Size: a.SizeBytes, ContentType: a.ContentType,
-			SHA256: a.SHA256, Image: strings.HasPrefix(a.ContentType, "image/"), AddedBy: a.AddedBy, AddedAt: rfc3339(a.AddedAt)})
+		v := taskboardAttachmentView{ID: a.ID, Name: a.Name, Size: a.SizeBytes, ContentType: a.ContentType,
+			SHA256: a.SHA256, Image: strings.HasPrefix(a.ContentType, "image/"), AddedBy: a.AddedBy, AddedAt: rfc3339(a.AddedAt)}
+		// A blob is content-addressed and never rewritten, so the probes'
+		// caches, keyed by its path, hold for every later snapshot.
+		if path, err := taskBlobPath(a.SHA256); err == nil {
+			probe := &db.HumanMessageAttachment{Filename: a.Name, ContentType: a.ContentType, SizeBytes: a.SizeBytes, StoragePath: path}
+			v.Previewable = humanMessageAttachmentPreviewable(probe)
+			v.Markdown = humanMessageAttachmentMarkdown(probe)
+			v.Video = humanMessageAttachmentVideoType(probe) != ""
+		}
+		out = append(out, v)
 	}
 	return out
 }

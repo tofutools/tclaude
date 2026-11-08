@@ -367,3 +367,36 @@ func TestPeerTaskboardAttachmentsUnderGrants(t *testing.T) {
 	assert.Equal(t, "moved with files", moved.Title)
 	assert.Equal(t, []string{"shot.png"}, fileNames(moved.Attachments))
 }
+
+// A task's files carry the viewer verdicts a notification's do, from their
+// bytes: a real image is previewable, a Markdown file renders, and a text
+// file or a PDF has no viewer (the dashboard offers it as before).
+func TestTaskboardAttachmentsViewerVerdicts(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	created := h.fileTask(h.upload("", "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "with files"},
+		[2]string{"shot.png", string(tbPNG)}, [2]string{"plan.md", "# Plan\n\n- one\n"},
+		[2]string{"log.txt", "a log"}, [2]string{"fake.png", "not an image"}), http.StatusCreated)
+
+	rec := h.call("", http.MethodGet, "/v1/taskboard/tasks/"+created.ID+"/attachments", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Attachments []struct {
+			Name        string `json:"name"`
+			Previewable bool   `json:"previewable"`
+			Markdown    bool   `json:"markdown"`
+			Video       bool   `json:"video"`
+		} `json:"attachments"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	got := map[string][3]bool{}
+	for _, a := range out.Attachments {
+		got[a.Name] = [3]bool{a.Previewable, a.Markdown, a.Video}
+	}
+	assert.Equal(t, map[string][3]bool{
+		"shot.png": {true, false, false},
+		"plan.md":  {false, true, false},
+		"log.txt":  {false, false, false},
+		"fake.png": {false, false, false}, // claimed an image, its bytes are not
+	}, got)
+}
