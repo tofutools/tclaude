@@ -797,8 +797,10 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
     const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
-    const takes = actions && !column.cordoned;
-    const add = takes && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
+    // A cordoned column takes no new task; a card already in it may still
+    // move within it (reorder, or another lane's hands).
+    const takes = actions && (!column.cordoned || byId.get(drag.dragging)?.column === column.slug);
+    const add = actions && !column.cordoned && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${cellClass(column)}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${takes ? (event) => drag.overCell(event, target) : undefined}

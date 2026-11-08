@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-// migrateV327toV328 adds a board-level state to a task board's columns
+// migrateV328toV329 adds a board-level state to a task board's columns
 // (tk_bf5d2b02): a column is shown (no row), hidden (kept, its tasks keep it,
 // not drawn) or cordoned (drawn, takes no new task; its tasks may leave).
 //
@@ -12,7 +12,7 @@ import "database/sql"
 //   - A task moved to another group stays in a column of the same slug there
 //     (group_tasks_column_clear) unless that column is cordoned: a cordoned
 //     column takes no new task, from another group either.
-func migrateV327toV328(d *sql.DB) error {
+func migrateV328toV329(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -33,7 +33,7 @@ func migrateV327toV328(d *sql.DB) error {
 			WHEN NEW.column_slug <> '' AND OLD.group_id <> NEW.group_id AND EXISTS (SELECT 1 FROM group_task_column_states s
 				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
 			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END`,
-		`UPDATE schema_version SET version = 328`,
+		`UPDATE schema_version SET version = 329`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return err

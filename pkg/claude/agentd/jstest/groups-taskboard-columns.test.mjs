@@ -226,6 +226,7 @@ test('a board-hidden column is not drawn and its tasks are counted in the hidden
   const entry = board('tb-colvis');
   entry.columns = [{ ...COLUMNS[0], state: 'hidden' }, { ...COLUMNS[1], state: 'cordoned' }];
   entry.builtin_columns = { ideas: 'hidden' };
+  entry.tasks.push(row('tk_00000004', 'in CI', { assignee: builder, assigned_at: ago(3), column: 'in-ci' }));
   const { harness, c, cell, drag, api } = await mount(t, 'tb-colvis', { entry });
   const heads = [...c.querySelectorAll('.tb-lane-columns > [data-col]')].map((h) => h.dataset.col);
   assert.deepEqual(heads, ['next', 'progress', 'col:in-ci', 'blocked', 'done']);
@@ -242,6 +243,10 @@ test('a board-hidden column is not drawn and its tasks are counted in the hidden
   const { taken } = await drag('tk_00000002', 'agt_builder', 'col:in-ci');
   assert.equal(taken, false, 'a cordoned column takes no drop');
   assert.equal(api.calls.length, before);
+
+  // A card already in it may still move within it: to another lane's hands.
+  const inside = await drag('tk_00000004', 'unassigned', 'col:in-ci');
+  assert.equal(inside.taken, true, 'a card in the cordoned column may move within it');
 
   // Its ⋯ lifts the cordon, the board's route.
   await harness.act(() => harness.fireEvent(ci.querySelector('.tb-col-more'), 'click'));

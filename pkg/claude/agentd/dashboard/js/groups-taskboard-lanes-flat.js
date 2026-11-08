@@ -146,8 +146,10 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     // A cell's "+" starts a task in its column: unassigned, or in You the
     // operator's. Agents does not say which agent.
     const addLane = row === OPERATOR ? OPERATOR : row === AGENTS ? null : UNASSIGNED;
-    const takes = actions && !column.cordoned;
-    const add = takes && onNewTask && addLane !== null && cellAdd(addLane, column.key, { assign: canAssign(actions), member: true });
+    // A cordoned column takes no new task; a card already in it may still
+    // move within it (reorder, or another lane's hands).
+    const takes = actions && (!column.cordoned || byId.get(drag.dragging)?.column === column.slug);
+    const add = actions && !column.cordoned && onNewTask && addLane !== null && cellAdd(addLane, column.key, { assign: canAssign(actions), member: true });
     const lane = addLane === OPERATOR ? { id: OPERATOR, name: operatorName(group) } : { id: UNASSIGNED, name: 'Unassigned' };
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${cellClass(column)}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-board-row=${row || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
