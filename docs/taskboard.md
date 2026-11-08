@@ -931,7 +931,8 @@ a CLI verb:
 | *+ New task › Write it myself* | `add <group> "title" --body … --ref … --resolve-ref [--next] --after … [--assignee …] [--blocked "…"\|--done]` |
 | A pasted list in *Write it myself* | `add <group> --lines-file -` |
 | *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
-| *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
+| *+ New task › From a tracker…*, one ticket | `add <group> "title" --ref <url> --ref-label … --body … --resolve-ref [--next]` |
+| *+ New task › From a tracker…*, several ids | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
@@ -969,7 +970,12 @@ a CLI verb:
     does. It picks the group's owner when one is online. You can pick any
     other online member who holds `taskboard.write` there and passes the
     writer lock. With no such member online, the item is off, and says why. Files go with the request.
-  - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
+  - *From a tracker…* opens a form for a ticket. Paste its full URL (awb,
+    Linear, GitHub…) first; the title is looked up through the tracker and
+    stays yours to change. A label for the link (the text the Task column
+    would show) and a brief are optional, and *Starts in* picks Idea or Next.
+    *Several ids* switches the form to the bulk import: one task per tracker
+    id.
 - **✎ *Edit*** on a row, or a click on a task's title (in the list or on a
   lanes card; Enter on a focused title does the same), opens the edit form.
   Renaming happens there. A press on the title never starts a drag. The
@@ -1179,7 +1185,7 @@ the cell:
 - *Ask an agent* opens with a first line that says where the tasks should
   land, such as "Land the tasks in Next for builder", for you to add your
   request to.
-- *From awb/Linear/GitHub…* imports into the queue from a Next cell or an
+- *From a tracker…* imports into the queue from a Next cell or an
   agent's lane. An import lands in Ideas or Next only, so you assign, block or
   close the tasks on the board afterwards. Order within the queue is set in the
 *List* view.
@@ -1255,6 +1261,7 @@ those drags aren't accepted in the lanes.
 | `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
 | `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
 | `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
+| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","resolved","note"}`), titled through the tracker proxy as an import is; adds nothing, needs board read |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

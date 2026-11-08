@@ -92,7 +92,7 @@ test('"+ New task" opens a menu of three ways to add, modelled on the Resources 
   await click(button);
   assert.equal(c.querySelector('[data-taskboard-new]').getAttribute('aria-expanded'), 'true');
   const names = [...c.querySelectorAll('.tb-new-menu .gr-new-name')].map((el) => el.textContent);
-  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From awb/Linear/GitHub…']);
+  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From a tracker…']);
   assert.equal(c.querySelector('[data-taskboard-new-ask]').disabled, false);
 });
 

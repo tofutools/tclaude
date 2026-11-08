@@ -80,6 +80,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ref-lookup", v1GroupRoute(handleTaskboardRefLookup))
 	registerTaskboardAssignRoutes(mux)
 	registerTaskboardQuestionRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)

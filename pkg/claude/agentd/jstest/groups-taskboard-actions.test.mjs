@@ -201,15 +201,18 @@ test('dragging a row reorders it; dropping a queued task on the Ideas band demot
   assert.deepEqual(api.calls, []);
 });
 
-test('"+ New task › From awb/Linear/GitHub…" imports tracker ids with the tracker prefix', async (t) => {
+test('"+ New task › From a tracker… › Several ids" imports tracker ids with the tracker prefix', async (t) => {
   const { harness, c, api, click } = await mountBoard(t, 'tba-import');
   await click(c.querySelector('[data-taskboard-new]'));
   await click(c.querySelector('[data-taskboard-new-import]'));
-  const panel = c.querySelector('[data-taskboard-import]');
-  await harness.input(panel.querySelector('.tb-import-ids'), 'tcl-a1b2c3, tcl-d4e5f6');
-  await click([...c.querySelector('[data-taskboard-import]').querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('Import')));
+  const dialog = () => harness.document.querySelector('#taskboard-tracker-modal');
+  assert.ok(dialog(), 'the tracker form opens as a dialog');
+  await click(dialog().querySelector('[data-tracker-mode="many"]'));
+  await harness.input(dialog().querySelector('.tb-import-ids'), 'tcl-a1b2c3, tcl-d4e5f6');
+  await click(dialog().querySelector('#taskboard-tracker-submit'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['importRefs', 'tba-import', ['awb:tcl-a1b2c3', 'awb:tcl-d4e5f6'], { next: false }]]);
-  assert.equal(c.querySelector('[data-taskboard-import]'), null, 'a clean import closes the panel');
+  assert.equal(dialog(), null, 'a clean import closes the dialog');
 });
 
 test('the client sends the CLI routes with an idempotency key', async (t) => {
@@ -452,4 +455,18 @@ test('a board whose api predates archiveClosed offers done only', async (t) => {
   const { c, click } = await mountBoard(t, 'tba-old', { context, api });
   await click(c.querySelector('.tb-archive-done-btn'));
   assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
+});
+
+test('a tracker ticket is added by its link, and a label never stands in for a bare id', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { trackerTaskPlan, sameRef } = await harness.importDashboardModule('js/groups-taskboard-tracker.js');
+  const linked = trackerTaskPlan({ ref: 'LIN-7', link: 'https://linear.app/acme/issue/LIN-7', title: 'Checkout', label: 'Cart', start: 'next' });
+  assert.equal(linked.task.ref, 'https://linear.app/acme/issue/LIN-7');
+  assert.equal(linked.task.refLabel, 'Cart');
+  assert.equal(linked.task.stage, 'next');
+  const bare = trackerTaskPlan({ ref: 'LIN-7', title: 'Checkout', label: 'Cart' });
+  assert.equal(bare.task.ref, 'LIN-7');
+  assert.equal(bare.task.refLabel, '', 'with no link the id is the ref\'s name');
+  const live = [{ id: 'tk_1', title: 'x', status: 'open', ref: { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7' } }];
+  assert.equal(sameRef(live, { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7/' })?.id, 'tk_1');
 });

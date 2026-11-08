@@ -275,6 +275,7 @@ var dashboardTaskboardRoutes = []struct {
 	{"GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList)},
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
 	{"POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk)},
+	{"POST /v1/groups/{name}/taskboard/ref-lookup", v1GroupRoute(handleTaskboardRefLookup)},
 	{"GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow)},
 	{"GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents)},
 	{"PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardOwnGate, handleTaskboardEdit)},
