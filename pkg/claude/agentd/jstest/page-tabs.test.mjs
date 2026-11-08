@@ -174,14 +174,20 @@ test('a shown page opens unfocused with a dot and a toast, and its view is the h
   const chip = head.querySelector('.page-sandbox-chip');
   assert.match(chip.getAttribute('title'), /own origin: http:\/\/f-‹token›\.ui\.localhost:7777/, 'the origin, its token masked');
   assert.match(chip.getAttribute('title'), /The agent that showed this page can read what you type in it\./);
-  const labels = [...head.querySelectorAll('button')].map((b) => b.textContent);
-  assert.deepEqual(labels.filter((l) => ['Reload', 'Open in overlay', 'Pop out', 'Close'].includes(l)), ['Reload', 'Open in overlay', 'Pop out', 'Close']);
+  const menuItems = async (key) => {
+    await harness.act(async () => { harness.fireEvent(head.querySelector(`[data-editor-menu="${key}"]`), 'click'); await wait(); });
+    return [...head.querySelectorAll('.reh-menu [role^="menuitem"]')].map((b) => b.textContent.trim());
+  };
+  assert.deepEqual(await menuItems('file'), ['Reload', 'Close page'], 'File reloads or closes the page');
+  assert.deepEqual(await menuItems('view'), ['Open in overlay', 'Open in separate window'], 'View moves it, in every editor\'s words');
+  await harness.act(async () => { harness.fireEvent(head.querySelector('[data-editor-menu="view"]'), 'click'); await wait(); });
   // The lock chip is a .ui-tag that toggles (data-ui-exempt, resource-lock.js).
   for (const button of head.querySelectorAll('button:not([data-ui-exempt])')) assert.ok(button.classList.contains('ui-btn'), `${button.textContent} is a ui-btn`);
   assert.equal(head.querySelector('[data-resource-lock]').textContent, '✎ agents can edit', 'the page wears its agent lock');
   assert.equal(host.innerHTML.split(TOKEN).length, 2, 'the token is in the frame src only');
 
-  await harness.act(async () => { harness.fireEvent([...head.querySelectorAll('button')].find((b) => b.textContent === 'Close'), 'click'); await wait(); });
+  await menuItems('file');
+  await harness.act(async () => { harness.fireEvent(head.querySelector('[data-editor-menu-item="close"]'), 'click'); await wait(); });
   assert.ok(requests.includes(`DELETE /api/pages/${PAGE.id}`), 'Close asks the daemon, which tells the agent');
   assert.equal(pageTab(host), null);
   env.stop();
@@ -224,8 +230,8 @@ test('a page leaves when the snapshot drops it, floats without closing, and a ta
 
   await env.setSnapshot(snap([PAGE]));
   await harness.act(async () => { harness.fireEvent(pageTab(host), 'click'); await wait(); });
-  const float = [...host.querySelectorAll(`[data-page-pane="${PAGE.id}"] .page-head button`)].find((b) => b.textContent === 'Open in overlay');
-  await harness.act(async () => { harness.fireEvent(float, 'click'); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector(`[data-page-pane="${PAGE.id}"] [data-editor-menu="view"]`), 'click'); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector(`[data-page-pane="${PAGE.id}"] [data-editor-menu-item="to-overlay"]`), 'click'); await wait(); });
   assert.equal(pageTab(host), null, 'the strip tab left');
   assert.deepEqual(instances.overlayTabs.peek().filter((tab) => tab.kind === 'page').map((tab) => tab.page), [PAGE.id], 'for an overlay tab');
   assert.deepEqual(requests.filter((r) => r.startsWith('DELETE')), [], 'moving is not closing');

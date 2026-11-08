@@ -13,6 +13,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { ResourceEditorHeader, editorMoveItems } from './resource-editor-header.js';
 import { LockChip } from './resource-lock.js';
 import {
   PAGE_FRAME_SANDBOX, PAGE_WINDOW_KIND, findLivePage, isPageId, pageFrameSrc, pageLabel, pagePaneSeed, pageSandboxRules, pageSender,
@@ -24,7 +25,7 @@ import { OverlayWindow } from './overlay-window.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement } from './overlay-window-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { closeOverlayTab, minimizeOverlayWindow } from './overlay-instances.js';
-import { POPUP_BLOCKED, TO_COLLAB_LABEL, registerTabMoves } from './overlay-tab-moves.js';
+import { POPUP_BLOCKED, registerTabMoves } from './overlay-tab-moves.js';
 import { detachSeedWindow, openWebWindowPane } from './terminals-tab.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { shellToast } from './shell-state.js';
@@ -192,10 +193,12 @@ export function PageFrame({ src, label, reloadKey, frameRef = null, onLoad = nul
     sandbox=${PAGE_FRAME_SANDBOX} allow="" referrerpolicy="no-referrer" credentialless=${true} loading="eager"></iframe>`;
 }
 
-// PageView is the header and the frame. tools are the buttons for where the
-// view is (move it elsewhere); onOpenSender opens the agent's pane, where
-// there is one.
-export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, fetchImpl, notify, win = globalThis.window, WebSocketCtor }) {
+// PageView is the header and the frame. The header is the resource editors'
+// (resource-editor-header.js): File reloads or closes the page, View holds
+// the live patches' switch and moves, the host's ways elsewhere in
+// editorMoveItems' wording; Interact / Draw stays at hand. onOpenSender opens
+// the agent's pane, where there is one.
+export function PageView({ pageId, snapshot, moves = [], onOpenSender = null, fetchImpl, notify, win = globalThis.window, WebSocketCtor }) {
   const value = snapshot?.value;
   const page = findLivePage(value, pageId);
   const frameRef = useRef(null);
@@ -224,7 +227,9 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   useEffect(() => { if (probe.scroll) live.report(probe.scroll); }, [probe.scroll]);
   if (!page) {
     return html`<div class="page-view page-view-closed" data-page=${pageId}>
-      <div class="page-head"><span class="page-head-title">${value ? 'This page has closed.' : 'Loading the page…'}</span><span class="spacer"></span>${tools}</div>
+      <${ResourceEditorHeader} class="page-head" label="Page menu"
+        title=${html`<span class="page-head-title">${value ? 'This page has closed.' : 'Loading the page…'}</span>`}
+        menus=${[{ key: 'view', label: 'View', items: moves }]} />
     </div>`;
   }
   const label = pageLabel(page);
@@ -252,32 +257,37 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
     if (!(await closeLivePage(page.id, { fetchImpl, notify }))) setClosing(false);
   };
   return html`<div class="page-view" data-page=${page.id}>
-    <div class="page-head">
-      <span class="page-head-glyph" aria-hidden="true">◧</span>
-      <span class="page-head-title" title=${label}>${label}</span>
-      <span class="page-head-from">from ${onOpenSender && sender.agent
+    <${ResourceEditorHeader} class="page-head" label="Page menu"
+      title=${html`<span class="page-head-glyph" aria-hidden="true">◧</span><span class="page-head-title" title=${label}>${label}</span>`}
+      identity=${html`<span class="page-head-from">from ${onOpenSender && sender.agent
         ? html`<${Button} size="sm" variant="link" class="page-head-sender" title=${`Open ${sender.name}'s terminal`} onClick=${() => onOpenSender(sender)}>${sender.name}<//>`
         : html`<b class="page-head-sender">${sender.name}</b>`}</span>
       <code class="page-head-target" title=${`Target: ${page.target}`}>${page.target}</code>
       ${page.worktree ? html`<span class="page-head-worktree" title=${`Worktree: ${page.worktree}`}>${baseName(page.worktree)}</span>` : null}
       <${LockChip} kind="page" id=${page.id} name=${label} locked=${lockSet ?? snapLocked} notify=${notify || (() => {})} onChanged=${setLockSet} />
       <span class="ui-tag page-sandbox-chip" tabIndex="0" role="note" title=${rules.join('\n')} aria-label=${`Sandboxed. ${rules.join(' ')}`}>🔒 sandboxed</span>
-      <span class="spacer"></span>
       ${chip ? html`<span class=${`ui-tag page-patch-chip${chip.live ? ' live' : ''}`} role="status"
-        title=${chip.live ? `The agent changed this page live. Its source does not have these changes yet.` : 'The page shows its source.'}>${chip.text}</span>` : null}
-      ${chip?.live ? html`<${Button} size="sm" class="mux-btn" pressed=${without}
-        title=${without ? 'Show the page with the live patches again' : 'Show the page as its source is, without the live patches'}
-        onClick=${() => setWithout((v) => !v)}>Show without<//>` : null}
-      <span class="page-mode" role="group" aria-label="Mode">
+        title=${chip.live ? `The agent changed this page live. Its source does not have these changes yet.` : 'The page shows its source.'}>${chip.text}</span>` : null}`}
+      menus=${[
+        { key: 'file', label: 'File', items: [
+          { key: 'reload', label: 'Reload', title: 'Reload the page', run: () => setManual((n) => n + 1) },
+          { sep: true },
+          { key: 'close', label: 'Close page', danger: true, disabled: closing,
+            title: page.group_id ? 'Close this page: the agent that showed it is told, and the page stays in its group to reopen' : 'Close this page: it ends, and the agent that showed it is told',
+            run: () => void close() },
+        ] },
+        { key: 'view', label: 'View', items: [
+          chip?.live ? { key: 'without', label: 'Without the live patches', checked: without,
+            title: without ? 'Show the page with the live patches again' : 'Show the page as its source is, without the live patches',
+            run: () => setWithout((v) => !v) } : null,
+          { sep: true },
+          ...moves,
+        ] },
+      ]}
+      actions=${html`<span class="page-mode" role="group" aria-label="Mode">
         <${Button} size="sm" class="mux-btn" pressed=${!drawing} title="Use the page" onClick=${() => setDrawing(false)}>Interact<//>
         <${Button} size="sm" class="mux-btn" pressed=${drawing} title="Draw on top of the page to show the agent what to change" onClick=${() => setDrawing(true)}>Draw${marks.marks.length ? ` (${marks.marks.length})` : ''}<//>
-      </span>
-      <${Button} size="sm" class="mux-btn" title="Reload the page" onClick=${() => setManual((n) => n + 1)}>Reload<//>
-      ${tools}
-      <${Button} size="sm" variant="danger" class="mux-btn" busy=${closing} disabled=${closing}
-        title=${page.group_id ? 'Close this page: the agent that showed it is told, and the page stays in its group to reopen' : 'Close this page: it ends, and the agent that showed it is told'}
-        onClick=${() => void close()}>Close<//>
-    </div>
+      </span>`} />
     ${drawing ? html`<${PageDrawBar} tool=${tool} setTool=${setTool} color=${color} setColor=${setColor} marks=${marks.marks}
       onUndo=${marks.undo} onClear=${marks.clear} note=${note} setNote=${setNote} onSend=${() => void send()} sending=${sending} agentName=${sender.name} />` : null}
     <div class="page-body">
@@ -315,15 +325,17 @@ export function PagePane({ pane, active, solo = false, manageTitle = false, acti
   useEffect(() => {
     if (active && manageTitle) document.title = `${label ? `${label} — ` : ''}tclaude page`;
   }, [active, manageTitle, label]);
-  const tools = solo
-    ? html`<${Button} size="sm" class="mux-btn" title="Move this page back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
-      ${pane.seed.floats && globalThis.window?.opener && !globalThis.window.opener.closed
-        ? html`<${Button} size="sm" class="mux-btn" title="Float this page in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
-    : html`<${Button} size="sm" class="mux-btn" title="Float this page in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
-      <${Button} size="sm" class="mux-btn" title="Move this page to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Pop out<//>`;
+  const moves = editorMoveItems({
+    what: 'this page',
+    toCollab: solo ? () => void actions.reattachPane(pane.key) : null,
+    toOverlay: solo
+      ? (pane.seed.floats && globalThis.window?.opener && !globalThis.window.opener.closed ? () => void actions.reattachPane(pane.key, { overlay: true }) : null)
+      : () => void actions.openPaneInOverlay(pane.key),
+    toWindow: solo ? null : () => void actions.popOutPane(pane.key, { floats: true }),
+  });
   return html`<div class=${`mux-pane mux-pane-page${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`} id=${pane.id}
     role=${solo ? null : 'tabpanel'} data-page-pane=${id}>
-    <${PageView} pageId=${id} snapshot=${snapshot} tools=${tools} fetchImpl=${fetchImpl} notify=${notify}
+    <${PageView} pageId=${id} snapshot=${snapshot} moves=${moves} fetchImpl=${fetchImpl} notify=${notify}
       onOpenSender=${solo ? null : (sender) => void openWebWindowPane(sender.agent, sender.name, { harness: sender.harness })} />
   </div>`;
 }
@@ -368,8 +380,6 @@ export function PageOverlayWindow({ instance, overlay, strip, close, snapshot, f
       closeOverlayTab(instance.id);
     } else notify?.(POPUP_BLOCKED, true);
   };
-  const tools = html`<${Button} size="sm" class="mux-btn" title="Move this page to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
-    <${Button} size="sm" class="mux-btn" title="Move this page to a browser window of its own" onClick=${toWindow}>Pop out<//>`;
   const title = html`${strip}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
       onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
@@ -378,7 +388,7 @@ export function PageOverlayWindow({ instance, overlay, strip, close, snapshot, f
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="drawing-board-overlay page-overlay" frameClass="drawing-board-overlay-resize-frame"
     titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Page ${label}`} title=${title}
     controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
-    <${PageView} pageId=${instance.page} snapshot=${snapshot} tools=${tools} fetchImpl=${fetchImpl} notify=${notify} win=${win}
+    <${PageView} pageId=${instance.page} snapshot=${snapshot} moves=${editorMoveItems({ what: 'this page', toCollab, toWindow })} fetchImpl=${fetchImpl} notify=${notify} win=${win}
       onOpenSender=${(sender) => void openWebWindowPane(sender.agent, sender.name, { harness: sender.harness })} />
   <//>`;
 }

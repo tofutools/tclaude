@@ -168,7 +168,7 @@ the group owns it:
 
 ## In the dashboard
 
-![A live page in a Collab tab: the header names the agent, the target and the worktree, with the sandboxed chip, Reload, Open in overlay, Pop out and Close](assets/live-page-tab.png)
+![A live page in a Collab tab: the header names the agent, the target and the worktree, with the sandboxed chip, the File and View menus and Interact / Draw](assets/live-page-tab.png)
 
 A page an agent shows opens as a **Page** tab (◧) in the Collab strip, behind
 the tab you are on, so it never takes your focus. The tab has a dot until you
@@ -179,16 +179,18 @@ that were already open when the dashboard loaded open quietly, with no toast.
 The header above the page says who showed it (a link to that agent's
 terminal), its target and worktree, and carries a **🔒 sandboxed** chip. Hover
 the chip for the page's origin and its rules, including that the agent that
-showed the page can read what you type in it. Then:
+showed the page can read what you type in it. Its menus are the drawing
+board's and the process editor's:
 
-- **Reload** loads the page again. Saved files under a static target and a
-  re-show reload it on their own.
-- **Open in overlay** floats it in an overlay window, and **Pop out** moves it
-  to a browser window of its own. Like a drawing board, a page tab can be reordered,
+- **File › Reload** loads the page again. Saved files under a static target
+  and a re-show reload it on their own.
+- **View › Open in overlay** floats it in an overlay window, and **View › Open
+  in separate window** moves it to a browser window of its own; from there,
+  **View › Open in the Collab tab** brings it back. Like a drawing board, a page tab can be reordered,
   grouped, dragged off the strip or onto an overlay window. A separate window
   is the dashboard's own page with the same frame in it: the page's origin
   never loads as a top-level page.
-- **Close**, or the tab's ×, closes the page. The agent is told in its
+- **File › Close page**, or the tab's ×, closes the page. The agent is told in its
   inbox. A page shared in a group stays in the group's Resources, closed,
   and reopens from there; a private page ends. Moving a page between places
   does not close it.
@@ -220,7 +222,7 @@ page's content: checked, shown only as text, and kept out of the inbox message.
 An agent can change its open page without touching its source, to ask "like
 this?" (see [Live patches for the agent](#live-patches-for-the-agent)). While
 a page has live patches, its header says **⚡ live patch #N · not in source**,
-and **Show without** reloads the page as its source is; press it again to see
+and **View › Without the live patches** reloads the page as its source is; pick it again to see
 the patches. After the agent drops them the header says **No live patches ·
 source**. Patches apply in every open view of the page and come back after
 each reload, until the agent drops them or the page closes. They never change
