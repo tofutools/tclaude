@@ -41,6 +41,7 @@ export const SHORTCUTS = Object.freeze([
   S('steward', 'global', 'Ctrl+Period', 'Open or minimize the Steward window', { terminal: true }),
   S('annotate', 'global', 'Ctrl+Shift+Period', 'Mark up the page for the agent in the window', { terminal: true }),
   S('expose', 'global', 'Ctrl+Comma', 'Show all windows side by side, to pick one', { terminal: true }),
+  S('windows-hide-toggle', 'global', 'Ctrl+Semicolon', 'Minimize all windows, or bring back the ones it minimized', { terminal: true }),
   S('compose', 'global', 'Ctrl+KeyM', 'Message the agent in the current terminal or window', { terminal: true }),
   S('tab-next', 'global', 'BracketRight', 'Next dashboard tab'),
   S('tab-prev', 'global', 'BracketLeft', 'Previous dashboard tab'),
