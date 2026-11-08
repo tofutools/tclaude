@@ -59,7 +59,7 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		return
 	}
 	if taskboardActor(r) == t.Asker() {
-		writeError(w, http.StatusForbidden, "forbidden", "the agent that asked does not answer its own question; drop it to withdraw it")
+		writeError(w, http.StatusForbidden, "own_question", "the agent that asked does not answer its own question; drop it to withdraw it")
 		return
 	}
 	waiters := taskboardWaitersBefore(t)
