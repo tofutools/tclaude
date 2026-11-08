@@ -255,6 +255,8 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const dirty = steps.length > 0 || commenting;
   // The board reads it when Back leaves the form (groups-taskboard.js).
   if (dirtyRef) dirtyRef.current = dirty;
+  // A closed form has nothing to lose.
+  useEffect(() => () => { if (dirtyRef) dirtyRef.current = false; }, []);
   const save = async () => {
     if (missing || sending.current) return;
     // An unsent comment (or an open comment edit) keeps the form open, and

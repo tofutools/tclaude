@@ -189,4 +189,19 @@ test('Back on a form with unsaved input asks first; keeping it puts the entry ba
   await settle();
   assert.equal(shellState.confirmation.value, null, 'nothing to discard, nothing asked');
   assert.equal(modal(), null);
+
+  // A discarded form leaves nothing dirty behind: a link to a task that
+  // cannot be read (no form ever shows) is let go of without asking.
+  await harness.act(() => harness.fireEvent(title('tk_00000001'), 'click'));
+  await settle();
+  await harness.input(modal().querySelector('input'), 'edited again');
+  routes.restoreOverlays({ task: '' });
+  await settle();
+  await harness.act(async () => { shellState.resolveConfirmation(true); await new Promise((r) => setTimeout(r, 0)); });
+  await settle();
+  assert.equal(modal(), null);
+  routes.restoreOverlays({ task: 'tk_0000000g:crew' });
+  await settle();
+  assert.equal(shellState.confirmation.value, null, 'no stale prompt');
+  assert.equal(route.taskRoute.value, null, 'the unreadable link is let go of');
 });
