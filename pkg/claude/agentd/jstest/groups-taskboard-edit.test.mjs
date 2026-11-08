@@ -387,3 +387,49 @@ test('files dropped or pasted on the comment box go with the comment, not the ta
   await save();
   assert.equal(api.calls.some((c) => c[0] === 'edit'), false, 'Save does not run while a comment is being edited');
 });
+
+// Questions in the edit form (tk_be8d0455): a task's questions head the
+// form, the open ones with Answer…, which opens the same Answer dialog as
+// the board and answers at once, not with Save.
+test('the edit form lists the task\'s questions; Answer… opens the Answer dialog and answers at once', async (t) => {
+  const the = task({ assignee: { agent_id: 'agt_dev', name: 'dev' }, questions: [
+    { kind: 'question', n: 1, title: 'Old one', asked_by: 'agent:agt_dev', state: 'answered', options: [{ key: 'a', label: 'Alpha' }],
+      answer: { picked: ['a'], text: 'fine', answered_by: 'human:operator', answered_at: ago(5) } },
+    { kind: 'question', n: 2, title: 'Behind a flag?', body: 'The **flag** question.', asked_by: 'agent:agt_dev', state: 'open', recommend: 'flag',
+      options: [{ key: 'flag', label: 'Behind a flag', description: 'safer', preview: 'if (flag) {…}' }, { key: 'on', label: 'On by default' }] },
+  ], open_questions: 1 });
+  const api = fakeApi();
+  api.answer = async (...args) => { api.calls.push(['answer', ...args]); return {}; };
+  const { harness, dialog, click, flush, saved } = await mountEdit(t, the, { api });
+  const rows = [...dialog.querySelectorAll('.tb-edit-question')];
+  assert.deepEqual(rows.map((r) => r.dataset.editQuestion), ['2', '1'], 'the open question comes first');
+  assert.match(rows[0].textContent, /Q2 · Behind a flag\?[\s\S]*pick one · 2/);
+  assert.match(rows[1].textContent, /answered[\s\S]*Picked Alpha — “fine”/);
+  assert.equal(rows[1].querySelector('.tb-answer-open'), null, 'an answered question offers no Answer');
+  await click(rows[0].querySelector('.tb-answer-open'));
+  const answer = harness.document.querySelector('#taskboard-answer-modal');
+  assert.ok(answer, 'Answer… opens the Answer dialog');
+  assert.ok(!dialog.contains(answer), 'beside the form, not inside it');
+  assert.match(answer.textContent, /Q2 on “Release notes”/);
+  for (let i = 0; i < 100 && !answer.querySelector('.tb-answer-context strong'); i += 1) await flush();
+  assert.ok(answer.querySelector('.tb-answer-context strong'), 'the question\'s context is rendered Markdown');
+  const flag = answer.querySelector('[data-answer-option="flag"]');
+  assert.ok(flag.classList.contains('tb-answer-recommended'));
+  assert.match(flag.textContent, /Behind a flag[\s\S]*recommended[\s\S]*safer[\s\S]*if \(flag\)/, 'the option shows its label, description and preview');
+  await harness.act(async () => { harness.fireEvent(answer.querySelector('[data-answer-option="on"] input'), 'change'); });
+  await click(answer.querySelector('#taskboard-answer-submit'));
+  assert.deepEqual(api.calls.filter((c) => c[0] === 'answer'), [['answer', 'tk_00000001', ['on'], '', 2]]);
+  assert.equal(harness.document.querySelector('#taskboard-answer-modal'), null, 'the dialog closes once the answer landed');
+  assert.equal(saved(), 1, 'the board is read again');
+  assert.ok(harness.document.querySelector('#taskboard-edit-modal'), 'the form stays open');
+});
+
+test('without the assign grant the form shows the questions, with no Answer', async (t) => {
+  const the = task({ questions: [{ kind: 'question', n: 1, title: 'Q?', state: 'open', options: [{ key: 'a', label: 'A' }] }], open_questions: 1 });
+  const api = fakeApi();
+  api.answer = async () => ({});
+  api.can = { assign: false };
+  const { dialog } = await mountEdit(t, the, { api });
+  assert.ok(dialog.querySelector('.tb-edit-question'));
+  assert.equal(dialog.querySelector('.tb-answer-open'), null);
+});

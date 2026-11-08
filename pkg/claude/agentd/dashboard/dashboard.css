@@ -19092,21 +19092,34 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .tb-question-opts .tb-answer-desc { display: inline; }
 .tb-question-picked { color: #3fb950; font-weight: 600; }
 .tb-question-answer { margin: 8px 0 0 12px; padding: 6px 10px; border-left: 2px solid #3fb950; border-radius: 0 6px 6px 0; background: var(--ui-bg, #0d1117); }
-.tb-question-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .tb-card-answer { margin-top: 6px; }
-.taskboard-answer-modal { max-width: 760px; }
+.taskboard-answer-modal { width: min(860px, 96vw); max-width: 96vw; }
 .tb-answer-meta { margin-bottom: 8px; }
-.tb-answer-context { background: var(--ui-bg, #21262d); border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; white-space: pre-wrap; line-height: 1.45; }
-.tb-answer-options { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
-.tb-answer-options.tb-answer-has-preview { grid-template-columns: minmax(220px, 300px) 1fr; }
+.tb-answer-context { background: var(--ui-bg, #21262d); border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; line-height: 1.45; max-height: 45vh; overflow: auto; }
+.tb-answer-context .tb-answer-md { font-size: 13px; }
+.tb-answer-context-hint { margin-bottom: 10px; }
+.tb-answer-files { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.tb-answer-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.tb-answer-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tb-answer-rec-line { font-size: 12px; color: #3fb950; }
 .tb-answer-list { display: flex; flex-direction: column; gap: 6px; }
-.tb-answer-opt { display: flex; gap: 8px; align-items: flex-start; padding: 7px 9px; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; cursor: pointer; }
+.tb-answer-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; cursor: pointer; }
+.tb-answer-opt.tb-answer-recommended { border-color: rgba(63, 185, 80, 0.55); box-shadow: inset 3px 0 0 #3fb950; }
 .tb-answer-opt.tb-answer-on { border-color: #58a6ff; background: rgba(88, 166, 255, 0.08); }
 .tb-answer-opt input { margin-top: 3px; }
+.tb-answer-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tb-answer-n { color: var(--ui-muted, #7d8590); font-weight: 400; }
 .tb-answer-label { display: block; color: var(--ui-text-strong, #e6edf3); font-weight: 500; }
-.tb-answer-desc { display: block; color: var(--ui-muted, #7d8590); font-size: 12px; margin-top: 2px; }
+.tb-answer-desc { display: block; color: var(--ui-muted, #7d8590); font-size: 12px; margin-top: 2px; white-space: pre-wrap; }
 .tb-answer-rec { margin-left: 6px; color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
-.tb-answer-preview { border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; padding: 8px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; min-height: 120px; }
+.tb-answer-preview { margin: 6px 0 0; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; padding: 8px; background: var(--ui-bg, #0d1117); font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; max-height: 260px; }
+.tb-edit-questions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tb-edit-question { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; }
+.tb-edit-question-open { border-color: rgba(163, 113, 247, 0.6); background: rgba(163, 113, 247, 0.06); }
+.tb-edit-question:not(.tb-edit-question-open) { opacity: 0.8; }
+.tb-edit-question-main { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
+.tb-edit-question-meta { font-size: 12px; color: var(--ui-muted, #8b949e); }
+.tb-edit-question-answer { font-size: 12px; color: #3fb950; overflow-wrap: anywhere; }
 
 /* The Markdown editor (markdown-editor.js): toolbar, Write / Preview / Split,
    CodeMirror (or its textarea fallback) and a status line. The box is
