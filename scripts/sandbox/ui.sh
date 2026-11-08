@@ -40,7 +40,7 @@ start() {
   if [[ -f "$state/pid" ]] && kill -0 "$(cat "$state/pid")" 2>/dev/null; then
     die "sandbox '$name' is already up at $(cat "$state/url" 2>/dev/null) (ui.sh down first)"
   fi
-  rm -rf "$state"
+  stop "$name" # a dead one's leftovers, its throwaway directory included
   mkdir -p "$state"
   local work
   work="$(mktemp -d "${TMPDIR:-/tmp}/tclaude-sandbox.XXXXXX")"
@@ -54,7 +54,10 @@ start() {
   echo "built in $((SECONDS - t0))s; seeding fixture '$fixture' ..." >&2
 
   # The server sees only the throwaway directory: HOME, TMPDIR and every XDG
-  # dir point inside it. It runs from the package directory, as go test does.
+  # dir point inside it. It runs from the package directory, as go test does,
+  # detached from the terminal (setsid where there is one; stock macOS has none).
+  local detach=nohup
+  command -v setsid >/dev/null && detach=setsid
   (
     cd "$root/pkg/claude/agentd"
     env HOME="$work/home" TMPDIR="$work/tmp" \
@@ -63,7 +66,7 @@ start() {
       XDG_RUNTIME_DIR="$work/xdg/runtime" \
       TCLAUDE_SANDBOX_SERVE="$work/serve" TCLAUDE_SANDBOX_FIXTURE="$fixture" \
       TCLAUDE_SANDBOX_PORT="$port" \
-      setsid "$work/agentd.test" -test.run '^TestSandboxServe$' -test.timeout 0 -test.v \
+      "$detach" "$work/agentd.test" -test.run '^TestSandboxServe$' -test.timeout 0 -test.v \
       > "$state/server.log" 2>&1 < /dev/null &
     echo $! > "$state/pid"
   )
@@ -94,8 +97,14 @@ stop() {
     touch "$work/serve/stop"
   fi
   if [[ -n "$pid" ]]; then
-    for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-    kill "$pid" 2>/dev/null || true
+    # The server returns on the stop file and runs its cleanup; give it time,
+    # then TERM it and wait again, so its files are not deleted under it.
+    for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+      kill -9 "$pid" 2>/dev/null || true
+    fi
   fi
   # Only ever delete the directory this script made.
   if [[ -n "$work" && "$work" == */tclaude-sandbox.* && -d "$work" ]]; then
@@ -104,20 +113,24 @@ stop() {
   rm -rf "$state"
 }
 
-# smoke NAME TEST...: Playwright against the sandbox NAME.
+# run_smoke NAME TEST...: Playwright against the sandbox NAME. Results and
+# screenshots go to sandbox-out/results-NAME, kept after the run.
 run_smoke() {
-  local state="$state_root/$1"; shift
+  local state="$state_root/$1"
+  local results="$state_root/results-$1"; shift
   [[ -d "$smoke_dir/node_modules/@playwright/test" ]] ||
     (cd "$smoke_dir" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund) >&2
   local work
   work="$(cat "$state/work")"
+  local fixture_env=()
+  [[ -f "$state/fixture.json" ]] && fixture_env=(SANDBOX_FIXTURE_JSON="$state/fixture.json")
   # Chrome writes under the XDG dirs, and ~/.config may not be writable under
   # an agent sandbox (crashpad then aborts), so they point at the throwaway dir.
   (
     cd "$smoke_dir"
     env XDG_CONFIG_HOME="$work/xdg/config" XDG_CACHE_HOME="$work/xdg/cache" XDG_DATA_HOME="$work/xdg/data" \
-      SANDBOX_URL="$(cat "$state/url")" SANDBOX_FIXTURE_JSON="$state/fixture.json" \
-      SANDBOX_OUT="$root/sandbox-out/results" \
+      SANDBOX_URL="$(cat "$state/url")" ${fixture_env[@]+"${fixture_env[@]}"} \
+      SANDBOX_OUT="$results" \
       node node_modules/@playwright/test/cli.js test "$@"
   )
 }
@@ -160,6 +173,7 @@ case "$cmd" in
     trap 'stop "$name"' EXIT
     start "$name" full ""
     run_smoke "$name" "$@"
+    echo "results and screenshots: $state_root/results-$name" >&2
     ;;
   *) usage ;;
 esac

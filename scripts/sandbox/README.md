@@ -73,4 +73,4 @@ The tests use `@playwright/test` with the system Chrome (`channel: 'chrome'`),
 so nothing is downloaded. Set `SANDBOX_CHROME` to use another binary. The
 package is kept out of `go.mod` and runs on demand only. Under an agent sandbox
 Chrome needs writable XDG dirs; `ui.sh` points them into the throwaway
-directory. Screenshots of every route land in `sandbox-out/results/`.
+directory. Screenshots of every route land in `sandbox-out/results-<run>/`.

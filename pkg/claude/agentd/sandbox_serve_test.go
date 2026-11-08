@@ -181,6 +181,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxAccess(t)
 	seedSandboxFederation(t)
 	seedSandboxUsageLimit(s)
+	seedSandboxPlugin(s)
 	seedSandboxLog(t)
 	s.writeFixture()
 }
@@ -424,4 +425,14 @@ func seedSandboxLog(t *testing.T) {
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// seedSandboxPlugin installs a plugin, which also shows the Plugins tab (it is
+// hidden while nothing is installed). Its checks only run `true`.
+func seedSandboxPlugin(s *sandboxSeeder) {
+	s.t.Helper()
+	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
+		"name":  "webshop-dev-env",
+		"steps": []map[string]any{{"name": "node-toolchain", "check": "true"}, {"name": "playwright-browsers", "check": "true"}},
+	}, nil)
 }

@@ -12,7 +12,7 @@ import { test, expect } from '@playwright/test';
 // The seeded entities the deep links open, written by the sandbox server
 // (TestSandboxServe) for the full fixture; absent for the docshots fixtures.
 const fixture = process.env.SANDBOX_FIXTURE_JSON
-  ? (() => { try { return JSON.parse(readFileSync(process.env.SANDBOX_FIXTURE_JSON, 'utf8')); } catch { return null; } })()
+  ? JSON.parse(readFileSync(process.env.SANDBOX_FIXTURE_JSON, 'utf8'))
   : null;
 
 // Tabs the tour skips, each with its reason.
@@ -51,6 +51,14 @@ const ALLOW_HTTP = [
   { text: /^502 \/api\/peer\/inst_[a-z0-9]+\//, why: NO_HUB },
   { text: /^429 \/api\/companion\/presence$/, why: 'every route is a fresh page load, faster than the 32-tab presence table ages tabs out' },
 ];
+
+// Routes the router sends elsewhere on purpose, each with its reason. A route
+// that lands on its own default sub-view (/config → /config/appearance) needs
+// no entry.
+const REDIRECTS = {
+  '/drawing-boards': { to: '/terminals', why: 'a bare Collab selector opens the Collab home; the deep link below opens a board' },
+  '/collab/processes': { to: '/terminals', why: 'a bare Collab selector opens the Collab home; the template deep link opens the editor' },
+};
 
 // A route renders at least this much visible text in its section.
 const MIN_TEXT = 40;
@@ -122,6 +130,13 @@ test('every route renders content without errors', async ({ page }) => {
     problems.push(`${route}: HTTP ${text}`);
   });
 
+  page.on('requestfailed', (req) => {
+    const failure = req.failure()?.errorText || 'failed';
+    // A navigation cancels the previous page's in-flight polls.
+    if (failure === 'net::ERR_ABORTED') return;
+    problems.push(`${route}: request failed: ${failure} ${new URL(req.url()).pathname}`);
+  });
+
   for (const r of list) {
     route = r.path;
     await page.goto(r.path);
@@ -142,6 +157,10 @@ test('every route renders content without errors', async ({ page }) => {
       problems.push(`${r.path}: no active section`);
       continue;
     }
+    // The router heals an unknown or hidden view to the nearest one it can
+    // show: then this route was never toured.
+    const own = seen.url === r.path || seen.url.startsWith(`${r.path}/`) || REDIRECTS[r.path]?.to === seen.url;
+    if (!r.expect && !own) problems.push(`${r.path}: redirected to ${seen.url}`);
     if (r.expect && !(await page.getByText(r.expect).filter({ visible: true }).count())) {
       problems.push(`${r.path}: does not show "${r.expect}"`);
     }
