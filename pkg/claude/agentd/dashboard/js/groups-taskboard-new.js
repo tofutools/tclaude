@@ -23,7 +23,8 @@ import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { captureLines, isTrackerLine, taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
-import { FilesField } from './groups-taskboard-files.js';
+import { FilesField, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
+import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
 
 const html = htm.bind(h);
@@ -254,8 +255,12 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const sending = useRef(false);
   const titleRef = useRef(null);
   const [files, setFiles] = useState([]);
+  const briefEditor = useRef(null);
+  // A file pasted or dropped on the brief is linked there too.
   const intake = useAttachmentIntake({ setAttachments: setFiles, attachments: files, busy: () => sending.current,
-    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true) });
+    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true), nameFile: taskPastedName,
+    onAdded: (added, event) => { if (event?.target?.closest?.('.tb-new-body')) briefEditor.current?.insertFiles(added.map((a) => a.name), event); } });
+  const briefFiles = useMarkdownFiles(api, null, files);
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const listMode = !!draft.list;
   const lines = captureLines(draft.list);
@@ -322,8 +327,10 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           tracker ? (draft.to || !['idea', 'next'].includes(draft.start)
             ? 'only a tracker id: it becomes the ref, and stays the title (an import cannot start it here or assign it)'
             : 'only a tracker id: it becomes the ref, titled from the tracker') : null)}
-        ${row('Brief', html`<${Textarea} class="tb-new-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
-          placeholder="what the assignee needs to know (optional)" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}
+        ${row('Brief', html`<${MarkdownEditor} class="tb-new-body" label="Brief" value=${draft.body} disabled=${busy}
+          placeholder="what the assignee needs to know (optional; Markdown)" onInput=${set('body')}
+          editorRef=${briefEditor} attachments=${briefFiles} onPickFiles=${(picked) => intake.add(picked).map((a) => a.name)}
+          modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} adds`} />`)}
         ${row('Ref', html`<${Input} class="tb-new-ref" aria-label="Ref" value=${draft.ref} disabled=${busy || tracker}
           placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123 (optional)" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
           draft.ref.trim() ? 'a bare awb or Linear id is linked through its tracker' : null)}`}

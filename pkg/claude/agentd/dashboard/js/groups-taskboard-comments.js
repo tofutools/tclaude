@@ -16,7 +16,8 @@ import { MarkdownDocument } from './markdown-document.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { isPageNode, onPeerPage, selfNodeID } from './node-api.js';
 import { taskFileLimits } from './taskboard-actions.js';
-import { FilesField, StoredFiles } from './groups-taskboard-files.js';
+import { FilesField, StoredFiles, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
+import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -116,6 +117,8 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
     if (ok) void run('Delete', () => api.deleteComment(taskId, comment.id));
   };
   const label = REASON_LABEL[comment.kind];
+  // A comment shows the images it carries where its text names them.
+  const files = useMarkdownFiles(api, { id: taskId, attachments: deleted ? [] : comment.attachments }, [], editing ?? comment.body);
   return html`<li class=${`tb-activity-comment${deleted ? ' tb-comment-deleted' : ''}${mine ? ' tb-comment-mine' : ''}`} data-comment=${comment.id}>
     <div class="tb-comment-head">
       <span class="tb-comment-author">${authorOf(comment, nameOf)}</span>
@@ -131,10 +134,9 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
       ? html`<div class="tb-comment-body ui-hint">deleted</div>`
       : editing !== null
         ? html`<div class="tb-comment-editor">
-            <${Textarea} class="tb-comment-edit-body" rows=${3} value=${editing} maxLength=${COMMENT_MAX} disabled=${busy}
-              onInput=${(event) => setEditing(event.currentTarget.value)}
+            <${MarkdownEditor} compact class="tb-comment-edit-body" label="Edit comment" value=${editing} maxLength=${COMMENT_MAX} disabled=${busy}
+              onInput=${setEditing} onSubmit=${save} attachments=${files} hint=${`${submitKeyLabel()} saves · Esc cancels`}
               onKeyDown=${(event) => {
-                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); save(); }
                 if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditing(null); }
               }} />
             <span class="tb-comment-editor-acts">
@@ -143,7 +145,7 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
               <${Button} size="sm" variant="ghost" disabled=${busy} onClick=${() => setEditing(null)}>Cancel<//>
             </span>
           </div>`
-        : html`<div class="tb-comment-body"><${MarkdownDocument} source=${comment.body} className="markdown-document tb-comment-md" /></div>`}
+        : html`<div class="tb-comment-body"><${MarkdownDocument} source=${comment.body} attachments=${files} className="markdown-document tb-comment-md" /></div>`}
     ${!deleted && comment.attachments?.length > 0 && html`<${StoredFiles} api=${api} taskId=${taskId} attachments=${comment.attachments}
       class="tb-comment-files" surface=${`comment-${comment.id}`} />`}
   </li>`;
@@ -280,8 +282,14 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
   const sendingRef = useRef(false);
   const key = useRef(newCommentKey());
   const list = useRef(null);
+  const composer = useRef(null);
+  // A file pasted or dropped on the comment goes with it, linked where it
+  // landed in the text.
   const intake = useAttachmentIntake({ setAttachments: setFiles, attachments: files, busy: () => sendingRef.current,
-    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true), onChange: () => { key.current = newCommentKey(); } });
+    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true), onChange: () => { key.current = newCommentKey(); },
+    nameFile: taskPastedName,
+    onAdded: (added, event) => { if (event?.target?.closest?.('.md-ed')) composer.current?.insertFiles(added.map((a) => a.name), event); } });
+  const composerFiles = useMarkdownFiles(api, null, files);
 
   useEffect(() => {
     if (typeof api?.activity !== 'function') { setStream({ state: 'failed', entries: [] }); return undefined; }
@@ -354,18 +362,15 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     </ol>`}
     ${stream.state === 'ready' && !comments && html`<div class="ui-hint tb-activity-empty">no comments yet</div>`}
     <div class=${`tb-comment-composer${intake.dragOver ? ' files-drag-over' : ''}`} ...${intake.handlers}>
-      <${Textarea} class="tb-comment-new" rows=${3} value=${draft} maxLength=${COMMENT_MAX} disabled=${sending}
-        placeholder="Write a comment (Markdown) · Ctrl+Enter sends"
-        onInput=${(event) => {
-          const next = event.currentTarget.value;
+      <${MarkdownEditor} compact class="tb-comment-new" label="Comment" value=${draft} maxLength=${COMMENT_MAX} disabled=${sending}
+        placeholder=${`Write a comment (Markdown) · ${submitKeyLabel()} sends`} editorRef=${composer} attachments=${composerFiles}
+        modeKey="tclaude.dash.mdEditor.comment" onSubmit=${() => void send()}
+        onInput=${(next) => {
           // The key names the comment as sent (trimmed): an edit that sends
           // the same text keeps it, so a retry after a lost answer is not a
           // second comment.
           if (next.trim() !== draft.trim()) key.current = newCommentKey();
           setDraft(next);
-        }}
-        onKeyDown=${(event) => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); void send(); }
         }} />
       ${tooLong(draft) && html`<span class="ui-hint tb-comment-too-long">${TOO_LONG}</span>`}
       <span class="tb-comment-send-row">

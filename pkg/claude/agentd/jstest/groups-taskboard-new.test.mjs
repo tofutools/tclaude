@@ -134,7 +134,7 @@ test('Write it myself sends every field, the assignee included, in one add', asy
   const submit = () => dialog().querySelector('#taskboard-new-submit');
   assert.equal(submit().disabled, true, 'the title is required');
   await harness.input(dialog().querySelector('.tb-new-title'), 'Port the sweep');
-  await harness.input(dialog().querySelector('.tb-new-body'), 'see the review notes');
+  await harness.input(dialog().querySelector('.tb-new-body textarea'), 'see the review notes');
   await harness.input(dialog().querySelector('.tb-new-ref'), 'tcl-a1b2c3');
   await harness.act(async () => { harness.fireEvent(dialog().querySelector('input[name="tb-new-stage"][value="next"]'), 'change'); });
   // After: the type-to-filter list adds a dependency, shown as a chip.
@@ -215,7 +215,7 @@ test('a pasted list is one task per line, and a title that is only a tracker id 
   await choose('form');
   await harness.input(dialog().querySelector('.tb-new-title'), 'LIN-231');
   assert.equal(dialog().querySelector('.tb-new-ref').disabled, true, 'the title is the ref');
-  await harness.input(dialog().querySelector('.tb-new-body'), 'brief');
+  await harness.input(dialog().querySelector('.tb-new-body textarea'), 'brief');
   await click(dialog().querySelector('#taskboard-new-submit'));
   assert.deepEqual(api.calls, [
     ['capture', 'tbn-list', 'LIN-231', { next: false }],

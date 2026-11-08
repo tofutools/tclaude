@@ -1,8 +1,10 @@
 {
   "prefixes": {
-    "cost-series-": "costs-model.js / costs-island.js: `cost-series-${index % 8}`, returned as a segment's class",
+    "cm-": "markdown-codemirror.js: CodeMirror 6 (third_party/codemirror) builds its view with cm-* classes at runtime",
     "cost-seg-h": "costs-model.js: 'cost-seg-h' + harness index, returned as a segment's class",
+    "cost-series-": "costs-model.js / costs-island.js: `cost-series-${index % 8}`, returned as a segment's class",
     "route-status-": "groups-route-map.js: returns `route-status route-status-${status}`",
+    "tok-": "markdown-codemirror.js: classHighlighter gives highlighted Markdown tok-* classes at runtime",
     "ui-btn-": "ui-components.js uiButtonClass: `ui-btn-${variant}`"
   },
   "classes": {

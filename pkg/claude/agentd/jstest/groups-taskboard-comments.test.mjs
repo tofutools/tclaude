@@ -77,7 +77,7 @@ test('the stream shows changes as lines and comments as Markdown; only the viewe
 test('Ctrl+Enter sends a comment at once; a failed send keeps its key, so the retry is not a second comment', async (t) => {
   const api = fakeApi({ failComment: 1 });
   const { harness, container, settle, drafts } = await mountActivity(t, { api });
-  const box = container.querySelector('.tb-comment-new');
+  const box = container.querySelector('.tb-comment-new textarea');
   await harness.input(box, 'Ship it after QA');
   assert.equal(drafts.at(-1), true, 'the form hears a comment is being written');
   const send = async () => {
@@ -105,7 +105,7 @@ test('Ctrl+Enter sends a comment at once; a failed send keeps its key, so the re
 test('the author edits and deletes a comment', async (t) => {
   const { harness, api, click, commentEl, settle } = await mountActivity(t);
   await click(commentEl(4).querySelector('.tb-comment-edit'));
-  await harness.input(commentEl(4).querySelector('.tb-comment-edit-body'), 'Add the QA and release notes');
+  await harness.input(commentEl(4).querySelector('.tb-comment-edit-body textarea'), 'Add the QA and release notes');
   await click([...commentEl(4).querySelectorAll('button')].find((b) => b.textContent.trim() === 'Save comment'));
   assert.deepEqual(api.calls.filter((c) => c[0] === 'editComment'), [['editComment', 'tk_00000001', 4, 'Add the QA and release notes']]);
   const { shellState } = await harness.importDashboardModule('js/shell-state.js');
@@ -164,7 +164,7 @@ test('a row shows its 💬 count, which opens the edit form at the comments', as
 test('a comment over 16 KiB of UTF-8 is held back before it is sent, though it fits maxLength in characters', async (t) => {
   const api = fakeApi();
   const { harness, container, settle } = await mountActivity(t, { api });
-  const box = container.querySelector('.tb-comment-new');
+  const box = container.querySelector('.tb-comment-new textarea');
   await harness.input(box, '漢'.repeat(6000)); // 6,000 characters, 18,000 bytes
   assert.equal(container.querySelector('#taskboard-comment-send').disabled, true);
   assert.match(container.querySelector('.tb-comment-too-long').textContent, /over 16 KiB/);
@@ -180,7 +180,7 @@ test('a failed re-read keeps the stream and says it may be stale', async (t) => 
   api.activity = async (id) => { if (fail) throw new Error('node offline'); return read(id); };
   const { harness, container, settle } = await mountActivity(t, { api });
   fail = true;
-  await harness.input(container.querySelector('.tb-comment-new'), 'one more');
+  await harness.input(container.querySelector('.tb-comment-new textarea'), 'one more');
   await harness.act(() => harness.fireEvent(container.querySelector('#taskboard-comment-send'), 'click'));
   await settle();
   assert.ok(container.querySelector('[data-comment="3"]'), 'the stream stays');
@@ -190,7 +190,7 @@ test('a failed re-read keeps the stream and says it may be stale', async (t) => 
 test('an edit that sends the same text keeps the key: trailing spaces after a lost answer are no second comment', async (t) => {
   const api = fakeApi({ failComment: 1 });
   const { harness, container, settle } = await mountActivity(t, { api });
-  const box = container.querySelector('.tb-comment-new');
+  const box = container.querySelector('.tb-comment-new textarea');
   await harness.input(box, 'Ship it');
   await harness.act(() => harness.fireEvent(box, 'keydown', { key: 'Enter', ctrlKey: true }));
   await settle();
