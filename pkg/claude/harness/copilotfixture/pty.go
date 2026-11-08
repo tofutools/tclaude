@@ -214,6 +214,15 @@ type PTYOptions struct {
 	// a startup banner followed by silence is not evidence of a blocked turn.
 	// It receives the ANSI-stripped transcript and is sampled in the main loop.
 	BlockedAfterReady func(string) bool
+
+	// BlockedWhen, when non-nil, ends the run as soon as the ANSI-stripped
+	// transcript shows evidence that is conclusive on its own for the blocked
+	// arm: a dialog the scenario must never reach (the folder-trust modal for
+	// a seeded launch, say). Unlike BlockedAfter it does not wait for the pane
+	// to go quiet, which a dialog that keeps redrawing may not do for a minute
+	// or more. It is sampled after SettledWhen on the same tick, so a run whose
+	// evidence arrived is settled rather than blocked.
+	BlockedWhen func(string) bool
 }
 
 // Keystroke is one scheduled raw write onto the terminal.
@@ -432,11 +441,15 @@ loop:
 				settled = true
 				break loop
 			}
-			if !blockedReady && drawn {
+			if drawn && (!blockedReady || opts.BlockedWhen != nil) {
 				mu.Lock()
-				text := transcript.String()
+				text := stripANSI(transcript.String())
 				mu.Unlock()
-				if opts.BlockedAfterReady(stripANSI(text)) {
+				if opts.BlockedWhen != nil && opts.BlockedWhen(text) {
+					blocked = true
+					break loop
+				}
+				if !blockedReady && opts.BlockedAfterReady(text) {
 					blockedReady = true
 					blockedReadyAt = time.Now()
 				}
@@ -526,7 +539,7 @@ loop:
 // logPTYTiming records what a run cost and why it ended.
 //
 // It is not debug output. The suite's early exits — SettledWhen for an allowed
-// arm, BlockedAfter for a blocked one — are only as sound as the margin
+// arm, BlockedAfter (or BlockedWhen) for a blocked one — are only as sound as the margin
 // between the quiet window they trust and the widest gap a working turn
 // actually produces, and that margin drifts as the CLI changes. Printing it on
 // every run means a future tightening is argued from the log of a real job
