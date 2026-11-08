@@ -797,8 +797,10 @@ Dragging a card is one action, the same as its CLI verb:
 | From an agent's lane onto the Unassigned lane's *Blocked* (asks the reason) | `unassign <task>`, then `block <task> --reason …` |
 
 Where a drag asks the reason, it asks in the same reason dialog as ⋯
-*Block…*: the reason is required, Enter blocks, Escape cancels and nothing
-is written. A refused write keeps the dialog open with the reason typed.
+*Block…*: the reason is required and may take several lines (Enter adds a
+line), Ctrl/Cmd+Enter blocks, Escape cancels and nothing is written. A
+refused write keeps the dialog open with the reason typed. A multiline
+reason keeps its line breaks under the task's title and on its hover card.
 
 A drag to another lane and another column at once runs both writes in that
 order, the lane first. A move the board cannot make in one step, such as

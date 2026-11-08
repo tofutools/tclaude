@@ -223,7 +223,7 @@ function StatePill({ task, byId, assignee = '' }) {
     const waits = (task.unmet || []).map((dep) => byId?.get(dep)?.title || dep);
     if (waits.length) details.push(`waits on ${waits.map((w) => `“${w}”`).join(', ')}`);
   }
-  if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason}”`);
+  if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason.trim()}”`);
   const title = `${word} · ${details.length ? details.join(' · ') : STATE_MEANING[state]}`;
   // The Agents pill's wrap (dashboard.css .state-pill-wrap): keyboard and
   // touch focus show data-full-status, as the pointer's title does.
@@ -386,7 +386,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
-      ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason">blocked: “${task.block_reason}”</div>`}
+      ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
     <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>

@@ -238,7 +238,7 @@ export function cellAdd(lane, column, { assign = true, member = true } = {}) {
 // cardHint is what a card's column does not say: why it is blocked, or that
 // its agent went quiet. No times (the List's Last and Age carry them).
 function cardHint(task) {
-  if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why">${task.block_reason || 'blocked'}</span>`;
+  if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why" title=${task.block_reason || undefined}>${task.block_reason || 'blocked'}</span>`;
   if (task.stalled && task.assignee?.agent_id) return html`<span class="ui-tag ui-tag-warn" title="its agent went idle without reporting">idle, no report</span>`;
   return null;
 }

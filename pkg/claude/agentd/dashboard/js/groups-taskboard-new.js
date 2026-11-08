@@ -330,7 +330,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           draft.ref.trim() ? 'a bare awb or Linear id is linked through its tracker' : null)}`}
     ${row('Starts in', html`<${StartPick} value=${listMode && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
       canAssign=${canAssign} listMode=${listMode} onChange=${set('start')} />`, missing || null)}
-    ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Input} class="tb-new-reason" aria-label="Block reason" required maxLength=${400}
+    ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Textarea} class="tb-new-reason" rows=${2} aria-label="Block reason" required maxLength=${400}
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
     ${!listMode && row('After', html`<${DepsPick} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
     ${!listMode && row('Files', html`<${FilesField} intake=${intake} attachments=${files} busy=${busy} />`)}

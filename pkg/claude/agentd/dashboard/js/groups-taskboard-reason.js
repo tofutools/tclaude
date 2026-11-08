@@ -5,9 +5,11 @@
 // the board asks the way the rest of the Groups tab does instead of opening
 // a field under the row.
 //
-// One Reason field, focused on open. Enter (or Ctrl/Cmd+Enter) submits,
-// Escape or Cancel closes without a write. A required reason (a block)
-// keeps the submit disabled while it is empty. onSubmit(reason) runs the
+// One Reason field, a resizable textarea (a reason can be nuanced, so it
+// may take several lines), focused on open. Ctrl/Cmd+Enter submits through
+// the dialog's submit hotkey, Enter adds a line, Escape or Cancel closes
+// without a write. A required reason (a block) keeps the submit disabled
+// while it is empty or only whitespace. onSubmit(reason) runs the
 // write and resolves true when it landed: the dialog closes; on false (the
 // write was refused and said so) it stays, with the reason kept, for a retry.
 
@@ -15,7 +17,7 @@ import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Dialog } from './ui-dialog.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Textarea } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -56,11 +58,6 @@ export function TaskReasonDialog({ kind, task, action = '', busy = false, onSubm
       sending.current = false;
     }
   };
-  const onKeyDown = (event) => {
-    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey) return;
-    event.preventDefault();
-    void submit();
-  };
   return html`<${Dialog} id="taskboard-reason-modal" dialogClass="cron-create-modal taskboard-reason-modal"
     title=${copy.title} onClose=${onClose} onSubmitHotkey=${() => void submit()}
     busy=${busy} initialFocusRef=${inputRef} cancel="Cancel"
@@ -68,11 +65,13 @@ export function TaskReasonDialog({ kind, task, action = '', busy = false, onSubm
       disabled=${busy || invalid} onClick=${() => { void submit(); }}>${busy ? copy.busy : copy.ok}<//>`}>
     <div class="modal-meta tb-reason-task" data-task-form=${kind}>${action ? `${action} ` : ''}“${task.title || task.id}”</div>
     <p class="modal-hint ui-hint">${copy.line}</p>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Reason</span>
-      <${Input} domRef=${inputRef} class="tb-form-reason" aria-label=${copy.label} placeholder=${copy.placeholder}
-        value=${reason} maxLength=${400} disabled=${busy} required=${copy.required} autocomplete="off"
-        onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${onKeyDown} />
-    </label>
+    <div class="cron-create-row tb-new-row"><span class="cron-create-label">Reason</span>
+      <span class="tb-new-field">
+        <${Textarea} domRef=${inputRef} class="tb-form-reason" rows=${4} aria-label=${copy.label} placeholder=${copy.placeholder}
+          aria-describedby="taskboard-reason-hint" value=${reason} maxLength=${400} disabled=${busy} required=${copy.required}
+          onInput=${(event) => setReason(event.currentTarget.value)} />
+        <span class="ui-hint tb-new-hint" id="taskboard-reason-hint">${copy.ok} with Ctrl/Cmd+Enter · Enter adds a line · Esc cancels</span>
+      </span>
+    </div>
   <//>`;
 }

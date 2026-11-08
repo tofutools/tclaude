@@ -18771,7 +18771,12 @@ a.tb-ref:hover { color: #79c0ff; }
 .ui-tag.tb-state-idea { border-style: dashed; }
 .tb-row-done .tb-title, .tb-row-dropped .tb-title { color: #7d8590; }
 .tb-row-dropped .tb-title, .tb-row-dropped .tb-title-open:hover { text-decoration: line-through; }
-.tb-reason { margin-top: 2px; color: #f85149; font-size: 11.5px; }
+/* A reason may take several lines: its line breaks are kept. In a List row
+   it is clamped to three lines; the hover card shows all of it. */
+.tb-reason { margin-top: 2px; color: #f85149; font-size: 11.5px; white-space: pre-line; overflow-wrap: anywhere; }
+.tb-row .tb-reason { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+/* The state pill's focus tooltip keeps a multiline block reason's breaks. */
+.tb-state-wrap:focus::after { white-space: pre-line; }
 .tb-row.tb-closed > td { opacity: 0.85; }
 .tb-closed-table { margin-top: 4px; }
 .tb-history, .tb-more { margin: 6px 8px 0; font-size: 11.5px; color: #7d8590; }
@@ -18788,8 +18793,7 @@ a.tb-ref:hover { color: #79c0ff; }
 @media (hover: none) { .tb-row .row-actions { opacity: 1; } }
 /* The reason dialog (groups-taskboard-reason.js): Block… / Drop… and a
    Lanes drag onto Blocked. */
-.taskboard-reason-modal { min-width: 0; width: min(480px, calc(100vw - 32px)); }
-.taskboard-reason-modal .tb-form-reason { flex: 1; min-width: 0; }
+.taskboard-reason-modal { min-width: 0; width: min(520px, calc(100vw - 32px)); }
 .tb-import { margin: 0 8px 8px; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
 /* "+ New task" (groups-taskboard-new.js): the Resources ＋ menu's
    icon-only button, and the New task / Ask an agent dialogs. */

@@ -88,12 +88,13 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.equal(refreshes(), 3);
 
   // Block asks for a reason in the shared dialog, not inline under the row;
-  // it cannot be empty, the field has focus, Escape cancels and Enter submits.
+  // it cannot be empty, the field (a textarea) has focus, Escape cancels,
+  // Enter adds a line and Ctrl/Cmd+Enter submits.
   api.calls.length = 0;
   const dialog = () => harness.document.querySelector('#taskboard-reason-modal');
-  const field = () => dialog().querySelector('input.tb-form-reason');
+  const field = () => dialog().querySelector('textarea.tb-form-reason');
   const submitButton = () => dialog().querySelector('#taskboard-reason-submit');
-  const key = (el, k) => harness.act(async () => { harness.fireEvent(el, 'keydown', { key: k }); await new Promise((r) => setTimeout(r, 0)); });
+  const key = (el, k, extra = {}) => harness.act(async () => { harness.fireEvent(el, 'keydown', { key: k, ...extra }); await new Promise((r) => setTimeout(r, 0)); });
   await pick('tk_00000002', 'Block…');
   assert.equal(c.querySelector('.tb-form-row'), null, 'no inline form under the row');
   assert.ok(dialog(), 'Block… opens the reason dialog');
@@ -101,16 +102,22 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.match(dialog().textContent, /Block task[\s\S]*“second”/);
   assert.equal(harness.document.activeElement, field(), 'the reason field has focus');
   assert.equal(submitButton().disabled, true, 'a block reason is required');
-  await key(field(), 'Enter');
-  assert.deepEqual(api.calls, [], 'Enter on an empty reason writes nothing');
+  await key(field(), 'Enter', { ctrlKey: true });
+  assert.deepEqual(api.calls, [], 'Ctrl+Enter on an empty reason writes nothing');
+  await harness.input(field(), '  \n ');
+  assert.equal(submitButton().disabled, true, 'a whitespace-only reason is still empty');
+  assert.match(dialog().querySelector('#taskboard-reason-hint').textContent, /Ctrl\/Cmd\+Enter/);
   await key(field(), 'Escape');
   assert.equal(dialog(), null, 'Escape cancels');
   assert.deepEqual(api.calls, []);
   await pick('tk_00000002', 'Block…');
-  await harness.input(field(), 'waiting on CI');
+  await harness.input(field(), 'waiting on CI\nthen on review');
   assert.equal(submitButton().disabled, false);
   await key(field(), 'Enter');
-  assert.deepEqual(api.calls, [['status', 'tk_00000002', 'blocked', 'waiting on CI']]);
+  assert.deepEqual(api.calls, [], 'a plain Enter adds a line, it does not submit');
+  assert.ok(dialog());
+  await key(field(), 'Enter', { metaKey: true });
+  assert.deepEqual(api.calls, [['status', 'tk_00000002', 'blocked', 'waiting on CI\nthen on review']], 'the reason keeps its line break');
   assert.equal(dialog(), null, 'the dialog closes on success');
 
   // ✎ opens the edit form; it saves only what changed.
