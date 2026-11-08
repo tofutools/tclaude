@@ -31,6 +31,16 @@ export function dndNode(el) {
 // otherwise finish at dragend: dnd.js registers cancelClone.
 export const dndGesture = { cancelClone: () => {} };
 
+// dndMember lets a target inside a group box take the member drag itself (a
+// task on a board: drop an agent on it to assign it, groups-taskboard.js
+// useAgentOnTask), without importing dnd.js. dnd.js registers both:
+// payload() is the live member drag's payload ({ agent, conv, sourceGroup,
+// sourceNode, label, ... }) or null; yieldTo(e, text) hands it this dragover
+// (the target stopped the event, so the group box's own handler never ran):
+// the box's highlight and any pending Ctrl/Cmd clone go, and the pill says
+// what a drop there does ('' hides it).
+export const dndMember = { payload: () => null, yieldTo: () => {} };
+
 // markDropBox paints the one drop-target highlight every Groups view uses:
 // the whole group box (header and body) under a member drag, tinted for a
 // move, a clone, or a drop that is refused there. clearDropBox removes it.
