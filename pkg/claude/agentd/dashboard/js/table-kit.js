@@ -45,3 +45,11 @@ export function TableHead({
     >${label(c)}<//>`;
   })}${trailing}</tr></thead>`;
 }
+
+// ColGroup renders a column list as <colgroup>, one <col> per column, each
+// classed by colClass(column) (ui.css: ui-col-fit, ui-col-rest,
+// ui-col-track). Building it from the same list as the header and the
+// full-width rows keeps their column counts from drifting apart.
+export function ColGroup({ cols, colClass }) {
+  return html`<colgroup>${cols.map((c) => html`<col key=${c.key} class=${colClass(c)} />`)}</colgroup>`;
+}

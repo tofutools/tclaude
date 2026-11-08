@@ -44,6 +44,7 @@ import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
 } from './taskboard-context.js';
+import { ColGroup } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -434,8 +435,9 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
 // Agents table's order and look, then the board's own Who, Ref, Deps and
 // Files. Each is as wide as its content (dashboard.css .tb-table); Name takes
 // the rest. The Ideas band and history are rows of the same table.
-const COLUMNS = html`<colgroup>${['ctl', 'name', 'state', 'last', 'age', 'who', 'ref', 'deps'].map((key) => html`<col key=${key} class=${`ui-col-fit tb-col-${key}`} />`)}<col class="ui-col-rest tb-col-files" /></colgroup>`;
-const TABLE_COLS = 9;
+const TB_COLS = Object.freeze(['ctl', 'name', 'state', 'last', 'age', 'who', 'ref', 'deps', 'files'].map((key) => ({ key })));
+const COLUMNS = html`<${ColGroup} cols=${TB_COLS} colClass=${(c) => `${c.key === 'files' ? 'ui-col-rest' : 'ui-col-fit'} tb-col-${c.key}`} />`;
+const TABLE_COLS = TB_COLS.length;
 
 const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 
