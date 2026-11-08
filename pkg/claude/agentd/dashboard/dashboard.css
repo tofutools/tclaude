@@ -6809,6 +6809,14 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
+/* A textarea keeps flex-basis auto, not the 0% of `flex: 1` above. Inside a
+   column flex (the task board's .tb-new-field, the comment composer and
+   editor) the flex basis decides the height, so a 0% basis overrode the
+   height the resize grip writes: the grip showed but dragging it did
+   nothing. With basis auto the grip's height is the basis; in a row it
+   still grows to fill like the inputs. */
+.sbx-section textarea,
+.cron-create-row textarea { flex: 1 1 auto; }
 .cron-create-row select { text-overflow: ellipsis; }
 /* A standard select in a form row takes the row's flex sizing; its skin is
    ui.css's. */
