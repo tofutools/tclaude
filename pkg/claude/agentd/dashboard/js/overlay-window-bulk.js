@@ -8,12 +8,14 @@ import { batch, computed } from '@preact/signals';
 import { minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { OVERLAY_EXPOSE_LABEL, overlayExposeAvailable, showAllOverlayWindows } from './overlay-expose.js';
 import { tiledOverlayWindowCount, untileOverlayWindows } from './overlay-window.js';
+import { hasShownOverlay } from './overlay-stack.js';
+import { matchesShortcut } from './keybindings.js';
 
 export const OVERLAY_BULK_ACTIONS = {
   expose: { icon: '⧉', label: OVERLAY_EXPOSE_LABEL, hint: 'Spread out every overlay window, minimized ones too, to pick one', shortcut: 'expose' },
   untile: { icon: '⊟', label: 'Untile all windows', hint: 'Float every tiled window where it is, and end the split' },
-  minimize: { icon: '▁', label: 'Minimize all windows', hint: 'Send every overlay window to the dock; tiled ones keep their cells' },
-  restore: { icon: '▣', label: 'Restore all windows', hint: 'Bring every minimized overlay window back' },
+  minimize: { icon: '▁', label: 'Minimize all windows', hint: 'Send every overlay window to the dock; tiled ones keep their cells', shortcut: 'windows-hide-toggle' },
+  restore: { icon: '▣', label: 'Restore all windows', hint: 'Bring every minimized overlay window back', shortcut: 'windows-hide-toggle' },
 };
 
 const tabOf = (window) => window.active || window.tabs?.[0]?.id;
@@ -32,6 +34,49 @@ export function restoreAllOverlayWindows() {
   const away = overlayWindows.peek().filter((window) => window.minimized);
   batch(() => { for (const window of away) minimizeOverlayWindow(tabOf(window), false); });
   return away.length > 0;
+}
+
+// The ids of the windows the hide toggle (Ctrl ;) sent to the dock, or null
+// when the next press should hide (tcl-ht7r39).
+let hiddenByToggle = null;
+
+// toggleOverlayWindowsHidden minimizes every shown window and remembers which,
+// or, when it did that last, brings back just those. A window opened or
+// minimized by hand in between is left where it is. With none of its windows
+// still on the dock, the press minimizes again.
+export function toggleOverlayWindowsHidden() {
+  const windows = overlayWindows.peek();
+  const hidden = hiddenByToggle;
+  hiddenByToggle = null;
+  const back = hidden ? windows.filter((window) => window.minimized && hidden.has(window.id)) : [];
+  if (back.length > 0) {
+    batch(() => { for (const window of back) minimizeOverlayWindow(tabOf(window), false); });
+    return true;
+  }
+  const shown = windows.filter((window) => !window.minimized);
+  if (shown.length === 0) return false;
+  hiddenByToggle = new Set(shown.map((window) => window.id));
+  batch(() => { for (const window of shown) minimizeOverlayWindow(tabOf(window)); });
+  return true;
+}
+
+// resetOverlayWindowsHiddenForTest forgets what the toggle hid.
+export function resetOverlayWindowsHiddenForTest() { hiddenByToggle = null; }
+
+// installOverlayHideKey lets its shortcut (Ctrl ;) hide and bring back the
+// windows from anywhere, a focused terminal included: capture phase, before
+// xterm sees the key.
+export function installOverlayHideKey(win) {
+  const onKey = (event) => {
+    if (!matchesShortcut(event, 'windows-hide-toggle')) return;
+    // Not over a dialog: the windows are not what is in the way there.
+    if (hasShownOverlay()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleOverlayWindowsHidden();
+  };
+  win?.addEventListener?.('keydown', onKey, true);
+  return () => win?.removeEventListener?.('keydown', onKey, true);
 }
 
 // The actions there is something to do for now, in menu order.

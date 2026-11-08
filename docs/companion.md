@@ -222,6 +222,10 @@ once, each only when there is something for it to do:
 - **Restore all windows** brings every minimized window back, into its cell if it had one.
   A tab minimized on its own stays on the dock.
 
+**Ctrl ;** minimizes every window, and pressing it again brings back just the windows
+it minimized: a window you open or minimize in between stays where you left it. It
+works from a focused terminal too, and can be rebound in **Config › Keyboard**.
+
 While any window is open, the dock shows its ☰ menu even with nothing minimized.
 
 ### The dock

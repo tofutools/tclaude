@@ -119,6 +119,7 @@ on yours.
 | Open or minimize the Steward window | <kbd>Ctrl</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>.</kbd> | yes |
 | Mark up the page for the agent in the window | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | yes |
 | Show all windows side by side, to pick one | <kbd>Ctrl</kbd> <kbd>,</kbd> | <kbd>Ctrl</kbd> <kbd>,</kbd> | yes |
+| Minimize all windows, or bring back the ones it minimized | <kbd>Ctrl</kbd> <kbd>;</kbd> | <kbd>Ctrl</kbd> <kbd>;</kbd> | yes |
 | Message the agent in the current terminal or window | <kbd>Ctrl</kbd> <kbd>M</kbd> | <kbd>Ctrl</kbd> <kbd>M</kbd> | yes |
 | Next dashboard tab | <kbd>]</kbd> | <kbd>]</kbd> | no |
 | Previous dashboard tab | <kbd>[</kbd> | <kbd>[</kbd> | no |
