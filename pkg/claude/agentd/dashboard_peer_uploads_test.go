@@ -124,9 +124,15 @@ func pathOf(uri string) string {
 	return uri
 }
 
-// Only the chunk route's request may carry more than a control request.
-func TestPeerViewBodyLimitOpensOnlyForUploadChunks(t *testing.T) {
+// Only the chunk route's request, and a drawing board export's pick, may
+// carry more than a control request.
+func TestPeerViewBodyLimitOpensOnlyForUploadChunksAndExports(t *testing.T) {
 	require.Equal(t, peerUploadChunk, peerViewBodyLimit(peerUploadChunkPath))
+	require.Equal(t, drawingBoardExportBodyLimit, peerViewBodyLimit("/api/drawing-boards/plan/export"))
+	for _, p := range []string{"/api/drawing-boards/plan", "/api/drawing-boards/a/b/export", "/api/drawing-boards//export", "/v1/drawing-boards/plan/export"} {
+		require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit(p), p)
+	}
+	require.Less(t, (drawingBoardExportBodyLimit+2)/3*4+8192, fedPeerViewRequestLimit)
 	require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit("/api/spawn-attachments"))
 	require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit(peerUploadFinishPath))
 	// A chunk, base64-encoded in its JSON frame, fits the frame limit.

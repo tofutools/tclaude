@@ -102,9 +102,18 @@ func TestDrawingBoardExportAttachesToATask(t *testing.T) {
 		{AttachTo: "tk_1", Format: "svg"},
 		{Output: "x.png", Comment: "see"},
 		{Output: "x.png", Replace: 3},
+		{AttachTo: "tk_1", Key: "k1"},
 	} {
 		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
 	}
+
+	// A comment carries a key, so a retried call is not a second comment.
+	rc = runDrawingBoardExport(&drawingBoardExportParams{AttachTo: "tk_1", Comment: "see"}, "plan", &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Regexp(t, `^cli-[0-9a-f]{32}$`, gotBody["key"], "a fresh key by default")
+	rc = runDrawingBoardExport(&drawingBoardExportParams{AttachTo: "tk_1", Comment: "see", Key: " k1 "}, "plan", &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, map[string]any{"board": "plan", "comment": "see", "key": "k1"}, gotBody)
 
 	// A linked node's board: the daemon has that node draw it, and the task
 	// here keeps it.

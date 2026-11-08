@@ -27,6 +27,7 @@ type drawingBoardExportParams struct {
 	Scale    float64  `long:"scale" optional:"true" help:"PNG pixels per drawing board unit (default 2, at most 4; the longest side is capped at 4096px)"`
 	AttachTo string   `long:"attach-to" optional:"true" help:"Attach the PNG to this task instead of writing a file; exporting the same part again updates that file"`
 	Comment  string   `long:"comment" optional:"true" help:"With --attach-to: post the drawing as a new comment with this text"`
+	Key      string   `long:"key" optional:"true" help:"With --comment: an idempotency key; the same key and comment again returns the first comment, not a second (default: a fresh one)"`
 	Name     string   `long:"name" optional:"true" help:"With --attach-to: the file's name (default: the drawing board's id, .png)"`
 	Replace  int64    `long:"replace" optional:"true" help:"With --attach-to: update this drawing file (its id from 'taskboard show') instead of matching by board and part"`
 	Node     string   `long:"node" optional:"true" help:"Export a linked node's drawing board, by its label or instance ID (at most about 6 MiB); with --attach-to it is attached to a task here"`
@@ -96,6 +97,9 @@ func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stder
 		return rcInvalidArg
 	case attach == "" && (p.Comment != "" || p.Name != "" || p.Replace != 0):
 		fmt.Fprintln(stderr, "Error: --comment, --name and --replace go with --attach-to")
+		return rcInvalidArg
+	case p.Key != "" && p.Comment == "":
+		fmt.Fprintln(stderr, "Error: --key goes with --comment")
 		return rcInvalidArg
 	case attach != "" && strings.EqualFold(strings.TrimSpace(p.Format), "svg"):
 		fmt.Fprintln(stderr, "Error: a drawing is attached as a PNG; export an SVG with -o")
@@ -207,6 +211,12 @@ func attachDrawingBoardExport(board, task string, p *drawingBoardExportParams, r
 	}
 	if p.Comment != "" {
 		req["comment"] = p.Comment
+		// A retry of this call is the same comment, not a second one.
+		key := strings.TrimSpace(p.Key)
+		if key == "" {
+			key = newCommentKey()
+		}
+		req["key"] = key
 	}
 	if p.Replace != 0 {
 		req["replace"] = p.Replace

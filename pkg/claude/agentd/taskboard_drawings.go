@@ -25,7 +25,7 @@ import (
 // reference back to the board so the viewer can open it there.
 //
 //	POST /v1/taskboard/tasks/{id}/drawings
-//	{board, node?, elements?, region?, scale?, name?, comment?, replace?}
+//	{board, node?, elements?, region?, scale?, name?, comment?, key?, replace?}
 //
 // With node, the board is a linked node's: that node draws it through its
 // peer view, as the caller (the operator, or an agent under its peer=
@@ -117,7 +117,10 @@ type taskboardDrawingRequest struct {
 	Scale    float64           `json:"scale"`
 	Name     string            `json:"name"`
 	Comment  string            `json:"comment"`
-	Replace  int64             `json:"replace"`
+	// Key is a comment's idempotency key, as POST .../comments takes it: a
+	// retry with the same key and comment returns the first comment.
+	Key     string `json:"key"`
+	Replace int64  `json:"replace"`
 }
 
 // drawingFileName is the file's name: the given one (a .png, or none), or
@@ -147,7 +150,7 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 	if !decodeTaskboardBodyLimit(w, r, &req, taskboardDrawingBodyLimit) {
 		return
 	}
-	var comment string
+	var comment, key string
 	if strings.TrimSpace(req.Comment) != "" {
 		if req.Replace != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "a comment posts a new file; replace updates a task's file")
@@ -159,9 +162,16 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			return
 		}
 		comment = text
+		if key, err = validateTaskCommentKey(req.Key); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
 		if !requireTaskboardCommenter(w, r, g) {
 			return
 		}
+	} else if strings.TrimSpace(req.Key) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a key goes with a comment; attaching the same part again updates its file anyway")
+		return
 	} else if !requireTaskboardTaskChange(w, r, g, t) {
 		return
 	}
@@ -217,7 +227,7 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 		AddedBy: actor, Drawing: string(refJSON)}
 
 	if comment != "" {
-		c, _, err := db.AddGroupTaskComment(db.NewGroupTaskComment{TaskID: t.ID, Actor: actor, Body: comment, Attachments: []db.GroupTaskAttachment{row}})
+		c, created, err := db.AddGroupTaskComment(db.NewGroupTaskComment{TaskID: t.ID, Actor: actor, Body: comment, Key: key, Attachments: []db.GroupTaskAttachment{row}})
 		if err != nil {
 			writeTaskboardCommentError(w, err)
 			return
@@ -227,9 +237,14 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			writeError(w, http.StatusInternalServerError, "db", "read the comment's file back")
 			return
 		}
-		setAuditDetail(r, fmt.Sprintf("commented on %s (#%d) with %s", t.ID, c.ID, from))
-		mailTaskboardComment(r, g, t, c)
-		writeJSON(w, http.StatusCreated, map[string]any{"id": t.ID, "group": g.Name, "comment": c.ID,
+		// A retry of the same key answers the first comment, with its file.
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+			setAuditDetail(r, fmt.Sprintf("commented on %s (#%d) with %s", t.ID, c.ID, from))
+			mailTaskboardComment(r, g, t, c)
+		}
+		writeJSON(w, status, map[string]any{"id": t.ID, "group": g.Name, "comment": c.ID,
 			"attachment": taskboardAttachmentViews(files[c.ID][:1])[0]})
 		return
 	}

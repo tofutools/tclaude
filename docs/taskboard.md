@@ -1464,7 +1464,7 @@ those drags aren't accepted in the lanes.
 | `attachments` | `GET /v1/taskboard/tasks/{id}/attachments` → `{id, group, attachments}` |
 | `attachments --save` | `GET /v1/taskboard/tasks/{id}/attachments/{aid}` (the bytes; `?format=json` → base64 `data`) |
 | `detach` | `DELETE /v1/taskboard/tasks/{id}/attachments/{aid}` → the task |
-| `drawing-board export --attach-to` | `POST /v1/taskboard/tasks/{id}/drawings {"board","elements"?,"region"?,"scale"?,"name"?,"comment"?,"replace"?}` → `{id, group, attachment, replaced?, comment?}` |
+| `drawing-board export --attach-to` | `POST /v1/taskboard/tasks/{id}/drawings {"board","elements"?,"region"?,"scale"?,"name"?,"comment"?,"key"?,"replace"?}` → `{id, group, attachment, replaced?, comment?}` (`key` goes with `comment`; a retry answers 200 with the first comment) |
 
 `add --attach`, `ask --attach` and a move to another node with files send
 their usual JSON as the `task` part of a multipart request, with one `file`

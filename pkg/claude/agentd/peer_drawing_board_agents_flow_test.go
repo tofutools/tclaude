@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"net/http"
@@ -146,6 +147,29 @@ func TestPeerDrawingBoardsAgentSender(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, "%s %s: %s", c.method, c.tail, rec.Body.String())
 		_ = conn.Close()
 	}
+
+	// A big --elements pick outgrows a control request's body, but the
+	// export route takes it whole (tk_32aa257d).
+	ids := make([]string, 3000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("element-%05d", i)
+	}
+	pick := map[string]any{"format": "png", "elements": ids}
+	require.Greater(t, len(mustJSON(t, pick)), 32<<10, "the pick is more than a control request carries")
+	after := len(p.envelopes(proto.KindPeerViewOpen))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- call("POST", "drawing-boards/plan/export?format=json", pick) }()
+	conn := acceptOutboundPeerView(t, p, after)
+	wire := readPeerViewWire(t, conn)
+	var asked struct {
+		Elements []string `json:"elements"`
+	}
+	require.NoError(t, json.Unmarshal(wire.Body, &asked))
+	assert.Equal(t, ids, asked.Elements, "every id goes out")
+	writePeerViewWire(t, conn, peerViewWire{Status: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"ok":true}`)})
+	rec = <-done
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_ = conn.Close()
 }
 
 // export --node --attach-to: the linked node draws the board through its

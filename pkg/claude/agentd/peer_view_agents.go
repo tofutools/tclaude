@@ -512,8 +512,9 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 	if cat == nil {
 		cat = &proto.CatalogPayload{}
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, fedPeerViewBodyLimit+1))
-	if err != nil || len(body) > fedPeerViewBodyLimit {
+	limit := peerProxyBodyLimit(r.PathValue("tail"))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
+	if err != nil || len(body) > limit {
 		refuse(http.StatusRequestEntityTooLarge, "request_too_large", "peer request body exceeds limit")
 		return
 	}
