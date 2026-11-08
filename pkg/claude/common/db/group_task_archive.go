@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -50,6 +52,23 @@ func UnarchiveGroupTask(id, actor string) (*GroupTask, error) {
 // were closed before closedBefore (zero: all of them), and returns their
 // ids.
 func ArchiveDoneGroupTasks(groupID int64, closedBefore time.Time, actor string) ([]string, error) {
+	return ArchiveClosedGroupTasks(groupID, []string{GroupTaskDone}, closedBefore, actor)
+}
+
+// ArchiveClosedGroupTasks archives a group's closed tasks in the given
+// statuses (done, dropped or both) not yet archived that were closed before
+// closedBefore (zero: all of them), and returns their ids, oldest first.
+func ArchiveClosedGroupTasks(groupID int64, statuses []string, closedBefore time.Time, actor string) ([]string, error) {
+	if len(statuses) == 0 {
+		return nil, fmt.Errorf("archive closed tasks: no status given")
+	}
+	marks := make([]string, 0, len(statuses))
+	for _, s := range statuses {
+		if s != GroupTaskDone && s != GroupTaskDropped {
+			return nil, fmt.Errorf("archive closed tasks: %q is not a closed status", s)
+		}
+		marks = append(marks, "?")
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -59,30 +78,33 @@ func ArchiveDoneGroupTasks(groupID int64, closedBefore time.Time, actor string) 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	where := `group_id = ? AND status = 'done' AND archived_at IS NULL`
+	where := `group_id = ? AND status IN (` + strings.Join(marks, ", ") + `) AND archived_at IS NULL`
 	args := []any{groupID}
+	for _, s := range statuses {
+		args = append(args, s)
+	}
 	if !closedBefore.IsZero() {
 		where += ` AND closed_at IS NOT NULL AND closed_at < ?`
 		args = append(args, dbTime(closedBefore))
 	}
-	ids, err := queryRows(tx, func(s rowScanner) (string, error) {
-		var id string
-		return id, s.Scan(&id)
-	}, `SELECT id FROM group_tasks WHERE `+where+` ORDER BY closed_at, id`, args...)
+	type row struct{ id, status string }
+	rows, err := queryRows(tx, func(s rowScanner) (row, error) {
+		var r row
+		return r, s.Scan(&r.id, &r.status)
+	}, `SELECT id, status FROM group_tasks WHERE `+where+` ORDER BY closed_at, id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	for _, id := range ids {
-		if _, err := tx.Exec(`UPDATE group_tasks SET archived_at = ?, updated_at = ? WHERE id = ?`, dbTime(now), dbTime(now), id); err != nil {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if _, err := tx.Exec(`UPDATE group_tasks SET archived_at = ?, updated_at = ? WHERE id = ?`, dbTime(now), dbTime(now), r.id); err != nil {
 			return nil, err
 		}
-		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventArchived, "archive done", now); err != nil {
+		if err := addGroupTaskEventTx(tx, r.id, actor, GroupTaskEventArchived, "archive "+r.status, now); err != nil {
 			return nil, err
 		}
-	}
-	if ids == nil {
-		ids = []string{}
+		ids = append(ids, r.id)
 	}
 	return ids, tx.Commit()
 }

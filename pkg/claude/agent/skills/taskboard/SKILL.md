@@ -7,8 +7,8 @@ description: >-
   (add it assigned to yourself), take an unassigned task or have one assigned
   to you, and report done or failed on it (take, release, report), and give
   the operator a task your work waits on (add --assignee operator --blocks),
-  or ask the operator a question with choices and get the answer back
-  (ask-operator [--wait]).
+  or ask the operator a question with choices on a task and get the answer
+  back (ask-operator <task> [--wait]).
   Use when a `[taskboard]` mail arrives in your inbox, when the
   operator or your lead says "put it on the board", "what's next for the group",
   "take the next task", "track your work on the board", or when you finish or give up on a task you were
@@ -109,11 +109,16 @@ comments on it come to you as mail too.
 - Something for the operator to look at when it can, that nothing waits on:
   `add <group> "…" --assignee operator --idea` puts it in the operator's
   ideas, not counted as waiting on them. `--next` queues it, still waiting.
-- To ask a question with choices and get the answer back: `ask-operator
-  <group> "question?" --option "A: why" --option B [--recommend 1] [--multi]
-  [--blocks tk_mine] [--wait 10m]`. The answer comes as `[taskboard]
-  answered: …` mail (picks, words, JSON); `--wait` prints it, or exits 6 when
-  it does not come in time. Without options the operator answers in words.
+- To ask a question with choices and get the answer back, ask it on your
+  task: `ask-operator tk_mine "question?" --option "A: why" --option B
+  [--recommend 1] [--multi] [--block] [--wait 10m]`. It is an entry of the
+  task's activity (Q1, Q2…) and shows in the operator's lane; `--block`
+  blocks your task until the answer. The answer is recorded under the
+  question and comes as `[taskboard] answered Q1: …` mail (picks, words,
+  JSON); `--wait` prints it, or exits 6 when it does not come in time.
+  Without options the operator answers in words. Withdraw an open question
+  by deleting its entry (`comment rm tk_mine <#id>`). `ask-operator <group>
+  "question?" [--blocks tk_mine]` makes a new task for the question instead.
 - Two steps work too: `add … --assignee operator`, then
   `block tk_mine --on tk_…`. A task blocked with a plain `--reason` is not
   reopened for you; you only get mail.
@@ -140,7 +145,7 @@ tclaude agent taskboard block tk_… --reason "waiting on review"   ;   unblock 
 tclaude agent taskboard drop tk_… --reason "parked in awb"
 tclaude agent taskboard reopen tk_… [--next|--idea] [--assignee <agent>|--unassign]   # a done task needs more work
 tclaude agent taskboard archive tk_… [--reason "…"]   ;   unarchive tk_…   ;   ls <group> --archived   # out of the history, kept
-tclaude agent taskboard archive <group> --done [--older-than 7d]   # tidy the done tasks (taskboard.write)
+tclaude agent taskboard archive <group> --done [--dropped] [--older-than 7d]   # tidy the done / dropped tasks (taskboard.write)
 tclaude agent taskboard move-to-group tk_… <other-group>[@<peer>] [--clone] [--stage next]   # @peer: created there, then dropped here
 ```
 

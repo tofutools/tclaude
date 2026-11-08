@@ -172,10 +172,8 @@ func TestTaskboardQuestionAskerNotFromBody(t *testing.T) {
 	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Forged?",
 		"question": map[string]any{"asked_by": "agent:agt_someoneelse000000000000", "asked_via": "peer:node1/agent:agt_bobremote0000000000000000"}})
 	asked := tbDecodeQuestion(t, rec.Code, rec.Body.String(), http.StatusCreated)
-	got, err := db.GetGroupTask(asked.ID)
+	q, err := db.GetGroupTaskQuestion(asked.ID, 1)
 	require.NoError(t, err)
-	q := got.Question()
-	require.NotNil(t, q)
 	assert.Empty(t, q.AskedVia)
 	assert.Equal(t, "agent:"+tbAgentID(t, h.worker), q.AskedBy)
 }

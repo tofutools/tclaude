@@ -140,16 +140,19 @@ type taskboardTask struct {
 		AgentID string `json:"agent_id"`
 		Name    string `json:"name,omitempty"`
 	} `json:"assignee,omitempty"`
-	AssignedBy  string             `json:"assigned_by,omitempty"`
-	Held        bool               `json:"held,omitempty"`
-	Question    *taskboardQuestion `json:"question,omitempty"`
-	Waiting     bool               `json:"waiting,omitempty"`
-	Outcome     string             `json:"outcome,omitempty"`
-	OutcomeNote string             `json:"outcome_note,omitempty"`
-	Failures    int                `json:"failures,omitempty"`
-	Stalled     bool               `json:"stalled,omitempty"`
-	IdleSince   string             `json:"idle_since,omitempty"`
-	Ref         *struct {
+	AssignedBy string             `json:"assigned_by,omitempty"`
+	Held       bool               `json:"held,omitempty"`
+	Question   *taskboardQuestion `json:"question,omitempty"`
+	// Questions are every question asked on the task (tk_8b2c86f7).
+	Questions     []*taskboardQuestion `json:"questions,omitempty"`
+	OpenQuestions int                  `json:"open_questions,omitempty"`
+	Waiting       bool                 `json:"waiting,omitempty"`
+	Outcome       string               `json:"outcome,omitempty"`
+	OutcomeNote   string               `json:"outcome_note,omitempty"`
+	Failures      int                  `json:"failures,omitempty"`
+	Stalled       bool                 `json:"stalled,omitempty"`
+	IdleSince     string               `json:"idle_since,omitempty"`
+	Ref           *struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url,omitempty"`
 		Label string `json:"label,omitempty"`
@@ -1908,10 +1911,11 @@ func nonEmpty(parts ...string) []string {
 // ---- archive ----
 
 type taskboardArchiveParams struct {
-	Target    string `pos:"true" help:"Task id (tk_…), or with --done the group whose board to tidy"`
+	Target    string `pos:"true" help:"Task id (tk_…), or with --done / --dropped the group whose board to tidy"`
 	Reason    string `long:"reason" optional:"true" help:"Why; a live task is dropped with it on the way"`
-	Done      bool   `long:"done" help:"Archive the group's done tasks (needs taskboard.write); dropped and live tasks stay"`
-	OlderThan string `long:"older-than" optional:"true" help:"With --done: only the tasks closed longer ago than this age, such as 1d, 7d or 36h"`
+	Done      bool   `long:"done" help:"Archive the group's done tasks (needs taskboard.write); live tasks stay"`
+	Dropped   bool   `long:"dropped" help:"Archive the group's dropped tasks (needs taskboard.write); with --done, both"`
+	OlderThan string `long:"older-than" optional:"true" help:"With --done / --dropped: only the tasks closed longer ago than this age, such as 1d, 7d or 36h"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
@@ -1920,10 +1924,11 @@ type taskboardArchiveParams struct {
 func taskboardArchiveCmd() *cobra.Command {
 	return boa.CmdT[taskboardArchiveParams]{
 		Use:   "archive",
-		Short: "Archive a task, or a group's done tasks with --done: they leave the board and the history, but are kept",
+		Short: "Archive a task, or a group's done / dropped tasks with --done / --dropped: they leave the board and the history, but are kept",
 		Long: "Archives a task. A done or dropped task leaves the history; a live one is dropped first (with --reason, " +
 			"gated as a drop is) and archived. `archive <group> --done [--older-than 7d]` archives the board's done tasks, " +
-			"or only those closed longer ago than the age, and needs taskboard.write. An archived task is on no list but " +
+			"`--dropped` its dropped ones, and both flags together both; --older-than keeps to those closed longer ago " +
+			"than the age. Archiving in bulk needs taskboard.write. An archived task is on no list but " +
 			"`ls --archived`; `unarchive` puts it back in the history, and `reopen` back on the board. It is purged with the " +
 			"other closed tasks after taskboard.retention_days.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1932,15 +1937,15 @@ func taskboardArchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardArchiveParams, _ *cobra.Command, _ []string) {
-			if p.Done {
+			if p.Done || p.Dropped {
 				if strings.TrimSpace(p.Reason) != "" {
-					fmt.Fprintln(cliStderr, "Error: --done takes no --reason")
+					fmt.Fprintln(cliStderr, "Error: --done and --dropped take no --reason")
 					taskboardExit(rcInvalidArg)
 				}
-				taskboardExit(runTaskboardArchiveDone(p, cliStdout, cliStderr))
+				taskboardExit(runTaskboardArchiveClosed(p, cliStdout, cliStderr))
 			}
 			if strings.TrimSpace(p.OlderThan) != "" {
-				fmt.Fprintln(cliStderr, "Error: --older-than is for --done")
+				fmt.Fprintln(cliStderr, "Error: --older-than is for --done or --dropped")
 				taskboardExit(rcInvalidArg)
 			}
 			req := map[string]any{}
@@ -1969,7 +1974,11 @@ func taskboardUnarchiveCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer) int {
+// runTaskboardArchiveClosed archives a board's done tasks, dropped ones or
+// both. Done alone goes through archive-done, which a linked node of any
+// version has; dropped needs archive-closed, which an older node answers
+// with a 404 rather than archiving the wrong tasks.
+func runTaskboardArchiveClosed(p *taskboardArchiveParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -1986,7 +1995,19 @@ func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer
 		Archived []string `json:"archived"`
 		Count    int      `json:"count"`
 	}
-	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Target)) + "/taskboard/archive-done"
+	statuses := []string{}
+	if p.Done {
+		statuses = append(statuses, "done")
+	}
+	if p.Dropped {
+		statuses = append(statuses, "dropped")
+	}
+	route := "/taskboard/archive-done"
+	if p.Dropped {
+		route = "/taskboard/archive-closed"
+		req["statuses"] = statuses
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Target)) + route
 	if err := remoteRequestOpts(p.Peer, http.MethodPost, path, req, &out, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -1994,6 +2015,6 @@ func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer
 	if p.JSON {
 		return writeJSONTo(stdout, out)
 	}
-	fmt.Fprintf(stdout, "archived %d done task(s) on %s\n", out.Count, out.Group)
+	fmt.Fprintf(stdout, "archived %d %s task(s) on %s\n", out.Count, strings.Join(statuses, " or "), out.Group)
 	return rcOK
 }

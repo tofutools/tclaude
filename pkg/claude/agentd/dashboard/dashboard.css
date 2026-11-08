@@ -19071,6 +19071,22 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .tb-question-tag { white-space: nowrap; }
 .tb-question-answered { opacity: 0.75; }
 .tb-question-waiting { white-space: nowrap; }
+/* Questions on any task (tk_8b2c86f7): a card in the operator's lane, and an
+   entry of the task's activity with its answer right under it. */
+.tb-question-card { box-shadow: inset 3px 0 0 #a371f7; }
+.tb-question-on { font-size: 11px; color: var(--ui-muted, #8b949e); margin-bottom: 2px; overflow-wrap: anywhere; }
+.tb-question-task { background: none; border: 0; padding: 0; font: inherit; color: #a371f7; cursor: pointer; text-align: left; }
+.tb-question-task:hover { text-decoration: underline; }
+.tb-question-title { font-weight: 600; color: var(--ui-text-strong, #e6edf3); overflow-wrap: anywhere; }
+.tb-activity-comment.tb-activity-question { border-color: rgba(163, 113, 247, 0.6); background: rgba(163, 113, 247, 0.05); }
+.tb-activity-question .tb-comment-kind { color: #a371f7; border-color: rgba(163, 113, 247, 0.35); }
+.tb-activity-question .tb-comment-kind.tb-question-ended { color: var(--ui-muted, #8b949e); border-color: var(--ui-line, #30363d); }
+.tb-activity-question.tb-question-withdrawn, .tb-activity-question.tb-question-closed { opacity: 0.7; }
+.tb-question-opts { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.tb-question-opts .tb-answer-desc { display: inline; }
+.tb-question-picked { color: #3fb950; font-weight: 600; }
+.tb-question-answer { margin: 8px 0 0 12px; padding: 6px 10px; border-left: 2px solid #3fb950; border-radius: 0 6px 6px 0; background: var(--ui-bg, #0d1117); }
+.tb-question-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .tb-card-answer { margin-top: 6px; }
 .taskboard-answer-modal { max-width: 760px; }
 .tb-answer-meta { margin-bottom: 8px; }

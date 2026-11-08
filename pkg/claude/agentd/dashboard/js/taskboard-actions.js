@@ -325,10 +325,18 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     archiveDone(group, olderThan = '') {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
     },
-    // answer answers a question task (`taskboard answer`): picked option
-    // keys and/or text; the task closes as done.
-    answer(id, picked = [], text = '') {
-      return call('POST', taskPath(id, '/answer'), { picked, text });
+    // archiveClosed archives a board's tasks in statuses (['done'],
+    // ['dropped'] or both), or only those closed longer ago than olderThan:
+    // `taskboard archive <group> --done --dropped`.
+    archiveClosed(group, statuses, olderThan = '') {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-closed`,
+        olderThan ? { statuses, older_than: olderThan } : { statuses });
+    },
+    // answer answers question n of a task (`taskboard answer`; n 0: its
+    // only open question, as a question task's own route): picked option
+    // keys and/or text.
+    answer(id, picked = [], text = '', n = 0) {
+      return call('POST', taskPath(id, n ? `/questions/${n}/answer` : '/answer'), { picked, text });
     },
     // moveToGroup moves the task to another group of its node, or with
     // clone copies it there (groups-taskboard-transfer.js).

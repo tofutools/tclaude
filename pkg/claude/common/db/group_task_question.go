@@ -3,20 +3,34 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Question tasks (tk_aa049a67, phase 2 of tcl-p4t78f): an operator task that
-// asks a question, modelled on AskUserQuestion. Its options (none, or 2 to
-// 6) are picked one or, with Multi, several; free text is always allowed and
-// required when there are no options. The answer is stored with the
-// question, the task is closed as done with it, and the asking agent gets it
-// by mail and on the answer route.
+// Questions for the operator (tk_aa049a67, tk_8b2c86f7): any task may carry
+// questions, each an entry of its activity stream (a comment of kind
+// "question") with its own row in group_task_questions, numbered per task
+// (Q1, Q2…). A question is modelled on AskUserQuestion: its options (none,
+// or 2 to 6) are picked one or, with Multi, several; free text is always
+// allowed and required when there are no options. The answer is an entry of
+// its own (kind "answer", tied to the question's entry), the question's row
+// records it, and the asking agent gets it by mail and on the question's
+// answer route.
+//
+// A question task (`taskboard ask-operator <group>`) is a task assigned to
+// the operator whose first question is the one it asks; its
+// operator_request is the marker {"kind":"question"}. Answering its last
+// open question closes it as done.
 
 // GroupTaskQuestionKind is the one operator_request kind so far.
 const GroupTaskQuestionKind = "question"
+
+// groupTaskQuestionMarker is a question task's operator_request.
+const groupTaskQuestionMarker = `{"kind":"question"}`
 
 // Bounds of a question.
 const (
@@ -24,27 +38,67 @@ const (
 	GroupTaskQuestionLabelMax   = 80
 	GroupTaskQuestionDescMax    = 300
 	GroupTaskQuestionPreviewMax = 2 << 10
+	GroupTaskQuestionTitleMax   = 200
+	GroupTaskQuestionBodyMax    = 8 << 10
 	GroupTaskAnswerTextMax      = 4000 // characters
 )
 
-// GroupTaskEventAnswered is a question answered.
-const GroupTaskEventAnswered = "answered"
+// What a comment is, for questions: the question and its answer.
+const (
+	GroupTaskCommentQuestion = "question"
+	GroupTaskCommentAnswer   = "answer"
+)
 
-// GroupTaskQuestion is a question task's operator_request.
-type GroupTaskQuestion struct {
+// groupTaskEventAnsweredV2 is the change entry a phase 2 answer wrote; the
+// v327 migration turns it into an answer entry.
+const groupTaskEventAnsweredV2 = "answered"
+
+// A question's state.
+const (
+	GroupTaskQuestionOpen      = "open"
+	GroupTaskQuestionAnswered  = "answered"
+	GroupTaskQuestionWithdrawn = "withdrawn" // its asker deleted it
+	GroupTaskQuestionClosed    = "closed"    // its task closed first
+)
+
+// groupTaskQuestionSpec is what a question offers, as stored in its spec.
+type groupTaskQuestionSpec struct {
 	Kind      string                    `json:"kind"`
 	Multi     bool                      `json:"multi,omitempty"`
 	Options   []GroupTaskQuestionOption `json:"options,omitempty"`
 	Recommend string                    `json:"recommend,omitempty"`
-	// AskedBy is the actor that asked ("agent:<id>", "peer: <author>",
-	// "operator"), fixed at create: assign and unassign rewrite the task's
-	// assigned_by, but the answer still goes back to the asker.
+}
+
+// GroupTaskQuestion is one question on a task: what it asks, who asked, and
+// its state and answer.
+type GroupTaskQuestion struct {
+	Kind string `json:"kind"`
+	// N numbers the question on its task, from 1.
+	N int `json:"n,omitempty"`
+	// Title is the question, one line; Body its context (Markdown), the
+	// text of its activity entry.
+	Title     string                    `json:"title,omitempty"`
+	Body      string                    `json:"body,omitempty"`
+	Multi     bool                      `json:"multi,omitempty"`
+	Options   []GroupTaskQuestionOption `json:"options,omitempty"`
+	Recommend string                    `json:"recommend,omitempty"`
+	// AskedBy is the actor that asked ("agent:<id>", "peer: <author>"),
+	// fixed when it is asked: the answer goes back to it whoever holds the
+	// task by then.
 	AskedBy string `json:"asked_by,omitempty"`
 	// AskedVia is a linked node's asking agent by stable ids
 	// ("peer:<instance>/agent:<id>"), set by the daemon when a peer's agent
 	// asked: the answer goes back to it as federation mail.
-	AskedVia string           `json:"asked_via,omitempty"`
-	Answer   *GroupTaskAnswer `json:"answer,omitempty"`
+	AskedVia string    `json:"asked_via,omitempty"`
+	AskedAt  time.Time `json:"asked_at,omitzero"`
+	State    string    `json:"state,omitempty"`
+	// Blocks says asking blocked the task until the question is answered
+	// or withdrawn.
+	Blocks        bool             `json:"blocks,omitempty"`
+	Answer        *GroupTaskAnswer `json:"answer,omitempty"`
+	EventID       int64            `json:"event_id,omitempty"`
+	AnswerEventID int64            `json:"answer_event_id,omitempty"`
+	ClosedAt      time.Time        `json:"closed_at,omitzero"`
 }
 
 // GroupTaskQuestionOption is one choice.
@@ -64,27 +118,32 @@ type GroupTaskAnswer struct {
 	AnsweredAt time.Time `json:"answered_at"`
 }
 
-// Question reads the task's question; nil for any other task.
-func (t *GroupTask) Question() *GroupTaskQuestion {
+// Open reports whether the question still waits on its answer.
+func (q *GroupTaskQuestion) Open() bool { return q != nil && q.State == GroupTaskQuestionOpen }
+
+// IsQuestionTask reports whether the task was made to ask a question
+// (`ask-operator <group>`): answering its last open question closes it.
+func (t *GroupTask) IsQuestionTask() bool {
 	if t.OperatorRequest == "" {
-		return nil
+		return false
 	}
-	var q GroupTaskQuestion
-	if json.Unmarshal([]byte(t.OperatorRequest), &q) != nil || q.Kind != GroupTaskQuestionKind {
-		return nil
+	var m struct {
+		Kind string `json:"kind"`
 	}
-	return &q
+	return json.Unmarshal([]byte(t.OperatorRequest), &m) == nil && m.Kind == GroupTaskQuestionKind
 }
 
 // NormalizeGroupTaskQuestion checks a new question and fills in what may be
 // left out: the kind, and each option's key (from its label). Recommend may
-// name an option by key or label.
+// name an option by key or label. The title and body are checked when it is
+// asked (askGroupTaskQuestionTx), since a question task's title is the
+// task's.
 func NormalizeGroupTaskQuestion(q *GroupTaskQuestion) error {
 	if q.Kind == "" {
 		q.Kind = GroupTaskQuestionKind
 	}
 	if q.Kind != GroupTaskQuestionKind {
-		return taskConflict("invalid_arg", "operator_request kind is %q", GroupTaskQuestionKind)
+		return taskConflict("invalid_arg", "a question's kind is %q", GroupTaskQuestionKind)
 	}
 	if q.Answer != nil {
 		return taskConflict("invalid_arg", "a new question has no answer")
@@ -135,14 +194,6 @@ func NormalizeGroupTaskQuestion(q *GroupTaskQuestion) error {
 		}
 	}
 	return nil
-}
-
-func (q *GroupTaskQuestion) encode() (string, error) {
-	if err := NormalizeGroupTaskQuestion(q); err != nil {
-		return "", err
-	}
-	b, err := json.Marshal(q)
-	return string(b), err
 }
 
 // questionKey derives an option's key from its label: lower case, runs of
@@ -205,77 +256,425 @@ func (q *GroupTaskQuestion) AnswerText() string {
 	return strings.Join(parts, "; ")
 }
 
-// Asker is the actor that asked the question: AskedBy, or for a question
-// stored before AskedBy, the task's creator.
-func (t *GroupTask) Asker() string {
-	if q := t.Question(); q != nil && q.AskedBy != "" {
-		return q.AskedBy
-	}
-	return t.CreatedBy
+// blockReason is the reason a task asked on with Blocks is blocked for.
+func (q *GroupTaskQuestion) blockReason() string {
+	return truncateUTF8(fmt.Sprintf("waiting on operator: Q%d %s", q.N, q.Title), 400)
 }
 
-// AnswerGroupTask answers a live question task: picked are option keys (or
-// labels), text the free answer. The answer is stored with the question and
-// the task is closed as done with it as the reason, releasing the tasks
-// waiting on it. A question is answered once.
-func AnswerGroupTask(id string, picked []string, text, actor string) (*GroupTask, error) {
-	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
-		q := t.Question()
-		if q == nil {
-			return taskConflict("not_question", "task %s is not a question", id)
+// checkQuestionTitle: one line of valid UTF-8 with no control characters,
+// 1 to GroupTaskQuestionTitleMax bytes.
+func checkQuestionTitle(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	switch {
+	case s == "":
+		return "", taskConflict("invalid_arg", "a question needs its question (title)")
+	case len(s) > GroupTaskQuestionTitleMax:
+		return "", taskConflict("invalid_arg", "a question's title is at most %d bytes", GroupTaskQuestionTitleMax)
+	case !utf8.ValidString(s) || strings.ContainsFunc(s, unicode.IsControl):
+		return "", taskConflict("invalid_arg", "a question's title is one line of text")
+	}
+	return s, nil
+}
+
+// askGroupTaskQuestionTx records question q on task t: its activity entry
+// and its row, numbered after the task's last question. q.AskedBy is the
+// actor.
+func askGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, q *GroupTaskQuestion, now time.Time) error {
+	if err := NormalizeGroupTaskQuestion(q); err != nil {
+		return err
+	}
+	title, err := checkQuestionTitle(q.Title)
+	if err != nil {
+		return err
+	}
+	q.Title = title
+	q.Body = strings.TrimSpace(q.Body)
+	if len(q.Body) > GroupTaskQuestionBodyMax || !utf8.ValidString(q.Body) {
+		return taskConflict("invalid_arg", "a question's context is at most %d bytes of UTF-8", GroupTaskQuestionBodyMax)
+	}
+	if q.AskedBy == "" {
+		return taskConflict("invalid_arg", "a question needs its asker")
+	}
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(n), 0) + 1 FROM group_task_questions WHERE task_id = ?`, t.ID).Scan(&q.N); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, body, comment_kind)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, t.ID, dbTime(now), q.AskedBy, GroupTaskEventComment,
+		truncateUTF8(q.Title, GroupTaskEventDetailMax), q.Body, GroupTaskCommentQuestion)
+	if err != nil {
+		return err
+	}
+	q.EventID, _ = res.LastInsertId()
+	spec, err := json.Marshal(groupTaskQuestionSpec{Kind: GroupTaskQuestionKind, Multi: q.Multi, Options: q.Options, Recommend: q.Recommend})
+	if err != nil {
+		return err
+	}
+	q.State, q.AskedAt = GroupTaskQuestionOpen, now.UTC().Truncate(time.Second)
+	_, err = tx.Exec(`INSERT INTO group_task_questions (task_id, n, event_id, title, spec, asked_by, asked_via, asked_at, state, blocks)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, q.N, q.EventID, q.Title, string(spec), q.AskedBy, q.AskedVia,
+		dbTime(now), q.State, q.Blocks)
+	return err
+}
+
+// AskGroupTaskQuestion asks the operator question q on live task id, as
+// q.AskedBy. With q.Blocks the task, which must be open, is blocked until
+// the question is answered or withdrawn.
+func AskGroupTaskQuestion(id string, q *GroupTaskQuestion) (*GroupTask, *GroupTaskQuestion, error) {
+	out, err := withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		if !t.Live() {
+			return taskConflict("not_live", "task %s is %s; reopen it to ask on it", id, t.Status)
 		}
-		if q.Answer != nil {
-			return taskConflict("answered", "task %s is answered already", id)
+		if q.Blocks && t.Status != GroupTaskOpen {
+			return taskConflict("blocked", "task %s is blocked already; ask without blocking it", id)
+		}
+		if err := askGroupTaskQuestionTx(tx, t, q, now); err != nil {
+			return err
+		}
+		if q.Blocks {
+			return setGroupTaskStatusTx(tx, t, GroupTaskBlocked, q.blockReason(), q.AskedBy, AnyAssignee, now)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, q, nil
+}
+
+const groupTaskQuestionCols = `q.task_id, q.n, q.event_id, q.title, COALESCE(e.body, ''), q.spec, q.asked_by, q.asked_via,
+	q.asked_at, q.state, q.blocks, q.answer, COALESCE(q.answer_event_id, 0), q.closed_at`
+
+const groupTaskQuestionFrom = ` FROM group_task_questions q LEFT JOIN group_task_events e ON e.id = q.event_id`
+
+func scanGroupTaskQuestion(s rowScanner) (string, *GroupTaskQuestion, error) {
+	var q GroupTaskQuestion
+	var taskID, spec, answer string
+	var asked, closed dbTimestamp
+	if err := s.Scan(&taskID, &q.N, &q.EventID, &q.Title, &q.Body, &spec, &q.AskedBy, &q.AskedVia, &asked, &q.State,
+		&q.Blocks, &answer, &q.AnswerEventID, &closed); err != nil {
+		return "", nil, err
+	}
+	var sp groupTaskQuestionSpec
+	_ = json.Unmarshal([]byte(spec), &sp)
+	q.Kind, q.Multi, q.Options, q.Recommend = GroupTaskQuestionKind, sp.Multi, sp.Options, sp.Recommend
+	q.AskedAt, q.ClosedAt = asked.Time(), closed.Time()
+	if answer != "" {
+		var a GroupTaskAnswer
+		if json.Unmarshal([]byte(answer), &a) == nil {
+			q.Answer = &a
+		}
+	}
+	return taskID, &q, nil
+}
+
+func getGroupTaskQuestionTx(q taskTx, taskID string, n int) (*GroupTaskQuestion, error) {
+	_, out, err := scanGroupTaskQuestion(q.QueryRow(`SELECT `+groupTaskQuestionCols+groupTaskQuestionFrom+`
+		WHERE q.task_id = ? AND q.n = ?`, taskID, n))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, taskConflict("no_question", "task %s has no question Q%d", taskID, n)
+	}
+	return out, err
+}
+
+// GetGroupTaskQuestion returns question n of a task.
+func GetGroupTaskQuestion(taskID string, n int) (*GroupTaskQuestion, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return getGroupTaskQuestionTx(d, taskID, n)
+}
+
+// ListGroupTaskQuestions maps each of the given tasks to its questions, in
+// order; a task with none is absent.
+func ListGroupTaskQuestions(ids []string) (map[string][]*GroupTaskQuestion, error) {
+	out := map[string][]*GroupTaskQuestion{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := d.Query(`SELECT `+groupTaskQuestionCols+groupTaskQuestionFrom+`
+			WHERE q.task_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`) ORDER BY q.task_id, q.n`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			id, q, err := scanGroupTaskQuestion(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = append(out[id], q)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// openQuestionTx picks the question to answer: n, or with n 0 the task's
+// only open question.
+func openQuestionTx(tx *sql.Tx, taskID string, n int) (*GroupTaskQuestion, error) {
+	if n > 0 {
+		return getGroupTaskQuestionTx(tx, taskID, n)
+	}
+	var ns []int
+	rows, err := tx.Query(`SELECT n FROM group_task_questions WHERE task_id = ? AND state = ? ORDER BY n`, taskID, GroupTaskQuestionOpen)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var k int
+		if err := rows.Scan(&k); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ns = append(ns, k)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	switch len(ns) {
+	case 0:
+		var any int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM group_task_questions WHERE task_id = ?`, taskID).Scan(&any); err != nil {
+			return nil, err
+		}
+		if any == 0 {
+			return nil, taskConflict("not_question", "task %s has no question", taskID)
+		}
+		return nil, taskConflict("answered", "task %s has no open question", taskID)
+	case 1:
+		return getGroupTaskQuestionTx(tx, taskID, ns[0])
+	}
+	return nil, taskConflict("which_question", "task %s has %d open questions; name one (Q%d…)", taskID, len(ns), ns[0])
+}
+
+// endQuestionBlockTx unblocks a task that asking q blocked, if it is still
+// blocked for it.
+func endQuestionBlockTx(tx *sql.Tx, t *GroupTask, q *GroupTaskQuestion, why, actor string, now time.Time) error {
+	if !q.Blocks || t.Status != GroupTaskBlocked || t.BlockReason != q.blockReason() {
+		return nil
+	}
+	return setGroupTaskStatusTx(tx, t, GroupTaskOpen, why, actor, AnyAssignee, now)
+}
+
+// AnswerGroupTaskQuestion answers question n of live task id (n 0: its
+// only open question): picked are option keys (or labels), text the free
+// answer. The answer is an entry under the question, the question's row
+// records it, a task blocked on it is unblocked, and a question task with
+// no open question left is closed as done with it as the reason. A
+// question is answered once. (A task that closes closes its open
+// questions: the group_task_questions_close trigger.)
+func AnswerGroupTaskQuestion(id string, n int, picked []string, text, actor string) (*GroupTask, *GroupTaskQuestion, error) {
+	var answered *GroupTaskQuestion
+	out, err := withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		q, err := openQuestionTx(tx, id, n)
+		if err != nil {
+			return err
+		}
+		switch q.State {
+		case GroupTaskQuestionOpen:
+		case GroupTaskQuestionAnswered:
+			return taskConflict("answered", "Q%d of task %s is answered already", q.N, id)
+		default:
+			return taskConflict("not_live", "Q%d of task %s is %s", q.N, id, q.State)
 		}
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it to answer it", id, t.Status)
 		}
-		text = strings.TrimSpace(text)
-		if !utf8.ValidString(text) || utf8.RuneCountInString(text) > GroupTaskAnswerTextMax {
-			return taskConflict("invalid_arg", "the answer text is at most %d characters of UTF-8", GroupTaskAnswerTextMax)
-		}
-		keys := []string{}
-		seen := map[string]bool{}
-		for _, p := range picked {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			key := ""
-			for _, o := range q.Options {
-				if o.Key == p || strings.EqualFold(o.Label, p) {
-					key = o.Key
-				}
-			}
-			if key == "" {
-				return taskConflict("invalid_arg", "%q is none of the question's options", p)
-			}
-			if !seen[key] {
-				seen[key] = true
-				keys = append(keys, key)
-			}
-		}
-		switch {
-		case len(keys) == 0 && text == "":
-			if len(q.Options) == 0 {
-				return taskConflict("invalid_arg", "answer it with text")
-			}
-			return taskConflict("invalid_arg", "pick an option, or answer with text")
-		case len(keys) > 1 && !q.Multi:
-			return taskConflict("invalid_arg", "pick one option")
-		}
-		q.Answer = &GroupTaskAnswer{Picked: keys, Text: text, AnsweredBy: actor, AnsweredAt: now.UTC().Truncate(time.Second)}
-		raw, err := json.Marshal(q)
+		a, err := checkGroupTaskAnswer(q, picked, text)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET operator_request = ? WHERE id = ?`, string(raw), id); err != nil {
+		a.AnsweredBy, a.AnsweredAt = actor, now.UTC().Truncate(time.Second)
+		q.Answer, q.State, q.ClosedAt = a, GroupTaskQuestionAnswered, a.AnsweredAt
+		raw, err := json.Marshal(a)
+		if err != nil {
 			return err
 		}
 		reason := truncateUTF8(q.AnswerText(), 400)
-		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventAnswered, reason, now); err != nil {
+		res, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, body, comment_kind, comment_id)
+			VALUES (?, ?, ?, ?, '', ?, ?, ?)`, id, dbTime(now), actor, GroupTaskEventComment,
+			truncateUTF8(q.AnswerText(), GroupTaskCommentMaxBytes), GroupTaskCommentAnswer, q.EventID)
+		if err != nil {
 			return err
 		}
-		return setGroupTaskStatusTx(tx, t, GroupTaskDone, reason, actor, AnyAssignee, now)
+		q.AnswerEventID, _ = res.LastInsertId()
+		if _, err := tx.Exec(`UPDATE group_task_questions SET state = ?, answer = ?, answer_event_id = ?, closed_at = ?
+			WHERE task_id = ? AND n = ?`, q.State, string(raw), q.AnswerEventID, dbTime(now), id, q.N); err != nil {
+			return err
+		}
+		answered = q
+		if err := endQuestionBlockTx(tx, t, q, fmt.Sprintf("Q%d answered", q.N), actor, now); err != nil {
+			return err
+		}
+		if !t.IsQuestionTask() {
+			return nil
+		}
+		var open int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM group_task_questions WHERE task_id = ? AND state = ?`, id, GroupTaskQuestionOpen).Scan(&open); err != nil {
+			return err
+		}
+		if open > 0 {
+			return nil
+		}
+		cur, err := getGroupTaskTx(tx, id)
+		if err != nil {
+			return err
+		}
+		return setGroupTaskStatusTx(tx, cur, GroupTaskDone, reason, actor, AnyAssignee, now)
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, answered, nil
+}
+
+// checkGroupTaskAnswer checks an answer to q: picked names its options (by
+// key or label), text is free.
+func checkGroupTaskAnswer(q *GroupTaskQuestion, picked []string, text string) (*GroupTaskAnswer, error) {
+	text = strings.TrimSpace(text)
+	if !utf8.ValidString(text) || utf8.RuneCountInString(text) > GroupTaskAnswerTextMax {
+		return nil, taskConflict("invalid_arg", "the answer text is at most %d characters of UTF-8", GroupTaskAnswerTextMax)
+	}
+	keys := []string{}
+	seen := map[string]bool{}
+	for _, p := range picked {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		key := ""
+		for _, o := range q.Options {
+			if o.Key == p || strings.EqualFold(o.Label, p) {
+				key = o.Key
+			}
+		}
+		if key == "" {
+			return nil, taskConflict("invalid_arg", "%q is none of the question's options", p)
+		}
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	switch {
+	case len(keys) == 0 && text == "":
+		if len(q.Options) == 0 {
+			return nil, taskConflict("invalid_arg", "answer it with text")
+		}
+		return nil, taskConflict("invalid_arg", "pick an option, or answer with text")
+	case len(keys) > 1 && !q.Multi:
+		return nil, taskConflict("invalid_arg", "pick one option")
+	}
+	return &GroupTaskAnswer{Picked: keys, Text: text}, nil
+}
+
+// withdrawGroupTaskQuestionTx withdraws the open question whose entry is
+// eventID: its asker deleted it. A task blocked on it is unblocked.
+func withdrawGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, eventID int64, actor string, now time.Time) error {
+	var n int
+	if err := tx.QueryRow(`SELECT n FROM group_task_questions WHERE task_id = ? AND event_id = ?`, t.ID, eventID).Scan(&n); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	q, err := getGroupTaskQuestionTx(tx, t.ID, n)
+	if err != nil {
+		return err
+	}
+	switch q.State {
+	case GroupTaskQuestionOpen:
+	case GroupTaskQuestionAnswered:
+		return taskConflict("answered", "Q%d is answered; its question stays in the activity", q.N)
+	default:
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE group_task_questions SET state = ?, closed_at = ? WHERE task_id = ? AND n = ?`,
+		GroupTaskQuestionWithdrawn, dbTime(now), t.ID, n); err != nil {
+		return err
+	}
+	why := fmt.Sprintf("Q%d withdrawn", q.N)
+	if err := endQuestionBlockTx(tx, t, q, why, actor, now); err != nil {
+		return err
+	}
+	// A question task left with nothing to answer, and no answer, is
+	// dropped: withdrawing its question withdraws it.
+	if !t.IsQuestionTask() {
+		return nil
+	}
+	var open, answered int
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(state = 'open'), 0), COALESCE(SUM(state = 'answered'), 0)
+		FROM group_task_questions WHERE task_id = ?`, t.ID).Scan(&open, &answered); err != nil {
+		return err
+	}
+	if open > 0 || answered > 0 {
+		return nil
+	}
+	cur, err := getGroupTaskTx(tx, t.ID)
+	if err != nil {
+		return err
+	}
+	return setGroupTaskStatusTx(tx, cur, GroupTaskDropped, why, actor, AnyAssignee, now)
+}
+
+// reopenGroupTaskQuestionsTx opens again the questions of a reopened task
+// that closed with it (the group_task_questions_close trigger).
+func reopenGroupTaskQuestionsTx(tx *sql.Tx, taskID string) error {
+	_, err := tx.Exec(`UPDATE group_task_questions SET state = ?, closed_at = NULL WHERE task_id = ? AND state = ?`,
+		GroupTaskQuestionOpen, taskID, GroupTaskQuestionClosed)
+	return err
+}
+
+// questionTaskAnswered reports whether question task t has an answered
+// question: such a task is not reopened (ask again instead).
+func questionTaskAnsweredTx(tx taskTx, t *GroupTask) (bool, error) {
+	if !t.IsQuestionTask() {
+		return false, nil
+	}
+	var n int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM group_task_questions WHERE task_id = ? AND state = ?`, t.ID, GroupTaskQuestionAnswered).Scan(&n)
+	return n > 0, err
+}
+
+// CountOpenGroupTaskQuestions counts, per group, the open questions on live
+// tasks that are not already waiting on the operator themselves (an open
+// task the operator holds, outside its ideas), so nothing is counted twice.
+func CountOpenGroupTaskQuestions() (map[int64]int, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT t.group_id, COUNT(*) FROM group_task_questions q JOIN group_tasks t ON t.id = q.task_id
+		WHERE q.state = 'open' AND t.status IN ('open','blocked')
+			AND NOT (t.status = 'open' AND t.assignee_kind = 'operator' AND NOT (t.stage = 'idea' AND t.started_at IS NULL))
+		GROUP BY t.group_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]int{}
+	for rows.Next() {
+		var gid int64
+		var n int
+		if err := rows.Scan(&gid, &n); err != nil {
+			return nil, err
+		}
+		out[gid] = n
+	}
+	return out, rows.Err()
 }

@@ -75,6 +75,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/archive", handleTaskboardTask(taskboardOwnGate, handleTaskboardArchive))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/unarchive", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnarchive))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/archive-done", v1GroupRoute(handleTaskboardArchiveDone))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/archive-closed", v1GroupRoute(handleTaskboardArchiveClosed))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
@@ -338,14 +339,18 @@ type taskboardTaskView struct {
 	// stands in, such as in-review; absent for none (tcl-plby5h). A task in
 	// a custom column never stalls.
 	Column string `json:"column,omitempty"`
-	// Question is a question task's question and, once answered, its
-	// answer (tk_aa049a67); Waiting marks one whose asker is polling for
-	// the answer (ask-operator --wait) right now.
-	Question    *db.GroupTaskQuestion `json:"question,omitempty"`
-	Waiting     bool                  `json:"waiting,omitempty"`
-	Outcome     string                `json:"outcome,omitempty"`
-	OutcomeNote string                `json:"outcome_note,omitempty"`
-	Failures    int                   `json:"failures,omitempty"`
+	// Questions are the questions asked on the task, in order, each with
+	// its state and answer (tk_8b2c86f7); OpenQuestions counts those still
+	// waiting on the operator. Question is a question task's own question
+	// (ask-operator <group>, tk_aa049a67): its first. Waiting marks a task
+	// whose asker is polling for an answer (ask-operator --wait) right now.
+	Questions     []*taskboardQuestionView `json:"questions,omitempty"`
+	OpenQuestions int                      `json:"open_questions,omitempty"`
+	Question      *taskboardQuestionView   `json:"question,omitempty"`
+	Waiting       bool                     `json:"waiting,omitempty"`
+	Outcome       string                   `json:"outcome,omitempty"`
+	OutcomeNote   string                   `json:"outcome_note,omitempty"`
+	Failures      int                      `json:"failures,omitempty"`
 	// Stalled marks an open task whose assignee has sat idle past
 	// taskboard.idle_grace without reporting; IdleSince is since when.
 	// Derived on read: a new turn or a report clears it.
@@ -444,6 +449,10 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	if err != nil {
 		return nil, err
 	}
+	questions, err := db.ListGroupTaskQuestions(ids)
+	if err != nil {
+		return nil, err
+	}
 	names := map[string]string{}
 	actorName := func(actor string) string {
 		id, ok := strings.CutPrefix(actor, "agent:")
@@ -457,7 +466,8 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		return names[id]
 	}
 	out := make([]taskboardTaskView, 0, len(tasks))
-	staller := newTaskboardStaller(time.Now())
+	now := time.Now()
+	staller := newTaskboardStaller(now)
 	var awbBase *string // read once, and only when a url-less awb ref needs it
 	for _, t := range tasks {
 		v := taskboardTaskView{
@@ -498,9 +508,16 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 			v.Held, v.StartedAt = t.Live() && !t.Started(), rfc3339(t.StartedAt)
 		}
-		if q := t.Question(); q != nil {
-			v.Question = q
-			v.Waiting = t.Live() && taskboardQuestionWaiting(t.ID, time.Now())
+		for _, q := range questions[t.ID] {
+			qv := taskboardQuestionViewOf(t.ID, q, now)
+			v.Questions = append(v.Questions, qv)
+			if q.Open() {
+				v.OpenQuestions++
+			}
+			v.Waiting = v.Waiting || qv.Waiting
+		}
+		if t.IsQuestionTask() && len(v.Questions) > 0 {
+			v.Question = v.Questions[0]
 		}
 		v.BlockedOn, v.Column = t.BlockedOn, t.Column
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
@@ -899,7 +916,8 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// it. It is gated as a change of that task.
 		Blocks string `json:"blocks"`
 		// Question makes the task a question for the operator (`taskboard
-		// ask-operator`): to is the operator, implied when left out.
+		// ask-operator <group>`), its first question: to is the operator,
+		// implied when left out.
 		Question *db.GroupTaskQuestion `json:"question"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);

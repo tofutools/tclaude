@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -45,6 +46,11 @@ type taskboardCommentView struct {
 	EditedAt    string                    `json:"edited_at,omitempty"`
 	DeletedAt   string                    `json:"deleted_at,omitempty"`
 	Attachments []taskboardAttachmentView `json:"attachments,omitempty"`
+	// Question is a question entry's question, with its state and answer
+	// (Body is its context); Answers is the number of the question an
+	// answer entry answers (tk_8b2c86f7).
+	Question *taskboardQuestionView `json:"question,omitempty"`
+	Answers  int                    `json:"answers,omitempty"`
 }
 
 // taskboardResourceActions are the change kinds that are an action on a
@@ -82,6 +88,18 @@ func taskboardActivityEntries(t *db.GroupTask, g *db.AgentGroup) ([]taskboardEve
 	if err != nil {
 		return nil, err
 	}
+	questions, err := db.ListGroupTaskQuestions([]string{t.ID})
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	asked, answers := map[int64]*db.GroupTaskQuestion{}, map[int64]int{}
+	for _, q := range questions[t.ID] {
+		asked[q.EventID] = q
+		if q.AnswerEventID != 0 {
+			answers[q.AnswerEventID] = q.N
+		}
+	}
 	labels := newTaskboardLabeler(g)
 	for _, e := range events {
 		labels.learnEvent(e.Actor, e.Kind, e.Detail)
@@ -105,6 +123,13 @@ func taskboardActivityEntries(t *db.GroupTask, g *db.AgentGroup) ([]taskboardEve
 		switch e.Kind {
 		case db.GroupTaskEventComment:
 			v.Comment = commentView(e, files[e.ID], labels)
+			if q := asked[e.ID]; q != nil {
+				v.Comment.Question = taskboardQuestionViewOf(t.ID, q, now)
+				// The question's title is its entry's detail; the wire
+				// carries it on the question.
+				v.Detail, v.DetailText = "", ""
+			}
+			v.Comment.Answers = answers[e.ID]
 		case db.GroupTaskEventCommentEdited:
 			v.CommentID, v.PreviousBody = e.CommentID, e.Body
 		}
@@ -216,9 +241,24 @@ func handleTaskboardComments(w http.ResponseWriter, _ *http.Request, t *db.Group
 	for _, c := range comments {
 		labels.learnEvent(c.Actor, c.Kind, "")
 	}
+	questions, err := db.ListGroupTaskQuestions([]string{t.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	now := time.Now()
 	out := make([]*taskboardCommentView, 0, len(comments))
 	for _, c := range comments {
-		out = append(out, commentView(c, files[c.ID], labels))
+		v := commentView(c, files[c.ID], labels)
+		for _, q := range questions[t.ID] {
+			switch c.ID {
+			case q.EventID:
+				v.Question = taskboardQuestionViewOf(t.ID, q, now)
+			case q.AnswerEventID:
+				v.Answers = q.N
+			}
+		}
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": t.ID, "group": g.Name, "comments": out})
 }

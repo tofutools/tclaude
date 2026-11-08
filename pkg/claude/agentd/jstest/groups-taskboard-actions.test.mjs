@@ -25,7 +25,7 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
-    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone') };
+    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone'), archiveClosed: record('archiveClosed') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -411,10 +411,45 @@ test('a task archives from its ⋯ or a right-click, and the history line archiv
   await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive'));
   assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
 
-  // Archive done ▾: every done task, or those done longer ago than an age.
+  // Archive closed ▾ › Done tasks: every done task, or those closed longer
+  // ago than an age. A board with no dropped task offers only done.
   api.calls.length = 0;
   await click(c.querySelector('.tb-archive-done-btn'));
-  assert.deepEqual([...c.querySelectorAll('[data-archive-done]')].map((b) => b.dataset.archiveDone), ['all', '1d', '7d', '30d']);
-  await click(c.querySelector('[data-archive-done="7d"]'));
-  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']]);
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
+  await click(c.querySelector('[data-archive-kind="done"]'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-age]')].map((b) => b.dataset.archiveAge), ['all', '1d', '7d', '30d']);
+  assert.equal(c.querySelector('[data-archive-age="7d"]').getAttribute('title'), 'taskboard archive tba-archive --done --older-than 7d');
+  await click(c.querySelector('[data-archive-age="7d"]'));
+  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']], 'done alone keeps the route every node has');
+});
+
+test('Archive closed covers the dropped tasks too: dropped, or done and dropped, with the age', async (t) => {
+  const context = { groups: [{ ...board('tba-dropped'), counts: { ...board('tba-dropped').counts, dropped: 1 },
+    closed: [...board('tba-dropped').closed, row('tk_00000006', 'parked', { status: 'dropped', closed_at: ago(90) })] }] };
+  const { c, api, click } = await mountBoard(t, 'tba-dropped', { context });
+  const open = async (kind) => {
+    await click(c.querySelector('.tb-archive-done-btn'));
+    await click(c.querySelector(`[data-archive-kind="${kind}"]`));
+  };
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.equal(c.querySelector('.tb-archive-done-btn').textContent.trim(), 'Archive closed ▾');
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done', 'dropped', 'both']);
+  await click(c.querySelector('.tb-archive-done-btn'));
+
+  await open('dropped');
+  assert.equal(c.querySelector('[data-archive-age="all"]').getAttribute('title'), 'taskboard archive tba-dropped --dropped');
+  await click(c.querySelector('[data-archive-age="all"]'));
+  await open('both');
+  assert.equal(c.querySelector('[data-archive-age="30d"]').getAttribute('title'), 'taskboard archive tba-dropped --done --dropped --older-than 30d');
+  await click(c.querySelector('[data-archive-age="30d"]'));
+  assert.deepEqual(api.calls, [['archiveClosed', 'tba-dropped', ['dropped'], ''], ['archiveClosed', 'tba-dropped', ['done', 'dropped'], '30d']]);
+});
+
+test('a board whose api predates archiveClosed offers done only', async (t) => {
+  const context = { groups: [{ ...board('tba-old'), closed: [...board('tba-old').closed, row('tk_00000006', 'parked', { status: 'dropped' })] }] };
+  const api = fakeApi();
+  delete api.archiveClosed;
+  const { c, click } = await mountBoard(t, 'tba-old', { context, api });
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
 });

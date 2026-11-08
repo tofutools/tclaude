@@ -47,7 +47,7 @@ import { TaskTitle } from './groups-taskboard-card.js';
 import { copyLinkItem, TaskLink } from './task-route.js';
 import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
-import { AnswerFor, QuestionTag, askerOf, questionOpen } from './groups-taskboard-answer.js';
+import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -151,7 +151,22 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.state = memberState(lane.member);
     lane.holds = holds.get(lane.id) || 0;
   }
-  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) };
+  const questions = operatorQuestions(entry);
+  const operatorHolds = ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) + questions.length;
+  return { cells, questions, groups: laneGroups(lanes, group, by, snapshot), operatorHolds };
+}
+
+// operatorQuestions are the open questions on tasks the operator does not
+// hold (tk_8b2c86f7): each is a card in the operator's lane (or Triage's
+// You), In progress, while its task stays in its own lane. A task the
+// operator holds shows Answer… on its own card.
+export function operatorQuestions(entry) {
+  const out = [];
+  for (const task of entry?.tasks || []) {
+    if (task.assignee?.operator) continue;
+    for (const question of openQuestions(task)) out.push({ task, question });
+  }
+  return out;
 }
 
 function laneGroups(lanes, group, by, snapshot) {
@@ -759,6 +774,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     if (lg) setUnfolded((now) => (now[lg.key] ? now : { ...now, [lg.key]: true }));
   }, [want?.seq]);
   const [answering, setAnswering] = useState('');
+  const answerable = canAssign(actions) && typeof actions?.api?.answer === 'function';
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
@@ -782,7 +798,10 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${canAssign(actions) && typeof actions.api?.answer === 'function' ? setAnswering : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null} />`} />
+      ${lane.id === OPERATOR && column.key === 'progress' && model.questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
+        task=${task} question=${question} askedBy=${actorLabel(question.asked_by, group, snapshot)} onOpen=${actions ? onEdit : null}
+        onAnswer=${answerable ? (id, n) => setAnswering(`${id}#${n}`) : null} />`)}
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
@@ -793,15 +812,16 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   </div>`;
   // The operator's lane shows while it holds a task, or for a viewer who
   // may give the operator one (by a drag or its "+").
-  const operatorLane = ([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions))
+  const operatorLane = ([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || model.questions.length > 0 || canAssign(actions))
     && { id: OPERATOR, name: operatorName(group), holds: model.operatorHolds };
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
     count: columns.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
-  const answerTask = answering && tasks.find((task) => task.id === answering);
+  const target = answerTarget(answering);
+  const answerTask = answering && tasks.find((task) => task.id === target.id);
   return html`<div class="tb-lanes-wrap">
     ${naming.dialog}
-    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
