@@ -8,7 +8,7 @@ test('Logs model formats records, builds API params, and keys duplicate rows sta
   assert.equal(model.levelKey('WARNING'), 'raw');
   assert.equal(model.levelKey('WARN'), 'warn');
   assert.equal(model.fieldsText({ nested: { ok: true }, count: 2 }), 'nested={"ok":true}  count=2');
-  assert.equal(model.fmtBytes(2048), '2 KB');
+  assert.equal(model.fmtBytes(2048), '2.0 KiB');
   assert.equal(model.pageCount(101, 100), 2);
   const row = { time: 'x', level: 'INFO', msg: 'same' };
   const first = model.keyedLogRows([row]);

@@ -18,6 +18,7 @@ import { GroupCombobox } from './group-picker.js';
 import {
   ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, programBounds, runIconView, runName, runSteps,
 } from './process-kit.js';
+import { fmtUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -156,7 +157,7 @@ function BoundsStrip({ bounds }) {
     <span class="pk-bounds-chip ui-tag" title=${bounds.cwd || 'working directory unknown'}>📁 ${bounds.dir || 'unknown dir'}</span>
     <span class="pk-bounds-chip ui-tag" title="Sandbox the agent was launched with">🛡 sandbox: ${bounds.sandbox || 'none'}</span>
     <span class="pk-bounds-chip ui-tag" title=${bounds.grants.length ? bounds.grants.join('\n') : 'No per-agent grants beyond the defaults'}>🔑 perms: ${grants}</span>
-    <span class="pk-bounds-chip ui-tag" title="Spend so far; runs have no budget cap">$ ${bounds.costUSD.toFixed(2)} spent · no cap</span>
+    <span class="pk-bounds-chip ui-tag" title="Spend so far; runs have no budget cap">${fmtUSD(bounds.costUSD)} spent · no cap</span>
     <span class="pk-bounds-chip ui-tag" title="The run is bound to the agent's stable id, so it follows the agent across new conversations">⟲ survives reincarnate</span>
   </div>`;
 }

@@ -83,7 +83,7 @@ test('the Snapshots view lists the library and resilience status, and spawns fro
   const { harness, host, calls, settle, choose, input } = await mount(t);
   const rows = [...host.querySelectorAll('#snapshots-list tbody tr')];
   assert.deepEqual(rows.map((row) => row.dataset.snapshot), ['known-good', 'flagged']);
-  assert.match(rows[0].textContent, /before the refactor[\s\S]*claude · claude-opus-5-5[\s\S]*2\.3 MB/);
+  assert.match(rows[0].textContent, /before the refactor[\s\S]*claude · claude-opus-5-5[\s\S]*2\.3 MiB/);
   assert.match(rows[1].querySelector('.snap-acts').textContent, /⚠ 1/);
   assert.match(host.querySelector('#snapshot-policies').textContent, /reviewer[\s\S]*1h[\s\S]*bob[\s\S]*error ×2/);
   rows[0].querySelector('[data-snap="spawn"]').click();

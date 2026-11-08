@@ -2,6 +2,7 @@ import { h } from 'preact';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -15,7 +16,7 @@ const ACTION_TEXT = {
 const PERIOD_TEXT = { day: 'today', week: 'this week', month: 'this month', window: 'this window' };
 
 function amount(limit, value) {
-  return limit.metric === 'window_pct' ? `${Math.round(value)}%` : `$${value.toFixed(2)}`;
+  return limit.metric === 'window_pct' ? `${Math.round(value)}%` : fmtExactUSD(value);
 }
 
 function limitLabel(limit) {

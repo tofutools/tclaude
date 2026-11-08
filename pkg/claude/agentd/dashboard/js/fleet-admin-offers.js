@@ -23,7 +23,7 @@ const OPEN = new Set(['pending', 'ready']);
 
 const when = (iso) => localStamp(iso);
 
-const size = (n) => (n > 0 ? binarySize(n) : '—');
+const size = (n) => binarySize(n);
 
 // offerKind names what an offer brings: a config bundle, an agent, or an
 // agent that moves or teleports here (its source stops on the peer).
