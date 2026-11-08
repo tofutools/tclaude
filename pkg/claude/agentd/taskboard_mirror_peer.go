@@ -82,6 +82,9 @@ func redactMirrored(doc any) {
 				walk(e, collect)
 			}
 		case map[string]any:
+			if x["mirrored"] == true {
+				x["title"] = mirroredRedactedTitle
+			}
 			if mirroredSource(x["source"]) {
 				x["title"] = mirroredRedactedTitle
 				for _, k := range []string{"body", "options", "recommend", "multi", "answer"} {

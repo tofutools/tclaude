@@ -364,7 +364,7 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	switch decision {
 	case approvalPickApprove, approvalPickAlways, approvalPickAlwaysScoped, approvalPickDeny:
-		if fail := decideApproval(req, decision); fail != nil {
+		if _, fail := decideApproval(req, decision); fail != nil {
 			fail.write(w)
 			return
 		}
@@ -407,33 +407,35 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 // req.decision is non-blocking (the channel is buffered cap 1 and the waiter
 // consumes exactly one); the waiter runs applyApprovalOutcome so audit +
 // always-allow persistence happen exactly once for the decision that took
-// effect.
-func decideApproval(req *approvalRequest, decision string) *humanReplyFailure {
+// effect. sent says the decision was queued: false when another was
+// already.
+func decideApproval(req *approvalRequest, decision string) (sent bool, fail *humanReplyFailure) {
 	var outcome approvalOutcome
 	switch decision {
 	case approvalPickApprove:
 		outcome = outcomeApprove
 	case approvalPickAlways:
 		if !req.autoGrantable {
-			return replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+			return false, replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
 		}
 		outcome = outcomeApproveAlways
 	case approvalPickAlwaysScoped:
 		if !req.autoGrantable || !isScopedAutoGrantableSlug(req.perm) {
-			return replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+			return false, replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
 		}
 		if req.scopeJSON == "" {
-			return replyFail(http.StatusBadRequest, "invalid_arg", errScopedAlwaysUnavailable.Error())
+			return false, replyFail(http.StatusBadRequest, "invalid_arg", errScopedAlwaysUnavailable.Error())
 		}
 		outcome = outcomeApproveAlwaysScoped
 	case approvalPickDeny:
 		outcome = outcomeDeny
 	default:
-		return replyFail(http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped or deny")
+		return false, replyFail(http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped or deny")
 	}
 	select {
 	case req.decision <- outcome:
+		return true, nil
 	default:
+		return false, nil
 	}
-	return nil
 }

@@ -511,6 +511,11 @@ func AnswerGroupTaskQuestion(id string, n int, picked []string, text, actor stri
 			return err
 		}
 		reason := truncateUTF8(q.AnswerText(), 400)
+		if q.Source != "" {
+			// A mirrored answer is its original's to show (a linked node
+			// reads the board's history, not the human inbox).
+			reason = fmt.Sprintf("Q%d answered", q.N)
+		}
 		res, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, body, comment_kind, comment_id)
 			VALUES (?, ?, ?, ?, '', ?, ?, ?)`, id, dbTime(now), actor, GroupTaskEventComment,
 			truncateUTF8(q.AnswerText(), GroupTaskCommentMaxBytes), GroupTaskCommentAnswer, q.EventID)

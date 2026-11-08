@@ -1131,6 +1131,18 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
 	}
+	if body.Title != nil || body.Body != nil {
+		// A question task made for a mirrored question shows its original
+		// (the access request the operator decides on it, say): only the
+		// original says what it asks (taskboard_mirror.go).
+		if mirrored, err := db.IsMirroredQuestionTask(t); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		} else if mirrored {
+			writeError(w, http.StatusConflict, "mirrored", "this task mirrors a question asked in Messages or an access request; its title and text are not edited")
+			return
+		}
+	}
 	edit := db.GroupTaskEdit{Actor: taskboardActor(r)}
 	var err error
 	if body.Title != nil {

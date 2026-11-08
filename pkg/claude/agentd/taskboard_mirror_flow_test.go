@@ -126,6 +126,19 @@ func TestTaskboardMirrorNotifyAnsweredInMessages(t *testing.T) {
 	assert.Equal(t, db.GroupTaskQuestionAnswered, q.State)
 	assert.Equal(t, "main", q.Answer.Text)
 	assert.Equal(t, "done", h.showQ(t, taskID).Status, "answering its only question closes the question task")
+	// The board's history does not repeat the answer (a linked node reads it).
+	for _, e := range h.activityRaw(t, taskID) {
+		if e["kind"] == "done" {
+			assert.NotContains(t, e["detail"], "main")
+		}
+	}
+
+	// A reply longer than a board answer is recorded cut.
+	long := h.notifyHuman(t, h.worker, map[string]any{"subject": "Notes?", "body": "Anything."})
+	reply = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/human-messages/reply", map[string]any{"id": long, "body": strings.Repeat("x", 5000)}))
+	require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
+	_, q = mirrored(t, notifySource(long))
+	assert.Equal(t, db.GroupTaskQuestionAnswered, q.State)
 
 	// A decision dismissed in Messages closes its question.
 	dec := h.notifyHuman(t, h.worker, map[string]any{"body": "Ship it?\nThe build is green.", "options": []string{"Yes", "No"}})
@@ -181,6 +194,12 @@ func TestTaskboardMirrorApproval(t *testing.T) {
 	}
 	assert.Equal(t, []string{"approve", "deny"}, keys)
 
+	// What the operator decides on is the original's: not edited on the board.
+	rec := h.call(h.worker, http.MethodPatch, "/v1/taskboard/tasks/"+taskID, map[string]any{"body": "On: idle-helper"})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	rec = h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+taskID, map[string]any{"title": "harmless"})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
 	// Words are not a decision.
 	code, body := h.post("", taskID, "questions/1/answer", map[string]any{"picked": []string{"approve"}, "text": "ok"})
 	assert.Equal(t, http.StatusBadRequest, code, body)
@@ -234,6 +253,7 @@ func TestTaskboardMirrorApproval(t *testing.T) {
 func TestTaskboardMirrorRedactedForPeers(t *testing.T) {
 	var doc any
 	require.NoError(t, json.Unmarshal([]byte(`{
+		"mirrored": true, "title": "Ship it?",
 		"tasks": [{"id": "tk_1", "status": "open", "title": "Ship it?", "body": "green",
 			"question": {"n": 1, "source": "notify:7", "title": "Ship it?", "options": [{"key": "1", "label": "Yes"}], "answer": {"text": "yes"}},
 			"questions": [{"n": 1, "source": "notify:7", "title": "Ship it?"}, {"n": 2, "title": "Plain?", "body": "kept"}]}],

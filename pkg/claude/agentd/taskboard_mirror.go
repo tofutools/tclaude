@@ -161,6 +161,10 @@ func humanMessageAnswered(orig *db.HumanMessage, choice int, text string) {
 	case text == "":
 		text = "(replied with attachments)"
 	}
+	// Messages takes a longer reply than a board answer holds.
+	if r := []rune(text); len(r) > db.GroupTaskAnswerTextMax {
+		text = string(r[:db.GroupTaskAnswerTextMax-1]) + "…"
+	}
 	if _, _, err := db.AnswerGroupTaskQuestionBySource(notifyQuestionSource(orig.ID), picked, text, mirrorActorOperator, false); err != nil {
 		slog.Warn("taskboard mirror: record a notify-human answer", "message", orig.ID, "err", err)
 	}
@@ -243,6 +247,7 @@ func approvalResolved(req *approvalRequest, outcome string) {
 	source := approvalQuestionSource(req.id)
 	pick := ""
 	switch outcome {
+	case "timed out":
 	case "approved":
 		pick = approvalPickApprove
 	case "always":
@@ -251,6 +256,8 @@ func approvalResolved(req *approvalRequest, outcome string) {
 		pick = approvalPickAlwaysScoped
 	case "declined":
 		pick = approvalPickDeny
+	default:
+		slog.Warn("taskboard mirror: an --ask-human outcome without a board answer", "request", req.id, "outcome", outcome)
 	}
 	var err error
 	if pick == "" {
@@ -324,8 +331,11 @@ func answerMirroredQuestion(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		}
 		choice, _ := strconv.Atoi(key)
 		if _, fail := replyHumanMessage(r.Context(), humanMessageReply{ID: id, Body: text, Choice: choice}); fail != nil {
-			if fail.code == "not_found" {
+			switch fail.code {
+			case "not_found":
 				humanMessagesEnded([]int64{id}, "Deleted in Messages", mirrorActorSystem)
+			case "decided", "dismissed":
+				syncMirroredHumanMessage(id)
 			}
 			fail.write(w)
 			return
@@ -341,8 +351,13 @@ func answerMirroredQuestion(w http.ResponseWriter, r *http.Request, g *db.AgentG
 			writeError(w, http.StatusConflict, "not_pending", "the access request is decided or expired already")
 			return
 		}
-		if fail := decideApproval(req, key); fail != nil {
+		sent, fail := decideApproval(req, key)
+		if fail != nil {
 			fail.write(w)
+			return
+		}
+		if !sent {
+			writeError(w, http.StatusConflict, "decided", "the access request was decided already")
 			return
 		}
 	default:
@@ -356,4 +371,25 @@ func answerMirroredQuestion(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)
+}
+
+// syncMirroredHumanMessage brings the board's question of notify-human
+// message id in line with the message, when it was decided or dismissed
+// without the board hearing of it.
+func syncMirroredHumanMessage(id int64) {
+	m, err := db.GetHumanMessage(id)
+	if err != nil || m == nil {
+		return
+	}
+	switch {
+	case m.Decision != "":
+		for i, o := range m.Options {
+			if o == m.Decision {
+				humanMessageAnswered(m, i+1, "")
+				return
+			}
+		}
+	case !m.DismissedAt.IsZero():
+		humanMessagesEnded([]int64{id}, "Dismissed in Messages", mirrorActorSystem)
+	}
 }

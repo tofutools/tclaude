@@ -39,6 +39,24 @@ func GetGroupTaskQuestionBySource(source string) (string, *GroupTaskQuestion, er
 	return id, q, err
 }
 
+// IsMirroredQuestionTask reports whether t is a question task made for a
+// mirrored question: its title and text are the original's, not the
+// board's to edit or to show a linked node.
+func IsMirroredQuestionTask(t *GroupTask) (bool, error) {
+	if t == nil || !t.IsQuestionTask() {
+		return false, nil
+	}
+	q, err := GetGroupTaskQuestion(t.ID, 1)
+	if err != nil {
+		var conflict *GroupTaskConflict
+		if errors.As(err, &conflict) {
+			return false, nil
+		}
+		return false, err
+	}
+	return q.Source != "", nil
+}
+
 // CurrentGroupTaskOf is the live task agentID holds in group groupID that it
 // started most recently: what it works on now. "" when it holds none started.
 func CurrentGroupTaskOf(groupID int64, agentID string) (string, error) {
