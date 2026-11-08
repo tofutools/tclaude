@@ -125,8 +125,10 @@ export function drawingBoardFocusParams({ elements = [], box = null } = {}) {
   const out = {};
   const b = box ? [box.x, box.y, box.width, box.height] : null;
   if (b && b.every(Number.isFinite) && box.width > 0 && box.height > 0) out.crop = b.map((n) => String(Math.round(n * 100) / 100)).join(',');
-  const ids = (Array.isArray(elements) ? elements : []).filter((id) => typeof id === 'string' && FOCUS_ELEMENT_ID.test(id)).slice(0, DRAWING_BOARD_FOCUS_MAX_ELEMENTS);
-  if (ids.length) out.elements = ids.join(',');
+  // A pick too big for a link goes as its crop alone: a part of it would
+  // win over the crop and show the wrong place.
+  const ids = (Array.isArray(elements) ? elements : []).filter((id) => typeof id === 'string' && FOCUS_ELEMENT_ID.test(id));
+  if (ids.length && ids.length <= DRAWING_BOARD_FOCUS_MAX_ELEMENTS) out.elements = ids.join(',');
   return out;
 }
 

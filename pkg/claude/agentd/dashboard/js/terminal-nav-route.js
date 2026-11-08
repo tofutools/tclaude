@@ -145,11 +145,15 @@ export function bindTerminalNavRouting({
       // false corrects the URL to what is on screen.
       if (!loc.selection) { state.requestDrawingBoardMenu(); return false; }
       if (!isDrawingBoardId(loc.selection)) return false;
+      // The part to show is asked for once the tab is there: a link to a
+      // deleted board leaves no request behind.
       const focus = drawingBoardFocusOf(loc.params);
-      if (focus) focusDrawingBoard(loc.selection, focus);
       const key = drawingBoardPaneKey(loc.selection);
-      if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
-      return !!(await openDrawingBoardPane(loc.selection));
+      const landed = state.panes.value.some((pane) => pane.key === key)
+        ? state.activatePane(key)
+        : !!(await openDrawingBoardPane(loc.selection));
+      if (landed && focus) focusDrawingBoard(loc.selection, focus);
+      return landed;
     }
     if (loc.tab === COLLAB_PROCESSES) {
       if (!loc.selection) { state.requestDrawingBoardMenu('processes'); return false; }
@@ -199,6 +203,7 @@ export function bindTerminalNavRouting({
           // network fetch). The URL still names where the router sent us, so
           // their move has to be announced now or it would be lost silently.
           reconcileAfterRestore(loc);
+          dropFocusParams(loc);
           return;
         }
         // We could not land where the URL pointed — a retired agent, or a
@@ -216,6 +221,17 @@ export function bindTerminalNavRouting({
         announce({ tab: 'terminals' }, true);
       });
   };
+
+  // dropFocusParams makes a drawing board's focus (crop, elements) one-shot,
+  // as openDrawingBoardAt is: once it is asked for, the entry is corrected to
+  // the bare board, so a Back onto it or a reload does not throw the view
+  // back to that part after the operator moved on.
+  function dropFocusParams(requested) {
+    if (requested?.tab !== 'drawing-boards' || !drawingBoardFocusOf(requested.params)) return;
+    if (selectionOf(state.location.value) !== selectionOf(requested)) return;
+    const { crop, elements, ...rest } = requested.params;
+    announce({ tab: 'drawing-boards', selection: requested.selection, ...(Object.keys(rest).length ? { params: rest } : {}) }, true);
+  }
 
   // reconcileAfterRestore compares where we actually are against the location
   // the router asked for, once the restore has settled. They differ only when

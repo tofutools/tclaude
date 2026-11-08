@@ -333,6 +333,8 @@ test('/drawing-boards/<id>?crop=…&elements=… opens the tab on that part, as 
   const { drawingBoardFocus } = await harness.importDashboardModule('js/drawing-board-overlay-state.js');
   const asked = [];
   const stop = drawingBoardFocus.subscribe((focus) => { if (focus) asked.push(focus); });
+  const announced = [];
+  harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
   const restore = (location) => harness.act(async () => {
     harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', { detail: { location } }));
     await wait();
@@ -342,13 +344,16 @@ test('/drawing-boards/<id>?crop=…&elements=… opens the tab on that part, as 
   assert.equal(state.activeKey.value, 'drawing_board:plan', 'the tab opens');
   assert.deepEqual(asked, [{ drawingBoard: 'plan', elements: ['api', 'db'], box: { x: 10, y: -20, width: 300.5, height: 200 } }],
     'and the board is asked to show the part the link names');
+  assert.deepEqual(announced, [{ location: { tab: 'drawing-boards', selection: 'plan' }, correction: true }],
+    'once asked, the entry names the bare board: Back onto it or a reload does not throw the view back there');
 
   // Open already: the tab comes forward and still shows that part.
   await restore(core.fromPath('/drawing-boards/plan', '?crop=0,0,40,30'));
   assert.deepEqual(asked.at(-1), { drawingBoard: 'plan', elements: [], box: { x: 0, y: 0, width: 40, height: 30 } });
-  // A plain link asks for nothing.
+  // A plain link asks for nothing, nor does one to a board that is gone.
   const before = asked.length;
   await restore(core.fromPath('/drawing-boards/plan', ''));
+  await restore(core.fromPath('/drawing-boards/gone', '?crop=0,0,40,30'));
   assert.equal(asked.length, before);
   stop();
   cleanup();

@@ -74,6 +74,9 @@ test('a drawing board focus survives a URL and nothing malformed does', async (t
   assert.deepEqual(drawingBoardFocusOf(drawingBoardFocusParams(focus)), focus);
   assert.deepEqual(drawingBoardFocusParams({ elements: ['ok', 'not ok', 7], box: { x: 0, y: 0, width: -1, height: 2 } }), { elements: 'ok' });
   assert.deepEqual(drawingBoardFocusParams({}), {});
+  const many = Array.from({ length: 201 }, (_, i) => `e${i}`);
+  assert.deepEqual(drawingBoardFocusParams({ elements: many, box: { x: 0, y: 0, width: 5, height: 5 } }), { crop: '0,0,5,5' },
+    'a pick too big for a link goes as its crop: a part of it would show the wrong place');
   assert.equal(drawingBoardFocusOf({ crop: '1,2,3' }), null);
   assert.equal(drawingBoardFocusOf({ crop: '1,2,0,4' }), null, 'an empty box is none');
   assert.equal(drawingBoardFocusOf({}), null);
