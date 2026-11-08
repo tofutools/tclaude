@@ -225,3 +225,51 @@ func tbEventKinds(t *testing.T, id string) []string {
 	}
 	return out
 }
+
+// Time in a custom column is not idling on the task: leaving it (moved out,
+// or its column removed) restarts the idle clock, so a task that sat In
+// review for hours does not stall the moment it comes back.
+func TestTaskboardColumnsLeavingRestartsIdleClock(t *testing.T) {
+	for _, leave := range []string{"stage next", "column removed"} {
+		t.Run(leave, func(t *testing.T) {
+			h := newTaskboardStallFlow(t, "1h")
+			h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+			task := h.add("my PR", "next")
+			code, body := h.post(h.lead, task.ID, "assign", map[string]any{"to": h.worker})
+			require.Equal(t, http.StatusOK, code, body)
+			code, body = h.post(h.worker, task.ID, "stage", map[string]any{"stage": "in-review"})
+			require.Equal(t, http.StatusOK, code, body)
+
+			// Assigned, then In review, three hours ago; idle since.
+			long := time.Now().Add(-3 * time.Hour)
+			d, err := db.Open()
+			require.NoError(t, err)
+			_, err = d.Exec(`UPDATE group_tasks SET assigned_at = ?, started_at = ? WHERE id = ?`, long.UnixNano(), long.UnixNano(), task.ID)
+			require.NoError(t, err)
+			_, err = d.Exec(`UPDATE group_task_events SET at = ? WHERE task_id = ?`, long.UnixNano(), task.ID)
+			require.NoError(t, err)
+			h.f.SetSessionStatus(h.worker, session.StatusIdle)
+			rows, err := db.FindSessionsByConvID(h.worker)
+			require.NoError(t, err)
+			for _, r := range rows {
+				r.LastHook = long
+				require.NoError(t, db.SaveSession(r))
+			}
+			agentd.SweepTaskboardIdleForTest(time.Now())
+			require.Zero(t, tbStalledEvents(t, task.ID), "no stall In review")
+
+			if leave == "stage next" {
+				code, body = h.post(h.worker, task.ID, "stage", map[string]any{"stage": "next"})
+				require.Equal(t, http.StatusOK, code, body)
+			} else {
+				h.columns("", http.MethodDelete, "/in-review", nil, http.StatusOK)
+			}
+			agentd.SweepTaskboardIdleForTest(time.Now())
+			assert.Zero(t, tbStalledEvents(t, task.ID), "not stalled right after leaving the column")
+			assert.False(t, h.columnTask(task.ID).Stalled)
+
+			agentd.SweepTaskboardIdleForTest(time.Now().Add(2 * time.Hour))
+			assert.Equal(t, 1, tbStalledEvents(t, task.ID), "stalled once idle past the grace since leaving")
+		})
+	}
+}

@@ -375,6 +375,7 @@ func peerSummaryTaskboardCounts(v *peerView) *taskboardCounts {
 		sum.Queued += c.Queued
 		sum.DoneThisWeek += c.DoneThisWeek
 		sum.Dropped += c.Dropped
+		sum.InColumns += c.InColumns
 	}
 	return sum
 }

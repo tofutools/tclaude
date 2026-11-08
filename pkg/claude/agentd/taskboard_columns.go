@@ -69,20 +69,27 @@ func taskboardColumnViews(g *db.AgentGroup) ([]taskboardColumnView, error) {
 	return out, nil
 }
 
-// findTaskboardColumn finds g's custom column by slug, or by its label
-// (case-insensitive), or by the slug its label would make ("In review").
-func findTaskboardColumn(g *db.AgentGroup, name string) (db.GroupTaskColumn, bool) {
+// findTaskboardColumn finds g's custom column by its slug first, then by its
+// label (case-insensitive), then by the slug its label would make ("In
+// review" → in-review).
+func findTaskboardColumn(g *db.AgentGroup, name string) (db.GroupTaskColumn, bool, error) {
 	cols, err := db.ListGroupTaskColumns(g.ID)
 	if err != nil {
-		return db.GroupTaskColumn{}, false
+		return db.GroupTaskColumn{}, false, err
 	}
 	slug := taskboardColumnSlug(name)
-	for _, c := range cols {
-		if c.Slug == name || c.Slug == slug || strings.EqualFold(c.Label, name) {
-			return c, true
+	for _, match := range []func(db.GroupTaskColumn) bool{
+		func(c db.GroupTaskColumn) bool { return c.Slug == name },
+		func(c db.GroupTaskColumn) bool { return strings.EqualFold(c.Label, name) },
+		func(c db.GroupTaskColumn) bool { return c.Slug == slug },
+	} {
+		for _, c := range cols {
+			if match(c) {
+				return c, true, nil
+			}
 		}
 	}
-	return db.GroupTaskColumn{}, false
+	return db.GroupTaskColumn{}, false, nil
 }
 
 // taskboardColumnSlug makes a slug of a label: lower-case ASCII letters and
@@ -107,6 +114,19 @@ func taskboardColumnSlug(label string) string {
 		s = strings.TrimRight(s[:maxTaskColumnSlugBytes], "-")
 	}
 	return s
+}
+
+func taskboardColumnExists(g *db.AgentGroup, slug string) bool {
+	cols, err := db.ListGroupTaskColumns(g.ID)
+	if err != nil {
+		return true
+	}
+	for _, c := range cols {
+		if c.Slug == slug {
+			return true
+		}
+	}
+	return false
 }
 
 func validateTaskColumnLabel(s string) (string, error) {
@@ -148,9 +168,15 @@ func writeTaskboardColumns(w http.ResponseWriter, status int, g *db.AgentGroup) 
 	writeJSON(w, status, map[string]any{"group": g.Name, "columns": cols, "cap": db.GroupTaskColumnsCap})
 }
 
-func writeTaskboardColumnError(w http.ResponseWriter, err error) {
+// writeTaskboardColumnError maps a column store error; a missing column
+// named in the path is 404, one named in the body (before) a bad argument.
+func writeTaskboardColumnError(w http.ResponseWriter, err error, inPath bool) {
 	if errors.Is(err, db.ErrGroupTaskColumnNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		if inPath {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "before names no custom column of the board")
+		}
 		return
 	}
 	writeTaskboardError(w, err)
@@ -201,7 +227,7 @@ func handleTaskboardColumnAdd(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	if _, err := db.AddGroupTaskColumn(g.ID, slug, label, strings.TrimSpace(body.Before), taskboardActor(r)); err != nil {
-		writeTaskboardColumnError(w, err)
+		writeTaskboardColumnError(w, err, false)
 		return
 	}
 	setAuditDetail(r, "added column "+slug)
@@ -237,7 +263,8 @@ func handleTaskboardColumnChange(w http.ResponseWriter, r *http.Request, g *db.A
 	}
 	slug := strings.TrimSpace(r.PathValue("slug"))
 	if _, err := db.ChangeGroupTaskColumn(g.ID, slug, ch); err != nil {
-		writeTaskboardColumnError(w, err)
+		// The path's column is checked first; a miss after that is before's.
+		writeTaskboardColumnError(w, err, !taskboardColumnExists(g, slug))
 		return
 	}
 	setAuditDetail(r, "changed column "+slug)
@@ -253,7 +280,7 @@ func handleTaskboardColumnRemove(w http.ResponseWriter, r *http.Request, g *db.A
 	slug := strings.TrimSpace(r.PathValue("slug"))
 	moved, err := db.RemoveGroupTaskColumn(g.ID, slug, taskboardActor(r))
 	if err != nil {
-		writeTaskboardColumnError(w, err)
+		writeTaskboardColumnError(w, err, true)
 		return
 	}
 	setAuditDetail(r, fmt.Sprintf("removed column %s (%d tasks back to next)", slug, len(moved)))

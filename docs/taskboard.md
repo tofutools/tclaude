@@ -80,7 +80,8 @@ tclaude agent taskboard move tk_… --stage next              # back out
   refused.
 - **A task in a column** is a live task in stage `next`. It keeps its
   assignee and its lane, and it may be unassigned. An idea moved into a
-  column is promoted first. `--stage next` takes it out again: a started task
+  column is promoted first. `--stage next` (or `promote`) takes it out again, and
+  restarts the idle clock: a started task
   is in progress once more, and a held one is queued. Blocking a task keeps
   its column, and unblocking it puts it back there. Closing it (done or
   dropped), demoting it to the ideas, or moving it to a group that has no

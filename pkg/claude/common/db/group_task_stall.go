@@ -60,9 +60,11 @@ func ListOpenAssignedGroupTasks() ([]AssignedGroupTask, error) {
 
 // groupTaskStallBoundaryKinds are the events that start a fresh stretch of
 // work on a task: an assignment, its assignee starting a task it held, or
-// the task coming back to open from blocked or closed. The idle clock starts at the latest one, and each such stretch
+// the task coming back to open from blocked or closed, or the task moving in
+// or out of a custom column (a task in one never stalls, so leaving it starts
+// the clock afresh). The idle clock starts at the latest one, and each such stretch
 // is announced at most once.
-const groupTaskStallBoundaryKinds = `'assigned','taken','started','unblocked','reopened'`
+const groupTaskStallBoundaryKinds = `'assigned','taken','started','unblocked','reopened','column'`
 
 // GroupTaskWorkSince is when the task's current stretch of work began: the
 // time of its latest assignment, unblock or reopen event, zero when none.

@@ -1106,7 +1106,11 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		out, err = db.SetGroupTaskStage(t.ID, stage, taskboardActor(r))
 	default:
 		// A custom column of the board (tcl-plby5h), by slug or label.
-		col, ok := findTaskboardColumn(g, stage)
+		col, ok, ferr := findTaskboardColumn(g, stage)
+		if ferr != nil {
+			writeError(w, http.StatusInternalServerError, "db", ferr.Error())
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				fmt.Sprintf("stage is idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)))

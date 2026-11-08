@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -113,7 +114,7 @@ func AddGroupTaskColumn(groupID int64, slug, label, before, actor string) ([]Gro
 			return nil, taskConflict("column_exists", "the board already has a column %s", slug)
 		}
 		for _, c := range cols {
-			if c.Label == label {
+			if strings.EqualFold(c.Label, label) {
 				return nil, taskConflict("column_exists", "the board already has a column named %q", label)
 			}
 		}
@@ -152,7 +153,7 @@ func ChangeGroupTaskColumn(groupID int64, slug string, ch GroupTaskColumnChange)
 		c := cols[i]
 		if ch.Label != "" && ch.Label != c.Label {
 			for _, o := range cols {
-				if o.Slug != slug && o.Label == ch.Label {
+				if o.Slug != slug && strings.EqualFold(o.Label, ch.Label) {
 					return nil, taskConflict("column_exists", "the board already has a column named %q", ch.Label)
 				}
 			}

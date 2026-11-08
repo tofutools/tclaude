@@ -58,6 +58,9 @@ type taskboardCounts struct {
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
+	// InColumns counts the open tasks in the board's custom columns
+	// (per column in the group's Columns), so the buckets add up to Live.
+	InColumns int `json:"in_columns,omitempty"`
 }
 
 // taskboardColumnCount is one custom column and how many open tasks stand
@@ -209,8 +212,6 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
 			entry.Counts.NeedsYou++
-		case inColumn && v.Column != "":
-			entry.Columns[i].Count++
 		case v.Stalled:
 			entry.Counts.Stalled++
 			entry.Counts.NeedsYou++
@@ -219,6 +220,9 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		case v.Assignee != nil && v.Assignee.Operator:
 			entry.Counts.WaitingOnYou++
 			entry.Counts.NeedsYou++
+		case inColumn && v.Column != "":
+			entry.Columns[i].Count++
+			entry.Counts.InColumns++
 		case v.Assignee != nil && !v.Held:
 			entry.Counts.InProgress++
 		case v.Stage == db.GroupTaskStageIdea:
