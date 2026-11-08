@@ -120,6 +120,10 @@ func TestTaskboardDrawingsAttachAnExportWithItsBoard(t *testing.T) {
 	assert.Len(t, comments, 2, "two comments carry drawings: the unkeyed one and the keyed one, once")
 	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "comment": "something else", "key": "web-1"})
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	rec = h.call(member, http.MethodPost, "/v1/taskboard/tasks/"+task.ID+"/comments", map[string]any{"body": "plain", "key": "web-3"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "comment": "plain", "key": "web-3"})
+	assert.Equal(t, http.StatusConflict, rec.Code, "a plain comment's key is not a drawing's: %s", rec.Body.String())
 	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "key": "web-2"})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "a key goes with a comment: %s", rec.Body.String())
 

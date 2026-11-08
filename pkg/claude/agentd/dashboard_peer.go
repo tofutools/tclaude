@@ -244,11 +244,6 @@ func validPeerViewReply(reply fedPeerViewReply) bool {
 		(len(reply.Body) == 0 || (json.Valid(reply.Body) && reply.Status != http.StatusNoContent && reply.Status != http.StatusNotModified))
 }
 
-// peerProxyPath is the peer path a /api/peer/{node}/{tail...} or
-// /v1/federation/peer/{node}/{tail...} request reaches: /api/<tail>, or for a
-// v1/ tail that /v1 route itself (the process API of a fused view's Processes
-// section, a group's task board, cron and triggers --remote). The peer's own
-// view rules decide either; a /v1 path no rule names is refused there.
 // peerProxyBodyLimit is the request body a peer view proxy to tail takes.
 // An upload chunk goes through peer_uploads, not the proxy: only an export's
 // pick may outgrow fedPeerViewBodyLimit (peerViewBodyLimit).
@@ -259,6 +254,11 @@ func peerProxyBodyLimit(tail string) int {
 	return fedPeerViewBodyLimit
 }
 
+// peerProxyPath is the peer path a /api/peer/{node}/{tail...} or
+// /v1/federation/peer/{node}/{tail...} request reaches: /api/<tail>, or for a
+// v1/ tail that /v1 route itself (the process API of a fused view's Processes
+// section, a group's task board, cron and triggers --remote). The peer's own
+// view rules decide either; a /v1 path no rule names is refused there.
 func peerProxyPath(tail string) string {
 	if strings.HasPrefix(tail, "v1/") {
 		return "/" + tail

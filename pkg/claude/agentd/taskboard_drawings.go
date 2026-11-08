@@ -233,7 +233,17 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			return
 		}
 		files, err := db.ListGroupTaskCommentAttachments(t.ID)
-		if err != nil || len(files[c.ID]) == 0 {
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db", "read the comment's file back")
+			return
+		}
+		// The key's comment has no file: it was deleted, or the key was a
+		// plain comment's.
+		if !created && (!c.DeletedAt.IsZero() || len(files[c.ID]) == 0) {
+			writeError(w, http.StatusConflict, "key_conflict", fmt.Sprintf("key %q was already used for a comment without this drawing", key))
+			return
+		}
+		if len(files[c.ID]) == 0 {
 			writeError(w, http.StatusInternalServerError, "db", "read the comment's file back")
 			return
 		}
