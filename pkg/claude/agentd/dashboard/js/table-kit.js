@@ -64,3 +64,17 @@ export function tableState({ loading, error, empty }) {
   if (empty) return html`<div class="empty">${empty}</div>`;
   return null;
 }
+
+// onActivateKey is the keydown handler of a click-to-edit cell (a span with
+// role="button"): Enter or Space runs fn(event), as a click would. prevent
+// keeps Space from scrolling the page, stop keeps the key from the row, and
+// ime skips a key that only commits an input-method composition.
+export function onActivateKey(fn, { prevent = true, stop = false, ime = false } = {}) {
+  return (event) => {
+    if (ime && (event.isComposing || event.keyCode === 229)) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (prevent) event.preventDefault();
+    if (stop) event.stopPropagation();
+    fn(event);
+  };
+}

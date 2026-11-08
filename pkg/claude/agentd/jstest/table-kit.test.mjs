@@ -89,3 +89,28 @@ test('tableState shows loading, then an error, then the empty note, else nothing
   assert.equal(await markup(tableState({ loading: false, error: false, empty: 'Nothing yet.' })), '<div><div class="empty">Nothing yet.</div></div>');
   assert.equal(tableState({ loading: false, error: false, empty: false }), null);
 });
+
+test('onActivateKey runs on Enter and Space only, with the asked-for event handling', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { onActivateKey } = await harness.importDashboardModule('js/table-kit.js');
+  const key = (k, extra = {}) => {
+    const event = { key: k, prevented: false, stopped: false, ...extra };
+    event.preventDefault = () => { event.prevented = true; };
+    event.stopPropagation = () => { event.stopped = true; };
+    return event;
+  };
+  const runs = [];
+  const plain = onActivateKey((event) => runs.push(event.key));
+  const space = key(' ');
+  plain(space); plain(key('Enter')); plain(key('a'));
+  assert.deepEqual(runs, [' ', 'Enter']);
+  assert.equal(space.prevented, true);
+  assert.equal(space.stopped, false);
+  const loose = onActivateKey(() => runs.push('loose'), { prevent: false, stop: true, ime: true });
+  const enter = key('Enter');
+  loose(enter); loose(key('Enter', { isComposing: true })); loose(key('Enter', { keyCode: 229 }));
+  assert.equal(runs.at(-1), 'loose');
+  assert.equal(runs.filter((r) => r === 'loose').length, 1);
+  assert.equal(enter.prevented, false);
+  assert.equal(enter.stopped, true);
+});

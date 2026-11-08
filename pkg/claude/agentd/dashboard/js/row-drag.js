@@ -26,8 +26,9 @@ export const ROW_DRAG_CONTROLS = 'button, a, input, select, textarea, label, [da
 
 // bindRowDragGuard guards the rows matching rowSelector on doc. It returns
 // { unbind, restore }: restore turns a row it suppressed back on (a drag's
-// end does it too).
-export function bindRowDragGuard(doc, rowSelector) {
+// end does it too). controls narrows what counts as a control, for a row
+// whose own guard always used a shorter list.
+export function bindRowDragGuard(doc, rowSelector, controls = ROW_DRAG_CONTROLS) {
   let suppressed = null;
   const restore = () => {
     if (!suppressed) return;
@@ -37,7 +38,7 @@ export function bindRowDragGuard(doc, rowSelector) {
   const down = (e) => {
     const row = e.target?.closest?.(rowSelector);
     if (!row) return;
-    const control = e.target.closest(ROW_DRAG_CONTROLS);
+    const control = e.target.closest(controls);
     if (!control || !row.contains(control)) return;
     restore();
     row.draggable = false;
