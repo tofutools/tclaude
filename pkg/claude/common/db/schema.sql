@@ -2410,7 +2410,7 @@ CREATE TABLE group_tasks (
 			updated_at   INTEGER NOT NULL,
 			closed_at    INTEGER,
 			archived_at  INTEGER
-		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '') STRICT;
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
 
