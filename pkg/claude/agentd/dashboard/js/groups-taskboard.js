@@ -37,6 +37,7 @@ import { TaskboardLanes } from './groups-taskboard-lanes.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
+import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
@@ -352,9 +353,6 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
   return items;
 }
 
-// RowForm is the inline form under a row: the reason for a block or a drop
-// (the row's ⋯). Enter submits, Escape closes. Everything else is the edit
-// form (groups-taskboard-edit.js).
 // assignableMembers are the group's members a task can go to: active
 // agents with a stable id, online ones first.
 export function assignableMembers(group) {
@@ -362,40 +360,12 @@ export function assignableMembers(group) {
     .sort((a, b) => Number(!!b.online) - Number(!!a.online) || String(a.title || '').localeCompare(String(b.title || '')));
 }
 
-function RowForm({ task, mode, actions, onClose }) {
-  const [reason, setReason] = useState('');
-  const submit = async () => {
-    let ok;
-    if (mode === 'block') {
-      if (!reason.trim()) return;
-      ok = await actions.run(`${task.id}:form`, 'Block', (api) => api.status(task.id, 'blocked', reason.trim()));
-    } else {
-      ok = await actions.run(`${task.id}:form`, 'Drop', (api) => api.status(task.id, 'dropped', reason.trim()));
-    }
-    if (ok) onClose();
-  };
-  const keys = (event) => {
-    if (event.key === 'Enter') { event.preventDefault(); if (!actions.busy) void submit(); }
-    if (event.key === 'Escape') { event.preventDefault(); onClose(); }
-  };
-  const busy = actions.busy === `${task.id}:form`;
-  return html`<tr class="tb-form-row" data-task-form=${mode}><td></td><td colspan=${TABLE_COLS - 1}>
-    <div class="tb-form"><${Input} size="sm" class="tb-form-reason" aria-label=${mode === 'block' ? 'Block reason' : 'Drop reason'} autoFocus
-        placeholder=${mode === 'block' ? 'why is it blocked? (required)' : 'why drop it? (optional, e.g. "parked in awb")'}
-        value=${reason} maxLength=${400} onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${keys} />
-      <${Button} size="sm" variant=${mode === 'drop' ? 'danger' : 'primary'} busy=${busy}
-        disabled=${busy || (mode === 'block' && !reason.trim())} onClick=${() => void submit()}>${mode === 'block' ? 'Block' : 'Drop'}<//>
-      <${Button} size="sm" variant="ghost" onClick=${onClose}>Cancel<//>
-    </div>
-  </td></tr>`;
-}
-
 const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another group to move it (Ctrl/Cmd: clone)';
 // linkDrag is a drag of a link in the row (the 🔗 ref): the browser's own
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, form, onForm }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -426,8 +396,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, f
     <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} byId=${byId} />` : html`<span class="tb-none">—</span>`}</td>
     <td class="tb-files-cell">${files ? html`<span class="tb-files" title=${`${files} file${files === 1 ? '' : 's'} on this task`}>📎 ${files}</span>` : html`<span class="tb-none">—</span>`}</td>
   </tr>`;
-  if (!form || !actions) return row;
-  return [row, html`<${RowForm} key=${`${task.id}-form`} task=${task} mode=${form} actions=${actions} onClose=${() => onForm(task.id, null)} />`];
+  return row;
 }
 
 // The list's columns: the leading cluster, Name, State, Last and Age in the
@@ -683,7 +652,6 @@ function HistoryLine({ entry, open, onToggle, wizard, row = false }) {
 // Without `actions` it is the read-only list.
 export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null, onLayout = null }) {
   const [history, setHistory] = useState(false);
-  const [forms, setForms] = useState({});
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const drag = useRowDrag(tasks, actions, group);
@@ -691,9 +659,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const ideas = tasks.filter((task) => task.stage === 'idea');
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
-  // ✎ opens the edit form; the row's ⋯ Block… and Drop… are inline.
+  // ✎ opens the edit form; the row's ⋯ Block… and Drop… ask their reason
+  // in the reason dialog (groups-taskboard-reason.js).
   const [editing, setEditing] = useState('');
-  const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setForms((current) => ({ ...current, [id]: mode })));
+  const [reasoning, setReasoning] = useState(null);
+  const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setReasoning(mode ? { id, kind: mode } : null));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
   const ideasBand = (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
@@ -707,19 +677,25 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
-        ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${forms[task.id]} ...${rowProps} />`)}
+        ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
         ${ideasBand}
-        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${forms[task.id]} ...${rowProps} />`)}
+        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
         ${historyLine}
-        ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${null} ...${rowProps} />`)}
+        ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
       </tbody>
     </table>` : null;
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
     me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
     nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${() => setEditing('')} onSaved=${() => { void actions.refresh(); }} />`;
+  const reasonTask = reasoning && actions && tasks.find((task) => task.id === reasoning.id);
+  const reasonDialog = reasonTask && html`<${TaskReasonDialog} key=${`${reasonTask.id}-${reasoning.kind}`} kind=${reasoning.kind} task=${reasonTask}
+    busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}
+    onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
+      (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${editDialog}
+    ${reasonDialog}
     ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
@@ -729,7 +705,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
-      ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} form=${null} ...${rowProps} />`)}
+      ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
     </tbody></table>`}
   </div>`;
 }

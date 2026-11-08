@@ -87,16 +87,31 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(api.calls, [['stage', 'tk_00000004', 'next'], ['status', 'tk_00000001', 'done'], ['status', 'tk_00000003', 'open']]);
   assert.equal(refreshes(), 3);
 
-  // Block asks for a reason inline; it cannot be empty.
+  // Block asks for a reason in the shared dialog, not inline under the row;
+  // it cannot be empty, the field has focus, Escape cancels and Enter submits.
   api.calls.length = 0;
+  const dialog = () => harness.document.querySelector('#taskboard-reason-modal');
+  const field = () => dialog().querySelector('input.tb-form-reason');
+  const submitButton = () => dialog().querySelector('#taskboard-reason-submit');
+  const key = (el, k) => harness.act(async () => { harness.fireEvent(el, 'keydown', { key: k }); await new Promise((r) => setTimeout(r, 0)); });
   await pick('tk_00000002', 'Block…');
-  const form = c.querySelector('[data-task-form="block"]');
-  const submit = [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block');
-  assert.equal(submit.disabled, true);
-  await harness.input(form.querySelector('input'), 'waiting on CI');
-  await click([...c.querySelector('[data-task-form="block"]').querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block'));
+  assert.equal(c.querySelector('.tb-form-row'), null, 'no inline form under the row');
+  assert.ok(dialog(), 'Block… opens the reason dialog');
+  assert.equal(dialog().querySelector('[data-task-form]').dataset.taskForm, 'block');
+  assert.match(dialog().textContent, /Block task[\s\S]*“second”/);
+  assert.equal(harness.document.activeElement, field(), 'the reason field has focus');
+  assert.equal(submitButton().disabled, true, 'a block reason is required');
+  await key(field(), 'Enter');
+  assert.deepEqual(api.calls, [], 'Enter on an empty reason writes nothing');
+  await key(field(), 'Escape');
+  assert.equal(dialog(), null, 'Escape cancels');
+  assert.deepEqual(api.calls, []);
+  await pick('tk_00000002', 'Block…');
+  await harness.input(field(), 'waiting on CI');
+  assert.equal(submitButton().disabled, false);
+  await key(field(), 'Enter');
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'blocked', 'waiting on CI']]);
-  assert.equal(c.querySelector('[data-task-form]'), null, 'the form closes on success');
+  assert.equal(dialog(), null, 'the dialog closes on success');
 
   // ✎ opens the edit form; it saves only what changed.
   api.calls.length = 0;
@@ -111,8 +126,16 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   // Drop takes an optional reason.
   api.calls.length = 0;
   await pick('tk_00000002', 'Drop…');
-  await click([...c.querySelector('[data-task-form="drop"]').querySelectorAll('button')].find((b) => b.textContent.trim() === 'Drop'));
+  assert.equal(dialog().querySelector('[data-task-form]').dataset.taskForm, 'drop');
+  assert.equal(submitButton().disabled, false, 'a drop reason is optional');
+  await click(submitButton());
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'dropped', '']]);
+  assert.equal(dialog(), null);
+  api.calls.length = 0;
+  await pick('tk_00000004', 'Drop…');
+  await harness.input(field(), 'parked in awb');
+  await click(submitButton());
+  assert.deepEqual(api.calls, [['status', 'tk_00000004', 'dropped', 'parked in awb']]);
 
   // A closed task reopens from history, a row of the same table.
   api.calls.length = 0;
