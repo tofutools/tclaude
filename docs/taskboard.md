@@ -828,8 +828,9 @@ the **Quest board**), below its Agents and Resources sections.
   done this week and the dropped ones. Click *history* to list the recently
   closed tasks in the same table.
 - **Filter ▾**, next to the view switch in the *List* view, picks which task
-  states the list shows: *open*, *queued*, *ideas*, *in progress*, *waiting*
-  (on you, the operator), *stalled*, *blocked*, *done* and *dropped*. By
+  states the list shows: *open*, *queued*, *ideas*, *in progress*, each of
+  the board's [custom columns](#custom-columns), *waiting* (on you, the
+  operator), *stalled*, *blocked*, *done* and *dropped*. By
   default it hides *done* and *dropped*, as before. Tick *done* to see this week's
   finished tasks in the list. The *history* toggle shows or hides *done* and
   *dropped* together. The button counts how many states differ from the
@@ -982,7 +983,16 @@ remembers both per group, for you only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
-needs you* also holds stalled tasks.
+needs you* also holds stalled tasks. A board's [custom
+columns](#custom-columns) come after *In progress*, with blue heads; their
+cards say *⏸ no idle alarm* while an agent holds them.
+
+A custom column's head has a ⋯ with *Rename…*, *Move left*, *Move right* and
+*Remove*, and the last head has *＋ column*, while the board has room for
+another. They are `taskboard columns rename`, `move`, `add` and `rm`, and need
+`taskboard.manage`. In the *List*, the *State* says the column, and a row's ⋯
+*Move to column ›* moves the task into one, or back out
+(`taskboard move --stage`).
 
 A cell shows its first three cards. When it holds more, *+ n more* opens it in
 place, so one busy cell does not stretch its whole row. An open cell grows up
@@ -1041,6 +1051,9 @@ Dragging a card is one action, the same as its CLI verb:
 | In an agent's lane, Ideas or Next → In progress | `start <task>` |
 | In an agent's lane, onto Ideas or Next | `hold <task> --idea` / `--next` |
 | Onto the Unassigned lane's *Next* | `unassign <task>` |
+| Onto a custom column, in the same lane | `move <task> --stage <column>` (a blocked task is unblocked first) |
+| Onto a custom column of another lane | `assign <task> --to <agent>` (or `unassign`), then `move <task> --stage <column>` |
+| Out of a custom column onto *Next* or *In progress*, same lane | `move <task> --stage next` (onto *In progress*, a held task is started too) |
 | Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
 | From an agent's lane onto the Unassigned lane's *Ideas* | `unassign <task>`, then `demote <task>` |
 | From an agent's lane onto the Unassigned lane's *Blocked* (asks the reason) | `unassign <task>`, then `block <task> --reason …` |

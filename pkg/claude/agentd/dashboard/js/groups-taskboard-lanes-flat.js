@@ -19,7 +19,7 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  BlockDialog, Card, CellAdd, CellCards, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useCellReveal, useLaneDrag,
+  BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, laneColumn, striped, useCellReveal, useLaneDrag,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
@@ -91,12 +91,14 @@ export function cardMarker(task, group, snapshot) {
 
 // rowTarget is what a drop on a row's cell means: resolve(fromLane) is the
 // lanes' lane it lands in, or null where it is not taken.
-function rowTarget(row, column, group) {
+function rowTarget(row, col, group, columns = []) {
+  const column = col.key;
   const key = `${row}|${column}`;
-  if (row === ALL) return { key, column, resolve: (from) => from };
-  if (row === OPERATOR) return { key, column, lane: OPERATOR, name: operatorName(group), member: true };
-  if (row === UNASSIGNED) return { key, column, lane: UNASSIGNED, name: 'Unassigned', member: true };
-  return { key, column, resolve: (from) => (from === UNASSIGNED || from === OPERATOR ? null : from) };
+  const at = { key, column, columnLabel: col.label, columns };
+  if (row === ALL) return { ...at, resolve: (from) => from };
+  if (row === OPERATOR) return { ...at, lane: OPERATOR, name: operatorName(group), member: true };
+  if (row === UNASSIGNED) return { ...at, lane: UNASSIGNED, name: 'Unassigned', member: true };
+  return { ...at, resolve: (from) => (from === UNASSIGNED || from === OPERATOR ? null : from) };
 }
 
 // rowStriped reports the Triage cells that cannot hold a card, as the lanes
@@ -110,6 +112,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const cells = flatModel(entry, mode, now);
+  const columns = boardColumns(entry);
   const drag = useLaneDrag(actions, group, tasks);
   const [open, setOpen] = useState({});
   useCellReveal(cells, FLAT_SHOWN, setOpen);
@@ -123,14 +126,14 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     const key = `${row}|${column.key}`;
     const list = cells.get(key) || [];
     const stripe = rowStriped(row, column.key);
-    const target = rowTarget(row, column.key, group);
+    const target = rowTarget(row, column, group, entry.columns || []);
     const over = drag.over?.key === key;
     // A cell's "+" starts a task in its column: unassigned, or in You the
     // operator's. Agents does not say which agent.
     const addLane = row === OPERATOR ? OPERATOR : row === AGENTS ? null : UNASSIGNED;
     const add = actions && onNewTask && addLane !== null && cellAdd(addLane, column.key, { assign: canAssign(actions), member: true });
     const lane = addLane === OPERATOR ? { id: OPERATOR, name: operatorName(group) } : { id: UNASSIGNED, name: 'Unassigned' };
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${column.custom ? ' tb-cell-custom' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-board-row=${row || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
@@ -143,7 +146,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
   };
-  const rowCount = (row) => LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`${row}|${column.key}`) || []).length), 0);
+  const rowCount = (row) => columns.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`${row}|${column.key}`) || []).length), 0);
   const head = (row) => {
     if (row === OPERATOR) return html`<${LaneHead} lane=${{ id: OPERATOR, name: operatorName(group), holds: (cells.get(`${OPERATOR}|progress`) || []).length }} />`;
     if (row === UNASSIGNED) return html`<${LaneHead} lane=${{ id: UNASSIGNED, name: 'Unassigned', count: rowCount(UNASSIGNED) }} />`;
@@ -157,8 +160,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     ? [...(([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions)) ? [OPERATOR] : []), UNASSIGNED, AGENTS]
     : [ALL];
   const count = (column) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${column}`) ? list.length : 0), 0);
-  const cols = `${triage ? `${HEAD_PX}px ` : ''}repeat(5, minmax(${MIN_STAGE_PX}px, 1fr))`;
-  const min = (triage ? HEAD_PX : 0) + 5 * MIN_STAGE_PX;
+  const cols = `${triage ? `${HEAD_PX}px ` : ''}repeat(${columns.length}, minmax(${MIN_STAGE_PX}px, 1fr))`;
+  const min = (triage ? HEAD_PX : 0) + columns.length * MIN_STAGE_PX;
   return html`<div class="tb-lanes-wrap">
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
@@ -167,10 +170,10 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         ${triage && html`<div class="ui-eyebrow tb-col-lane">Who</div>`}
-        ${LANE_COLUMNS.map((column) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span></div>`)}
+        ${columns.map((column) => html`<div key=${column.key} class=${`ui-eyebrow ${column.custom ? 'tb-col-custom' : `tb-col-${column.key}`}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span></div>`)}
       </div>
       ${rows.map((row) => html`<div key=${row || 'unassigned'} class=${`tb-lane${row === OPERATOR ? ' tb-lane-operator' : ''}`} data-board-row-head=${row || 'unassigned'}>
-        ${triage && head(row)}${LANE_COLUMNS.map((column) => cell(row, column))}
+        ${triage && head(row)}${columns.map((column) => cell(row, column))}
       </div>`)}
     </div>
   </div>`;

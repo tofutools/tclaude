@@ -6,8 +6,11 @@
 
 import { dashPrefs } from './prefs.js';
 
-// The grid's six columns: the lane heads, then the five stages.
+// The grid's six columns: the lane heads, then the five stages. A board
+// with custom columns (In review, …) has more stages; the width functions
+// take how many.
 export const LAYOUT_COLUMNS = ['lane', 'ideas', 'next', 'progress', 'blocked', 'done'];
+const STAGES = LAYOUT_COLUMNS.length - 1;
 export const DEFAULT_LANE_PX = 170;
 // MIN_PX keeps a column wide enough to read a card title or a lane name.
 export const MIN_PX = { lane: 110, stage: 90 };
@@ -26,14 +29,17 @@ function readJSON(key) {
 
 // --- column widths ---
 
-// laneWidths reads the stored widths: { lane: px, stages: [5 weights] }, or
-// null for the default grid. A malformed value reads as the default.
-export function laneWidths(group) {
+// laneWidths reads the stored widths: { lane: px, stages: [n weights] }, or
+// null for the default grid. A malformed value, or one stored for another
+// number of stages (a custom column added or removed since), reads as the
+// default.
+export function laneWidths(group, stages = STAGES) {
+  const n = stages;
   const stored = readJSON(WIDTHS_PREF(group));
   const lane = Number(stored?.lane);
-  const stages = Array.isArray(stored?.stages) ? stored.stages.map(Number) : null;
-  if (!Number.isFinite(lane) || lane < MIN_PX.lane || !stages || stages.length !== 5 || stages.some((w) => !Number.isFinite(w) || w <= 0)) return null;
-  return { lane: Math.round(lane), stages };
+  const weights = Array.isArray(stored?.stages) ? stored.stages.map(Number) : null;
+  if (!Number.isFinite(lane) || lane < MIN_PX.lane || !weights || weights.length !== n || weights.some((w) => !Number.isFinite(w) || w <= 0)) return null;
+  return { lane: Math.round(lane), stages: weights };
 }
 
 export function setLaneWidths(group, widths) {
@@ -44,8 +50,8 @@ export function setLaneWidths(group, widths) {
 // gridColumns is the grid-template-columns for widths: the lane column in
 // pixels, the stages as weights of what is left (so the grid still fills
 // the card at any width), each with its minimum.
-export function gridColumns(widths) {
-  if (!widths) return '';
+export function gridColumns(widths, stages = STAGES) {
+  if (!widths) return stages === STAGES ? '' : `${DEFAULT_LANE_PX}px repeat(${stages}, minmax(${MIN_PX.stage}px, 1fr))`;
   return `${widths.lane}px ${widths.stages.map((w) => `minmax(${MIN_PX.stage}px, ${w}fr)`).join(' ')}`;
 }
 
@@ -53,8 +59,8 @@ export function gridColumns(widths) {
 // plus each stage at its minimum. Each row is at least this wide, so a row
 // spans every column it draws even when the grid scrolls sideways, and the
 // pinned lane column stays in view across the whole scroll.
-export function gridMinWidth(widths) {
-  return (widths ? widths.lane : DEFAULT_LANE_PX) + 5 * MIN_PX.stage;
+export function gridMinWidth(widths, stages = STAGES) {
+  return (widths ? widths.lane : DEFAULT_LANE_PX) + (widths ? widths.stages.length : stages) * MIN_PX.stage;
 }
 
 // resizeColumns moves the edge on the right of column `index` (0 is the
@@ -62,16 +68,18 @@ export function gridMinWidth(widths) {
 // `measured` (six numbers). The lane column grows or shrinks against the
 // stages; a stage edge trades width with its right-hand neighbour, so the
 // total stays. Minimums hold. Returns the new widths, stages in pixels (they
-// are weights; pixels are as good as any).
+// are weights; pixels are as good as any). measured holds the lane column
+// and every stage, however many.
 export function resizeColumns(measured, index, dx) {
   const px = measured.map((w) => Math.max(0, Number(w) || 0));
+  const n = px.length - 1;
   if (index === 0) {
     const stagesTotal = px.slice(1).reduce((a, b) => a + b, 0);
-    const room = Math.max(0, stagesTotal - 5 * MIN_PX.stage);
+    const room = Math.max(0, stagesTotal - n * MIN_PX.stage);
     const lane = Math.min(Math.max(MIN_PX.lane, px[0] + dx), px[0] + room);
     return { lane, stages: px.slice(1).map((w) => w || MIN_PX.stage) };
   }
-  if (index < 1 || index > 4) return { lane: px[0], stages: px.slice(1) };
+  if (index < 1 || index > n - 1) return { lane: px[0], stages: px.slice(1) };
   const left = px[index];
   const right = px[index + 1];
   const move = Math.min(Math.max(dx, MIN_PX.stage - left), right - MIN_PX.stage);

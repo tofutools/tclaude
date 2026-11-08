@@ -45,7 +45,7 @@ import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import { agentLink } from './cross-links.js';
 import {
-  actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
+  COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
@@ -220,12 +220,13 @@ const STATE_MEANING = {
 // aria-label on a focusable wrap) has what else there is to know: who holds
 // it, why it is blocked, what it waits on, or else what the state means.
 // No times: the Last and Age columns carry them.
-function StatePill({ task, byId, assignee = '' }) {
+function StatePill({ task, byId, assignee = '', columns = [] }) {
   const state = taskRowState(task);
-  const word = STATE_LABELS[state];
+  const custom = state.startsWith(COLUMN_STATE);
+  const word = custom ? columnLabel(state, columns) : STATE_LABELS[state];
   const details = [];
   if (state === 'waiting' && task.assigned_by) details.push(`asked by ${assignee || task.assigned_by}`);
-  if (state === 'in-progress' || state === 'stalled') {
+  if (state === 'in-progress' || state === 'stalled' || custom) {
     const who = task.assignee?.name || assignee || task.assignee?.agent_id || '';
     if (who) details.push(`with ${who}`);
     if (state === 'stalled') details.push('idle, no report');
@@ -235,11 +236,12 @@ function StatePill({ task, byId, assignee = '' }) {
     if (waits.length) details.push(`waits on ${waits.map((w) => `“${w}”`).join(', ')}`);
   }
   if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason.trim()}”`);
+  if (custom) details.push('no idle alarm here');
   const title = `${word} · ${details.length ? details.join(' · ') : STATE_MEANING[state]}`;
   // The Agents pill's wrap (dashboard.css .state-pill-wrap): keyboard and
   // touch focus show data-full-status, as the pointer's title does.
   return html`<span class="state-pill-wrap tb-state-wrap" tabindex="0" title=${title} aria-label=${`state: ${title}`} data-full-status=${title}>
-    <span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state tb-state-${state}`} aria-hidden="true">${word}</span>
+    <span class=${`ui-tag${state === 'open' ? ' ui-tag-accent' : ''} tb-state ${custom ? 'tb-state-column' : `tb-state-${state}`}`} aria-hidden="true">${word}</span>
   </span>`;
 }
 
@@ -289,7 +291,7 @@ export function canClose(task, actions) {
 // focus/retire/⚙ cluster: the one action the row's state calls for (✓ Done,
 // ✓ Next on an idea, ↺ Reopen in history), ✎ Edit, and ⋯ for the rest
 // (rowMenu). Each names its CLI verb in its title.
-function RowActions({ task, group, tasks, actions, onForm }) {
+function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const go = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -304,7 +306,7 @@ function RowActions({ task, group, tasks, actions, onForm }) {
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm })}
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns })}
     glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
@@ -312,7 +314,7 @@ function RowActions({ task, group, tasks, actions, onForm }) {
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const run = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -350,6 +352,21 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
       if (!task.assignee?.agent_id) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea', { stage: 'idea' });
       else if (canAssign(actions)) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea --unassign: without its assignee', { stage: 'idea', to: '' });
     }
+  }
+  // The board's custom columns (In review, In CI): move it into one, or
+  // back out to next (`taskboard move --stage`).
+  if (!closed && task.status === 'open' && columns.length) {
+    items.push(item('column', 'Move to column', 'taskboard move --stage <column>: a column of the board\'s own, where the task never stalls', {
+      children: () => [
+        ...columns.map((column) => item('to-column', `${column.label}${task.column === column.slug ? ' ✓' : ''}`, `taskboard move --stage ${column.slug}`, {
+          key: column.slug, disabled: task.column === column.slug,
+          run: () => actions.run(`${task.id}:column`, `Move to ${column.label}`, (api) => api.stage(task.id, column.slug)),
+        })),
+        ...(task.column ? [item('out-of-column', task.assignee?.agent_id && !task.held ? 'Back to In progress' : 'Back to Next', 'taskboard move --stage next', {
+          key: 'out', run: () => actions.run(`${task.id}:column`, 'Out of the column', (api) => api.stage(task.id, 'next')),
+        })] : []),
+      ],
+    }));
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
@@ -421,7 +438,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [] }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -433,20 +450,20 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
   // A closed row drags too: dropped among the live tasks (or on an agent),
   // it is reopened there.
   const draggable = !!actions && !!drag;
-  const row = html`<tr class=${`tb-row tb-row-${state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
+  const row = html`<tr class=${`tb-row tb-row-${state.startsWith(COLUMN_STATE) ? 'column' : state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
       draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? (closed ? REOPEN_DRAG_TITLE : DRAG_TITLE) : undefined}
       onDragStart=${draggable ? (event) => { if (!linkDrag(event)) drag.start(event, task); } : undefined} onDragEnd=${draggable ? drag.end : undefined}
       onContextMenu=${actions ? (event) => openRowMenu(event, '.tb-row-actions .tb-act-more') : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
     <td class="tb-ic">${actions && html`<span class="tb-handle" aria-hidden="true">⋮⋮</span><${RowActions} task=${task} group=${group} tasks=${tasks}
-        actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
+        actions=${actions} columns=${columns} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
-    <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.operator ? actorLabel(task.assigned_by, group, snapshot)
+    <td><${StatePill} task=${task} byId=${byId} columns=${columns} assignee=${task.assignee?.operator ? actorLabel(task.assigned_by, group, snapshot)
       : task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
@@ -777,7 +794,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [reasoning, setReasoning] = useState(null);
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setReasoning(mode ? { id, kind: mode } : null));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
-  const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
+  const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
   // The band heads every idea-stage row the filter leaves (a blocked or
   // assigned idea is not in the "ideas" state), so no idea passes for a queue
   // row a drop next to would demote into.
@@ -839,6 +856,13 @@ export const LIST_STATES = [
   ['stalled', 'stalled', 'its agent went idle without reporting'], ['blocked', 'blocked', 'waits on something outside the board'],
   ['done', 'done', 'finished this week'], ['dropped', 'dropped', 'dropped without being done'],
 ];
+// listStates are the Filter's states for a board: LIST_STATES with the
+// board's custom columns (`col:<slug>`) after in progress.
+export function listStates(columns = []) {
+  const at = LIST_STATES.findIndex(([key]) => key === 'in-progress') + 1;
+  const custom = (columns || []).map((column) => [COLUMN_STATE + column.slug, column.label, `in the board's ${column.label} column`]);
+  return [...LIST_STATES.slice(0, at), ...custom, ...LIST_STATES.slice(at)];
+}
 // The list hides what is closed unless asked, as before the Filter.
 export const LIST_HIDDEN_DEFAULT = ['done', 'dropped'];
 const LIST_HIDDEN_PREF = (group) => `tclaude.dash.groups.taskboard.list-hidden.${group}`;
@@ -850,7 +874,7 @@ export function listHidden(group) {
   try {
     const raw = dashPrefs.getItem(LIST_HIDDEN_PREF(group));
     const list = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(list)) return list.filter((state) => LIST_STATES.some(([key]) => key === state));
+    if (Array.isArray(list)) return list.filter((state) => LIST_STATES.some(([key]) => key === state) || String(state).startsWith(COLUMN_STATE));
   } catch (_) { /* a malformed value reads as the default */ }
   return [...LIST_HIDDEN_DEFAULT];
 }
@@ -916,17 +940,18 @@ function ViewSelector({ prefs }) {
 // ListFilter is the List's Filter dropdown (view-menu.js, as the Groups
 // tab's view and the Collab panel's Filter): which task states the list
 // shows, with Reset. Its count is the states that differ from the default.
-function ListFilter({ group, prefs }) {
+function ListFilter({ group, prefs, columns = [] }) {
   const [open, setOpen] = useState(false);
   const hidden = prefs.listHidden;
-  const changes = LIST_STATES.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
+  const states = listStates(columns);
+  const changes = states.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
   // Element ids from the group's name, every other character spelled out,
   // so name@node and a local name-node never share one.
   const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9-]/g, (c) => `_${c.codePointAt(0).toString(16)}_`)}`;
   return html`<${ViewMenu} open=${open} onOpenChange=${setOpen} label="Filter ▾" badge=${changes} buttonClass="tb-list-filter"
       ids=${{ button: `${id}-btn`, menu: `${id}-menu`, badge: `${id}-badge` }} title="Choose which task states the list shows">
     <${ViewMenuHeading}>State<//>
-    ${LIST_STATES.map(([key, text, title]) => html`<${ViewToggle} key=${key} id=${`${id}-${key}`} title=${title} checked=${!hidden.includes(key)}
+    ${states.map(([key, text, title]) => html`<${ViewToggle} key=${key} id=${`${id}-${key.replace(':', '-')}`} title=${title} checked=${!hidden.includes(key)}
       onChange=${(on) => prefs.setListHidden(on ? hidden.filter((state) => state !== key) : [...hidden, key])}>${text}<//>`)}
     <${ViewMenuSep} />
     <button data-ui-exempt type="button" class="view-menu-reset" data-tb-filter-reset="" disabled=${changes === 0}
@@ -971,14 +996,14 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section line.
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
   const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
-    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} />`}</div>`;
+    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}</div>`;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
         members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
     : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />` : null;
   return html`${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} />`} auto=${autoOpened.current}
+      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
       closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
@@ -990,9 +1015,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
 // TaskboardCounts is the section head's total; the columns (and the group's
 // summary line) show the breakdown, which the tooltip carries too.
 // The tasks waiting on the operator stand out beside it.
-function TaskboardCounts({ counts, who = 'you' }) {
+function TaskboardCounts({ counts, who = 'you', columns = [] }) {
   const waiting = counts.waiting_on_you || 0;
-  return html`<span class="tb-counts" title=${taskboardCountsText(counts, who)}>
+  return html`<span class="tb-counts" title=${taskboardCountsText(counts, who, columns)}>
     <span class=${`gf-count${counts.live ? '' : ' zero'}`}>${counts.live || 0}</span>
     ${waiting > 0 && html`<span class="ui-tag tb-waiting-tag" data-tb-waiting=${waiting}>${waiting} waiting on ${who}</span>`}
   </span>`;
@@ -1006,9 +1031,9 @@ export function TaskboardSummaryChip({ group: shown, source: ownSource = taskboa
   const entry = useTaskboardEntry(group.name, source);
   if (!entry || !entry.counts?.live) return null;
   const who = operatorName(group);
-  const parts = taskboardCountParts(entry.counts, who);
+  const parts = taskboardCountParts(entry.counts, who, entry.columns);
   const wizard = isWizardActive();
-  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts, who)}`}>
+  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts, who, entry.columns)}`}>
     ${wizard ? 'quest board' : 'task board'}: ${parts.length
       ? parts.map((part, i) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${i ? ' · ' : ''}${part.text}</span>`)
       : `${entry.counts.live}`}
