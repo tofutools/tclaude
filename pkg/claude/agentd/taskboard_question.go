@@ -103,6 +103,15 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 		return
 	}
 	q := body.GroupTaskQuestion
+	// The question and its context are gated as a task's title and text.
+	var err error
+	if q.Title, err = validateTaskTitle(q.Title); err == nil {
+		q.Body, err = validateTaskText("a question's context", strings.TrimSpace(q.Body), db.GroupTaskQuestionBodyMax)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 	// Who asked is the daemon's to say, never the body's.
 	q.AskedBy, q.AskedVia, q.Blocks = actor, taskboardPeerAskerPrincipal(r), body.Block
 	q.Answer, q.State = nil, ""
@@ -216,7 +225,9 @@ func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *
 	}
 	raw, _ := json.Marshal(q.Answer)
 	var b strings.Builder
-	if t.IsQuestionTask() && q.N == 1 {
+	// A question task's own question reads as the task.
+	own := t.IsQuestionTask() && q.N == 1
+	if own {
 		fmt.Fprintf(&b, "%s answered your question %s %q in %s.\n\n", taskboardCallerName(r), t.ID, t.Title, g.Name)
 	} else {
 		fmt.Fprintf(&b, "%s answered your question Q%d %q on %s %q in %s.\n\n", taskboardCallerName(r), q.N, q.Title, t.ID, t.Title, g.Name)
@@ -233,7 +244,7 @@ func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *
 	}
 	fmt.Fprintf(&b, "\n%s\n", raw)
 	subject := taskboardSubject(g, t, "answered")
-	if !(t.IsQuestionTask() && q.N == 1) {
+	if !own {
 		subject = taskboardSubject(g, t, fmt.Sprintf("answered Q%d", q.N))
 	}
 	if !local {

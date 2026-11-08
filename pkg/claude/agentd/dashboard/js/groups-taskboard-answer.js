@@ -166,9 +166,9 @@ export function AnswerFor({ task, n = 0, actions, askedBy = '', onClose }) {
   const q = questionOf(task, n);
   if (!q) return null;
   const busyKey = `${task.id}:answer`;
-  // A question task's own question goes by its own route, which a node
-  // from before per-task questions serves too.
-  const which = task.question && (q.n || 1) === (task.question.n || 1) ? 0 : q.n;
+  // By number; a node from before per-task questions sends none, and is
+  // answered through the question task's own route.
+  const which = q.n || 0;
   return html`<${AnswerDialog} key=${`${task.id}#${q.n || 0}`} task=${task} question=${q} askedBy=${askedBy} busy=${actions.busy === busyKey} onClose=${onClose}
     onSubmit=${({ picked, text }) => actions.run(busyKey, 'Answer', (api) => api.answer(task.id, picked, text, which))} />`;
 }

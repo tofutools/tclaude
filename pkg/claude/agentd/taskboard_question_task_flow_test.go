@@ -217,3 +217,35 @@ func TestTaskboardQuestionTaskIsFirstQuestion(t *testing.T) {
 	assert.Equal(t, "answered", got.Question.State)
 	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "[taskboard] answered: crew · "+asked.ID)
 }
+
+// A question task dropped and reopened can be answered again; withdrawing
+// its only question drops it; a question's text is gated as a title is.
+func TestTaskboardQuestionTaskReopenWithdrawText(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Ship it?", "question": map[string]any{}})
+	asked := h.task(rec, http.StatusCreated)
+	code, body := h.post("", asked.ID, "status", map[string]any{"status": "dropped"})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, "closed", h.showQ(t, asked.ID).Question.State)
+	code, body = h.post("", asked.ID, "reopen", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, "open", h.showQ(t, asked.ID).Question.State, "the question closed with the task opens with it")
+	code, body = h.post("", asked.ID, "answer", map[string]any{"text": "yes"})
+	require.Equal(t, http.StatusOK, code, body)
+
+	rec = h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Never mind?", "question": map[string]any{}})
+	other := h.task(rec, http.StatusCreated)
+	q := h.showQ(t, other.ID).Question
+	rec = h.call(h.worker, http.MethodDelete, "/v1/taskboard/tasks/"+other.ID+"/comments/"+tbID(q.EventID), nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := h.showQ(t, other.ID)
+	assert.Equal(t, "dropped", got.Status, "withdrawing a question task's question withdraws the task")
+	assert.Equal(t, "withdrawn", got.Question.State)
+
+	rec = h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Work"})
+	work := h.task(rec, http.StatusCreated)
+	for _, bad := range []map[string]any{{"title": "flip ‮ it"}, {"title": "ok", "body": "esc \x1b[31m red"}} {
+		code, body = h.askOn(h.worker, work.ID, bad)
+		assert.Equal(t, http.StatusBadRequest, code, body)
+	}
+}

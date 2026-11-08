@@ -226,9 +226,9 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
     const ok = await shellConfirm({ title: `Withdraw Q${q.n}?`, body: 'The question leaves the operator\'s lane; the activity keeps a note of it.', okLabel: 'Withdraw' });
     if (ok) void run('Withdraw', () => api.deleteComment(task.id, comment.id));
   };
-  // A question task's own question goes by its own route, which a node
-  // from before per-task questions serves too.
-  const which = task.question && (q.n || 1) === (task.question.n || 1) ? 0 : q.n;
+  // By number; a node from before per-task questions sends none, and is
+  // answered through the question task's own route.
+  const which = q.n || 0;
   return html`<li class=${`tb-activity-comment tb-activity-question tb-question-${q.state || 'open'}`} data-comment=${comment.id} data-question-n=${q.n}>
     <div class="tb-comment-head">
       <span class="tb-comment-author">${authorOf(comment, nameOf)}</span>

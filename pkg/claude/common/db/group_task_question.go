@@ -608,7 +608,36 @@ func withdrawGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, eventID int64, actor 
 		GroupTaskQuestionWithdrawn, dbTime(now), t.ID, n); err != nil {
 		return err
 	}
-	return endQuestionBlockTx(tx, t, q, fmt.Sprintf("Q%d withdrawn", q.N), actor, now)
+	why := fmt.Sprintf("Q%d withdrawn", q.N)
+	if err := endQuestionBlockTx(tx, t, q, why, actor, now); err != nil {
+		return err
+	}
+	// A question task left with nothing to answer, and no answer, is
+	// dropped: withdrawing its question withdraws it.
+	if !t.IsQuestionTask() {
+		return nil
+	}
+	var open, answered int
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(state = 'open'), 0), COALESCE(SUM(state = 'answered'), 0)
+		FROM group_task_questions WHERE task_id = ?`, t.ID).Scan(&open, &answered); err != nil {
+		return err
+	}
+	if open > 0 || answered > 0 {
+		return nil
+	}
+	cur, err := getGroupTaskTx(tx, t.ID)
+	if err != nil {
+		return err
+	}
+	return setGroupTaskStatusTx(tx, cur, GroupTaskDropped, why, actor, AnyAssignee, now)
+}
+
+// reopenGroupTaskQuestionsTx opens again the questions of a reopened task
+// that closed with it (the group_task_questions_close trigger).
+func reopenGroupTaskQuestionsTx(tx *sql.Tx, taskID string) error {
+	_, err := tx.Exec(`UPDATE group_task_questions SET state = ?, closed_at = NULL WHERE task_id = ? AND state = ?`,
+		GroupTaskQuestionOpen, taskID, GroupTaskQuestionClosed)
+	return err
 }
 
 // questionTaskAnswered reports whether question task t has an answered

@@ -47,6 +47,10 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		if err := setGroupTaskStatusTx(tx, t, GroupTaskOpen, "", in.Actor, in.ExpectAssignee, now); err != nil {
 			return err
 		}
+		// The questions that closed with the task are open again.
+		if err := reopenGroupTaskQuestionsTx(tx, id); err != nil {
+			return err
+		}
 		cur, err := getGroupTaskTx(tx, id)
 		if err != nil {
 			return err

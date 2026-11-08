@@ -314,9 +314,13 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	if !p.JSON {
 		fmt.Fprintf(stdout, "asked %s: %s; waiting up to %s for the answer…\n", t.ID, t.Title, wait)
 	}
-	// A question task's own route, which a node from before per-task
-	// questions serves too.
-	return waitTaskboardAnswer(p.Peer, t.ID, 0, wait, p.JSON, stdout, stderr)
+	// Its question by number; a node from before per-task questions sends
+	// none, and is waited on through the question task's own route.
+	n := 0
+	if t.Question != nil {
+		n = t.Question.N
+	}
+	return waitTaskboardAnswer(p.Peer, t.ID, n, wait, p.JSON, stdout, stderr)
 }
 
 // taskboardAsked is POST …/questions's answer.

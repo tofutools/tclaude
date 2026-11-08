@@ -232,7 +232,8 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		}
 		// An open question on a task the operator does not already wait
 		// on as a whole waits on it too (tk_8b2c86f7).
-		if !(v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && !(v.Held && v.Stage == db.GroupTaskStageIdea)) {
+		waitsWhole := v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && (!v.Held || v.Stage != db.GroupTaskStageIdea)
+		if !waitsWhole {
 			entry.Counts.WaitingOnYou += v.OpenQuestions
 			entry.Counts.NeedsYou += v.OpenQuestions
 		}
