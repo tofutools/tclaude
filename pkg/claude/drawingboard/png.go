@@ -33,20 +33,17 @@ import (
 
 type raster struct {
 	ctx context.Context
-	// dst is what draws land on: out, or layer while a translucent element
-	// is drawn.
+	// dst is what draws land on: out, or a translucent element's layer.
 	dst   *image.RGBA
 	out   *image.RGBA
 	crop  Box
 	scale float64
 	faces map[string]font.Face
 	z     *vector.Rasterizer // reused across paints
-	// layer holds a translucent element drawn opaque, then put on out at
-	// its opacity in one go, as the editor's and the SVG's element opacity
-	// does: its fill, strokes and halo compose as one, never darker where
-	// they overlap. dirty is the part of layer drawn on.
-	layer *image.RGBA
-	dirty image.Rectangle
+	// measure has the draws only add the pixels they would cover to
+	// dirty, for sizing a translucent element's layer (element).
+	measure bool
+	dirty   image.Rectangle
 }
 
 func renderPNG(ctx context.Context, sel, drawn []Element, crop Box, scale float64) ([]byte, int, int, error) {
@@ -124,7 +121,7 @@ type rect struct{ x0, y0, x1, y1 float64 }
 
 // canvas is the image's pixel box grown by margin.
 func (r *raster) canvas(margin float64) rect {
-	b := r.dst.Bounds()
+	b := r.out.Bounds()
 	return rect{-margin, -margin, float64(b.Dx()) + margin, float64(b.Dy()) + margin}
 }
 
@@ -229,6 +226,10 @@ func (r *raster) paint(polys [][][2]float64, c color.NRGBA) {
 	if box.Empty() {
 		return
 	}
+	if r.measure {
+		r.dirty = r.dirty.Union(box)
+		return
+	}
 	z := r.z
 	z.Reset(box.Dx(), box.Dy())
 	ox, oy := float32(box.Min.X), float32(box.Min.Y)
@@ -241,7 +242,6 @@ func (r *raster) paint(polys [][][2]float64, c color.NRGBA) {
 	}
 	z.DrawOp = draw.Over
 	z.Draw(r.dst, box, image.NewUniform(c), image.Point{})
-	r.dirty = r.dirty.Union(box)
 }
 
 // signedArea is positive for a clockwise polygon in screen coordinates.
@@ -444,7 +444,11 @@ func smoothPoints(pts [][2]float64) [][2]float64 {
 	return append(out, pts[len(pts)-1])
 }
 
-// element draws e; a translucent one through layer, at its opacity once.
+// element draws e. A translucent one is drawn opaque into a layer, then
+// put on the image at its opacity in one go, as the editor's and the SVG's
+// element opacity is: its fill, strokes and halo compose as one, never
+// darker where they overlap. The layer covers only what e draws, which a
+// first pass of the same draws measures.
 func (r *raster) element(e Element, line bool) error {
 	s := styleOf(e)
 	if s.opacity >= 1 {
@@ -454,18 +458,19 @@ func (r *raster) element(e Element, line bool) error {
 	if alpha == 0 {
 		return nil
 	}
-	if r.layer == nil {
-		r.layer = image.NewRGBA(r.out.Bounds())
-	}
-	r.dst, r.dirty = r.layer, image.Rectangle{}
 	s.opacity = 1
+	r.measure, r.dirty = true, image.Rectangle{}
 	err := r.draw(e, s, line)
-	r.dst = r.out
+	r.measure = false
 	box := r.dirty.Intersect(r.out.Bounds())
-	if !box.Empty() {
-		draw.DrawMask(r.out, box, r.layer, box.Min, image.NewUniform(color.Alpha{A: alpha}), image.Point{}, draw.Over)
-		draw.Draw(r.layer, box, image.Transparent, image.Point{}, draw.Src)
+	if err != nil || box.Empty() {
+		return err
 	}
+	layer := image.NewRGBA(box)
+	r.dst = layer
+	err = r.draw(e, s, line)
+	r.dst = r.out
+	draw.DrawMask(r.out, box, layer, box.Min, image.NewUniform(color.Alpha{A: alpha}), image.Point{}, draw.Over)
 	return err
 }
 
@@ -576,7 +581,7 @@ func (r *raster) text(e Element, s style, line bool) error {
 	fg := image.NewUniform(parseColor(s.stroke, s.opacity))
 	halo := image.NewUniform(parseColor(paperColor, s.opacity))
 	radius := 2.5 * r.scale // the editor's 5-unit paper stroke behind text on a line
-	bounds := r.dst.Bounds()
+	bounds := r.out.Bounds()
 	ax := textAnchorX(e)
 	for i, l := range textLines(e) {
 		if l == "" {
@@ -613,9 +618,12 @@ func (r *raster) text(e Element, s style, line bool) error {
 			continue
 		}
 		visible := l[from:to]
-		// What the line's glyphs and halo may cover.
-		r.dirty = r.dirty.Union(image.Rect(int(math.Floor(startX-radius-px)), int(math.Floor(at[1]-2*px-radius)),
-			int(math.Ceil(x+radius+px)), int(math.Ceil(at[1]+px+radius))).Intersect(bounds))
+		if r.measure {
+			// What the line's glyphs and halo may cover.
+			r.dirty = r.dirty.Union(image.Rect(int(math.Floor(startX-radius-px)), int(math.Floor(at[1]-2*px-radius)),
+				int(math.Ceil(x+radius+px)), int(math.Ceil(at[1]+px+radius))).Intersect(bounds))
+			continue
+		}
 		put := func(src image.Image, dx, dy float64) {
 			d := font.Drawer{Dst: r.dst, Src: src, Face: face, Dot: fixed.Point26_6{X: fixed.Int26_6((startX + dx) * 64), Y: fixed.Int26_6((at[1] + dy) * 64)}}
 			d.DrawString(visible)

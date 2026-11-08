@@ -225,6 +225,42 @@ func TestRenderPNGAppliesOpacityPerElement(t *testing.T) {
 	assert.Equal(t, uint32(0xff), grey(150, 50), "the paper between them")
 }
 
+// A translucent element's layer covers all it draws: text at half opacity
+// is its opaque self, half way to the paper, everywhere, even where the
+// image cuts it off.
+func TestRenderPNGTranslucentLayerCoversTheElement(t *testing.T) {
+	half := 50.0
+	text := Element{ID: "t", Type: "text", X: 0, Y: 0, Text: "Wide WAVY glyphs, gjpqy\nsecond line", FontSize: 40, FontStyle: "italic", StrokeColor: "#000000"}
+	for name, region := range map[string]*Box{"whole": nil, "cut": {X: 30, Y: 10, Width: 120, Height: 40}} {
+		t.Run(name, func(t *testing.T) {
+			opaque, err := Render(context.Background(), []Element{text}, Options{Scale: 1, Region: region})
+			require.NoError(t, err)
+			faded := text
+			faded.Opacity = &half
+			translucent, err := Render(context.Background(), []Element{faded}, Options{Scale: 1, Region: region})
+			require.NoError(t, err)
+			a, err := png.Decode(bytes.NewReader(opaque.Data))
+			require.NoError(t, err)
+			b, err := png.Decode(bytes.NewReader(translucent.Data))
+			require.NoError(t, err)
+			require.Equal(t, a.Bounds(), b.Bounds())
+			inked := 0
+			for y := a.Bounds().Min.Y; y < a.Bounds().Max.Y; y++ {
+				for x := a.Bounds().Min.X; x < a.Bounds().Max.X; x++ {
+					full, _, _, _ := a.At(x, y).RGBA()
+					got, _, _, _ := b.At(x, y).RGBA()
+					want := 255 - (255-float64(full>>8))/2
+					if full>>8 < 200 {
+						inked++
+					}
+					require.InDelta(t, want, float64(got>>8), 2, "pixel %d,%d", x, y)
+				}
+			}
+			assert.Positive(t, inked, "the text is drawn")
+		})
+	}
+}
+
 // A dashed line keeps its pattern where it leaves the image and comes back.
 func TestDashesKeepTheirPhaseOffCanvas(t *testing.T) {
 	els := []Element{{ID: "d", Type: "line", X: 0, Y: 0, Points: [][]float64{{0, 0}, {2000, 0}}, StrokeStyle: "dashed", StrokeWidth: 2}}
