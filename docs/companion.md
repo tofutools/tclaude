@@ -223,7 +223,8 @@ once, each only when there is something for it to do:
   A tab minimized on its own stays on the dock.
 
 **Ctrl ;** minimizes every window, and pressing it again brings back just the windows
-it minimized: a window you open or minimize in between stays where you left it. It
+it minimized and are still on the dock: a window you open, or bring back and minimize
+again, in between stays where you left it. It
 works from a focused terminal too, and can be rebound in **Config › Keyboard**.
 
 While any window is open, the dock shows its ☰ menu even with nothing minimized.

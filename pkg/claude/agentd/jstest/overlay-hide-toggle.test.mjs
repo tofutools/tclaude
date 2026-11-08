@@ -55,7 +55,18 @@ test('a window opened or minimized in between is left alone', async (t) => {
   await s.harness.act(() => s.instances.minimizeOverlayWindow('b'));
   await s.harness.act(() => s.instances.minimizeOverlayWindow('a', false));
   await s.press();
-  assert.deepEqual(s.shown(), ['a', 'b', 'new'], 'only windows still on the dock come back');
+  assert.deepEqual(s.shown(), ['a', 'new'], 'b, brought back and minimized again by hand, stays on the dock');
+  assert.deepEqual(s.away(), ['b']);
+});
+
+test('a held key toggles once', async (t) => {
+  const s = await setup(t);
+  await s.open('a');
+  await s.press();
+  const held = s.harness.fireEvent(s.doc.body, 'keydown', { key: ';', code: 'Semicolon', ctrlKey: true, repeat: true });
+  await s.harness.act(() => {});
+  assert.deepEqual(s.away(), ['a'], 'the repeat does not bring it back');
+  assert.equal(held.defaultPrevented, true, 'but is still taken from the terminal');
 });
 
 test('with none of its windows left on the dock, the press hides again', async (t) => {
