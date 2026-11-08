@@ -25,7 +25,8 @@ const SKIP_TABS = {
 // this list short, since every entry is a page the sandbox cannot show.
 const NO_HUB = 'the sandbox has no federation hub and its one peer has no live node behind it';
 const ALLOW = [
-  { route: '/map', text: /^Unreachable\./, why: NO_HUB },
+  // Exactly this: a peer never seen has no date (tk_7dcf4f84).
+  { route: '/map', text: /^Unreachable\.$/, why: NO_HUB },
   { route: '/fleet-admin/peers', text: /No other instances visible on the hub/, why: NO_HUB },
   { route: '/fleet-admin/spawns', text: /No open spawn requests from peers|Nothing sent yet/, why: NO_HUB },
   { route: '/fleet-admin/invites', text: /Invites need a node profile/, why: NO_HUB },

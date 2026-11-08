@@ -59,6 +59,18 @@ production routes wherever one exists.
   profiles, offers, remote jobs, moves and federation audit.
 - **Performance captures.** A CPU capture needs a busy live daemon.
 
+## The smoke tests
+
+`ui.sh smoke` runs every test in `smoke/tests/` against a fresh sandbox, and
+`ui.sh smoke NAME` runs one file. Each run's results and screenshots land in
+`sandbox-out/results-<run>/`.
+
+- `tour`: the route tour, described below.
+- `markdown-editor`: the Markdown editor in the task edit form and the New
+  task form. It checks typing, the toolbar, and Preview and back with the
+  height kept. It checks that dragging the corner still resizes the editor,
+  and that no page errors occur.
+
 ## The route tour
 
 `smoke/tests/tour.spec.mjs` loads every route the router knows:
