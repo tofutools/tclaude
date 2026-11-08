@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -28,6 +29,7 @@ type drawingBoardExportParams struct {
 	Comment  string   `long:"comment" optional:"true" help:"With --attach-to: post the drawing as a new comment with this text"`
 	Name     string   `long:"name" optional:"true" help:"With --attach-to: the file's name (default: the drawing board's id, .png)"`
 	Replace  int64    `long:"replace" optional:"true" help:"With --attach-to: update this drawing file (its id from 'taskboard show') instead of matching by board and part"`
+	Node     string   `long:"node" optional:"true" help:"Export a linked node's drawing board, by its label or instance ID (operator only; at most about 6 MiB)"`
 }
 
 func drawingBoardExportCmd() *cobra.Command {
@@ -39,6 +41,7 @@ func drawingBoardExportCmd() *cobra.Command {
 			"(with the text on them and the lines between them), and --region only what meets a box, cropped to it. " +
 			"With --attach-to it puts the PNG on a task instead (or on a new comment with --comment), with a link back to " +
 			"the drawing board; exporting the same part to the task again updates that file. " +
+			"--node exports a linked node's drawing board under the grants it gave this node (operator only). " +
 			"Text is drawn in the Go fonts, so it is close to the editor's, not identical. Needs read access to the drawing board.",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -93,6 +96,9 @@ func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stder
 	case attach == "" && (p.Comment != "" || p.Name != "" || p.Replace != 0):
 		fmt.Fprintln(stderr, "Error: --comment, --name and --replace go with --attach-to")
 		return rcInvalidArg
+	case attach != "" && strings.TrimSpace(p.Node) != "":
+		fmt.Fprintln(stderr, "Error: --node exports a linked node's drawing board to a file; attaching it to a task is not supported yet")
+		return rcInvalidArg
 	case attach != "" && strings.EqualFold(strings.TrimSpace(p.Format), "svg"):
 		fmt.Fprintln(stderr, "Error: a drawing is attached as a PNG; export an SVG with -o")
 		return rcInvalidArg
@@ -139,8 +145,7 @@ func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stder
 	if attach != "" {
 		return attachDrawingBoardExport(id, attach, p, req, stdout, stderr)
 	}
-	body, _ := json.Marshal(req)
-	data, hdr, err := DaemonPostRawBytes(drawingBoardPath(id, "export"), "application/json", body, drawingBoardOpts())
+	data, version, count, err := fetchDrawingBoardExport(id, strings.TrimSpace(p.Node), req)
 	if err != nil {
 		return drawingBoardErr(stderr, err)
 	}
@@ -156,11 +161,34 @@ func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stder
 		return rcIOFailure
 	}
 	what := "the whole drawing board"
-	if n := hdr.Get("X-Drawing-board-Export-Elements"); n != "" && (len(ids) > 0 || p.Region != "") {
-		what = n + " element(s)"
+	if count != "" && (len(ids) > 0 || p.Region != "") {
+		what = count + " element(s)"
 	}
-	fmt.Fprintf(stdout, "Wrote %s (%d bytes): %s at version %s.\n", p.Output, len(data), what, hdr.Get("X-Drawing-board-Version"))
+	fmt.Fprintf(stdout, "Wrote %s (%d bytes): %s at version %s.\n", p.Output, len(data), what, version)
 	return rcOK
+}
+
+// fetchDrawingBoardExport renders the export on this node, or on node
+// through its peer view, which carries the image base64-encoded in JSON.
+func fetchDrawingBoardExport(id, node string, req map[string]any) (data []byte, version, elements string, err error) {
+	if node == "" {
+		body, _ := json.Marshal(req)
+		data, hdr, err := DaemonPostRawBytes(drawingBoardPath(id, "export"), "application/json", body, drawingBoardOpts())
+		if err != nil {
+			return nil, "", "", err
+		}
+		return data, hdr.Get("X-Drawing-board-Version"), hdr.Get("X-Drawing-board-Export-Elements"), nil
+	}
+	var out struct {
+		Data     []byte `json:"data"`
+		Version  int64  `json:"version"`
+		Elements int    `json:"elements"`
+	}
+	path := "/v1/federation/peer/" + url.PathEscape(node) + "/drawing-boards/" + url.PathEscape(id) + "/export?format=json"
+	if err := DaemonRequest(http.MethodPost, path, req, &out, DaemonOpts{Timeout: 30 * time.Second, NoRetry: true}); err != nil {
+		return nil, "", "", err
+	}
+	return out.Data, strconv.FormatInt(out.Version, 10), strconv.Itoa(out.Elements), nil
 }
 
 // attachDrawingBoardExport puts the export on a task (or a new comment on

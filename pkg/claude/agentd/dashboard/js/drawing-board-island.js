@@ -220,12 +220,40 @@ function gridStyle(view) {
 
 // -- the editor ---------------------------------------------------------------
 
+// exportDrawingBoardImage has the daemon draw the board (or the selected
+// elements, with their text and the lines between them) as format, and
+// downloads it. As JSON (format=json), so a peer's page, whose fetches go
+// through the peer view, gets it the same way.
+const saveBlob = (blob, filename) => import('./download.js').then((m) => m.downloadBlob(blob, filename));
+
+export async function exportDrawingBoardImage({ drawingBoardId, format, selection = [], fetchImpl = globalThis.fetch, notify = () => {}, save = saveBlob }) {
+  const body = { format, ...(selection.length ? { elements: selection } : {}) };
+  try {
+    const out = await jsonOrThrow(await fetchImpl(`/api/drawing-boards/${encodeURIComponent(drawingBoardId)}/export?format=json`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }));
+    const bytes = Uint8Array.from(atob(out.data || ''), (c) => c.charCodeAt(0));
+    await save(new Blob([bytes], { type: out.content_type }), out.filename || `${drawingBoardId}.${format}`);
+  } catch (error) {
+    notify(`Could not export the drawing board as ${format.toUpperCase()}: ${error?.message || error}`, true);
+  }
+}
+
 // drawingBoardFileItems are the editor's File menu. Export is its own
-// section: the image export (PNG, SVG, attach to a task, tk_413bdf5d) joins
-// it there. elements() reads the board as drawn now.
-export function drawingBoardFileItems({ drawingBoardId, title = '', peer = false, elements = () => [] }) {
+// section: the board as an .excalidraw file, and as an image the daemon
+// draws (tk_413bdf5d), of the selection when there is one. elements() reads
+// the board as drawn now, selection() the selected ids.
+export function drawingBoardFileItems({ drawingBoardId, title = '', peer = false, elements = () => [], selection = () => [],
+  fetchImpl = globalThis.fetch, notify = () => {} }) {
+  const picked = selection();
+  const what = picked.length ? `the ${picked.length === 1 ? 'selected element' : `${picked.length} selected elements`}` : 'the whole drawing board';
+  const image = (format) => ({ key: `export-${format}`, label: `Export ${format.toUpperCase()}`,
+    title: `Download ${what} as ${format === 'png' ? 'a PNG' : 'an SVG'}, drawn from the board as it is now`,
+    run: () => exportDrawingBoardImage({ drawingBoardId, format, selection: picked, fetchImpl, notify }) });
   return [
     { heading: 'Export' },
+    image('png'),
+    image('svg'),
     { key: 'download', label: 'Download .excalidraw', title: 'Save the drawing board as an .excalidraw file, which excalidraw.com opens',
       run: () => import('./download.js').then((m) => m.downloadText(`${drawingBoardId}.excalidraw`, toExcalidraw(elements()))) },
     ...(peer ? [] : [
@@ -1853,7 +1881,8 @@ export function DrawingBoardEditor({
         onChanged=${(agentsLocked) => setMeta((m) => ({ ...m, agentsLocked }))} />
       <span class=${`drawing-board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>`}
       menus=${[
-        { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, peer, elements: () => drawnElements(elements.current) }) },
+        { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, peer, elements: () => drawnElements(elements.current),
+          selection: () => selected.filter((id) => elements.current.get(id) && !elements.current.get(id).isDeleted), fetchImpl, notify }) },
         { key: 'view', label: 'View', items: () => [
           { key: 'fit', label: 'Zoom to fit', shortcut: '⇧1', disabled: !live.length, run: fitView },
           { key: 'actual', label: 'Zoom 100%', shortcut: '⇧0', disabled: view.zoom === 1, run: zoomReset },

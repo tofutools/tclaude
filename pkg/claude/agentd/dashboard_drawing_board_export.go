@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -23,7 +24,8 @@ import (
 //
 // Body: {format: "png"|"svg", elements?: [ids], region?: {x,y,width,height},
 // scale?: n}. The reply is the image; X-Drawing-board-Version names the board
-// version it shows.
+// version it shows. ?format=json answers it as JSON instead, the image
+// base64-encoded, for a peer view (which carries JSON only) and a script.
 
 const drawingBoardExportBodyLimit = 256 << 10
 
@@ -62,6 +64,31 @@ func handleDashboardDrawingBoardExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string) {
+	serveDrawingBoardExportWith(w, r, id, drawingBoardExportServe{asJSON: r.URL.Query().Get("format") == "json"})
+}
+
+// drawingBoardExportServe is how an export is answered.
+type drawingBoardExportServe struct {
+	// asJSON answers drawingBoardExportJSON, the image base64-encoded in
+	// it, instead of the image itself: what a peer view carries.
+	asJSON bool
+	// maxBytes, when set, refuses a bigger image (a peer view's body cap).
+	maxBytes int
+}
+
+// drawingBoardExportJSON is an export as JSON (?format=json).
+type drawingBoardExportJSON struct {
+	ContentType string           `json:"content_type"`
+	Filename    string           `json:"filename"`
+	Data        []byte           `json:"data"` // base64
+	Width       int              `json:"width"`
+	Height      int              `json:"height"`
+	Version     int64            `json:"version"`
+	Elements    int              `json:"elements"`
+	Crop        drawingboard.Box `json:"crop"`
+}
+
+func serveDrawingBoardExportWith(w http.ResponseWriter, r *http.Request, id string, how drawingBoardExportServe) {
 	r.Body = http.MaxBytesReader(w, r.Body, drawingBoardExportBodyLimit)
 	var req drawingBoardExportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -72,14 +99,27 @@ func serveDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string) 
 	if !ok {
 		return
 	}
+	if how.maxBytes > 0 && len(img.Data) > how.maxBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large",
+			fmt.Sprintf("the export is larger than %d MiB, more than a linked node carries; export a part of it, or at a smaller scale", how.maxBytes>>20))
+		return
+	}
 	ext := "png"
 	if img.ContentType != "image/png" {
 		ext = "svg"
+	}
+	filename := id + "." + ext
+	if how.asJSON {
+		writeJSON(w, http.StatusOK, drawingBoardExportJSON{ContentType: img.ContentType, Filename: filename, Data: img.Data,
+			Width: img.Width, Height: img.Height, Version: version, Elements: len(img.Elements), Crop: img.Crop})
+		return
+	}
+	if ext == "svg" {
 		// An SVG is a document: never let a browser run it from this origin.
 		w.Header().Set("Content-Security-Policy", "sandbox")
 	}
 	w.Header().Set("Content-Type", img.ContentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+id+`.`+ext+`"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Drawing-board-Version", strconv.FormatInt(version, 10))
