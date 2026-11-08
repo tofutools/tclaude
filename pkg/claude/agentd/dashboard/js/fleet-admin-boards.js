@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { BoardItems } from './fleet-admin-board-items.js';
+import { BoardItems, short } from './fleet-admin-board-items.js';
 import { ContentBrowser } from './fleet-admin-board-browser.js';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
@@ -28,7 +28,6 @@ const INVITE_TTLS = Object.freeze([
 ]);
 
 function errText(error) { return error?.message || String(error); }
-const short = (v) => String(v || '').slice(0, 10);
 
 // inviteHub reads the hub URL out of a pasted invite (board1_ + base64url
 // JSON), for the "wrong hub" message only; the daemon does the real check.

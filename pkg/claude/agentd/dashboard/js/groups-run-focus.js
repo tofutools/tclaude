@@ -41,7 +41,7 @@ export function graphFitScale(size, pane) {
   return Math.max(MIN_GRAPH_SCALE, Math.round(fit * 100) / 100);
 }
 
-function memberName(member) {
+export function memberName(member) {
   return member?.title || member?.agent_id || member?.conv_id || '';
 }
 

@@ -22,7 +22,7 @@ import {
 } from './process-context.js';
 import { TemplateCombobox, namedItems } from './registry-picker.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
-import { GroupsRunFocus } from './groups-run-focus.js';
+import { GroupsRunFocus, memberName } from './groups-run-focus.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
 import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
@@ -55,10 +55,6 @@ function filterLabel(filter, wizard) {
   const kinds = runFilterKinds(filter);
   if (kinds.length === RUN_KINDS.length) return '';
   return kinds.map((kind) => RUN_KIND_LABELS[kind][wizard ? 1 : 0].toLowerCase()).join(' or ');
-}
-
-function memberName(member) {
-  return member?.title || member?.agent_id || member?.conv_id || '';
 }
 
 function memberKey(member) {

@@ -1,4 +1,4 @@
-import { keyTransition } from './fleet-model.js';
+import { keyTransition, peerName } from './fleet-model.js';
 
 // fleet-admin-model.js — DOM-free view helpers for Fleet administration: which
 // nodes this node trusts and what they may do. The data is this node's own
@@ -10,10 +10,6 @@ import { keyTransition } from './fleet-model.js';
 // granted: it implies every peer permission on every group, including groups
 // created later. (Wording follows the daemon's confirmation_required error.)
 export const UNRESTRICTED_CONSEQUENCE = 'Unrestricted trust grants this peer every peer permission on all groups — every live group and every group created later — plus automatic spawn and local unscoped grants towards it. Interactive terminal attach includes answering harness approval prompts.';
-
-export function peerLabel(p) {
-  return p?.label || p?.name || String(p?.instance_id || '').slice(0, 13) || 'peer';
-}
 
 // shortID abbreviates an instance ID for tables; dialogs always show it whole.
 export function shortID(id) {
@@ -63,7 +59,7 @@ export function adminView(status, { pools = [] } = {}) {
   const peers = Array.isArray(status.peers) ? status.peers : [];
   const row = (p) => ({
     id: p.instance_id,
-    label: peerLabel(p),
+    label: peerName(p),
     name: p.name || '',
     fingerprint: p.fingerprint || '',
     level: p.level === 'unrestricted' ? 'unrestricted' : 'restricted',

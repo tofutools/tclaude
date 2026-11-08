@@ -3,6 +3,7 @@ import { effect } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { TrashIcon } from './row-icons.js';
 import { Dialog } from './ui-dialog.js';
 import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAutomationsEntry } from './automations-subnav.js';
 import { registerCommandProvider } from './command-registry.js';
@@ -75,10 +76,6 @@ function EditableName({ template, actions, busy }) {
 
 function EditableDescription({ template, actions, busy }) {
   return html`<${InlineTemplateField} id=${template.id} value=${template.description || ''} emptyLabel="add a description" placeholder="short description" className="process-description" editAttr="data-process-description-edit" inputAttr="data-process-description-input" editTitle="Click to edit the description" editLabel=${`Description for ${template.name || template.id}`} busy=${busy} commit=${(next) => actions.describeTemplate({ id: template.id, description: template.description || '', sourceHash: template.latestVersion?.sourceHash || '' }, next)} />`;
-}
-
-function TrashIcon() {
-  return html`<svg class="trash-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
 }
 
 function Templates({ current, actions }) {

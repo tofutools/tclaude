@@ -24,24 +24,11 @@ function renderGroupsTab() {
   featureState('groups')?.publish(lastSnapshot);
 }
 
-function fmtRemaining(secs) {
-  if (!secs || secs <= 0) return 'expired';
-  if (secs < 60) return secs + 's';
-  if (secs < 3600) {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return s > 0 ? `${m}m${s}s` : `${m}m`;
-  }
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  return m > 0 ? `${h}h${m}m` : `${h}h`;
-}
-
 function renderLinksTab() {
   if (!lastSnapshot) return;
   featureState('links')?.publish(lastSnapshot);
 }
 
 export {
-  renderGroupsTab, renderLinksTab, fmtRemaining,
+  renderGroupsTab, renderLinksTab,
 };
