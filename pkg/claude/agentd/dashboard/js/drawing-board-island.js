@@ -1841,7 +1841,7 @@ export function DrawingBoardEditor({
               ? candidates.slice(0, 30).map((a) => ({ key: a.agentId, label: `${a.steward ? '✦ ' : ''}${a.name}`, run: () => addParticipant(a.agentId) }))
               : [{ key: 'none', label: `No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).`, disabled: true }]) },
             { key: 'group', node: html`<${GroupCombobox} ariaLabel="The drawing board's group" attrs=${{ 'data-drawing-board-group': '', title: "A group's members are on its drawing board without invitations" }}
-              groups=${groupChoices} value=${meta.group} noneLabel="No group" onChange=${(group) => setGroup(group)} />` },
+              groups=${groupChoices} value=${meta.group} noneLabel="No group" floating=${false} onChange=${(group) => setGroup(group)} />` },
           ]),
         ] },
       ]}

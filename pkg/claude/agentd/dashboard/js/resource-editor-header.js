@@ -18,7 +18,7 @@
 // in the menu's place, with a way back.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
 import { Menu, MenuItem, MenuSep } from './ui-components.js';
@@ -61,17 +61,38 @@ function itemsOf(menu) {
 
 // EditorMenuBar is the row of menus: one open at a time; while one is open,
 // hovering another label opens that one; ←/→ move along the bar, ↓ into the
-// open menu, Escape closes it.
-export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onOpen }) {
+// open menu, Escape closes it. roots are more refs that count as the bar's own
+// for a press (the people stack, which opens Share), so a press there does
+// not close a menu its click then toggles.
+export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onOpen, roots = [] }) {
   const [own, setOwn] = useState('');
   const open = openKey ?? own;
   const setOpen = onOpen || setOwn;
   const [sub, setSub] = useState(null);
   const ref = useRef(null);
   const close = () => { setOpen(''); setSub(null); };
-  useDismissablePopover(ref, open, (why) => { if (why !== 'away') close(); });
+  // Escape is handled below, after a control in the menu (the group
+  // picker's list) has had it: its Escape closes its own list first.
+  useDismissablePopover([ref, ...roots], open, (why) => { if (why !== 'away') close(); }, { escape: false });
   const live = menus.filter((menu) => itemsOf(menu).length > 0);
   const labels = () => [...(ref.current?.querySelectorAll('.reh-menubar-label') || [])];
+  const latest = useRef(null);
+  latest.current = { open, live, close, labels };
+  useEffect(() => {
+    if (!open) return undefined;
+    const doc = ref.current?.ownerDocument;
+    const onKey = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const { open: now, live: menus, close: shut, labels: all } = latest.current;
+      const i = menus.findIndex((menu) => menu.key === now);
+      const inside = ref.current?.contains(event.target);
+      event.preventDefault();
+      shut();
+      if (inside) all()[i]?.focus();
+    };
+    doc?.addEventListener('keydown', onKey);
+    return () => doc?.removeEventListener('keydown', onKey);
+  }, [!!open]);
   const show = (key) => { setSub(null); setOpen(key); };
   const onLabelKey = (event, i) => {
     const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
@@ -87,14 +108,11 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
     }
   };
   const onMenuKey = (event) => {
+    // A control drawn in the menu (a picker) keeps its own keys.
+    if (event.target?.closest?.('.reh-menu-node')) return;
     const items = [...(ref.current?.querySelectorAll('.reh-menu [role="menuitem"]:not([disabled])') || [])];
     const at = items.indexOf(event.target);
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      const i = live.findIndex((menu) => menu.key === open);
-      close();
-      labels()[i]?.focus();
-    } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && items.length) {
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && items.length) {
       event.preventDefault();
       items[(at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
     }
@@ -137,11 +155,12 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
 // people at the right. people is drawn as given; openMenu/onOpenMenu let the
 // people stack open Share.
 export function ResourceEditorHeader({ title, identity = null, menus = [], people = null, label = 'Editor menu', openMenu, onOpenMenu, class: extra = '' }) {
+  const peopleRef = useRef(null);
   return html`<header class=${`reh ${extra}`.trim()}>
     <div class="reh-identity">${title}${identity}</div>
-    <${EditorMenuBar} menus=${menus} label=${label} open=${openMenu} onOpen=${onOpenMenu} />
+    <${EditorMenuBar} menus=${menus} label=${label} open=${openMenu} onOpen=${onOpenMenu} roots=${[peopleRef]} />
     <span class="reh-spacer"></span>
-    ${people && html`<div class="reh-people">${people}</div>`}
+    ${people && html`<div class="reh-people" ref=${peopleRef}>${people}</div>`}
   </header>`;
 }
 

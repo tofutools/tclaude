@@ -110,3 +110,48 @@ test('the people stack names everyone, shows a few, and opens what it is given',
   harness.fireEvent(stack, 'click');
   assert.equal(opened, 1);
 });
+
+test('a control in a menu keeps its own keys: arrows stay in it, and its Escape closes only its own list', async (t) => {
+  let listOpen = true;
+  const { harness, c, open } = await mountHeader(t, (mod, h) => ({
+    title: 'Plan',
+    menus: [{ key: 'share', label: 'Share', items: [
+      { key: 'invite', label: 'Invite agent', run() {} },
+      { key: 'picker', node: h.html`<input class="picker" onKeyDown=${(event) => {
+        if (event.key === 'Escape' && listOpen) { event.preventDefault(); event.stopPropagation(); listOpen = false; }
+      }} />` },
+    ] }],
+  }));
+  await open('share');
+  const input = () => c.querySelector('.picker');
+  input().focus();
+  await harness.act(async () => { harness.fireEvent(input(), 'keydown', { key: 'ArrowDown' }); await wait(); });
+  assert.equal(harness.document.activeElement, input(), 'the arrow is the picker\'s');
+  await harness.act(async () => { harness.fireEvent(input(), 'keydown', { key: 'Escape' }); await wait(); });
+  assert.ok(c.querySelector('.reh-menu'), 'the picker closed its list; the menu stays');
+  await harness.act(async () => { harness.fireEvent(input(), 'keydown', { key: 'Escape' }); await wait(); });
+  assert.equal(c.querySelector('.reh-menu'), null, 'a second Escape closes the menu');
+});
+
+test('the people stack toggles Share: a click while it is open closes it', async (t) => {
+  const { harness, c } = await mountHeader(t, () => ({ title: 'Plan', menus: [] }));
+  const mod = await harness.importDashboardModule('js/resource-editor-header.js');
+  function Host() {
+    const [open, setOpen] = harness.hooks.useState('');
+    return harness.html`<${mod.ResourceEditorHeader} title="Plan" openMenu=${open} onOpenMenu=${setOpen}
+      menus=${[{ key: 'share', label: 'Share', items: [{ key: 'x', label: 'X', run() {} }] }]}
+      people=${harness.html`<${mod.PeopleStack} people=${[{ id: 'a', name: 'alpha' }]} onClick=${() => setOpen((o) => (o === 'share' ? '' : 'share'))} />`} />`;
+  }
+  const view = await harness.mount(harness.html`<${Host} />`);
+  const stack = view.container.querySelector('.reh-stack');
+  const press = async () => harness.act(async () => {
+    harness.fireEvent(stack, 'pointerdown', { button: 0 });
+    harness.fireEvent(stack, 'click');
+    await wait();
+  });
+  await press();
+  assert.ok(view.container.querySelector('.reh-menu'), 'opens Share');
+  await press();
+  assert.equal(view.container.querySelector('.reh-menu'), null, 'and closes it again');
+  void c;
+});
