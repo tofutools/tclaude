@@ -94,6 +94,10 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
     return () => doc?.removeEventListener('keydown', onKey);
   }, [!!open]);
   const show = (key) => { setSub(null); setOpen(key); };
+  // hovered is the menu a pointer opened by passing over its label while
+  // another was open: the click that pointer then makes keeps it open
+  // rather than toggling it shut again.
+  const hovered = useRef('');
   const onLabelKey = (event, i) => {
     const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
     if (step) {
@@ -141,8 +145,12 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
     ${live.map((menu, i) => html`<span key=${menu.key} class="reh-menubar-slot">
       <button data-ui-exempt type="button" role="menuitem" class=${`reh-menubar-label${open === menu.key ? ' open' : ''}`}
         aria-haspopup="menu" aria-expanded=${open === menu.key ? 'true' : 'false'} data-editor-menu=${menu.key} title=${menu.title || undefined}
-        onClick=${() => (open === menu.key ? close() : show(menu.key))}
-        onPointerEnter=${() => { if (open && open !== menu.key) show(menu.key); }}
+        onClick=${() => {
+          if (hovered.current === menu.key) { hovered.current = ''; return; }
+          if (open === menu.key) close(); else show(menu.key);
+        }}
+        onPointerEnter=${() => { if (open && open !== menu.key) { hovered.current = menu.key; show(menu.key); } }}
+        onPointerLeave=${() => { hovered.current = ''; }}
         onKeyDown=${(event) => onLabelKey(event, i)}>${menu.label}</button>
       ${open === menu.key && html`<${Menu} size="sm" class="reh-menu" aria-label=${menu.label} onKeyDown=${onMenuKey}>
         ${items.map(drawItem)}

@@ -155,3 +155,20 @@ test('the people stack toggles Share: a click while it is open closes it', async
   assert.equal(view.container.querySelector('.reh-menu'), null, 'and closes it again');
   void c;
 });
+
+test('with a menu open, a pointer that moves onto another label and clicks it leaves that one open', async (t) => {
+  const { harness, c, label, items, open } = await mountHeader(t, () => ({
+    title: 'Plan',
+    menus: [
+      { key: 'file', label: 'File', items: [{ key: 'a', label: 'A', run() {} }] },
+      { key: 'view', label: 'View', items: [{ key: 'b', label: 'B', run() {} }] },
+    ],
+  }));
+  await open('file');
+  await harness.act(async () => { harness.fireEvent(label('view'), 'pointerenter'); await wait(); });
+  assert.deepEqual(items(), ['B'], 'hovering opens View');
+  await open('view');
+  assert.deepEqual(items(), ['B'], 'and the click that follows keeps it open');
+  await open('view');
+  assert.equal(c.querySelector('.reh-menu'), null, 'a second click closes it');
+});
