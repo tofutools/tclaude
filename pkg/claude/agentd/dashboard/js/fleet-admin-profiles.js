@@ -7,6 +7,7 @@ import { Dialog } from './ui-dialog.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -161,9 +162,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Node pools <span class="muted">${pools.length}</span></h4>
     <div class="muted">A pool's grants apply to every member node — peer grants for a pool are edited on the Peer grants page.</div>
-    ${pools.length > 0 && html`<table class="fa-table ui-compact" id="fleet-pools">
-      <thead><tr><th>Pool</th><th>Members</th><th>Add member</th><th></th></tr></thead>
-      <tbody>${pools.map((pool) => {
+    ${pools.length > 0 && html`<${FaTable} id="fleet-pools" head=${['Pool', 'Members', 'Add member', '']}>${pools.map((pool) => {
         const ids = (pool.members || []).map((m) => m.instance_id);
         const candidates = view.trusted.filter((r) => !ids.includes(r.id));
         return html`<tr key=${pool.name} data-pool=${pool.name}>
@@ -175,8 +174,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
           <td class="fa-acts"><${Button} size="sm" data-fa="pool-grants" onClick=${() => onOpenGrants(`group:${pool.name}`)}>Grants…<//>
             <${Button} size="sm" variant="ghost danger" data-fa="delete-pool" onClick=${() => deletePool(pool)}>Delete…<//></td>
         </tr>`;
-      })}</tbody>
-    </table>`}
+      })}<//>`}
     <div class="fa-grant-form">
       <input id="fleet-pool-name" type="text" placeholder="new pool name" value=${newPool} autocomplete="off" spellcheck="false" onInput=${(e) => setNewPool(e.currentTarget.value)} />
       <${Button} size="sm" id="fleet-pool-create" disabled=${!newPool.trim()} onClick=${createPool}>Create pool<//>
@@ -184,9 +182,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
     <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <${Button} size="sm" variant="link" id="fleet-profile-new" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…<//> CLI: <code>tclaude federation profile</code>.</div>
     ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
-    ${summaries && summaries.length > 0 && html`<table class="fa-table ui-compact" id="fleet-profiles">
-      <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
-      <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
+    ${summaries && summaries.length > 0 && html`<${FaTable} id="fleet-profiles" head=${['Profile', 'Level', 'Pools', 'Grants', 'Labels', '']}>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
         <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="ui-tag ui-tag-accent fa-badge">default</span>` : ''}</td>
         <td><span class=${`fa-level ${p.level}`}>${p.level}</span></td>
         <td>${p.pools.join(', ') || html`<span class="muted">—</span>`}</td>
@@ -200,8 +196,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
             : html`<${Button} size="sm" data-fa="make-default" onClick=${() => setDefault(p)}>Make default…<//>`}
           <${Button} size="sm" variant="ghost danger" data-fa="delete-profile" onClick=${() => deleteProfile(p)}>Delete…<//>
         </td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${editing && html`<${ProfileEditor} profile=${editing.profile} pools=${pools} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast}
       onClose=${() => setEditing(null)} onDone=${(msg) => { setEditing(null); done(msg); }} />`}
     ${applying && html`<${ApplyDialog} profile=${applying} peers=${view.trusted} actions=${actions} poolNames=${poolNames} onClose=${() => setApplying(null)}

@@ -37,6 +37,7 @@ import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './fleet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
 import { writeClipboard } from './insecure-origin.js';
 import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -296,21 +297,16 @@ function grantsCell(g) {
 function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose, proposable }) {
   return html`<div class="fa-peers">
     <h4>This node</h4>
-    <table class="fa-table ui-compact" id="fleet-self">
-      <thead><tr><th>Node</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th></tr></thead>
-      <tbody><tr data-self=${view.self.id}>
+    <${FaTable} id="fleet-self" head=${['Node', 'Instance', 'Fingerprint', 'Level', 'Seen']}><tr data-self=${view.self.id}>
         <td><span class="fa-dot on" title="online"></span> <b>${view.self.name}</b> <span class="muted">(this node)</span></td>
         <td><code title=${view.self.id}>${shortID(view.self.id)}</code></td>
         <td><code title=${view.self.fingerprint}>${shortFingerprint(view.self.fingerprint)}</code></td>
         <td>self</td><td>online</td>
-      </tr></tbody>
-    </table>
+      </tr><//>
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
       ? html`<div class="empty">No trusted peers yet. Trust an instance below once its operator has read you its fingerprint.</div>`
-      : html`<table class="fa-table ui-compact" id="fleet-trusted">
-        <thead><tr><th>Peer</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th><th>Grants</th><th>Pools</th><th></th></tr></thead>
-        <tbody>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+      : html`<${FaTable} id="fleet-trusted" head=${['Peer', 'Instance', 'Fingerprint', 'Level', 'Seen', 'Grants', 'Pools', '']}>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b>${r.name && r.name !== r.label ? html` <span class="muted">${r.name}</span>` : ''}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
           <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code>${keyBadge(r.keyTransition) && html` <${Button} size="sm" variant="link" class="fa-link" data-fa="key" title=${keyBadge(r.keyTransition).title} onClick=${() => onKey(r)}><span class=${keyBadge(r.keyTransition).cls}>${keyBadge(r.keyTransition).text}</span><//>`}</td>
@@ -326,21 +322,17 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
               : html`<${Button} size="sm" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…<//>`}
             <${Button} size="sm" variant="ghost danger" data-fa="untrust" onClick=${() => onUntrust(r)}>Untrust…<//>
           </td>
-        </tr>`)}</tbody>
-      </table>`}
+        </tr>`)}<//>`}
     <h4>Waiting to be trusted <span class="muted">${view.waiting.length}</span></h4>
     ${view.waiting.length === 0
       ? html`<div class="empty">No other instances visible on the hub.</div>`
-      : html`<table class="fa-table ui-compact" id="fleet-waiting">
-        <thead><tr><th>Reports name</th><th>Instance</th><th>Fingerprint</th><th>Seen</th><th></th></tr></thead>
-        <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+      : html`<${FaTable} id="fleet-waiting" head=${['Reports name', 'Instance', 'Fingerprint', 'Seen', '']}>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> ${r.name || html`<span class="muted">unnamed</span>`}${r.asks && html` <span class="fa-asks" title="This instance asked to be trusted; its note is on the map">🤝 asks to be trusted</span>`}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
           <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code></td>
           <td>${r.online ? 'online' : ago(r.lastSeen, now)}</td>
           <td class="fa-acts"><${Button} size="sm" variant="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…<//></td>
-        </tr>`)}</tbody>
-      </table>`}
+        </tr>`)}<//>`}
   </div>`;
 }
 

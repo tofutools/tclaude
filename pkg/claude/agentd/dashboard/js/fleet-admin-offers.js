@@ -12,6 +12,7 @@ import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLan
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { binarySize, errText, localStamp } from './cell-format.js';
+import { ChangeTable, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -152,8 +153,6 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   // echoes the daemon's answer; a typed path waits for Preview again.
   const choose = (id) => run(change({ landing: id, cwd: '' }));
   const set = (k) => (e) => change({ [k]: e.currentTarget.type === 'checkbox' ? e.currentTarget.checked : e.currentTarget.value });
-  const toggleItem = (item) => (e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== item) : [...opts.skip, item] });
-
   const changes = rows;
   const conflicts = changes.some((c) => c.action === 'replace' && !opts.skip.includes(c.item));
   const unresolved = preview?.unresolved || [];
@@ -189,8 +188,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       ${preview?.agent?.carry_permissions && html`
         <label class="fa-of-check"><input id="fleet-offer-drop-permissions" type="checkbox" checked=${opts.dropPermissions} onChange=${set('dropPermissions')} /> discard carried permissions; use this node's defaults only</label>
         <label class="fa-of-check"><input id="fleet-offer-sensitive-permissions" type="checkbox" checked=${opts.allowSensitivePermissions} disabled=${opts.dropPermissions} onChange=${set('allowSensitivePermissions')} /> I explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants. These can change security policy and contact the operator; unrestricted trust is also required.</label>
-        <table class="fa-table ui-compact" id="fleet-offer-permissions"><thead><tr><th>Permission</th><th>Effect</th><th>Source scope</th><th>Receiving scope</th><th>Decision</th><th>Reason</th></tr></thead>
-          <tbody>${(preview.permissions || []).map((p, i) => html`<tr key=${i}><td><code>${p.slug}</code></td><td>${p.effect}</td><td>${p.source_scope ? JSON.stringify(p.source_scope) : 'all'}</td><td>${p.scope ? JSON.stringify(p.scope) : p.decision === 'drop' ? '—' : 'all'}</td><td>${p.decision}</td><td>${p.reason}</td></tr>`)}</tbody></table>`}
+        <${FaTable} id="fleet-offer-permissions" head=${['Permission', 'Effect', 'Source scope', 'Receiving scope', 'Decision', 'Reason']}>${(preview.permissions || []).map((p, i) => html`<tr key=${i}><td><code>${p.slug}</code></td><td>${p.effect}</td><td>${p.source_scope ? JSON.stringify(p.source_scope) : 'all'}</td><td>${p.scope ? JSON.stringify(p.scope) : p.decision === 'drop' ? '—' : 'all'}</td><td>${p.decision}</td><td>${p.reason}</td></tr>`)}<//>`}
       <${ImportConfirmList} confirm=${preview?.confirm} overrides=${overrides} setOverrides=${setOverrides} />
       ${preview && html`<div class="fa-plan"><ul>
         <li>${preview.history ? 'With conversation history.' : 'Without conversation history.'}</li>
@@ -199,13 +197,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
         ${preview.security && html`<li class="muted">${preview.security}</li>`}
       </ul></div>`}`
     : html`
-      ${changes.length > 0 && html`<table class="fa-table ui-compact" id="fleet-offer-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
-        <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
-          <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${c.action === 'unchanged'} onChange=${toggleItem(c.item)} /></td>
-          <td><code>${c.item}</code></td>
-          <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
-          <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
-        </tr>`)}</tbody></table>`}
+      ${changes.length > 0 && html`<${ChangeTable} id="fleet-offer-changes" changes=${changes} skip=${opts.skip} onSkip=${(skip) => change({ skip })} />`}
       ${preview && !changes.length && html`<div class="muted">The offer has no items.</div>`}
       ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}
       ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-offer-replace" type="checkbox" checked=${opts.replace} onChange=${set('replace')} /> overwrite my items that differ (otherwise untick them)</label>`}`}
@@ -378,9 +370,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Offered to this node</h4>
     ${incoming == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !incoming.length ? html`<div class="empty">No offers from peers.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-offers-in">
-      <thead><tr><th>From</th><th>Kind</th><th>Summary</th><th>Size</th><th>Expires</th><th>State</th><th></th></tr></thead>
-      <tbody>${incoming.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
+    <${FaTable} id="fleet-offers-in" head=${['From', 'Kind', 'Summary', 'Size', 'Expires', 'State', '']}>${incoming.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
         <td>${label(o.peer)}${o.sender_agent ? html` <span class="muted">(${o.sender_agent})</span>` : ''}</td>
         <td class=${o.offer?.move || o.offer?.teleport ? 'fa-warn' : ''}>${offerKind(o)}</td>
         <td class="fa-wrap">${o.offer?.summary || ''}${o.offer?.group ? html` <span class="muted">→ group ${o.offer.group}</span>` : ''}${o.import_agent ? html` <span class="muted">agent ${o.import_agent}</span>` : ''}${o.last_error ? html`<div class="fa-danger">${o.last_error}</div>` : ''}</td>
@@ -388,18 +378,14 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
         <td class="fa-nowrap">${when(o.offer?.expires_at)}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}</td>
         <td class="fa-acts">${OPEN.has(o.state) && html`<${Button} size="sm" data-fa="inspect" onClick=${() => setDialog({ kind: 'inspect', offer: o })}>Inspect…<//><${Button} size="sm" data-fa="preview" onClick=${() => setDialog({ kind: 'import', offer: o })}>Preview…<//><${Button} size="sm" data-fa="decline" onClick=${() => decline(o)}>Decline…<//>`}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <h4>Sent by this node</h4>
     ${outgoing == null ? '' : !outgoing.length ? html`<div class="empty">No offers sent.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-offers-out">
-      <thead><tr><th>To</th><th>Kind</th><th>Summary</th><th>Expires</th><th>State</th></tr></thead>
-      <tbody>${outgoing.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
+    <${FaTable} id="fleet-offers-out" head=${['To', 'Kind', 'Summary', 'Expires', 'State']}>${outgoing.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
         <td>${label(o.peer)}</td><td>${offerKind(o)}</td><td class="fa-wrap">${o.offer?.summary || ''}${o.last_error ? html`<div class="fa-danger">${o.last_error}</div>` : ''}</td>
         <td class="fa-nowrap">${when(o.offer?.expires_at)}</td>
         <td class=${o.last_error || o.state === 'declined' ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${dialog?.kind === 'inspect' && html`<${BundleInspectDialog} offer=${dialog.offer} label=${label} actions=${actions} toast=${toast}
       onImport=${() => setDialog({ kind: 'import', offer: dialog.offer })} onDecline=${() => { const o = dialog.offer; setDialog(null); decline(o); }} onClose=${() => { setDialog(null); setTick((n) => n + 1); }} />`}
     ${dialog?.kind === 'import' && html`<${OfferImportDialog} offer=${dialog.offer} label=${label} actions=${actions} confirm=${confirm} onClose=${() => { setDialog(null); setTick((n) => n + 1); }} onDone=${done} />`}

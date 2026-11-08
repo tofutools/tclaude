@@ -7,6 +7,7 @@ import { ClaimDialog } from './fleet-admin-hub.js';
 import { Button, Select } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -369,14 +370,11 @@ function TrustStep({ view, copy, toast, onTrust, onPeers }) {
     ${!connected && html`<p class="fs-warn">Join a hub first: other nodes show up here once this node is connected.</p>`}
     ${connected && (view.waiting.length === 0
       ? html`<div class="empty">No other nodes in your space yet. Each node joins the same space with its own invite; it shows up here once it connects.</div>`
-      : html`<table class="fa-table ui-compact" id="fleet-setup-waiting">
-        <thead><tr><th>Node</th><th>Fingerprint</th><th></th></tr></thead>
-        <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+      : html`<${FaTable} id="fleet-setup-waiting" head=${['Node', 'Fingerprint', '']}>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> ${r.name || html`<span class="muted">unnamed</span>`} <code class="muted" title=${r.id}>${shortID(r.id)}</code></td>
           <td><code class="fa-fp-full">${r.fingerprint || '—'}</code></td>
           <td class="fa-acts"><${Button} size="sm" variant="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…<//></td>
-        </tr>`)}</tbody>
-      </table>`)}
+        </tr>`)}<//>`)}
     ${view.trusted.length > 0 && html`<p class="fs-ok" id="fleet-setup-trusted">✓ Trusted: ${view.trusted.map((r, i) => html`${i ? ', ' : ''}<b>${r.label}</b> <span class="muted">(${r.level}, ${r.online ? 'online' : 'offline'})</span>`)}.
       <${Button} size="sm" variant="link" class="fa-link" onClick=${onPeers}>Peers…<//></p>`}
     <p class="muted">Restricted, the default, gives a peer only what you grant it in the next step. For your own machines you can trust <b>unrestricted</b> instead: every peer permission on every group, including groups created later.</p>

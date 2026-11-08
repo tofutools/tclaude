@@ -5,6 +5,7 @@ import { AUDIT_WINDOWS, auditSince, shortID } from './fleet-admin-model.js';
 import { Button, Select } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -63,9 +64,7 @@ export function AuditPage({ view, actions, now }) {
     </div>
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${rows == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : list.length === 0 ? html`<div class="empty">No federation activity in this window.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-audit">
-      <thead><tr><th>When</th><th></th><th>Peer</th><th>Kind</th><th>Actor</th><th>Target</th><th>Group</th><th>Outcome</th></tr></thead>
-      <tbody>${list.map((r) => html`<tr key=${r.id} data-kind=${r.kind}>
+    <${FaTable} id="fleet-audit" head=${['When', '', 'Peer', 'Kind', 'Actor', 'Target', 'Group', 'Outcome']}>${list.map((r) => html`<tr key=${r.id} data-kind=${r.kind}>
         <td class="fa-nowrap">${when(r.at)}</td>
         <td title=${r.direction === 'in' ? 'incoming: the peer acted on this node' : r.direction === 'out' ? 'outgoing: this node acted on the peer' : r.direction}>${r.direction === 'in' ? '⇠' : r.direction === 'out' ? '⇢' : '·'}</td>
         <td>${label(r.peer)}</td>
@@ -74,8 +73,7 @@ export function AuditPage({ view, actions, now }) {
         <td class="fa-wrap">${r.target || ''}</td>
         <td>${r.group || ''}</td>
         <td class=${failed(r) ? 'fa-danger' : ''}>${[r.state, r.status || ''].filter(Boolean).join(' ') || '—'}</td>
-      </tr>`)}</tbody>
-    </table>
+      </tr>`)}<//>
     ${list.length >= limit && limit < MAX && html`<div class="fa-grant-form"><${Button} size="sm" id="fleet-audit-more" onClick=${() => setLimit(Math.min(MAX, limit + PAGE))}>Show more<//></div>`}
     ${list.length >= MAX && html`<div class="muted">Showing the newest ${MAX}; narrow by peer or time for older rows.</div>`}`}
   </div>`;

@@ -6,6 +6,7 @@ import { Dialog } from './ui-dialog.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 import { BoardCombobox, namedItems } from './registry-picker.js';
 import { binarySize, errText } from './cell-format.js';
+import { ChangeTable, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -215,14 +216,7 @@ export function ImportDialog({ board, item, version, by, actions, confirm, onClo
       <label class="fa-of-check"><input id="fleet-board-skill-executable" type="checkbox" checked=${opts.preserve_executable} onChange=${(e)=>change({preserve_executable:e.currentTarget.checked})} /> Preserve executable bits: the listed scripts and executables can be run by agents. I have inspected them. Otherwise executable bits are stripped; an interpreter can still run scripts.</label>
       <div class="fa-cli-note">Files (inspect security-relevant content before importing):</div>
       ${(preview.files || []).map((file)=>html`<details key=${file.path} data-skill-file=${file.path}><summary><code>${file.path}</code> · ${file.bytes} bytes ${file.security && html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive">security-relevant</span>`} ${file.executable ? '· executable' : ''}</summary>${file.binary && html`<div class="fa-warn">Binary file: use the verified download to inspect its bytes.</div>`}${file.text !== undefined && html`<pre>${file.text}</pre>`}</details>`)}`}
-    ${changes.length > 0 && html`<table class="fa-table ui-compact" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
-      <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
-        <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${preview?.kind === 'skill' || c.action === 'unchanged'}
-          onChange=${(e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== c.item) : [...opts.skip, c.item] })} /></td>
-        <td><code>${c.item}</code></td>
-        <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
-        <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
-      </tr>`)}</tbody></table>`}
+    ${changes.length > 0 && html`<${ChangeTable} id="fleet-board-import-changes" changes=${changes} skip=${opts.skip} locked=${preview?.kind === 'skill'} onSkip=${(skip) => change({ skip })} />`}
     ${preview && !changes.length && html`<div class="muted">${preview.kind === 'skill' ? 'Select a destination skill root, then preview again.' : 'This version has nothing to import.'}</div>`}
     ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}
     ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-board-import-replace" type="checkbox" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} /> overwrite my items that differ ${preview?.kind === 'skill' ? '(or deselect the root)' : '(otherwise untick them)'}</label>`}
@@ -254,16 +248,14 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
   }).then((r) => { if (r) { toast(`Keeping ${short(v.version)}`, false); onPinned(); } }).catch((e) => toast(`Keep failed: ${errText(e)}`, true));
   const list = Array.isArray(versions) ? versions : [];
   return html`<${Dialog} id="fleet-board-versions" onClose=${onClose} title=${html`Versions of ${item.name}`}>
-    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<table class="fa-table ui-compact" id="fleet-board-version-list">
-      <thead><tr><th>Version</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
-      <tbody>${list.map((v) => html`<tr key=${v.version} data-version=${v.version}>
+    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<${FaTable} id="fleet-board-version-list" head=${['Version', 'Posted by', 'Size', '']}>${list.map((v) => html`<tr key=${v.version} data-version=${v.version}>
         <td><code title=${v.version}>${short(v.version)}</code>${v.version === item.pinned_version ? html` <span class="ui-tag ui-tag-accent fa-badge">kept</span>` : ''}${v.version === item.latest_version ? html` <span class="muted">latest</span>` : ''}</td>
         <td>${v.invalid ? html`<span class="fa-danger">${v.error || 'invalid'}</span>` : postedBy(v, name)}</td>
         <td>${size(v.bytes)}</td>
         <td class="fa-acts">${!v.invalid && html`<${Button} size="sm" data-version-act="open" onClick=${() => onOpen(v)}>Open…<//>
           ${v.version !== item.pinned_version && html`<${Button} size="sm" data-version-act="pin" onClick=${() => pin(v)}>Keep…<//>`}
           ${onRepost && html`<${Button} size="sm" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…<//>`}`}</td>
-      </tr>`)}</tbody></table>`}
+      </tr>`)}<//>`}
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
   </${Dialog}>`;
 }
@@ -297,9 +289,7 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
   return html`<div class="fa-board-items" id="fleet-board-items">
     <div class="fa-row"><b>Shared config</b><span class="spacer"></span>
       ${poster && html`<${Button} size="sm" id="fleet-board-post" onClick=${() => setDialog({ kind: 'publish' })}>Post config…<//>`}</div>
-    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table ui-compact" id="fleet-board-item-list">
-      <thead><tr><th>Item</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
-      <tbody>${list.map((it) => it.invalid ? html`<tr key=${`${it.id}/${it.version}`} data-item-id=${it.id} class="fa-invalid">
+    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<${FaTable} id="fleet-board-item-list" head=${['Item', 'Posted by', 'Size', '']}>${list.map((it) => it.invalid ? html`<tr key=${`${it.id}/${it.version}`} data-item-id=${it.id} class="fa-invalid">
           <td>${it.name || 'Invalid item'}</td><td colspan="2" class="fa-danger">${it.error || 'could not be verified'}</td><td class="fa-acts muted">not importable</td></tr>`
         : html`<tr key=${it.id} data-item-id=${it.id}>
           <td>${it.name}${it.update_available ? html` <span class="ui-tag ui-tag-accent fa-badge" title="A newer version than the one you keep was posted">update</span>` : ''}${it.pinned_version ? html` <span class="muted">kept ${short(it.pinned_version)}</span>` : ''}</td>
@@ -310,7 +300,7 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
             <${Button} size="sm" data-item-act="versions" onClick=${() => setDialog({ kind: 'versions', item: it })}>Versions…<//>
             ${poster && html`<${Button} size="sm" data-item-act="update" onClick=${() => setDialog({ kind: 'publish', item: it })}>New version…<//>`}
             ${reposter && html`<${Button} size="sm" data-item-act="repost" title="Post this item, unchanged, to another board you can post to" onClick=${() => setDialog({ kind: 'repost', item: it, version: it.latest_version || it.version })}>Post to…<//>`}
-          </td></tr>`)}</tbody></table>`}
+          </td></tr>`)}<//>`}
     ${d?.kind === 'publish' && html`<${PublishDialog} board=${board} item=${d.item} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'versions' && html`<${VersionsDialog} board=${board} item=${d.item} name=${name} actions=${actions} confirm=${confirm} toast=${toast} onOpen=${(v) => open(withVersion(d.item, v), v.version)}
       onRepost=${reposter ? (v) => setDialog({ kind: 'repost', item: withVersion(d.item, v), version: v.version }) : null} onClose=${() => setDialog(null)} onPinned=${() => { setDialog(null); reload(); onChanged(); }} />`}
