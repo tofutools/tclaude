@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { accessHint } from './fleet-harness-model.js';
 import { Button } from './ui-components.js';
+import { localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -10,10 +11,7 @@ const html = htm.bind(h);
 // is still running.
 const SCRIPT_POLL_MS = 2000;
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) ? t.toLocaleString() : '';
-}
+const when = (iso) => localStamp(iso, { empty: '' });
 
 // overviewBusy says whether a node's update-scripts overview is still moving.
 export function overviewBusy(o) {

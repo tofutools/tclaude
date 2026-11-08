@@ -11,6 +11,7 @@ import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { markInTransit } from './drop-landing.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -64,8 +65,6 @@ export function moveProgress(rec) {
   if (rec.disposition === 'pending_acceptance' || rec.state === 'awaiting_acceptance') return { phase: 'waiting' };
   return { phase: 'checking' };
 }
-
-function errText(e) { return e?.message || String(e); }
 
 // MoveDropDialog confirms a dropped move and follows it until it lands, waits
 // for acceptance, or fails. Closing it never stops the move.

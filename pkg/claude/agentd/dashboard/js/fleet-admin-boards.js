@@ -5,6 +5,7 @@ import { BoardItems, short } from './fleet-admin-board-items.js';
 import { ContentBrowser } from './fleet-admin-board-browser.js';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -26,8 +27,6 @@ const INVITE_TTLS = Object.freeze([
   { s: 86400, label: '1 day' },
   { s: 7 * 86400, label: '7 days' },
 ]);
-
-function errText(error) { return error?.message || String(error); }
 
 // inviteHub reads the hub URL out of a pasted invite (board1_ + base64url
 // JSON), for the "wrong hub" message only; the daemon does the real check.
@@ -176,7 +175,7 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
       <thead><tr><th>Open invites</th><th>Expires</th><th></th></tr></thead>
       <tbody>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
         <td>${roleText(i.role)}</td>
-        <td>${new Date(i.expires_at).toLocaleString()}</td>
+        <td>${localStamp(i.expires_at)}</td>
         <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…<//></td>
       </tr>`)}</tbody></table>`}
     ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Recently used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}

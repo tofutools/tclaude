@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { SCRIPT_MAX_BYTES, TIMEOUT_DEFAULT_S, TIMEOUT_MAX_S, runActive, runOK, scriptBytes } from './fleet-run-actions.js';
 import { Button } from './ui-components.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -11,8 +12,6 @@ const RUN_POLL_MS = 1000;
 // share the hub's per-connection control budget with everything else.
 const HUB_POLL_EVERY = 2;
 const RUN_POLL_GIVE_UP = 30;
-
-function errText(error) { return error?.message || String(error); }
 
 // ACCEPT_CONSEQUENCE is the remote-code-execution warning the accept switch
 // and the node.exec grant both spell out.

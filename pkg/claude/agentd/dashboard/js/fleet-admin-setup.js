@@ -6,6 +6,7 @@ import { grantConsequence, grantRows, shortID } from './fleet-admin-model.js';
 import { ClaimDialog } from './fleet-admin-hub.js';
 import { Button, Select } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -15,8 +16,6 @@ const html = htm.bind(h);
 // rest of Fleet administration and names its CLI, so nothing here is
 // dashboard-only. It is the landing page until the first three steps are
 // done, and stays one click away after.
-
-function errText(error) { return error?.message || String(error); }
 
 // SHARE_PRESETS are the guide's sets of peer grants on one local group. They
 // are plain peer grants: the Peer grants page shows and revokes each one.
@@ -145,10 +144,7 @@ function IdentityCard({ self, copy, toast }) {
 const JOIN_CODE = /^\s*tchj_/;
 const INVITE = /^\s*tchi_/;
 
-function when(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const when = (iso) => localStamp(iso, { empty: '' });
 
 // joinConsequence is the confirmation text for joining with a previewed code:
 // where this node connects, what it trusts for TLS, and what it replaces.

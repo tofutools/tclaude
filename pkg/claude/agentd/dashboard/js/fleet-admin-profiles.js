@@ -6,10 +6,9 @@ import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // ApplyDialog applies a node profile to one trusted peer: it previews the
 // plan (every change, how many are security-relevant, conflicts) and commits

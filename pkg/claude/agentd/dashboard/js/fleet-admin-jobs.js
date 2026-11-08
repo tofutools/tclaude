@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -15,15 +16,10 @@ const TERMINAL = new Set(['completed', 'failed', 'canceled', 'timeout', 'refused
 const BAD = new Set(['failed', 'canceled', 'timeout', 'refused', 'interrupted', 'output_unavailable', 'unknown']);
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-function errText(error) { return error?.message || String(error); }
-
 // expired pending jobs can no longer start (approve is a silent no-op).
 function expired(j) { const t = Date.parse(j.expires || ''); return Number.isFinite(t) && t > 0 && t <= Date.now(); }
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 function parse(raw) {
   if (raw && typeof raw === 'object') return raw;

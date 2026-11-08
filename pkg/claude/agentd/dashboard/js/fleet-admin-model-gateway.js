@@ -3,10 +3,9 @@ import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // PROVIDERS preset where a provider's API lives and which header carries its
 // key. "custom" leaves all of it to the operator (a corporate gateway, a

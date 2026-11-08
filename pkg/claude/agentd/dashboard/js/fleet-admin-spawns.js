@@ -5,16 +5,13 @@ import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const BRIEF_MAX = 4096;
 
-function errText(error) { return error?.message || String(error); }
-
-function when(t) {
-  return t && !String(t).startsWith('0001-') ? new Date(t).toLocaleString() : '';
-}
+const when = (t) => localStamp(t, { empty: '' });
 
 // paidBy says whose model account a requested worker uses. Only a request
 // that carries a model lease is requester-paid; a proxy selector naming some

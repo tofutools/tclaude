@@ -6,10 +6,9 @@ import { AddGrantDialog } from './fleet-admin-grant-dialog.js';
 import { ALL_TARGETS } from './fleet-admin-page.js';
 import { Button } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // grantTargets lists who can hold grants: trusted peers, then node pools
 // (group:<name>, whose grants apply to every member node).

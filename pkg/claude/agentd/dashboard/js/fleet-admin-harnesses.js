@@ -5,17 +5,13 @@ import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const JOB_POLL_MS = 1000;
 
-function errText(error) { return error?.message || String(error); }
-
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 // HarnessDialog manages one harness on one node: install or update it (with
 // the busy-workers choice the daemon asks for), copy this operator's login

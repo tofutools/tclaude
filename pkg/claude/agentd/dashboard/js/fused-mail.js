@@ -48,6 +48,7 @@ import {
 import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, newWalk, pageCount as mergedPageCount, recordVector, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
 import { Button } from './ui-components.js';
 import { requestJSON } from './request-json.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -80,8 +81,7 @@ function initialPageSize() {
 const SIDEBAR_ROWS = { rowSelector: '.mailbox', wrapSelector: '.mailbox-row' };
 const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
 
-function errText(e) { return e?.message || String(e); }
-function when(s) { const t = Date.parse(s || ''); return Number.isFinite(t) ? new Date(t).toLocaleString() : ''; }
+const when = (s) => localStamp(s, { empty: '' });
 
 const readJSON = (fetchFn, url) => requestJSON(url, { cache: 'no-store', fetchImpl: fetchFn });
 

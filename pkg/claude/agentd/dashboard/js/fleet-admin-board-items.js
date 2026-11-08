@@ -5,6 +5,7 @@ import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 import { BoardCombobox, namedItems } from './registry-picker.js';
+import { binarySize, errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -20,12 +21,7 @@ export const POSTABLE = Object.freeze(['roles', 'profiles', 'sandbox-profiles', 
 
 export const canPost = (board) => board?.role === 'owner' || board?.role === 'publisher';
 
-function errText(error) { return error?.message || String(error); }
-
-function size(n) {
-  if (!(n >= 0)) return '—';
-  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
-}
+const size = (n) => binarySize(n);
 
 export const short = (v) => String(v || '').slice(0, 10);
 

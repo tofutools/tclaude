@@ -24,11 +24,6 @@ function bytesText(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function when(iso) {
-  if (!iso || String(iso).startsWith('0001-')) return '';
-  return relTime(iso);
-}
-
 function everyText(seconds) {
   if (!seconds) return '';
   if (seconds % 86400 === 0) return `${seconds / 86400}d`;
@@ -267,12 +262,12 @@ function PolicyStatus({ policies }) {
       ${policies.flatMap((p) => (p.agents?.length ? p.agents : [null]).map((a, i) => html`<tr key=${`${p.id}:${a?.agent || i}`} data-policy=${p.id}>
         <td>${i === 0 ? p.target : ''}</td><td>${i === 0 ? everyText(p.every_seconds) : ''}</td><td>${i === 0 ? (p.peer_label || p.dest?.peer || '') : ''}</td>
         <td>${a?.agent || html`<span class="paf-hint ui-hint">no agent yet</span>`}</td>
-        <td>${a ? (when(a.last_good) || '—') : ''}</td>
+        <td>${a ? (relTime(a.last_good) || '—') : ''}</td>
         <td>${!a ? '' : a.last_error ? html`<span class="gi-warn" title=${a.last_error}>⚠ error${a.failures ? ` ×${a.failures}` : ''}</span>`
           : a.deferred ? html`<span class="paf-hint ui-hint" title=${a.deferred}>deferred</span>`
           : a.pending_offer ? html`<span class="paf-hint ui-hint">sending…</span>` : html`<span class="paf-ok">ok</span>`}
           ${a?.findings ? html` <span class="gi-warn">${a.findings} finding${a.findings === 1 ? '' : 's'}</span>` : ''}</td>
-        <td>${a ? (when(a.next_due) || '—') : ''}</td>
+        <td>${a ? (relTime(a.next_due) || '—') : ''}</td>
       </tr>`))}
     </tbody></table>
     <div class="paf-hint ui-hint">Set and remove policies with <code>tclaude agent snapshot policy</code>.</div>
@@ -325,9 +320,9 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
           <td><div class="snap-trunc" title=${snap.name}><b>${snap.name}</b></div>${snap.note && html`<div class="paf-hint ui-hint snap-trunc" title=${snap.note}>${snap.note}</div>`}</td>
           <td><div class="snap-trunc" title=${snap.agent_name}>${snap.agent_name}</div></td>
           <td><div class="snap-trunc" title=${[snap.harness, snap.model].filter(Boolean).join(' · ')}>${[snap.harness, snap.model].filter(Boolean).join(' · ')}</div>${!snap.history ? html`<div class="paf-hint ui-hint">no history</div>` : ''}</td>
-          <td title=${snap.created_at}>${when(snap.created_at)}${snap.state === 'last_complete_turn' ? html`<div class="paf-hint ui-hint">last complete turn</div>` : ''}</td>
+          <td title=${snap.created_at}>${relTime(snap.created_at)}${snap.state === 'last_complete_turn' ? html`<div class="paf-hint ui-hint">last complete turn</div>` : ''}</td>
           <td>${bytesText(snap.bytes)}</td>
-          <td>${snap.expires_at ? when(snap.expires_at) : 'never'}</td>
+          <td>${snap.expires_at ? relTime(snap.expires_at) : 'never'}</td>
           <td class="snap-acts">
             ${(snap.findings || []).length > 0 && html`<span class="gi-warn" title=${findingsText(snap.findings).join('\n')}>⚠ ${snap.findings.length}</span>`}
             <${Button} size="sm" data-snap="spawn" onClick=${() => open('spawn', snap)}>Spawn…<//>

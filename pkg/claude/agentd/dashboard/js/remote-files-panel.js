@@ -5,18 +5,14 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { PREVIEW_MAX_BYTES, downloadRemoteFile, listRemoteDir, previewRemoteFile } from './remote-files.js';
+import { binarySize } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const baseName = (p) => String(p).split('/').filter(Boolean).pop() || p;
 const parentDir = (p) => { const parts = String(p).split('/').filter((x) => x && x !== '.'); parts.pop(); return parts.length ? parts.join('/') : '.'; };
 
-export function fileSize(n) {
-  if (!(n >= 0)) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1 << 20) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${(n / (1 << 20)).toFixed(1)} MiB`;
-}
+export function fileSize(n) { return binarySize(n, ''); }
 
 // RemoteFilesPanel browses the agent's project directory on the peer one
 // level at a time: open a folder, preview a small text file, or download.

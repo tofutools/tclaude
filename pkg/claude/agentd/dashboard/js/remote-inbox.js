@@ -10,6 +10,7 @@ import { nodeSnapshot } from './node-api.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { requestJSON } from './request-json.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -179,8 +180,6 @@ export function remoteInboxCounts(inbox = remoteInbox.value) {
   for (const n of Object.values(inbox)) { requests += n.access_requests?.length || 0; messages += n.messages?.length || 0; }
   return { requests, messages };
 }
-
-function errText(e) { return e?.message || String(e); }
 
 // approveConsequence spells out what one remote approval does.
 export function approveConsequence(r, node) {

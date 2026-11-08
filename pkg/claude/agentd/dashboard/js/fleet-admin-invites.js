@@ -7,10 +7,9 @@ import { Dialog } from './ui-dialog.js';
 import { fmtAge } from './fleet-model.js';
 import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
 import { GroupCombobox } from './group-picker.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // nodeProfileTrust is a node profile's row hint: the trust it grants, when
 // that is unrestricted.

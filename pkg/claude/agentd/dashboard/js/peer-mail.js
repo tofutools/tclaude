@@ -5,6 +5,7 @@ import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { requestJSON } from './request-json.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -14,8 +15,6 @@ export const PEER_MAIL_EVENT = 'tclaude:peer-mail';
 const PEER_GROUP = 'federation:';
 // A forwarded away request carries its one-shot ticket in this line.
 const TICKET_RE = /One-shot answer: tclaude federation answer ([0-9a-f]{32}\.[0-9a-f]{32}@[A-Za-z0-9_.-]{1,128}) --decision/;
-
-function errText(error) { return error?.message || String(error); }
 
 // Operator mail from a peer starts with the daemon's remote banner, which
 // names the sender, the peer's label and its instance. Other notices filed
@@ -111,7 +110,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       <table class="fa-table ui-compact" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
         <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
-        <td class="muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ''}</td></tr>`)}</tbody></table>`}
+        <td class="muted">${localStamp(o.updated_at, { empty: '' })}</td></tr>`)}</tbody></table>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation notify --peer … | send ${'<to>'}</code>, <code>tclaude federation outbox</code></div>`}>
     <div class="peer-mail-kind" role="radiogroup">
       <label><input type="radio" name="peer-mail-kind" value="operator" checked=${kind === 'operator'} onChange=${() => setKind('operator')} /> its operator</label>

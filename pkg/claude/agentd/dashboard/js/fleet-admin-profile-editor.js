@@ -5,6 +5,7 @@ import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
 import { PEER_SLUGS, REQUESTER_PAYS, UNRESTRICTED_CONSEQUENCE, slugInfo } from './fleet-admin-model.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -13,8 +14,6 @@ const LABEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
 // ADVANCED are the definition fields edited as JSON (worker permission
 // overrides, teleport landing, the config bundle); they pass through as is.
 const ADVANCED = ['worker_permissions', 'teleport_landing', 'config_bundle'];
-
-function errText(error) { return error?.message || String(error); }
 
 function scopeText(scope, groupNames) {
   const s = String(scope || '');
