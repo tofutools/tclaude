@@ -112,6 +112,8 @@ export function taskboardCountParts(counts, who = 'you') {
   if (c.in_progress) parts.push({ key: 'in-progress', text: `${c.in_progress} in progress` });
   if (c.next) parts.push({ key: 'next', text: `${c.next} next` });
   if (c.ideas) parts.push({ key: 'ideas', text: `${c.ideas} idea${c.ideas === 1 ? '' : 's'}` });
+  const mine = c.ideas_for_you || 0;
+  if (mine) parts.push({ key: 'ideas-for-you', text: `${mine} idea${mine === 1 ? '' : 's'} for ${who}` });
   return parts;
 }
 
@@ -126,14 +128,16 @@ export function taskboardCountsText(counts, who = 'you') {
 // taskRowState is what a row's state column says, derived exactly as the
 // lanes are (docs/taskboard.md): blocked, stalled (assigned to an agent idle
 // past taskboard.idle_grace without reporting), waiting (the operator holds
-// it), in progress (assigned),
-// queued (open with an unmet dependency), idea, or open.
+// it, queued or started), in progress (assigned and started), queued (open
+// with an unmet dependency), idea, or open. A task its assignee holds
+// without starting it reads as its stage (tk_3826822a).
 export function taskRowState(task) {
   if (task.status === 'done' || task.status === 'dropped') return task.status;
   if (task.status === 'blocked') return 'blocked';
   if (task.stalled && task.assignee?.agent_id) return 'stalled';
-  if (task.assignee?.operator) return 'waiting';
-  if (task.assignee?.agent_id) return 'in-progress';
+  const ideaHeld = task.held && task.stage === 'idea';
+  if (task.assignee?.operator && !ideaHeld) return 'waiting';
+  if (task.assignee?.agent_id && !task.held) return 'in-progress';
   if (task.queued) return 'queued';
   if (task.stage === 'idea') return 'idea';
   return 'open';

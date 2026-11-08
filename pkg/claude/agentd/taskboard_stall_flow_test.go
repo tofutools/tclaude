@@ -240,7 +240,7 @@ func TestTaskboardIdleClockRestartsOnUnblock(t *testing.T) {
 	long := time.Now().Add(-3 * time.Hour)
 	d, err := db.Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`UPDATE group_tasks SET assigned_at = ? WHERE id = ?`, long.UnixNano(), task.ID)
+	_, err = d.Exec(`UPDATE group_tasks SET assigned_at = ?, started_at = ? WHERE id = ?`, long.UnixNano(), long.UnixNano(), task.ID)
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE group_task_events SET at = ? WHERE task_id = ?`, long.UnixNano(), task.ID)
 	require.NoError(t, err)

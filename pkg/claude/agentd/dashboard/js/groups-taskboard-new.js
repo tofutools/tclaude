@@ -79,14 +79,16 @@ export const START_STATES = [
   { key: 'done', label: 'Done', wizard: 'Fulfilled' },
 ];
 
-// startFields are the create's fields for a start state.
+// startFields are the create's fields for a start state. An assignee with
+// Idea or Next holds the task there, not started (add --assignee X --idea /
+// --next); In progress starts it.
 export function startFields(start, { to = '', reason = '' } = {}) {
   switch (start) {
-    case 'next': return { stage: 'next', status: '', to };
+    case 'next': return to ? { stage: 'next', status: '', to, hold: true } : { stage: 'next', status: '', to };
     case 'progress': return { stage: 'next', status: '', to };
     case 'blocked': return { stage: 'next', status: 'blocked', blockReason: reason.trim(), to };
     case 'done': return { stage: 'idea', status: 'done', to };
-    default: return { stage: 'idea', status: '', to };
+    default: return to ? { stage: 'idea', status: '', to, hold: true } : { stage: 'idea', status: '', to };
   }
 }
 
@@ -337,8 +339,10 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}
         <//>`,
       draft.start === 'done' ? (draft.to ? 'who did it; nobody is mailed' : 'optional: who did it')
+        : draft.to && (draft.start === 'idea' || draft.start === 'next')
+          ? `${draft.start === 'idea' ? 'an idea for them to triage' : 'queued for them'}, not started${draft.to === 'operator' ? '' : '; a short note goes to its inbox'}`
         : draft.to === 'operator' ? 'it waits on the operator, who closes it as done'
-        : draft.to ? `the brief goes to its inbox${draft.start === 'idea' ? '; the idea joins the queue' : ''}` : null)}
+        : draft.to ? 'the brief goes to its inbox' : null)}
   <//>`;
 }
 
@@ -350,11 +354,11 @@ export function askHint(initial = {}, wizard = false) {
   const noun = wizard ? 'quests' : 'tasks';
   const who = initial.toName || initial.to || '';
   switch (initial.start) {
-    case 'next': return `Land the ${noun} in Next.\n\n`;
+    case 'next': return who ? `Land the ${noun} in Next for ${who}, not started (taskboard add --assignee ${who} --next).\n\n` : `Land the ${noun} in Next.\n\n`;
     case 'progress': return `Land the ${noun} in Next for ${who} (assign them to ${who}).\n\n`;
     case 'blocked': return `Land the ${noun} as blocked${who ? ` for ${who}` : ''}, with the reason.\n\n`;
     case 'done': return `Log the ${noun} as done${who ? `, done by ${who}` : ''} (taskboard add --done).\n\n`;
-    case 'idea': return `Land the ${noun} in the ideas.\n\n`;
+    case 'idea': return who ? `Land the ${noun} as ideas for ${who} to triage (taskboard add --assignee ${who} --idea).\n\n` : `Land the ${noun} in the ideas.\n\n`;
     default: return '';
   }
 }

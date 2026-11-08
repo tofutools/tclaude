@@ -357,6 +357,12 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
+  // A task its assignee holds starts (in progress); a started one is put
+  // back, held in its stage (tk_3826822a).
+  if (task.status === 'open' && canAssign(actions) && task.assignee?.agent_id && typeof actions.api?.start === 'function') {
+    if (task.held) items.push(item('start', 'Start', 'taskboard start: in progress, the stall clock runs', { run: run('start', 'Start', (api) => api.start(task.id)) }));
+    else items.push(item('hold', 'Not started', `taskboard hold: back to ${task.stage === 'idea' ? 'the ideas' : 'next'}, still held by its assignee`, { run: run('hold', 'Hold', (api) => api.hold(task.id, task.stage)) }));
+  }
   if (!closed && canAssign(actions) && task.assignee?.agent_id) {
     items.push(item('unassign', 'Unassign', 'taskboard unassign: take it back from its assignee', { run: run('unassign', 'Unassign', (api) => api.unassign(task.id)) }));
   }

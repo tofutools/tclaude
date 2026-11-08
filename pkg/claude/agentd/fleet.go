@@ -57,7 +57,8 @@ type fleetTaskboard struct {
 	NeedsYou int    `json:"needs_you"`
 	Blocked  int    `json:"blocked"`
 	Stalled  int    `json:"stalled"`
-	// WaitingOnYou counts the open tasks assigned to the operator.
+	// WaitingOnYou counts the open tasks assigned to the operator, leaving
+	// out the ideas it holds to triage.
 	WaitingOnYou int `json:"waiting_on_you"`
 }
 

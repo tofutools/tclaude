@@ -37,8 +37,10 @@ type taskboardContextTask = taskboardTaskView
 // taskboardCounts are a board's counts. Live is every open or blocked task;
 // the stage buckets split the open ones: Stalled is assigned to an agent idle
 // past taskboard.idle_grace without reporting, InProgress is the other
-// assigned ones (WaitingOnYou the operator's), Next and Ideas are unassigned in that stage. Queued (open
-// with an unmet dependency) overlaps Next. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
+// started ones (WaitingOnYou the operator's, started or queued for it), Next
+// and Ideas are the rest in that stage, unassigned or held by an agent
+// (IdeasForYou the operator's ideas). Queued (open with an unmet dependency)
+// overlaps the others. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
 type taskboardCounts struct {
 	Live       int `json:"live"`
 	NeedsYou   int `json:"needs_you"`
@@ -50,6 +52,9 @@ type taskboardCounts struct {
 	// WaitingOnYou counts the open tasks assigned to the operator; they
 	// count in NeedsYou too.
 	WaitingOnYou int `json:"waiting_on_you"`
+	// IdeasForYou counts the ideas the operator holds to triage
+	// (tk_3826822a); they are not waiting on it.
+	IdeasForYou  int `json:"ideas_for_you,omitempty"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -184,10 +189,12 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		case v.Stalled:
 			entry.Counts.Stalled++
 			entry.Counts.NeedsYou++
+		case v.Assignee != nil && v.Assignee.Operator && v.Held && v.Stage == db.GroupTaskStageIdea:
+			entry.Counts.IdeasForYou++
 		case v.Assignee != nil && v.Assignee.Operator:
 			entry.Counts.WaitingOnYou++
 			entry.Counts.NeedsYou++
-		case v.Assignee != nil:
+		case v.Assignee != nil && !v.Held:
 			entry.Counts.InProgress++
 		case v.Stage == db.GroupTaskStageIdea:
 			entry.Counts.Ideas++
@@ -244,6 +251,7 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn)},
 	{"POST /v1/taskboard/tasks/{id}/assign", handleTaskboardTask(taskboardOwnGate, handleTaskboardAssign)},
 	{"POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign)},
+	{"POST /v1/taskboard/tasks/{id}/start", handleTaskboardTask(taskboardOwnGate, handleTaskboardStart)},
 	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},
 	{"POST /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersSet)},
 	{"POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardOwnGate, handleTaskboardAttach)},

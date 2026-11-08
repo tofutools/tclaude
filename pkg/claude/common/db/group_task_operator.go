@@ -21,14 +21,19 @@ const OperatorAssignee = "operator"
 const GroupTaskWaitReasonPrefix = "waiting on operator: "
 
 // setGroupTaskAssigneeTx stores who holds the task: an agent id, or
-// OperatorAssignee.
-func setGroupTaskAssigneeTx(tx taskTx, id, assignee, assignedBy string, now time.Time) error {
+// OperatorAssignee. start records it as started now (in progress); without
+// it the assignee holds the task in its stage.
+func setGroupTaskAssigneeTx(tx taskTx, id, assignee, assignedBy string, start bool, now time.Time) error {
 	agentID, kind := any(assignee), ""
 	if assignee == OperatorAssignee {
 		agentID, kind = nil, "operator"
 	}
-	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = ?, assignee_kind = ?, assigned_by = ?, assigned_at = ? WHERE id = ?`,
-		agentID, kind, assignedBy, dbTime(now), id)
+	var started any
+	if start {
+		started = dbTime(now)
+	}
+	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = ?, assignee_kind = ?, assigned_by = ?, assigned_at = ?, started_at = ? WHERE id = ?`,
+		agentID, kind, assignedBy, dbTime(now), started, id)
 	return err
 }
 
@@ -65,6 +70,9 @@ func blockGroupTaskOnTx(tx taskTx, t, on *GroupTask, actor, expectAssignee strin
 	}
 	if !on.Live() {
 		return taskConflict("not_live", "task %s is %s; a task waits only on a live task", on.ID, on.Status)
+	}
+	if on.Stage == GroupTaskStageIdea && !on.Started() {
+		return taskConflict("invalid_arg", "task %s is an idea for the operator to triage; a task waits only on one queued or in progress", on.ID)
 	}
 	before := strings.Join(t.DependsOn, " ")
 	if err := setGroupTaskDepsTx(tx, t, []string{on.ID}, nil); err != nil {

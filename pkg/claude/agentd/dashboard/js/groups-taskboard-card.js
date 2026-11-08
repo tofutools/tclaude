@@ -85,7 +85,7 @@ const STATUS_WORD = { open: 'open', blocked: 'blocked', done: 'done', dropped: '
 function whereText(task) {
   const status = task.status || 'open';
   if (status !== 'open') return STATUS_WORD[status] || status;
-  if (task.assignee?.agent_id) return 'in progress';
+  if (task.assignee?.agent_id && !task.held) return 'in progress';
   return task.stage === 'idea' ? 'idea' : 'next';
 }
 

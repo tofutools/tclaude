@@ -5,17 +5,21 @@
 // verb uses:
 //
 //   card → another column, same lane   promote · demote · block --reason ·
-//                                      unblock · done · reopen
-//   card → an agent's lane             assign <task> --to <agent>
+//                                      unblock · done · reopen; in an agent's
+//                                      lane, onto In progress start, onto
+//                                      Ideas or Next hold --idea / --next
+//   card → an agent's lane             assign <task> --to <agent>: onto In
+//                                      progress it starts, onto Ideas or
+//                                      Next it is held there (--idea/--next)
 //   card → the Unassigned lane         unassign <task>
 //   card → another lane AND column     both, in that order: assign then block
 //                                      --reason; unassign then demote or block
 //
-// Cells that cannot hold a card are striped: Ideas in an agent's lane (an
-// idea is unassigned), In progress in the Unassigned lane. A cell a new task
-// can land in has a small "+" in its lower-right corner that opens the New
-// task form filled from the cell (add [--next], then assign --to for an
-// agent's lane). Column widths and the order of the lanes and their headings
+// The one cell that cannot hold a card is striped: In progress in the
+// Unassigned lane. An agent's (or the operator's) Ideas and Next hold what
+// it was given and has not started (tk_3826822a). A cell a new task can
+// land in has a small "+" in its lower-right corner that opens the New task
+// form filled from the cell (add [--next|--idea] [--assignee <agent>]). Column widths and the order of the lanes and their headings
 // are this viewer's own (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
@@ -65,13 +69,16 @@ export function laneColumn(task, now = Date.now()) {
   }
   const assigned = !!task.assignee?.agent_id;
   if (task.status === 'blocked' || (assigned && task.stalled)) return 'blocked';
-  if (assigned) return 'progress';
+  // A held task (assigned, not started) sits in its stage; a node that
+  // predates holding sends no held, so its assigned tasks are in progress.
+  if (assigned && !task.held) return 'progress';
   return task.stage === 'idea' ? 'ideas' : 'next';
 }
 
-// striped reports the cells that cannot hold a card.
+// striped reports the cells that cannot hold a card: In progress in the
+// Unassigned lane.
 export function striped(lane, column) {
-  return lane === UNASSIGNED ? column === 'progress' : column === 'ideas';
+  return lane === UNASSIGNED && column === 'progress';
 }
 
 function memberState(member) {
@@ -114,7 +121,7 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.state = memberState(lane.member);
     lane.holds = holds.get(lane.id) || 0;
   }
-  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: (cells.get(`${OPERATOR}|progress`) || []).length };
+  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) };
 }
 
 function laneGroups(lanes, group, by, snapshot) {
@@ -200,11 +207,29 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     if (!open || to.member === false) return null;
     const name = to.name || to.lane;
     const give = (api) => api.assign(task.id, to.lane);
-    if (to.column === 'progress' || to.column === 'next') return { kind: 'assign', label: `assign to ${name}`, agent: to.lane, run: give };
+    if (to.column === 'progress') return { kind: 'assign', label: `assign to ${name}`, agent: to.lane, run: give };
+    if (to.column === 'next' || to.column === 'ideas') {
+      const stage = to.column === 'ideas' ? 'idea' : 'next';
+      return { kind: 'assign-hold', label: `give to ${name}, ${stage === 'idea' ? 'an idea' : 'queued'}, not started`, agent: to.lane,
+        run: (api) => api.assign(task.id, to.lane, { hold: stage }) };
+    }
     if (to.column === 'blocked') {
       return { kind: 'assign+block', label: `assign to ${name} · block (asks why)`, agent: to.lane, reason: true, run: twoStep(give, block) };
     }
     return null;
+  }
+  // In an agent's (or the operator's) own lane: onto In progress starts a
+  // task it holds; onto Ideas or Next puts it back there, not started.
+  if (to.lane !== UNASSIGNED && task.assignee?.agent_id && open && ['progress', 'ideas', 'next'].includes(to.column)) {
+    if (!assign) return null;
+    if (to.column === 'progress') {
+      if (!task.held) return null;
+      return { kind: 'start', label: 'start', run: (api) => api.start(task.id) };
+    }
+    if (to.column === 'ideas' || to.column === 'next') {
+      const stage = to.column === 'ideas' ? 'idea' : 'next';
+      return { kind: 'hold', label: stage === 'idea' ? 'back to ideas, not started' : 'back to next, not started', run: (api) => api.hold(task.id, stage) };
+    }
   }
   switch (to.column) {
     case 'ideas':
@@ -260,15 +285,15 @@ function reopenDrop(task, from, to, { assign, block }) {
 // cellAdd is the start state the "+" in a cell carries into the add menu's
 // choice, or null where a new task cannot start: every cell the form can
 // create a task in. The Unassigned lane's cells set the column; an agent's
-// lane also sets the assignee (Next and In progress both start it in
-// progress), only for a viewer who may assign. Striped cells take none.
+// lane also sets the assignee (Ideas and Next hold it there, not started),
+// only for a viewer who may assign. Striped cells take none.
 export function cellAdd(lane, column, { assign = true, member = true } = {}) {
   if (striped(lane, column)) return null;
   const start = { ideas: 'idea', next: 'next', progress: 'progress', blocked: 'blocked', done: 'done' }[column];
   if (!start) return null;
   if (lane === UNASSIGNED) return { start, to: '' };
   if (!assign || !member) return null;
-  return { start: start === 'next' ? 'progress' : start, to: lane };
+  return { start, to: lane };
 }
 
 // cardHint is what a card's column does not say: why it is blocked, or that

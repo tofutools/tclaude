@@ -16,15 +16,16 @@ import (
 // assignment.
 const GroupTaskEventStalled = "stalled"
 
-// ListOpenAssignedGroupTasks is every open, assigned task in an active group:
-// the idle sweep's candidates.
+// ListOpenAssignedGroupTasks is every open, assigned and started task in an
+// active group: the idle sweep's candidates. A task its assignee holds
+// without starting it (an idea, or queued) never stalls.
 func ListOpenAssignedGroupTasks() ([]AssignedGroupTask, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT g.name, t.id FROM group_tasks t JOIN agent_groups g ON g.id = t.group_id
-		WHERE t.assignee_id IS NOT NULL AND t.status = 'open' AND g.archived_at IS NULL
+		WHERE t.assignee_id IS NOT NULL AND t.started_at IS NOT NULL AND t.status = 'open' AND g.archived_at IS NULL
 		ORDER BY t.assigned_at, t.id`)
 	if err != nil {
 		return nil, err
@@ -58,10 +59,10 @@ func ListOpenAssignedGroupTasks() ([]AssignedGroupTask, error) {
 }
 
 // groupTaskStallBoundaryKinds are the events that start a fresh stretch of
-// work on a task: an assignment, or the task coming back to open from blocked
-// or closed. The idle clock starts at the latest one, and each such stretch
+// work on a task: an assignment, its assignee starting a task it held, or
+// the task coming back to open from blocked or closed. The idle clock starts at the latest one, and each such stretch
 // is announced at most once.
-const groupTaskStallBoundaryKinds = `'assigned','taken','unblocked','reopened'`
+const groupTaskStallBoundaryKinds = `'assigned','taken','started','unblocked','reopened'`
 
 // GroupTaskWorkSince is when the task's current stretch of work began: the
 // time of its latest assignment, unblock or reopen event, zero when none.
@@ -103,7 +104,7 @@ func MarkGroupTaskStalled(id, assignee string, assignedAt time.Time, detail stri
 	if err != nil {
 		return false, err
 	}
-	if t.Status != GroupTaskOpen || t.AssigneeID != assignee || !t.AssignedAt.Equal(assignedAt) {
+	if t.Status != GroupTaskOpen || !t.Started() || t.AssigneeID != assignee || !t.AssignedAt.Equal(assignedAt) {
 		return false, nil
 	}
 	var kind string
@@ -128,9 +129,10 @@ func CountBlockedGroupTasks() (map[int64]int, error) {
 }
 
 // CountOperatorGroupTasks counts the open tasks the operator holds, per
-// group id (tcl-p4t78f).
+// group id (tcl-p4t78f): waiting on the operator. Its ideas are left out
+// (CountOperatorGroupTaskIdeas).
 func CountOperatorGroupTasks() (map[int64]int, error) {
-	return countGroupTasksWhere(`status = 'open' AND assignee_kind = 'operator'`)
+	return countGroupTasksWhere(`status = 'open' AND assignee_kind = 'operator' AND NOT (stage = 'idea' AND started_at IS NULL)`)
 }
 
 func countGroupTasksWhere(where string) (map[int64]int, error) {

@@ -86,6 +86,7 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	assign := peerViewRule{feature: "groups.taskboard.assign", requires: PermTaskboardAssign, group: true, write: servePeerTaskboardTask}
 	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
+	rules["POST /v1/taskboard/tasks/{id}/start"] = assign
 	// The source side of a move to another node: the holder's write, or
 	// manage on the task's group; the handler tells them apart.
 	rules["POST /v1/taskboard/tasks/{id}/moved-away"] = peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite,
@@ -363,6 +364,7 @@ func peerSummaryTaskboardCounts(v *peerView) *taskboardCounts {
 		sum.Blocked += c.Blocked
 		sum.Stalled += c.Stalled
 		sum.WaitingOnYou += c.WaitingOnYou
+		sum.IdeasForYou += c.IdeasForYou
 		sum.Queued += c.Queued
 		sum.DoneThisWeek += c.DoneThisWeek
 		sum.Dropped += c.Dropped

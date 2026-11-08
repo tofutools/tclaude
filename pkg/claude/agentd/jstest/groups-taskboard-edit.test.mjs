@@ -43,13 +43,32 @@ test('the save plan writes only what changed, in an order the routes accept', as
   assert.deepEqual(names(editPlan(blocked, setAssignee(draftOf(blocked), 'agt_dev'))), ['unblock', 'assignee', 'block']);
   // Unblocking into Next.
   assert.deepEqual(names(editPlan(blocked, setWhere(draftOf(blocked), 'next'))), ['unblock']);
-  // A task in progress back to the ideas: unassigned first, then demoted.
+  // A task in progress back to the ideas: its assignee holds it there, not
+  // started; unassigned, it is demoted.
   const held = task({ assignee: { agent_id: 'agt_dev' } });
   assert.equal(draftOf(held).where, 'progress');
-  assert.deepEqual(names(editPlan(held, setWhere(draftOf(held), 'idea'))), ['unassign', 'back to the ideas']);
-  // An idea given to someone: the assignment queues it, no separate promote.
+  const calls = [];
+  const rec = new Proxy({}, { get: (_, verb) => (...args) => { calls.push([verb, ...args]); } });
+  const holdSteps = editPlan(held, setWhere(draftOf(held), 'idea'));
+  assert.deepEqual(names(holdSteps), ['not started']);
+  holdSteps[0].run(rec);
+  assert.deepEqual(calls.splice(0), [['hold', 'tk_00000001', 'idea']]);
+  assert.deepEqual(names(editPlan(held, setAssignee(setWhere(draftOf(held), 'idea'), ''))), ['unassign', 'back to the ideas']);
+  // A held task (assigned, not started) reads as its stage, and starts.
+  const heldIdea = task({ stage: 'idea', assignee: { agent_id: 'agt_dev' }, held: true });
+  assert.equal(draftOf(heldIdea).where, 'idea');
+  const startSteps = editPlan(heldIdea, setWhere(draftOf(heldIdea), 'progress'));
+  assert.deepEqual(names(startSteps), ['start']);
+  startSteps[0].run(rec);
+  assert.deepEqual(calls.splice(0), [['start', 'tk_00000001']]);
+  // An idea given to someone: the assignment queues it, no separate promote;
+  // given to someone held as an idea, it stays one.
   const idea = task({ stage: 'idea' });
   assert.deepEqual(names(editPlan(idea, setAssignee(draftOf(idea), 'agt_dev'))), ['assignee']);
+  const giveSteps = editPlan(idea, setWhere(setAssignee(draftOf(idea), 'agt_dev'), 'idea'));
+  assert.deepEqual(names(giveSteps), ['assignee']);
+  giveSteps[0].run(rec);
+  assert.deepEqual(calls.splice(0), [['assign', 'tk_00000001', 'agt_dev', { hold: 'idea' }]]);
   // A done task reopened into Next, and one dropped with its reason.
   const done = task({ status: 'done', stage: 'idea' });
   assert.deepEqual(names(editPlan(done, setWhere(draftOf(done), 'next'))), ['reopen', 'into Next']);

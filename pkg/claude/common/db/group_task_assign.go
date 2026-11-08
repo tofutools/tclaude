@@ -46,6 +46,17 @@ var ErrGroupTaskNotAssignee = errors.New("you are not the current assignee of th
 // unassigned, AnyAssignee for no check): a task that changed hands meanwhile
 // is refused.
 func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAssignee string) (*GroupTask, error) {
+	return AssignGroupTaskHeld(id, agentID, assignedBy, take, "", actor, expectAssignee)
+}
+
+// AssignGroupTaskHeld is AssignGroupTask with hold: "" starts the task (as
+// AssignGroupTask); idea or next assigns it without starting it, and the
+// assignee holds it in that stage (tk_3826822a). A task already assigned to
+// agentID is started, or held, as asked.
+func AssignGroupTaskHeld(id, agentID, assignedBy string, take bool, hold, actor, expectAssignee string) (*GroupTask, error) {
+	if err := checkGroupTaskHold(hold); err != nil {
+		return nil, err
+	}
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee && t.AssigneeID != agentID {
 			return errAssigneeChanged(id)
@@ -54,28 +65,25 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 			return taskConflict("not_open", "task %s is %s; only an open task can be assigned or taken", id, t.Status)
 		}
 		if t.AssigneeID == agentID {
-			return nil
+			return startGroupTaskTx(tx, t, hold == "", hold, actor, now)
 		}
 		if take {
 			if t.AssigneeID != "" {
 				return taskConflict("assigned", "task %s is assigned to %s; ask whoever assigned it", id, t.AssigneeID)
 			}
 		}
-		// An idea is promoted to the end of the queue on the way, whether it
-		// is assigned or taken.
-		if t.Stage == GroupTaskStageIdea {
-			_, rank, err := placeTask(tx, t.GroupID, GroupTaskStageNext, id, GroupTaskPosition{Bottom: true})
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`UPDATE group_tasks SET stage = 'next', rank = ? WHERE id = ?`, rank, id); err != nil {
-				return err
-			}
-			if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventPromoted, "on assign", stageChange(t.Stage, GroupTaskStageNext), now); err != nil {
+		if hold != "" {
+			if err := checkOperatorIdeaTx(tx, t, agentID, hold); err != nil {
 				return err
 			}
 		}
-		if err := setGroupTaskAssigneeTx(tx, id, agentID, assignedBy, now); err != nil {
+		// A started task is promoted from the ideas to the end of the queue
+		// on the way, whether it is assigned or taken; a held one goes to
+		// the stage it is held in.
+		if err := setGroupTaskStageTx(tx, t, firstNonEmptyString(hold, GroupTaskStageNext), "on assign", actor, now); err != nil {
+			return err
+		}
+		if err := setGroupTaskAssigneeTx(tx, id, agentID, assignedBy, hold == "", now); err != nil {
 			return err
 		}
 		kind, detail := GroupTaskEventAssigned, "→ "+agentID
@@ -85,8 +93,129 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 		if t.AssigneeID != "" {
 			detail += " (was " + t.AssigneeID + ")"
 		}
+		detail += heldDetail(hold)
 		return addGroupTaskChangeTx(tx, id, actor, kind, detail, assigneeChange(t.AssigneeID, agentID), now)
 	})
+}
+
+// GroupTaskEventStarted and GroupTaskEventHeld record an assignee starting a
+// task it held, and putting a started one back in a stage.
+const (
+	GroupTaskEventStarted = "started"
+	GroupTaskEventHeld    = "held"
+)
+
+// checkGroupTaskHold validates a stage a task is held in ("" for none).
+func checkGroupTaskHold(hold string) error {
+	switch hold {
+	case "", GroupTaskStageIdea, GroupTaskStageNext:
+		return nil
+	}
+	return taskConflict("invalid_arg", "a task is held in idea or next, not %q", hold)
+}
+
+func heldDetail(hold string) string {
+	if hold == "" {
+		return ""
+	}
+	return ", held in " + hold
+}
+
+// setGroupTaskStageTx moves a live task to the end of stage (the top of
+// the ideas), recording the promotion or demotion; a task already there
+// stays where it is.
+func setGroupTaskStageTx(tx *sql.Tx, t *GroupTask, stage, detail, actor string, now time.Time) error {
+	if t.Stage == stage {
+		return nil
+	}
+	pos := GroupTaskPosition{Bottom: true}
+	if stage == GroupTaskStageIdea {
+		pos = GroupTaskPosition{Top: true}
+	}
+	_, rank, err := placeTask(tx, t.GroupID, stage, t.ID, pos)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, t.ID); err != nil {
+		return err
+	}
+	return stageChangeEvent(tx, t, stage, actor, detail, now)
+}
+
+// StartGroupTask starts an assigned task its assignee held (start), moving
+// an idea to the end of the queue, or puts a started one back to be held in
+// stage (idea or next; "" keeps its stage). Starting a started task, or
+// holding a held one in its stage, changes nothing. expectAssignee is the
+// holder the caller was authorised against.
+func StartGroupTask(id string, start bool, stage, actor, expectAssignee string) (*GroupTask, error) {
+	if err := checkGroupTaskHold(stage); err != nil {
+		return nil, err
+	}
+	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
+			return errAssigneeChanged(id)
+		}
+		if t.AssigneeID == "" {
+			return taskConflict("not_assigned", "task %s is not assigned; take it or assign it", id)
+		}
+		if !t.Live() {
+			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
+		}
+		hold := ""
+		if !start {
+			hold = firstNonEmptyString(stage, t.Stage)
+		}
+		return startGroupTaskTx(tx, t, start, hold, actor, now)
+	})
+}
+
+// checkOperatorIdeaTx refuses to make t an operator idea (assignee, held in
+// stage) while a task waits on it: nothing waits on an idea, which counts
+// as nobody's wait.
+func checkOperatorIdeaTx(tx taskTx, t *GroupTask, assignee, stage string) error {
+	if assignee != OperatorAssignee || stage != GroupTaskStageIdea {
+		return nil
+	}
+	var waiting int
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE blocked_on = ? AND status = 'blocked')`, t.ID).Scan(&waiting); err != nil {
+		return err
+	}
+	if waiting != 0 {
+		return taskConflict("invalid_arg", "a task waits on %s; the operator holds it in next, not as an idea", t.ID)
+	}
+	return nil
+}
+
+// startGroupTaskTx starts t (start) or holds it in hold.
+func startGroupTaskTx(tx *sql.Tx, t *GroupTask, start bool, hold, actor string, now time.Time) error {
+	if start {
+		if t.Started() {
+			return nil
+		}
+		if err := setGroupTaskStageTx(tx, t, GroupTaskStageNext, "on start", actor, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE group_tasks SET started_at = ? WHERE id = ?`, dbTime(now), t.ID); err != nil {
+			return err
+		}
+		return addGroupTaskEventTx(tx, t.ID, actor, GroupTaskEventStarted, t.AssigneeID, now)
+	}
+	if !t.Started() && t.Stage == hold {
+		return nil
+	}
+	if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, hold); err != nil {
+		return err
+	}
+	if err := setGroupTaskStageTx(tx, t, hold, "on hold", actor, now); err != nil {
+		return err
+	}
+	if !t.Started() {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE group_tasks SET started_at = NULL WHERE id = ?`, t.ID); err != nil {
+		return err
+	}
+	return addGroupTaskEventTx(tx, t.ID, actor, GroupTaskEventHeld, t.AssigneeID+heldDetail(hold), now)
 }
 
 // UnassignGroupTask clears the task's assignee. release records it as the
@@ -100,7 +229,7 @@ func UnassignGroupTask(id string, release bool, detail, actor, expectAssignee st
 		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
 			return errAssigneeChanged(id)
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`,
+		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
 			id); err != nil {
 			return err
 		}
@@ -182,7 +311,7 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 		}
 		failures := t.Failures + 1
 		if _, err := tx.Exec(`UPDATE group_tasks SET outcome = ?, outcome_note = ?, failures = ?,
-			assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`,
+			assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
 			outcome, note, failures, id); err != nil {
 			return err
 		}
@@ -342,7 +471,7 @@ func unassignAgentGroupTasksTx(tx taskTx, agentID, actor, detail string, now tim
 		dbTime(now), actor, GroupTaskEventUnassigned, detail, agentID); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL, updated_at = ?
+	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL, updated_at = ?
 		WHERE assignee_id = ? AND status IN ('open','blocked')`, dbTime(now), agentID)
 	return err
 }

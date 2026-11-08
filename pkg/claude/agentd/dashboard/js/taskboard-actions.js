@@ -176,7 +176,9 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // create adds one task in its start state, in one call: status open
     // (the default), blocked (blockReason) or done, and `to` its assignee
     // (in progress, or who did it).
-    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', files = [] }) {
+    // hold assigns `to` without starting the task: it waits in its stage in
+    // their lane (tk_3826822a).
+    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
       const payload = { title };
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
@@ -186,6 +188,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (status && status !== 'open') payload.status = status;
       if (status === 'blocked') payload.block_reason = blockReason;
       if (to) payload.to = to;
+      if (to && hold) { payload.start = false; payload.stage = stage === 'next' ? 'next' : 'idea'; }
       if (files.length) return post(boardPath(group), payload, files);
       return call('POST', boardPath(group), payload);
     },
@@ -256,9 +259,19 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       return call('POST', taskPath(id, '/status'), reason ? { status, reason } : { status });
     },
     // assign gives the task to a member (an idea is promoted first); the
-    // assignee gets the brief in its inbox from the operator.
-    assign(id, agentId) {
-      return call('POST', taskPath(id, '/assign'), { to: agentId });
+    // assignee gets the brief in its inbox from the operator. With hold
+    // ('idea' or 'next') it is assigned without being started, held in that
+    // stage, and the assignee gets a short note instead.
+    assign(id, agentId, { hold = '' } = {}) {
+      return call('POST', taskPath(id, '/assign'), hold ? { to: agentId, start: false, stage: hold } : { to: agentId });
+    },
+    // start starts a task its assignee holds; hold(id, stage) puts a
+    // started one back, held in stage (idea or next).
+    start(id) {
+      return call('POST', taskPath(id, '/start'), { start: true });
+    },
+    hold(id, stage) {
+      return call('POST', taskPath(id, '/start'), { start: false, stage });
     },
     unassign(id) {
       return call('POST', taskPath(id, '/unassign'), {});

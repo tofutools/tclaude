@@ -102,9 +102,15 @@ type GroupTask struct {
 	// BlockedOn is the operator task a blocked task waits on: closing that
 	// task as done reopens this one (tcl-p4t78f).
 	BlockedOn string
+	// StartedAt is when its assignee started it (tk_3826822a); zero for an
+	// assigned task it holds without starting, in its stage.
+	StartedAt time.Time
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
+
+// Started reports whether the task is assigned and started: in progress.
+func (t *GroupTask) Started() bool { return t.AssigneeID != "" && !t.StartedAt.IsZero() }
 
 // Live reports whether the task is on the live list (open or blocked).
 func (t *GroupTask) Live() bool { return t.Status == GroupTaskOpen || t.Status == GroupTaskBlocked }
@@ -134,18 +140,19 @@ type GroupTaskEvent struct {
 
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
-	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on`
+	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
+	started_at`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
-	var assigned, created, updated, closed, archived dbTimestamp
+	var assigned, created, updated, closed, archived, started dbTimestamp
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
-		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn); err != nil {
+		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started); err != nil {
 		return nil, err
 	}
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
-	t.ClosedAt, t.ArchivedAt = closed.Time(), archived.Time()
+	t.ClosedAt, t.ArchivedAt, t.StartedAt = closed.Time(), archived.Time(), started.Time()
 	return &t, nil
 }
 
@@ -202,11 +209,13 @@ type NewGroupTask struct {
 	// Status open (the default), blocked (BlockReason says why) or done
 	// (work logged after the fact: closed now). AssigneeID, when set, is who
 	// holds it (in progress) or, done, who did it; AssignedBy records who
-	// assigned it. An assigned task always lands in next.
+	// assigned it. An assigned task lands in next, started, unless Hold
+	// names the stage (idea or next) its assignee holds it in, not started.
 	Status      string
 	BlockReason string
 	AssigneeID  string
 	AssignedBy  string
+	Hold        string
 	// Blocks, when set, names a live task of the same group that waits on
 	// the new one: in the same transaction it gains the new task as a
 	// dependency and is blocked on it (BlockGroupTaskOn). BlocksExpect is
@@ -418,6 +427,16 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if status == GroupTaskBlocked && strings.TrimSpace(in.BlockReason) == "" {
 		return nil, taskConflict("invalid_arg", "a blocked task needs its reason")
 	}
+	if err := checkGroupTaskHold(in.Hold); err != nil {
+		return nil, err
+	}
+	// A task something waits on is queued, never an idea to triage.
+	if in.Blocks != "" && in.Hold == GroupTaskStageIdea {
+		in.Hold = GroupTaskStageNext
+	}
+	if in.Hold != "" && (in.AssigneeID == "" || status == GroupTaskDone) {
+		return nil, taskConflict("invalid_arg", "only a live task with an assignee is held in a stage")
+	}
 	// A done task is not live: logging work never meets the cap.
 	if status != GroupTaskDone {
 		var live int
@@ -434,18 +453,22 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		stage = GroupTaskStageIdea
 	}
 	// An assigned task is queued, done or not: assign promotes an idea, and
-	// a done task reopened comes back assigned.
+	// a done task reopened comes back assigned. A held one sits in the stage
+	// it is held in.
 	if in.AssigneeID != "" {
 		stage = GroupTaskStageNext
+		if in.Hold != "" {
+			stage = in.Hold
+		}
 	}
 	stage, rank, err := placeTask(tx, in.GroupID, stage, "", in.Position)
 	if err != nil {
 		return nil, err
 	}
 	// An anchor (before/after) names its own stage; an assigned task stays in
-	// next, at its end.
-	if in.AssigneeID != "" && stage != GroupTaskStageNext {
-		if stage, rank, err = placeTask(tx, in.GroupID, GroupTaskStageNext, "", GroupTaskPosition{Bottom: true}); err != nil {
+	// its stage (next, or the one it is held in), at its end.
+	if want := firstNonEmptyString(in.Hold, GroupTaskStageNext); in.AssigneeID != "" && stage != want {
+		if stage, rank, err = placeTask(tx, in.GroupID, want, "", GroupTaskPosition{Bottom: true}); err != nil {
 			return nil, err
 		}
 	}
@@ -487,10 +510,10 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		return nil, err
 	}
 	if in.AssigneeID != "" {
-		if err := setGroupTaskAssigneeTx(tx, id, in.AssigneeID, in.AssignedBy, now); err != nil {
+		if err := setGroupTaskAssigneeTx(tx, id, in.AssigneeID, in.AssignedBy, in.Hold == "", now); err != nil {
 			return nil, err
 		}
-		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventAssigned, "→ "+in.AssigneeID, now); err != nil {
+		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventAssigned, "→ "+in.AssigneeID+heldDetail(in.Hold), now); err != nil {
 			return nil, err
 		}
 	}
@@ -776,6 +799,11 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
 		}
+		if !t.Started() {
+			if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, stage); err != nil {
+				return err
+			}
+		}
 		pos := GroupTaskPosition{Bottom: true}
 		if stage == GroupTaskStageIdea {
 			pos = GroupTaskPosition{Top: true}
@@ -852,7 +880,7 @@ func setGroupTaskStatusTx(tx *sql.Tx, t *GroupTask, status, reason, actor, expec
 		}
 		// A task closed while assigned comes back without an assignee that
 		// has since been retired (the retire trigger only covers live tasks).
-		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL
+		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL
 			WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
 			return err
 		}

@@ -314,12 +314,18 @@ type taskboardTaskView struct {
 	Unmet  []string `json:"unmet,omitempty"`
 	Queued bool     `json:"queued,omitempty"`
 	// Assignee is the task's one assignee; absent when unassigned.
-	Assignee    *taskboardAgentRef `json:"assignee,omitempty"`
-	AssignedBy  string             `json:"assigned_by,omitempty"`
-	AssignedAt  string             `json:"assigned_at,omitempty"`
-	Outcome     string             `json:"outcome,omitempty"`
-	OutcomeNote string             `json:"outcome_note,omitempty"`
-	Failures    int                `json:"failures,omitempty"`
+	Assignee   *taskboardAgentRef `json:"assignee,omitempty"`
+	AssignedBy string             `json:"assigned_by,omitempty"`
+	AssignedAt string             `json:"assigned_at,omitempty"`
+	// Held marks a live task its assignee holds without starting it: it
+	// sits in its stage in the assignee's lane, not in progress
+	// (tk_3826822a). StartedAt is when a started one was started. A node
+	// that predates holding sends neither: its assigned tasks are started.
+	Held        bool   `json:"held,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
+	OutcomeNote string `json:"outcome_note,omitempty"`
+	Failures    int    `json:"failures,omitempty"`
 	// Stalled marks an open task whose assignee has sat idle past
 	// taskboard.idle_grace without reporting; IdleSince is since when.
 	// Derived on read: a new turn or a report clears it.
@@ -452,6 +458,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		}
 		if t.AssigneeID != "" {
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
+			v.Held, v.StartedAt = t.Live() && !t.Started(), rfc3339(t.StartedAt)
 		}
 		v.BlockedOn = t.BlockedOn
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
@@ -760,10 +767,12 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// The task's start state, in this one create: status open (the
 		// default), blocked (with block_reason) or done (logged after the
 		// fact); to is its assignee: who holds it (in progress, so next) or,
-		// done, who did it.
+		// done, who did it. With "start": false the assignee holds it in
+		// stage (idea, the default, or next) without starting it.
 		Status      string `json:"status"`
 		BlockReason string `json:"block_reason"`
 		To          string `json:"to"`
+		Start       *bool  `json:"start"`
 		// Mine assigns the task to the calling agent (`add --mine`).
 		Mine bool `json:"mine"`
 		// Blocks names a live task of the board that waits on the new
@@ -797,7 +806,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || len(files) > 0 {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
@@ -882,6 +891,20 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			return
 		}
 	}
+	hold := ""
+	if body.Start != nil && !*body.Start {
+		switch {
+		case assignee == "":
+			err = errors.New("start is for a task with an assignee (to)")
+		case status == db.GroupTaskDone:
+			err = errors.New("a task logged as done is not held")
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		hold = firstNonEmpty(body.Stage, db.GroupTaskStageIdea)
+	}
 	// A task that waits on the new operator task is changed in the same
 	// write, so its change is gated here too.
 	var blocks *db.GroupTask
@@ -911,7 +934,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
-		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Attachments: atts}
+		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts}
 	if blocks != nil {
 		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
 	}
@@ -926,6 +949,12 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if self, _ := callerAgentID(r); assignee != "" && assignee != self && assignee != db.OperatorAssignee && t.Status != db.GroupTaskDone {
 		setAuditTargetConv(r, assigneeConv)
 		by := taskboardCallerName(r)
+		if !t.Started() {
+			subject, text := taskboardHeldNote(g, t, by)
+			mailTaskboard(r, g, assigneeConv, subject, text)
+			writeTaskboardTask(w, http.StatusCreated, g, t)
+			return
+		}
 		brief := taskboardBrief(g, t, by)
 		if t.Status == db.GroupTaskBlocked {
 			brief = "It starts blocked: " + t.BlockReason + "\n" + brief

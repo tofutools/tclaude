@@ -62,15 +62,22 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		}
 		switch assignee {
 		case cur.AssigneeID:
+			// An assigned task comes back started, even one its assignee
+			// held when it was closed.
+			if assignee != "" && cur.StartedAt.IsZero() {
+				if _, err := tx.Exec(`UPDATE group_tasks SET started_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
+					return err
+				}
+			}
 		case "":
-			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`, id); err != nil {
+			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`, id); err != nil {
 				return err
 			}
 			if err := addGroupTaskChangeTx(tx, id, in.Actor, GroupTaskEventUnassigned, "on reopen", assigneeChange(cur.AssigneeID, ""), now); err != nil {
 				return err
 			}
 		default:
-			if err := setGroupTaskAssigneeTx(tx, id, assignee, in.AssignedBy, now); err != nil {
+			if err := setGroupTaskAssigneeTx(tx, id, assignee, in.AssignedBy, true, now); err != nil {
 				return err
 			}
 			detail := "→ " + assignee
