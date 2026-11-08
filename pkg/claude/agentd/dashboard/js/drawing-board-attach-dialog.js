@@ -162,11 +162,11 @@ export function DrawingBoardAttachDialog({ request, close }) {
       ${!context && !error && html`<div class="ui-hint">Reading the task boards…</div>`}
       ${context && !choices.length && html`<div class="ui-hint">No open task matches.</div>`}
       ${choices.slice(0, SHOWN).map((t) => html`<button type="button" role="option" key=${t.id} data-task=${t.id}
-        aria-selected=${task?.id === t.id ? 'true' : 'false'} class=${`drawing-board-attach-task${task?.id === t.id ? ' on' : ''}`}
+        aria-selected=${task?.id === t.id ? 'true' : 'false'} class=${`ui-menu-item drawing-board-attach-task${task?.id === t.id ? ' on' : ''}`}
         onClick=${() => setChosen(t)}>
         <span class="drawing-board-attach-title">${t.title}</span>
         <span class="drawing-board-attach-id">${t.id}${t.group !== group ? ` · ${t.group}` : ''}</span>
-        <span class=${`drawing-board-attach-lane lane-${laneOf(t)}`}>${laneOf(t)}</span>
+        <span class=${`ui-tag${laneOf(t) === 'now' ? ' ui-tag-accent' : ''}`}>${laneOf(t)}</span>
       </button>`)}
     </div>
     <div class="cron-create-row">

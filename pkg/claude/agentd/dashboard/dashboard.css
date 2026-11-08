@@ -19221,18 +19221,14 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .drawing-board-attach-modal .ui-input { flex: 1; min-width: 0; }
 .drawing-board-attach-tasks { display: flex; flex-direction: column; border: 1px solid var(--ui-line, #30363d); border-radius: 6px; margin: 4px 0 10px; max-height: 260px; overflow: auto; }
 .drawing-board-attach-tasks > .ui-hint { padding: 8px 10px; }
-.drawing-board-attach-task { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--ui-line, #30363d);
-  background: none; color: var(--ui-body-text, #e6edf3); font: inherit; text-align: left; cursor: pointer; }
-.drawing-board-attach-task:last-child { border-bottom: 0; }
-.drawing-board-attach-task:hover { background: var(--ui-bg-hover, #21262d); }
-.drawing-board-attach-task.on { background: rgba(31, 111, 235, 0.25); }
+/* A ui-menu-item row, ruled, flush with the list's edges. */
+.drawing-board-attach-task.ui-menu-item { padding: 6px 10px; border-radius: 0; border-bottom: 1px solid var(--ui-line, #30363d); font-size: 13px; }
+.drawing-board-attach-task.ui-menu-item:last-child { border-bottom: 0; }
+.drawing-board-attach-task.ui-menu-item.on { background: rgba(31, 111, 235, 0.25); color: var(--ui-text-strong); }
 .drawing-board-attach-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawing-board-attach-id { color: var(--ui-muted-text, #8b949e); font: 11px ui-monospace, monospace; white-space: nowrap; }
-.drawing-board-attach-lane { font-size: 10px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--ui-line, #4b5a6e); color: var(--ui-muted-text, #8b949e); white-space: nowrap; }
-.drawing-board-attach-lane.lane-now { border-color: #3fb950; color: #3fb950; }
 .drawing-board-attach-preview { display: flex; align-items: center; justify-content: center; min-height: 96px; max-height: 220px; margin: 8px 0;
   border: 1px solid var(--ui-line, #30363d); border-radius: 6px; background: #fbfaf7; overflow: hidden; }
 .drawing-board-attach-preview img { max-width: 100%; max-height: 218px; object-fit: contain; }
-.drawing-board-attach-preview .ui-hint { color: #57606a; }
 .drawing-board-attach-existing { margin: 0 0 8px; }
 #drawing-board-attach-comment { width: 100%; margin-top: 6px; }
