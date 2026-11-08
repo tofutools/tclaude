@@ -813,107 +813,113 @@ func errAssigneeChanged(id string) error {
 // someone else by the time it is changed.
 func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
-		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
-			return errAssigneeChanged(id)
+		return setGroupTaskStatusTx(tx, t, status, reason, actor, expectAssignee, now)
+	})
+}
+
+// setGroupTaskStatusTx is SetGroupTaskStatusFor's change, in tx.
+func setGroupTaskStatusTx(tx *sql.Tx, t *GroupTask, status, reason, actor, expectAssignee string, now time.Time) error {
+	id := t.ID
+	if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
+		return errAssigneeChanged(id)
+	}
+	if t.Status == status && status != GroupTaskBlocked {
+		return nil
+	}
+	var kind, detail string
+	switch status {
+	case GroupTaskBlocked:
+		if !t.Live() {
+			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
 		}
-		if t.Status == status && status != GroupTaskBlocked {
+		if t.Status == GroupTaskBlocked && t.BlockReason == reason {
 			return nil
 		}
-		var kind, detail string
-		switch status {
-		case GroupTaskBlocked:
-			if !t.Live() {
-				return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
-			}
-			if t.Status == GroupTaskBlocked && t.BlockReason == reason {
-				return nil
-			}
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'blocked', block_reason = ?, blocked_on = '' WHERE id = ?`, reason, id); err != nil {
-				return err
-			}
-			kind, detail = GroupTaskEventBlocked, reason
-		case GroupTaskOpen:
-			kind = GroupTaskEventUnblocked
-			if !t.Live() {
-				kind = GroupTaskEventReopened
-				detail = "was " + t.Status
-			}
-			// Unblocking or reopening gives the task a fresh run of attempts.
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', blocked_on = '', closed_at = NULL,
-				archived_at = NULL, failures = 0 WHERE id = ?`, id); err != nil {
-				return err
-			}
-			// A task closed while assigned comes back without an assignee that
-			// has since been retired (the retire trigger only covers live tasks).
-			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL
-				WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
-				return err
-			}
-			if kind == GroupTaskEventReopened {
-				var live int
-				if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE group_id = ? AND status IN ('open','blocked')`,
-					t.GroupID).Scan(&live); err != nil {
-					return err
-				}
-				if live > GroupTaskLiveCap {
-					return ErrGroupTaskCap
-				}
-				// Its rank may have been handed out while it was closed (closed
-				// tasks leave the rank bounds): keep it where it was, just after
-				// the live task that now holds that rank.
-				var taken int
-				if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE group_id = ? AND stage = ?
-					AND status IN ('open','blocked') AND rank = ? AND id <> ?)`,
-					t.GroupID, t.Stage, t.Rank, id).Scan(&taken); err != nil {
-					return err
-				}
-				if taken != 0 {
-					above, err := neighbourRank(tx, t.GroupID, t.Stage, t.Rank, id, false)
-					if err != nil {
-						return err
-					}
-					if _, err := tx.Exec(`UPDATE group_tasks SET rank = ? WHERE id = ?`,
-						taskRankBetween(t.Rank, above), id); err != nil {
-						return err
-					}
-				}
-			}
-		case GroupTaskDone, GroupTaskDropped:
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = ?, closed_at = ?, archived_at = NULL, blocked_on = '' WHERE id = ?`,
-				status, dbTime(now), id); err != nil {
-				return err
-			}
-			// Done releases the tasks blocked waiting on this one.
-			if status == GroupTaskDone {
-				if err := releaseGroupTaskWaitersTx(tx, t, actor, now); err != nil {
-					return err
-				}
-			}
-			kind, detail = status, reason
-			if t.Status == GroupTaskBlocked {
-				detail = firstNonEmptyString(reason, "was blocked: "+t.BlockReason)
-			}
-		default:
-			return taskConflict("invalid_arg", "unknown status %q", status)
-		}
-		var changes []GroupTaskChange
-		if t.Status != status {
-			changes = statusChange(t.Status, status)
-		}
-		if err := addGroupTaskChangeTx(tx, id, actor, kind, detail, changes, now); err != nil {
+		if _, err := tx.Exec(`UPDATE group_tasks SET status = 'blocked', block_reason = ?, blocked_on = '' WHERE id = ?`, reason, id); err != nil {
 			return err
 		}
-		// A reason is a typed comment, committed with its transition.
-		switch status {
-		case GroupTaskBlocked:
-			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentBlock, reason, now)
-		case GroupTaskDone:
-			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDone, reason, now)
-		case GroupTaskDropped:
-			return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDrop, reason, now)
+		kind, detail = GroupTaskEventBlocked, reason
+	case GroupTaskOpen:
+		kind = GroupTaskEventUnblocked
+		if !t.Live() {
+			kind = GroupTaskEventReopened
+			detail = "was " + t.Status
 		}
-		return nil
-	})
+		// Unblocking or reopening gives the task a fresh run of attempts.
+		if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', blocked_on = '', closed_at = NULL,
+			archived_at = NULL, failures = 0 WHERE id = ?`, id); err != nil {
+			return err
+		}
+		// A task closed while assigned comes back without an assignee that
+		// has since been retired (the retire trigger only covers live tasks).
+		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL
+			WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
+			return err
+		}
+		if kind == GroupTaskEventReopened {
+			var live int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE group_id = ? AND status IN ('open','blocked')`,
+				t.GroupID).Scan(&live); err != nil {
+				return err
+			}
+			if live > GroupTaskLiveCap {
+				return ErrGroupTaskCap
+			}
+			// Its rank may have been handed out while it was closed (closed
+			// tasks leave the rank bounds): keep it where it was, just after
+			// the live task that now holds that rank.
+			var taken int
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE group_id = ? AND stage = ?
+				AND status IN ('open','blocked') AND rank = ? AND id <> ?)`,
+				t.GroupID, t.Stage, t.Rank, id).Scan(&taken); err != nil {
+				return err
+			}
+			if taken != 0 {
+				above, err := neighbourRank(tx, t.GroupID, t.Stage, t.Rank, id, false)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(`UPDATE group_tasks SET rank = ? WHERE id = ?`,
+					taskRankBetween(t.Rank, above), id); err != nil {
+					return err
+				}
+			}
+		}
+	case GroupTaskDone, GroupTaskDropped:
+		if _, err := tx.Exec(`UPDATE group_tasks SET status = ?, closed_at = ?, archived_at = NULL, blocked_on = '' WHERE id = ?`,
+			status, dbTime(now), id); err != nil {
+			return err
+		}
+		// Done releases the tasks blocked waiting on this one.
+		if status == GroupTaskDone {
+			if err := releaseGroupTaskWaitersTx(tx, t, actor, now); err != nil {
+				return err
+			}
+		}
+		kind, detail = status, reason
+		if t.Status == GroupTaskBlocked {
+			detail = firstNonEmptyString(reason, "was blocked: "+t.BlockReason)
+		}
+	default:
+		return taskConflict("invalid_arg", "unknown status %q", status)
+	}
+	var changes []GroupTaskChange
+	if t.Status != status {
+		changes = statusChange(t.Status, status)
+	}
+	if err := addGroupTaskChangeTx(tx, id, actor, kind, detail, changes, now); err != nil {
+		return err
+	}
+	// A reason is a typed comment, committed with its transition.
+	switch status {
+	case GroupTaskBlocked:
+		return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentBlock, reason, now)
+	case GroupTaskDone:
+		return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDone, reason, now)
+	case GroupTaskDropped:
+		return addGroupTaskCommentTx(tx, id, actor, GroupTaskCommentDrop, reason, now)
+	}
+	return nil
 }
 
 // SweepGroupTasks archives the done and dropped tasks closed before

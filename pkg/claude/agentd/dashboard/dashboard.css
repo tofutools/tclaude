@@ -18722,7 +18722,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-deps-cell .tb-dep:first-child { margin-left: 0; }
 .tb-table .tb-ic { white-space: nowrap; overflow: visible; }
 .tb-ic .tb-handle, .tb-ic .row-actions { vertical-align: middle; }
-.tb-handle-off { visibility: hidden; }
 .tb-row-actions { align-items: center; }
 .tb-act-slot { display: inline-block; width: 22px; }
 .tb-row-actions .gr-add-menu { left: 0; right: auto; min-width: 180px; max-height: 60vh; overflow-y: auto; }

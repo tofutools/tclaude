@@ -221,6 +221,7 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/taskboard/tasks/{id}/move":             {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/stage":            {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/status":           {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/reopen":           {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/move-to-group":    {slugs: []string{PermTaskboardTransfer}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/assign":           {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/unassign":         {slugs: []string{PermTaskboardAssign}, target: agentViewNode},

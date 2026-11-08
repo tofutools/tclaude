@@ -530,3 +530,25 @@ test('the operator lane: pinned above Unassigned, "You" with what waits on you, 
   await harness.act(async () => { harness.fireEvent(target, 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls.find(([verb]) => verb === 'assign'), ['assign', 'tk_00000001', 'operator']);
 });
+
+test('a done card dragged out of Done reopens there, in the column\'s stage and the lane\'s hands', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { laneDrop } = await harness.importDashboardModule('js/groups-taskboard-lanes.js');
+  const done = row('tk_000000d1', 'finished', { status: 'done', closed_at: ago(30), assignee: builder });
+  const loose = row('tk_000000d2', 'finished alone', { status: 'done', closed_at: ago(30), stage: 'idea' });
+  const at = (lane, column) => ({ lane, column, name: lane });
+  const calls = [];
+  const api = { reopen: async (...args) => { calls.push(['reopen', ...args]); }, status: async (...args) => { calls.push(['status', ...args]); } };
+  const run = async (drop, reason) => { calls.length = 0; await drop.run(api, reason); return calls.slice(); };
+
+  assert.deepEqual(await run(laneDrop(done, at('agt_builder', 'done'), at('agt_builder', 'progress'))), [['reopen', 'tk_000000d1', {}]]);
+  assert.deepEqual(await run(laneDrop(done, at('agt_builder', 'done'), at('agt_tester', 'next'))), [['reopen', 'tk_000000d1', { to: 'agt_tester', stage: 'next' }]]);
+  assert.deepEqual(await run(laneDrop(done, at('agt_builder', 'done'), at('', 'ideas'))), [['reopen', 'tk_000000d1', { to: '', stage: 'idea' }]]);
+  assert.deepEqual(await run(laneDrop(done, at('agt_builder', 'done'), at('operator', 'progress'))), [['reopen', 'tk_000000d1', { to: 'operator', stage: 'next' }]]);
+  assert.deepEqual(await run(laneDrop(loose, at('', 'done'), at('', 'next'))), [['reopen', 'tk_000000d2', { stage: 'next' }]]);
+  const blocked = laneDrop(done, at('agt_builder', 'done'), at('agt_builder', 'blocked'));
+  assert.equal(blocked.kind, 'reopen+block');
+  assert.deepEqual(await run(blocked, 'more to do'), [['reopen', 'tk_000000d1', {}], ['status', 'tk_000000d1', 'blocked', 'more to do']]);
+  assert.equal(laneDrop(done, at('agt_builder', 'done'), at('agt_tester', 'next'), { assign: false }), null, 'another lane needs assign');
+  assert.equal(laneDrop(done, at('agt_builder', 'done'), at('', 'done')), null);
+});

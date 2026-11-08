@@ -25,7 +25,7 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
-    assign: record('assign'), unassign: record('unassign') };
+    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -149,9 +149,11 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   await click(c.querySelector('.tb-history-toggle'));
   const closed = rowOf('tk_00000005');
   assert.ok(closed.matches('.tb-closed') && closed.closest('table') === rowOf('tk_00000001').closest('table'), 'history rows share the list\'s table');
-  assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit', 'Nothing more for finished'], 'a closed task has nothing more here: no group to clone to');
+  assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit']);
+  assert.deepEqual((await menu('tk_00000005')).filter((label) => label.startsWith('Reopen')), ['Reopen', 'Reopen as an idea'],
+    'the ⋯ menu reopens it where it was, or elsewhere');
   await click(button('tk_00000005', 'Reopen'));
-  assert.deepEqual(api.calls, [['status', 'tk_00000005', 'open']]);
+  assert.deepEqual(api.calls, [['reopen', 'tk_00000005']]);
 });
 
 test('the section has no capture box: it adds through ＋ New task', async (t) => {

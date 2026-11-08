@@ -53,6 +53,7 @@ func taskboardCmd() *cobra.Command {
 			taskboardStatusCmd("unblock", "open", "Unblock a blocked task", false),
 			taskboardStatusCmd("drop", "dropped", "Drop a task off the board (park it in the external tracker)", true),
 			taskboardStatusCmd("done", "done", "Close a task as done", true),
+			taskboardReopenCmd(),
 			taskboardAssignCmd(),
 			taskboardUnassignCmd("unassign", "Take a task back from its assignee (needs taskboard.assign)"),
 			taskboardTakeCmd(),
@@ -1370,6 +1371,61 @@ func taskboardBlockCmd() *cobra.Command {
 				req, p.AskHuman, p.JSON, "blocked", cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+type taskboardReopenParams struct {
+	Task     string `pos:"true" help:"Task id (tk_…) of a done or dropped task"`
+	Next     bool   `long:"next" help:"Reopen it in the queue (next) instead of the stage it had"`
+	Idea     bool   `long:"idea" help:"Reopen it as an idea (an assigned task needs --unassign too)"`
+	Assignee string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
+	Unassign bool   `long:"unassign" help:"Reopen it with no assignee"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON     bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardReopenCmd() *cobra.Command {
+	return boa.CmdT[taskboardReopenParams]{
+		Use:   "reopen",
+		Short: "Reopen a done or dropped task, where it was or in another stage, and optionally with another assignee",
+		Long: "Puts a done or dropped task back on the board: by default in the stage and place it had, with the assignee it had. " +
+			"--next or --idea picks the stage, --assignee gives it to a member (or operator), --unassign takes the assignee off. " +
+			"Reopening your own task needs taskboard.own; anyone else's, taskboard.write. Changing the assignee is gated as assign and unassign are.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardReopenParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardReopenParams, _ *cobra.Command, _ []string) {
+			taskboardExit(runTaskboardReopen(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int {
+	assignee := strings.TrimSpace(p.Assignee)
+	switch {
+	case p.Next && p.Idea:
+		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
+		return rcInvalidArg
+	case p.Unassign && assignee != "":
+		fmt.Fprintln(stderr, "Error: give --assignee or --unassign, not both")
+		return rcInvalidArg
+	}
+	req := map[string]any{}
+	if p.Next {
+		req["stage"] = "next"
+	}
+	if p.Idea {
+		req["stage"] = "idea"
+	}
+	if assignee != "" {
+		req["to"] = assignee
+	}
+	if p.Unassign {
+		req["to"] = ""
+	}
+	return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/reopen"), req, p.AskHuman, p.JSON, "reopened", stdout, stderr)
 }
 
 // ---- assign / take / release / report ----
