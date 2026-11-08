@@ -31,6 +31,11 @@ test('the save plan writes only what changed, in an order the routes accept', as
   assert.deepEqual(editPlan(open, draftOf(open)), [], 'an untouched form writes nothing');
   assert.deepEqual(names(editPlan(open, { ...draftOf(open), title: 'Release 2.4 notes', newRef: 'SHOP-1', deps: ['tk_00000002'] })),
     ['title, ref, dependencies']);
+  // A current node sends refs: [] for a task with none, and takes several.
+  const { refsPlan } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
+  const none = task({ refs: [] });
+  assert.deepEqual(refsPlan(none, { ...draftOf(none), refs: ['LIN-1'], newRef: 'tcl-a1b2c3' }),
+    { addRefs: ['LIN-1', 'tcl-a1b2c3'], resolveRef: true });
 
   // Blocked, with its reason, and given to someone: assign while open, then block.
   let draft = setAssignee(draftOf(open), 'agt_dev');

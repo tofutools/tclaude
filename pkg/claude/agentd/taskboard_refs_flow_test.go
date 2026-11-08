@@ -208,3 +208,19 @@ func TestTaskboardTransferKeepsRefs(t *testing.T) {
 		"origin": map[string]any{"node": "far", "group": "crew", "task": "tk_00000001"}}, http.StatusCreated)
 	assert.Equal(t, []string{"LIN-6", "tcl-a1b2c3"}, refLabels(in.Refs))
 }
+
+// TestTaskboardTaskWithoutRefsSaysRefs: a task with no ref still sends
+// "refs": [], since a view with no refs at all is a node from before
+// several refs, which the dashboard lets take one ref only.
+func TestTaskboardTaskWithoutRefsSaysRefs(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	rec := h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "no ref yet"})
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	assert.Equal(t, "[]", string(raw["refs"]), "refs is there, and empty")
+	_, hasRef := raw["ref"]
+	assert.False(t, hasRef, "no first ref")
+}
+

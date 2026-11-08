@@ -330,10 +330,11 @@ type taskboardTaskView struct {
 	// BlockedOn is the task a blocked task waits on (block --on, add
 	// --blocks): closing it as done reopens this one.
 	BlockedOn string        `json:"blocked_on,omitempty"`
-	Ref *taskboardRef `json:"ref,omitempty"`
-	// Refs are all of the task's refs, Ref first (tk_01ad0884); absent
-	// without one. A node from before sends only Ref.
-	Refs      []*taskboardRef `json:"refs,omitempty"`
+	Ref       *taskboardRef `json:"ref,omitempty"`
+	// Refs are all of the task's refs, Ref first (tk_01ad0884); [] without
+	// one, never absent: a node from before sends no refs at all, and that
+	// is how the dashboard tells it takes one ref only.
+	Refs      []*taskboardRef `json:"refs"`
 	DependsOn []string        `json:"depends_on"`
 	// Unmet lists the dependencies not yet done; an open task with any is
 	// queued.
@@ -493,6 +494,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		if v.DependsOn == nil {
 			v.DependsOn = []string{}
 		}
+		v.Refs = []*taskboardRef{}
 		for i, stored := range t.Refs() {
 			if stored.Kind == "" {
 				continue
