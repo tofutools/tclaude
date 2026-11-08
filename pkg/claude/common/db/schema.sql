@@ -2481,7 +2481,7 @@ CREATE TABLE group_task_attachments (
 			content_type TEXT NOT NULL,
 			added_by     TEXT NOT NULL,
 			added_at     INTEGER NOT NULL
-		, comment_id INTEGER REFERENCES group_task_events(id) ON DELETE CASCADE) STRICT;
+		, comment_id INTEGER REFERENCES group_task_events(id) ON DELETE CASCADE, drawing TEXT) STRICT;
 
 CREATE UNIQUE INDEX idx_group_task_attachments_name ON group_task_attachments(task_id, name COLLATE NOCASE);
 
