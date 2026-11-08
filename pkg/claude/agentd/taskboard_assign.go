@@ -157,8 +157,11 @@ func taskboardBrief(g *db.AgentGroup, t *db.GroupTask, by string) string {
 	if t.Body != "" {
 		fmt.Fprintf(&b, "\n%s\n", t.Body)
 	}
-	if t.RefKind != "" {
-		fmt.Fprintf(&b, "\nRef (%s): %s %s\n", t.RefKind, t.RefLabel, t.RefURL)
+	for i, ref := range t.Refs() {
+		if i == 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Ref (%s): %s %s\n", ref.Kind, ref.Label, ref.URL)
 	}
 	if len(t.DependsOn) > 0 {
 		fmt.Fprintf(&b, "After: %s\n", strings.Join(t.DependsOn, ", "))

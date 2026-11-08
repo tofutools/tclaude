@@ -8,12 +8,12 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const row = (group, id, title, extra = {}) => ({ id, group, title, stage: 'next', status: 'open', depends_on: [], ...extra });
 
-function board(group, ids) {
+function board(group, ids, firstExtra = {}) {
   return {
     group, group_id: ids[0],
     counts: { live: 2, next: 1, ideas: 1 },
     tasks: [
-      row(group, `tk_0000000${ids[0]}`, `${group} first`),
+      row(group, `tk_0000000${ids[0]}`, `${group} first`, firstExtra),
       row(group, `tk_0000000${ids[1]}`, `${group} waits`, { stage: 'idea', depends_on: [`tk_0000000${ids[0]}`] }),
     ],
     closed: [],
@@ -22,7 +22,7 @@ function board(group, ids) {
 
 const members = () => [{ agent_id: 'agt_dev', title: 'dev', role: 'dev', online: true }];
 
-async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
+async function mountTwo(t, { lanes = false, otherNode = '', firstExtra = {} } = {}) {
   const harness = await createPreactHarness(t);
   const [{ TaskboardSection }, { dashPrefs }, transfer] = await Promise.all([
     harness.importDashboardModule('js/groups-taskboard.js'),
@@ -64,7 +64,7 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
     },
     move: async () => ({}), assign: async () => ({}), status: async (...args) => { calls.push(['status', ...args]); return {}; }, stage: async () => ({}),
   };
-  const source = { context: harness.signals.signal({ groups: [board('tbt-a', [1, 2]), board('tbt-b', [3, 4])] }),
+  const source = { context: harness.signals.signal({ groups: [board('tbt-a', [1, 2], firstExtra), board('tbt-b', [3, 4])] }),
     status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const card = (name, node = '') => {
     const group = { name, members: members() };
@@ -198,7 +198,7 @@ test('a drop on a group on another node creates it there first, then drops the o
   await drop(summary('tbt-b'), data);
   assert.equal(confirms[0].title, 'Move task to another node?');
   assert.match(confirms[0].body, /created there in Ideas.*only then closed here as dropped \("moved to other\/tbt-b"\)/);
-  assert.deepEqual(remote, [['nd_other', 'transferIn', 'tbt-b', { title: 'tbt-a first', body: '', ref: '', refLabel: '',
+  assert.deepEqual(remote, [['nd_other', 'transferIn', 'tbt-b', { title: 'tbt-a first', body: '', ref: '', refLabel: '', addRefs: [],
     stage: 'idea', clone: false, origin: { node: '', group: 'tbt-a', task: 'tk_00000001' } }]], 'the target node creates it');
   assert.deepEqual(calls, [['check', 'tk_00000001'], ['movedAway', 'tk_00000001', { node: 'other', group: 'tbt-b', task: 'tk_000000aa' }]],
     'the drop\'s gates first, then the source drops it, naming the new task');
@@ -538,4 +538,34 @@ test('a ref linked on this node\'s awb server goes to another node as its id', a
     { ref: 'https://github.com/o/r/issues/3', refLabel: 'o/r#3' });
   assert.deepEqual(transferRef({ kind: 'linear', label: 'LIN-3' }), { ref: 'LIN-3', refLabel: '' });
   assert.deepEqual(transferRef(null), { ref: '', refLabel: '' });
+});
+
+// Every ref of a task goes to the other node (tk_01ad0884): the first as
+// ref, the rest as addRefs, a local awb one by its id; a task from a node
+// before several refs has only ref.
+test('all of a task\'s refs go to another node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { transferRefs } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  const pr = { kind: 'github', url: 'https://github.com/o/r/pull/7', label: '#7' };
+  const awb = { kind: 'awb', url: 'http://localhost:7777/#/issues/tcl-a1b2c3', label: 'tcl-a1b2c3', local: true, id: 'tcl-a1b2c3' };
+  assert.deepEqual(transferRefs({ ref: pr, refs: [pr, awb] }),
+    { ref: 'https://github.com/o/r/pull/7', refLabel: '#7', addRefs: ['awb:tcl-a1b2c3'], count: 2 });
+  assert.deepEqual(transferRefs({ ref: pr }), { ref: 'https://github.com/o/r/pull/7', refLabel: '#7', addRefs: [], count: 1 });
+  assert.deepEqual(transferRefs({}), { ref: '', refLabel: '', addRefs: [], count: 0 });
+});
+
+// A node from before several refs keeps only a moved task's first ref: the
+// original is not dropped, so its other refs are not lost (tk_01ad0884).
+test('a move to a node that keeps only the first ref leaves the original', async (t) => {
+  const pr = { kind: 'github', url: 'https://github.com/o/r/pull/7', label: '#7' };
+  const lin = { kind: 'linear', label: 'LIN-3' };
+  const { harness, c, calls, remote, toasts, dt, drop, summary } = await mountTwo(t, { otherNode: 'nd_other', firstExtra: { ref: pr, refs: [pr, lin] } });
+  const data = dt();
+  await harness.act(async () => { harness.fireEvent(c.querySelector('tr[data-task-id="tk_00000001"]'), 'dragstart', { dataTransfer: data }); });
+  await drop(summary('tbt-b'), data);
+  assert.equal(remote.length, 1);
+  assert.equal(remote[0][3].ref, 'https://github.com/o/r/pull/7');
+  assert.deepEqual(remote[0][3].addRefs, ['LIN-3'], 'the other refs go along');
+  assert.deepEqual(calls, [['check', 'tk_00000001']], 'the original is not dropped');
+  assert.match(toasts[0], /kept only the first ref[\s\S]*the original stays here with all its refs/);
 });

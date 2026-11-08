@@ -94,7 +94,7 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		// original lost meanwhile before the clone's rows name it.
 		touchTaskBlobs(files)
 		out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: target.ID, Title: t.Title, Body: t.Body, Stage: stage,
-			RefKind: t.RefKind, RefURL: t.RefURL, RefLabel: t.RefLabel, Actor: actor,
+			RefKind: t.RefKind, RefURL: t.RefURL, RefLabel: t.RefLabel, MoreRefs: t.MoreRefs, Actor: actor,
 			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name), Attachments: files})
 		if err != nil {
 			writeTaskboardError(w, err)
@@ -204,7 +204,8 @@ func (o taskboardTransferOrigin) String() string {
 }
 
 // POST /v1/groups/{name}/taskboard/transfer-in {"title", "body", "ref",
-// "ref_label", "stage", "clone", "origin": {node, group, task}}. A task
+// "ref_label", "add_refs", "stage", "clone", "origin": {node, group, task}}:
+// add_refs are the task's refs after its first (ref). A task
 // with files comes as multipart: that JSON as the "task" part, and its
 // files as "file" parts, all landing in one transaction.
 func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -219,6 +220,7 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		Body     string                  `json:"body"`
 		Ref      string                  `json:"ref"`
 		RefLabel string                  `json:"ref_label"`
+		AddRefs  []string                `json:"add_refs"`
 		Stage    string                  `json:"stage"`
 		Clone    bool                    `json:"clone"`
 		Origin   taskboardTransferOrigin `json:"origin"`
@@ -238,6 +240,10 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 	stage := strings.TrimSpace(body.Stage)
 	if err == nil && stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
 		err = fmt.Errorf("stage is idea or next")
+	}
+	var moreRefs []db.GroupTaskRef
+	if err == nil {
+		kind, refURL, refLabel, moreRefs, err = withAddedTaskRefs(r, kind, refURL, refLabel, body.AddRefs, false)
 	}
 	if err == nil && strings.TrimSpace(body.Origin.Group) == "" {
 		err = fmt.Errorf("give the origin: the group (and node and task) the task comes from")
@@ -267,7 +273,7 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		return
 	}
 	out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: stage,
-		RefKind: kind, RefURL: refURL, RefLabel: refLabel, Actor: actor, Origin: verb + body.Origin.String(), Attachments: atts})
+		RefKind: kind, RefURL: refURL, RefLabel: refLabel, MoreRefs: moreRefs, Actor: actor, Origin: verb + body.Origin.String(), Attachments: atts})
 	if err != nil {
 		writeTaskboardError(w, err)
 		return

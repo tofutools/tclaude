@@ -147,7 +147,7 @@ tclaude agent taskboard comment edit <task> <#id> "markdown" [--body …|--file 
 tclaude agent taskboard comment rm <task> <#id>
 tclaude agent taskboard comment ls <task> [--save <dir>]
 
-tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
+tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--add-ref URL|id]… [--resolve-ref]
                                     [--next|--stage <custom column>] [--after tk_a,tk_b] [--top|--before tk_x]
                                     [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
 tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
@@ -158,7 +158,7 @@ tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
 tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref] [--resolve-ref]
-                                    [--add-dep tk_…] [--rm-dep tk_…]
+                                    [--add-ref …]… [--rm-ref #n|link|label]… [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
 tclaude agent taskboard move <task> --stage idea|next|<custom column>
 tclaude agent taskboard columns ls|add|rename|move|rm <group> …   # custom columns
@@ -208,6 +208,36 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     import does. The title stays yours. An import (below) always looks it up.
     `edit <task> --resolve-ref` with no `--ref` links the task's own ref.
   - A ref with no link shows as a plain chip ("not linked" in its tooltip).
+- A task can have several refs, at most 10: its tracker issue and the pull
+  request that does it, say. `--ref` is always the task's first ref, so
+  everything that reads one ref keeps reading that one.
+  - `add --add-ref` (repeatable) adds refs after `--ref`. Without `--ref`,
+    the first one added is the first ref.
+  - `edit --add-ref` appends refs, and leaves out one the task already has
+    (the same link, issue or pull request however it is written).
+    `edit --rm-ref` removes refs, each named by `#position` (`#2`), link or
+    label. Removing the first ref makes the next one first.
+  - `edit --ref` replaces the first ref and keeps the rest; one the task
+    already has is not kept twice. `--clear-ref` removes them all.
+    `--resolve-ref` links the added refs too.
+  - Through the API, `clear_ref` (or `"ref":""`) removes only the first ref,
+    and the next one becomes first. So a form that shows one ref never drops
+    refs it does not show. `clear_refs` removes them all; `--clear-ref` sends
+    both.
+  - `show` lists every ref; `ls` shows the first and how many more (`#12 +1`).
+  - A GitHub pull request or GitLab merge request ref carries its status:
+    state, title, CI and reviews, as the agent rows show them. It is read
+    from the same caches the agent rows read, so a board read sends no
+    request to the forge. A pull request no agent shows has whatever the
+    hover cards last read for it, and at least its number.
+  - An awb, Linear or GitHub issue ref carries its issue's title and status
+    (`tracker`) as its last lookup found them. A lookup happens on
+    `--resolve-ref`, an import, and the dashboard's ref lookup. A board read
+    asks no tracker. A ref never looked up has none.
+  - A linked node from before several refs keeps only the first: `add` and
+    `edit` with `--add-ref` or `--rm-ref` on it fail, saying so. A move to
+    such a node leaves the original where it is, with all its refs, and says so.
+    The dashboard's move does the same.
 - `ask` mails a member of the group a request in your own words. The member
   is told to turn it into tasks with `taskboard add`, to reply when it is
   done, and not to start the work. The request is inbox mail, never keys sent
@@ -1379,13 +1409,13 @@ those drags aren't accepted in the lanes.
 | `comment add` | `POST /v1/taskboard/tasks/{id}/comments {"body","key"?}` (multipart: a `comment` JSON part and `file` parts) → 201 `{id, group, comment}`, 200 on a repeated key |
 | `comment edit` / `rm` | `PATCH` `{"body"}` / `DELETE /v1/taskboard/tasks/{id}/comments/{cid}` → `{id, group, comment}`; 403 `not_author` for anyone else |
 | `comment ls` | `GET /v1/taskboard/tasks/{id}/comments` → `{id, group, comments}`; a comment's file is read through `…/attachments/{aid}` |
-| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`; `--stage <column>` sends `"stage":"<column slug or label>"`) |
+| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`; `--stage <column>` sends `"stage":"<column slug or label>"`; `--add-ref` sends `"add_refs":[…]`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
-| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`) |
+| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
-| `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
+| `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","add_refs","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `move --stage` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"idea"\|"next"\|"<column slug or label>"}` |
 | `columns ls` | `GET /v1/groups/{g}/taskboard/columns` → `{group, columns:[{slug,label}], cap}` |
@@ -1408,7 +1438,7 @@ those drags aren't accepted in the lanes.
 | `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
 | `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
 | `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
-| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","resolved","note"}`), titled through the tracker proxy as an import is; adds nothing, needs board read |
+| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","status","resolved","note"}`; it also keeps the title and status for the board to show on that ref), titled through the tracker proxy as an import is; adds nothing, needs board read |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

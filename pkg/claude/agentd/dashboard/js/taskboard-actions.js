@@ -363,9 +363,10 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     },
     // transferIn creates, on this node's group, a task moved or cloned in
     // from another node; origin is { node, group, task } there.
-    transferIn(group, { title, body = '', ref = '', refLabel = '', stage = 'idea', clone = false, origin }) {
+    // addRefs are its refs after the first (ref).
+    transferIn(group, { title, body = '', ref = '', refLabel = '', addRefs = [], stage = 'idea', clone = false, origin }) {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/transfer-in`,
-        { title, body, ref, ref_label: refLabel, stage, clone, origin });
+        { title, body, ref, ref_label: refLabel, ...(addRefs.length ? { add_refs: addRefs } : {}), stage, clone, origin });
     },
     // movedAway drops the original of a task moved to another node, noting
     // where it went: to is { node, group, task }.

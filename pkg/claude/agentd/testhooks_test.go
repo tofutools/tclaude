@@ -2820,3 +2820,22 @@ func PeerCeilingSlugsForTest() []string {
 	}
 	return out
 }
+
+// SeedPRCachesForTest writes what the agent rows' forge reads would have
+// cached for a pull request: its state and title, a CI summary of passed of
+// total checks, and its review decision.
+func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decision string) {
+	now := time.Now()
+	savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{URL: rawURL, State: state, Title: title,
+		FetchedAt: now, TitleCheckedAt: now}, now)
+	checks := make([]prCheckRun, 0, total)
+	for i := range total {
+		bucket := "pass"
+		if i >= passed {
+			bucket = "fail"
+		}
+		checks = append(checks, prCheckRun{Name: "check-" + strconv.Itoa(i), Bucket: bucket})
+	}
+	savePRChecks(rawURL, prChecksInfo{PRState: state, Checks: checks, FetchedAt: now, Summary: summarizePRChecks(checks, now)})
+	savePRReviewObservation(rawURL, prReviewObservation{Decision: decision}, now)
+}
