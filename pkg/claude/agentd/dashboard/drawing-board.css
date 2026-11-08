@@ -89,7 +89,8 @@ body.slop, body.vegas {
 .drawing-board-peer-banner .drawing-board-peer-mark { font-weight: 600; }
 .drawing-board-peer-banner .drawing-board-peer-state { margin-left: auto; color: #f2cc8f; }
 .drawing-board-peer-banner.offline { background: #3a2a10; border-bottom-color: #e3a341; color: #f2cc8f; }
-.drawing-board-people { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.drawing-board-people { display: flex; align-items: flex-start; gap: 6px; flex-direction: column; max-width: 280px; }
+.drawing-board-people-none { font-size: 12px; }
 .drawing-board-person {
   display: inline-flex; align-items: center; border: 1px solid var(--drawing-board-line); border-radius: 14px;
   background: var(--drawing-board-bar); font-size: 12px; overflow: hidden;
@@ -98,19 +99,6 @@ body.slop, body.vegas {
 .drawing-board-person button { border: 0; background: transparent; color: var(--drawing-board-text); font: inherit; cursor: pointer; padding: 3px 4px 3px 10px; }
 .drawing-board-person .drawing-board-person-x { padding: 3px 8px 3px 4px; color: var(--drawing-board-muted); }
 .drawing-board-person .drawing-board-person-x:hover { color: #f85149; }
-.drawing-board-invite-wrap { position: relative; }
-.drawing-board-invite-menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: var(--z-popover); min-width: 220px; max-height: 320px; overflow: auto;
-  display: flex; flex-direction: column; padding: 4px; border-radius: 8px;
-  border: 1px solid var(--drawing-board-line); background: var(--drawing-board-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
-}
-.drawing-board-invite-menu button { text-align: left; }
-.drawing-board-invite-menu button:where(:not(.ui-menu-item)) {
-  border: 0; border-radius: 5px; padding: 6px 10px; background: transparent;
-  color: var(--drawing-board-text); font: inherit; font-size: 12px; cursor: pointer;
-}
-.drawing-board-invite-menu button:where(:not(.ui-menu-item)):hover, .drawing-board-invite-menu button:where(:not(.ui-menu-item)):focus-visible { background: #1f6feb33; outline: none; }
-.drawing-board-invite-empty { padding: 8px 10px; max-width: 260px; }
 
 .drawing-board-toolbar {
   display: flex; align-items: center; gap: 3px; flex-wrap: wrap; padding: 4px 12px 6px; flex: none;
@@ -254,7 +242,7 @@ body.slop, body.vegas {
 .drawing-board-person.via-group { border-style: dashed; }
 .drawing-board-person.via-group button { padding-right: 10px; }
 /* The drawing board's group choice (group-picker.js) keeps to the header's width. */
-.drawing-board-people [data-drawing-board-group] { flex: 0 1 200px; max-width: 220px; font-size: 12px; }
+.reh-menu [data-drawing-board-group] { width: 220px; font-size: 12px; }
 
 /* The overlay (js/drawing-board-overlay.js, tcl-h4y60w): a drawing board in its own window, on
    the companion's layer. Whichever was clicked last is on top. */

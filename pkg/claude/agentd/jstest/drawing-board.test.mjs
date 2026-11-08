@@ -292,7 +292,7 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   const rasterize = async (_svg, box) => { boxes.push(box); return new Blob(['PNG-region']); };
   const view = await harness.mount(harness.html`<${DrawingBoardEditor} drawingBoardId="plan" visible=${inSection(harness)} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} rasterize=${rasterize} />`);
   await harness.act(() => wait());
-  assert.match(view.container.querySelector('.drawing-board-people').textContent, /alpha/);
+  assert.match(view.container.querySelector('.reh-stack').getAttribute('title'), /alpha/, 'the people stack names the agents on it');
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
   const svg = view.container.querySelector('svg.drawing-board-canvas');
   await harness.act(() => pointer(harness, svg, 'pointerdown', 100, 100));
@@ -1216,7 +1216,9 @@ test('the editor shows who is drawing and reports the operator\'s view of the dr
   presence = [{ agent_id: A, state: 'drawing' }];
   await harness.act(() => wait(DRAWING_BOARD_POLL_MS + 50));
   assert.match(view.container.querySelector('.drawing-board-drawing-note').textContent, /alpha is drawing/);
-  assert.ok(view.container.querySelector('.drawing-board-person.drawing'));
+  assert.ok(view.container.querySelector('.reh-avatar.drawing'), 'the stack marks who is drawing');
+  await harness.act(() => harness.fireEvent(view.container.querySelector('.reh-stack'), 'click'));
+  assert.ok(view.container.querySelector('.drawing-board-person.drawing'), 'and so does Share, which the stack opens');
   const { client, ...area } = views.at(-1);
   assert.match(client, /^[a-z0-9]+$/, 'each editor reports under its own token');
   assert.deepEqual(area, { x: -40, y: -40, width: 800, height: 400 }, 'the visible drawing board area, in drawing board units');
@@ -1246,6 +1248,7 @@ test('making a drawing board a group\'s drawing board shows its members and tell
   drawingBoardsSection(harness);
   const view = await harness.mount(harness.html`<${DrawingBoardEditor} drawingBoardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
+  await harness.act(() => harness.fireEvent(view.container.querySelector('[data-editor-menu="share"]'), 'click'));
   const groupBox = view.container.querySelector('[data-drawing-board-group]');
   assert.match(groupBox.querySelector('input').value, /No group/);
   assert.deepEqual(await comboKeys(harness, groupBox), ['team']);

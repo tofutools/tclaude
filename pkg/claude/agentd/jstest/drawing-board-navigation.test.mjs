@@ -87,10 +87,10 @@ test('Ctrl+wheel zooms the drawing board over its inputs and controls, not the p
   assert.ok((await wheel(input, twice)).defaultPrevented, 'the browser leaves the page alone');
   assert.equal(zoom(), '200%');
 
-  assert.ok((await wheel(root.querySelector('[data-drawing-board-group] input'), { ...twice, deltaY: Math.log(2) / 0.002 })).defaultPrevented);
+  assert.ok((await wheel(root.querySelector('[data-editor-menu="file"]'), { ...twice, deltaY: Math.log(2) / 0.002 })).defaultPrevented);
   assert.equal(zoom(), '100%', 'a control outside the canvas too');
 
-  assert.equal((await wheel(root.querySelector('[data-drawing-board-group] input'), { deltaY: 40 })).defaultPrevented, false, 'a plain scroll out there is the page\'s');
+  assert.equal((await wheel(root.querySelector('[data-editor-menu="file"]'), { deltaY: 40 })).defaultPrevented, false, 'a plain scroll out there is the page\'s');
 });
 
 test('the grid scrolls and zooms with the drawing board', async (t) => {
@@ -182,6 +182,7 @@ test('number keys leave typing alone', async (t) => {
   await down(harness, root.querySelector('svg.drawing-board-canvas'));
   await press(harness, harness.window.document.body, '3');
   assert.equal(toolOn(root), 'Rectangle');
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-editor-menu="share"]'), 'click'));
   const groupBox = root.querySelector('[data-drawing-board-group] input');
   await press(harness, groupBox, '6');
   assert.equal(toolOn(root), 'Rectangle', 'the group box in the editor keeps its typing');

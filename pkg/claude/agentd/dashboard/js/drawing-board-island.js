@@ -31,13 +31,13 @@ import { clipboardReadNote } from './insecure-origin.js';
 import { DrawingBoardMinimap } from './drawing-board-minimap.js';
 import { DrawingBoardQuickMenu, QUICK_MENU_SIZE } from './drawing-board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
-import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
 import { onPeerPage } from './node-api.js';
 import { peerDrawingBoardAccess, peerDrawingBoardsShared, peerName } from './peer-drawing-boards.js';
 import { LockChip, rememberLock } from './resource-lock.js';
+import { PeopleStack, ResourceEditorHeader } from './resource-editor-header.js';
 
 const html = htm.bind(h);
 
@@ -219,12 +219,29 @@ function gridStyle(view) {
 
 // -- the editor ---------------------------------------------------------------
 
+// drawingBoardFileItems are the editor's File menu. Export is its own
+// section: the image export (PNG, SVG, attach to a task, tk_413bdf5d) joins
+// it there. elements() reads the board as drawn now.
+export function drawingBoardFileItems({ drawingBoardId, title = '', peer = false, elements = () => [] }) {
+  return [
+    { heading: 'Export' },
+    { key: 'download', label: 'Download .excalidraw', title: 'Save the drawing board as an .excalidraw file, which excalidraw.com opens',
+      run: () => import('./download.js').then((m) => m.downloadText(`${drawingBoardId}.excalidraw`, toExcalidraw(elements()))) },
+    ...(peer ? [] : [
+      { sep: true },
+      { key: 'delete', label: 'Delete drawing board…', danger: true, title: 'Delete it for everyone, after a confirm',
+        run: () => askDeleteDrawingBoard({ id: drawingBoardId, title }) },
+    ]),
+  ];
+}
+
 // DrawingBoardEditor is one drawing board's editor. A tab keeps it mounted while another tab
 // or view shows: `onScreen` says it is the tab showing, and `visible` whether
-// its surroundings are. headActions are the host's own controls.
+// its surroundings are. moves are the host's ways to move the editor (to a
+// tab, the overlay, a window of its own: editorMoveItems), which View lists.
 export function DrawingBoardEditor({
   drawingBoardId, fetchImpl, notify = () => {}, snapshot, win, WebSocketCtor = win?.WebSocket, rasterize = rasterizeDrawingBoard, onOpenAgent,
-  onScreen = true, visible = null, headActions = null, onTitle = null, peer = onPeerPage(),
+  onScreen = true, visible = null, moves = [], onTitle = null, peer = onPeerPage(),
 }) {
   const [gone, setGone] = useState(false);
   const wheelScroll = useRef({ at: -Infinity, mouse: false });
@@ -269,9 +286,8 @@ export function DrawingBoardEditor({
   const setEditingText = (value) => { editingRef.current = value; setEditingTextState(value); };
   const textInputRef = useRef(null);
   const [flash, setFlash] = useState(() => new Set());
-  const [invite, setInvite] = useState(false);
-  const inviteRef = useRef(null);
-  useDismissablePopover(inviteRef, invite, () => setInvite(false));
+  // menuOpen is the header's open menu (file, view, share), '' for none.
+  const [menuOpen, setMenuOpen] = useState('');
   const svgRef = useRef(null);
   const pending = useRef(new Map()); // id -> element awaiting PATCH
   const saving = useRef(0); // PATCHes in flight
@@ -1677,7 +1693,7 @@ export function DrawingBoardEditor({
   // -- participants -------------------------------------------------------------
 
   async function addParticipant(agentId) {
-    setInvite(false);
+    setMenuOpen('');
     try {
       await jsonOrThrow(await fetchImpl(`/api/drawing-boards/${encodeURIComponent(drawingBoardId)}/participants`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -1775,6 +1791,20 @@ export function DrawingBoardEditor({
   const groupNames = [...new Set([meta.group, ...(snapshot.value?.groups || []).filter((g) => g?.name && !g.scribe && !g.archived).map((g) => g.name)].filter(Boolean))].sort();
   const groupChoices = groupNames.map((name) => ({ value: name, label: `Group: ${name}` }));
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
+  // people are the agents on the drawing board, invited ones first, for the
+  // header's stack; peopleChips the same as Share lists them.
+  const people = [...meta.participants, ...meta.groupMembers.filter((id) => !meta.participants.includes(id))].map((id) => {
+    const agent = agents.get(id);
+    const state = presence.get(id) || '';
+    const viaGroup = !meta.participants.includes(id);
+    return { id, name: agent?.name || id.slice(0, 12), offline: !agent?.online, state, viaGroup, steward: !!agent?.steward,
+      note: [viaGroup ? `in group ${meta.group}` : '', agent?.online ? '' : 'offline', state === 'drawing' ? 'drawing…' : state === 'looking' ? 'looking' : ''].filter(Boolean).join(', ') };
+  });
+  const peopleChips = people.map((p) => html`<span key=${p.id} class=${`drawing-board-person${p.viaGroup ? ' via-group' : ''}${p.offline ? ' offline' : ''}${p.state ? ` ${p.state}` : ''}`}
+      title=${`${p.name}${p.note ? ` (${p.note})` : ''}`}>
+    <button data-ui-exempt type="button" class="drawing-board-person-name" onClick=${() => { setMenuOpen(''); onOpenAgent?.(p.id); }}>${p.steward ? '✦ ' : ''}${p.name}${p.state === 'drawing' ? html` <span class="drawing-board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
+    ${!peer && !p.viaGroup && html`<button data-ui-exempt type="button" class="drawing-board-person-x" aria-label=${`Remove ${p.name} from the drawing board`} onClick=${() => removeParticipant(p.id)}>×</button>`}
+  </span>`);
   void tick;
   // A pan or a zoom renders the editor without changing an element: the same
   // list lets Preact skip every shape, which a drawing board of thousands needs.
@@ -1787,42 +1817,36 @@ export function DrawingBoardEditor({
       : 'This drawing board was deleted.'}</p>`;
   }
   return html`<div ref=${rootRef} class="drawing-board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
-    <header class="drawing-board-head">
-      <h2 class="drawing-board-title">${meta.title}</h2>
-      <${LockChip} kind="drawing_board" id=${drawingBoardId} name=${meta.title} locked=${!!meta.agentsLocked} notify=${notify}
+    <${ResourceEditorHeader} class="drawing-board-head" label="Drawing board menu" openMenu=${menuOpen} onOpenMenu=${setMenuOpen}
+      title=${html`<h2 class="drawing-board-title">${meta.title}</h2>`}
+      identity=${html`<${LockChip} kind="drawing_board" id=${drawingBoardId} name=${meta.title} locked=${!!meta.agentsLocked} notify=${notify}
         onChanged=${(agentsLocked) => setMeta((m) => ({ ...m, agentsLocked }))} />
-      <span class=${`drawing-board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>
-      <div class="drawing-board-people" aria-label="Agents on this drawing board">
-        ${meta.participants.map((id) => {
-          const agent = agents.get(id);
-          const state = presence.get(id) || '';
-          const doing = state === 'drawing' ? ' (drawing…)' : state === 'looking' ? ' (looking at the drawing board)' : '';
-          return html`<span key=${id} class=${`drawing-board-person${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${agent ? `${agent.name}${agent.online ? '' : ' (offline)'}${doing}` : id}>
-            <button data-ui-exempt type="button" class="drawing-board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="drawing-board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
-            ${!peer && html`<button data-ui-exempt type="button" class="drawing-board-person-x" aria-label=${`Remove ${agent?.name || id} from the drawing board`} onClick=${() => removeParticipant(id)}>×</button>`}
-          </span>`;
-        })}
-        ${meta.groupMembers.filter((id) => !meta.participants.includes(id)).map((id) => {
-          const agent = agents.get(id);
-          const state = presence.get(id) || '';
-          return html`<span key=${id} class=${`drawing-board-person via-group${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${`${agent?.name || id} (in group ${meta.group})${state === 'drawing' ? ' (drawing…)' : ''}`}>
-            <button data-ui-exempt type="button" class="drawing-board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="drawing-board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
-          </span>`;
-        })}
-        ${!peer && html`<span class="drawing-board-invite-wrap" ref=${inviteRef}>
-          <${Button} size="sm" class="drawing-board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent<//>
-          ${invite && html`<div class="drawing-board-invite-menu" role="menu">
-            ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
-              : html`<div class="drawing-board-invite-empty ui-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
-          </div>`}
-        </span>
-        <${GroupCombobox} ariaLabel="The drawing board's group" attrs=${{ 'data-drawing-board-group': '', title: "A group's members are on its drawing board without invitations" }}
-          groups=${groupChoices} value=${meta.group} noneLabel="No group" onChange=${(group) => setGroup(group)} />`}
-      </div>
-      <${Button} size="sm" class="drawing-board-export" title="Download as .excalidraw"
-        onClick=${() => import('./download.js').then((m) => m.downloadText(`${drawingBoardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>
-      ${headActions}
-    </header>
+      <span class=${`drawing-board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>`}
+      menus=${[
+        { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, peer, elements: () => drawnElements(elements.current) }) },
+        { key: 'view', label: 'View', items: () => [
+          { key: 'fit', label: 'Zoom to fit', shortcut: '⇧1', disabled: !live.length, run: fitView },
+          { key: 'actual', label: 'Zoom 100%', shortcut: '⇧0', disabled: view.zoom === 1, run: zoomReset },
+          { key: 'in', label: 'Zoom in', shortcut: '+', disabled: view.zoom >= DRAWING_BOARD_ZOOM_MAX, run: zoomIn },
+          { key: 'out', label: 'Zoom out', shortcut: '−', disabled: view.zoom <= DRAWING_BOARD_ZOOM_MIN, run: zoomOut },
+          { sep: true },
+          ...(moves || []),
+        ] },
+        { key: 'share', label: 'Share', items: () => [
+          { heading: 'On this drawing board' },
+          { key: 'people', node: html`<div class="drawing-board-people" aria-label="Agents on this drawing board">${people.length ? peopleChips : html`<span class="drawing-board-people-none ui-empty">Nobody yet.</span>`}</div>` },
+          ...(peer ? [] : [
+            { sep: true },
+            { key: 'invite', label: 'Invite agent', title: 'Invite a live agent to draw with you', children: () => (candidates.length
+              ? candidates.slice(0, 30).map((a) => ({ key: a.agentId, label: `${a.steward ? '✦ ' : ''}${a.name}`, run: () => addParticipant(a.agentId) }))
+              : [{ key: 'none', label: `No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).`, disabled: true }]) },
+            { key: 'group', node: html`<${GroupCombobox} ariaLabel="The drawing board's group" attrs=${{ 'data-drawing-board-group': '', title: "A group's members are on its drawing board without invitations" }}
+              groups=${groupChoices} value=${meta.group} noneLabel="No group" onChange=${(group) => setGroup(group)} />` },
+          ]),
+        ] },
+      ]}
+      people=${html`<${PeopleStack} people=${people} label="Agents on this drawing board"
+        onClick=${() => setMenuOpen((open) => (open === 'share' ? '' : 'share'))} />`} />
     ${peer && html`<div class=${`drawing-board-peer-banner${readOnly ? ' read-only' : ''}${status === 'offline' ? ' offline' : ''}`} role="note" data-drawing-board-peer=${readOnly ? 'read' : 'write'}>
       <span class="drawing-board-peer-mark" aria-hidden="true">⇄</span>
       <span>Remote drawing board on <b>${peerName()}</b>${meta.group ? html` · group ${meta.group}` : ''} · <b>${readOnly ? 'read-only' : 'you can edit'}</b>${readOnly

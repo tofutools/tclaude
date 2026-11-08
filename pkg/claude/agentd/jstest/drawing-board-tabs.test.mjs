@@ -363,7 +363,8 @@ test('detaching a drawing board carries it to the solo page, which renders it an
   });
   await harness.act(async () => { await page.start(); await wait(); });
   assert.ok(host.querySelector('svg.drawing-board-canvas'), 'the solo page renders the drawing board');
-  assert.ok([...host.querySelectorAll('button')].some((b) => b.textContent.includes('Open in the Collab tab')));
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="view"]'), 'click'); await wait(); });
+  assert.ok([...host.querySelectorAll('.reh-menu button')].some((b) => b.textContent.includes('Open in the Collab tab')), 'View offers the way back');
   assert.ok(requests.includes('/api/snapshot?standalone=1'), 'it reads the roster, to name the agents on the drawing board');
   page.dispose();
 });
@@ -403,7 +404,8 @@ async function soloWithEdit(t, patchAnswer) {
   await pointer('PointerDown', 100, 100);
   await pointer('PointerMove', 220, 160);
   await pointer('PointerUp', 220, 160);
-  const back = [...host.querySelectorAll('button')].find((b) => b.textContent.includes('Open in the Collab tab'));
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="view"]'), 'click'); await wait(); });
+  const back = [...host.querySelectorAll('.reh-menu button')].find((b) => b.textContent.includes('Open in the Collab tab'));
   return { harness, page, replaced, back };
 }
 

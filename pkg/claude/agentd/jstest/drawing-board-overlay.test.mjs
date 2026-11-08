@@ -76,6 +76,13 @@ async function setup(t, snapshotValue = COLLAB_ON, { companion = true, footer = 
     harness, host, overlayHost, overlayState, island, windows, dashboardState, dashPrefs, state: terminalShellState,
     click: (node) => harness.act(async () => { harness.fireEvent(node, 'click'); await wait(); await wait(); }),
     button: (root, text) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === text),
+    // fromView picks a move from a drawing board editor's View menu.
+    fromView: async (root, text) => {
+      await harness.act(async () => { harness.fireEvent(root.querySelector('.drawing-board-editor [data-editor-menu="view"]'), 'click'); await wait(); });
+      const item = [...root.querySelectorAll('.reh-menu [role="menuitem"]')].find((b) => b.textContent.trim() === text);
+      assert.ok(item, `View offers ${text}`);
+      await harness.act(async () => { harness.fireEvent(item, 'click'); await wait(); await wait(); });
+    },
   };
 }
 
@@ -188,7 +195,7 @@ scenario('an agent\'s tab dragged off the strip floats its chat at the drop poin
   } finally { stop(); }
 });
 
-scenario('a tab\'s separate window asks for a real window and may come back to an overlay', async ({ t, harness, host, overlayState, click, button }) => {
+scenario('a tab\'s separate window asks for a real window and may come back to an overlay', async ({ t, harness, host, overlayState, click, button, fromView }) => {
   const features = [];
   const urls = [];
   const previous = harness.window.open;
@@ -202,7 +209,7 @@ scenario('a tab\'s separate window asks for a real window and may come back to a
   const screen = harness.window.screen;
   harness.window.screen = { availWidth: 1920, availHeight: 1080 };
   t.after(() => { harness.window.screen = screen; });
-  await click(button(host, 'Open in separate window'));
+  await fromView(host, 'Open in separate window');
   await harness.act(() => wait(5));
   assert.equal(seedOf(urls[0]).drawingBoard, 'plan');
   assert.equal(seedOf(urls[0]).floats, true);
@@ -261,11 +268,11 @@ scenario('A move back from a separate window goes to the companion tab waiting o
   } finally { stop(); }
 });
 
-scenario('a drawing board moves from its tab into the overlay and back', async ({ harness, host, overlayHost, overlayState, state, click, button }) => {
+scenario('a drawing board moves from its tab into the overlay and back', async ({ harness, host, overlayHost, overlayState, state, click, button, fromView }) => {
   await harness.act(async () => { await overlayState.openDrawingBoardPane('plan', 'Release plan'); await wait(); await wait(); });
   const announced = [];
   harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
-  await click(button(host, 'Open in overlay'));
+  await fromView(host, 'Open in overlay');
   await harness.act(() => wait(5));
 
   assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }], 'a reload must not reopen it as a tab');
