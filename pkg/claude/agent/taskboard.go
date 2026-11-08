@@ -46,6 +46,7 @@ func taskboardCmd() *cobra.Command {
 			taskboardDetachCmd(),
 			taskboardAttachmentsCmd(),
 			taskboardMoveCmd(),
+			taskboardColumnsCmd(),
 			taskboardMoveToGroupCmd(),
 			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
 			taskboardStageCmd("demote", "idea", "Demote a queued task to the top of the ideas"),
@@ -114,6 +115,7 @@ type taskboardTask struct {
 	Title            string   `json:"title"`
 	Body             string   `json:"body,omitempty"`
 	Stage            string   `json:"stage"`
+	Column           string   `json:"column,omitempty"`
 	Status           string   `json:"status"`
 	BlockReason      string   `json:"block_reason,omitempty"`
 	BlockedOn        string   `json:"blocked_on,omitempty"`
@@ -190,8 +192,16 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 	if asJSON {
 		return writeJSONTo(stdout, t)
 	}
-	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.Stage, t.Status)
+	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.where(), t.Status)
 	return rcOK
+}
+
+// where is the task's stage, or the custom column it stands in.
+func (t taskboardTask) where() string {
+	if t.Column != "" {
+		return t.Column
+	}
+	return t.Stage
 }
 
 // ---- ls ----
@@ -283,11 +293,12 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		path += "?" + q.Encode()
 	}
 	var resp struct {
-		Group       string          `json:"group"`
-		Tasks       []taskboardTask `json:"tasks"`
-		Locked      bool            `json:"locked"`
-		Writers     []string        `json:"writers,omitempty"`
-		WriterNames []string        `json:"writer_names,omitempty"`
+		Group       string            `json:"group"`
+		Tasks       []taskboardTask   `json:"tasks"`
+		Locked      bool              `json:"locked"`
+		Writers     []string          `json:"writers,omitempty"`
+		WriterNames []string          `json:"writer_names,omitempty"`
+		Columns     []taskboardColumn `json:"columns,omitempty"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		// No group: an agent in one group lists that board; anyone else (the
@@ -323,6 +334,9 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 			writers = resp.Writers
 		}
 		fmt.Fprintf(stdout, "(locked to writers: %s)\n", strings.Join(append([]string{"owners"}, writers...), ", "))
+	}
+	if len(resp.Columns) > 0 {
+		fmt.Fprintf(stdout, "(custom columns: %s)\n", taskboardColumnsText(resp.Columns))
 	}
 	printTaskboardRows(stdout, resp.Tasks)
 	return rcOK
@@ -369,6 +383,9 @@ func taskboardRowText(t taskboardTask) string {
 	if t.Stalled {
 		state = "stalled"
 	}
+	if t.Column != "" && t.Status == "open" {
+		state = t.Column
+	}
 	line := fmt.Sprintf("%s  %-7s  %s", t.ID, state, t.Title)
 	if ref := t.refText(); ref != "" {
 		line += "  [" + ref + "]"
@@ -396,9 +413,10 @@ const taskboardOverviewRows = 5
 func runTaskboardOverview(stdout, stderr io.Writer) int {
 	var resp struct {
 		Groups []struct {
-			Group  string          `json:"group"`
-			Counts TaskboardCounts `json:"counts"`
-			Tasks  []taskboardTask `json:"tasks"`
+			Group   string                 `json:"group"`
+			Counts  TaskboardCounts        `json:"counts"`
+			Columns []TaskboardColumnCount `json:"columns,omitempty"`
+			Tasks   []taskboardTask        `json:"tasks"`
 		} `json:"groups"`
 	}
 	if err := DaemonGet("/v1/taskboard/context", &resp); err != nil {
@@ -413,7 +431,7 @@ func runTaskboardOverview(stdout, stderr io.Writer) int {
 		if i > 0 {
 			fmt.Fprintln(stdout)
 		}
-		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts))
+		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts, g.Columns...))
 		rows := g.Tasks[:min(len(g.Tasks), taskboardOverviewRows)]
 		printTaskboardRows(stdout, rows)
 		if more := g.Counts.Live - len(rows); more > 0 {
@@ -441,10 +459,19 @@ type TaskboardCounts struct {
 	Dropped      int `json:"dropped"`
 }
 
+// TaskboardColumnCount is one custom column's count in TaskboardCounts.
+type TaskboardColumnCount struct {
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
 // TaskboardSummaryGroup is one readable group in `ls --summary`.
 type TaskboardSummaryGroup struct {
 	Group  string          `json:"group"`
 	Counts TaskboardCounts `json:"counts"`
+	// Columns are the board's custom columns with their counts.
+	Columns []TaskboardColumnCount `json:"columns,omitempty"`
 }
 
 // RunTaskboardSummary prints the counts of every board the caller can read,
@@ -477,7 +504,7 @@ func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int
 		return rcOK
 	}
 	for _, g := range resp.Groups {
-		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts))
+		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts, g.Columns...))
 	}
 	return rcOK
 }
@@ -485,7 +512,7 @@ func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int
 // taskboardCountsLine reads as the dashboard's folded section, with what
 // needs you broken down: "9 · 2 needs you (1 stalled, 1 blocked) · 2 in
 // progress · 6 next · 3 ideas · 12 done this week".
-func taskboardCountsLine(c TaskboardCounts) string {
+func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) string {
 	parts := []string{fmt.Sprintf("%d", c.Live)}
 	add := func(n int, label string) {
 		if n > 0 {
@@ -510,6 +537,9 @@ func taskboardCountsLine(c TaskboardCounts) string {
 		add(c.NeedsYou, label)
 	}
 	add(c.InProgress, "in progress")
+	for _, col := range columns {
+		add(col.Count, col.Label)
+	}
 	add(c.Next, "next")
 	if c.Ideas == 1 {
 		add(c.Ideas, "idea")
@@ -560,6 +590,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	printRemoteScheduleBanner(stdout, p.Peer, "task")
 	fmt.Fprintf(stdout, "%s  %s\n", t.ID, t.Title)
 	fmt.Fprintf(stdout, "  group:   %s\n  stage:   %s\n  status:  %s\n", t.Group, t.Stage, t.Status)
+	if t.Column != "" {
+		fmt.Fprintf(stdout, "  column:  %s\n", t.Column)
+	}
 	if t.BlockReason != "" {
 		fmt.Fprintf(stdout, "  blocked: %s\n", t.BlockReason)
 	}
@@ -1098,6 +1131,7 @@ type taskboardMoveParams struct {
 	Bottom   bool   `long:"bottom" help:"To the end of its stage"`
 	Before   string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
 	After    string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
+	Stage    string `long:"stage" optional:"true" help:"Move it to this stage or column: idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column"`
 	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -1106,7 +1140,7 @@ type taskboardMoveParams struct {
 func taskboardMoveCmd() *cobra.Command {
 	return boa.CmdT[taskboardMoveParams]{
 		Use:         "move",
-		Short:       "Reorder a task",
+		Short:       "Reorder a task, or move it to a stage or custom column (--stage in-review)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardMoveParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -1125,8 +1159,15 @@ func runTaskboardMove(p *taskboardMoveParams, stdout, stderr io.Writer) int {
 			n++
 		}
 	}
-	if n != 1 {
-		fmt.Fprintln(stderr, "Error: give exactly one of --top, --bottom, --before, --after")
+	stage := strings.TrimSpace(p.Stage)
+	if stage != "" && n == 0 {
+		// Into a stage or a custom column: a change of the task, which a
+		// member makes on its own task under taskboard.own.
+		return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": stage},
+			p.AskHuman, p.JSON, "moved", stdout, stderr)
+	}
+	if n != 1 || stage != "" {
+		fmt.Fprintln(stderr, "Error: give exactly one of --top, --bottom, --before, --after, or --stage")
 		return rcInvalidArg
 	}
 	req := map[string]any{"top": p.Top, "bottom": p.Bottom, "before": p.Before, "after": p.After}

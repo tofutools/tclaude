@@ -58,12 +58,28 @@ type taskboardCounts struct {
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
+	// InColumns counts the open tasks in the board's custom columns
+	// (per column in the group's Columns), so the buckets add up to Live.
+	InColumns int `json:"in_columns,omitempty"`
+}
+
+// taskboardColumnCount is one custom column and how many open tasks stand
+// in it.
+type taskboardColumnCount struct {
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
 }
 
 type taskboardGroupContext struct {
-	GroupID int64                  `json:"group_id"`
-	Group   string                 `json:"group"`
-	Counts  taskboardCounts        `json:"counts"`
+	GroupID int64           `json:"group_id"`
+	Group   string          `json:"group"`
+	Counts  taskboardCounts `json:"counts"`
+	// Columns are the board's custom columns in its order, each with how
+	// many open tasks stand in it (tcl-plby5h); those are not in the
+	// counts' InProgress or Next. A blocked task in one counts as Blocked.
+	// Kept apart from Counts, whose values are all numbers.
+	Columns []taskboardColumnCount `json:"columns,omitempty"`
 	Tasks   []taskboardContextTask `json:"tasks"`
 	Closed  []taskboardContextTask `json:"closed"`
 	// Truncated says the live rows stop short of Counts.Live.
@@ -180,8 +196,18 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	if err != nil {
 		return entry, err
 	}
+	cols, err := db.ListGroupTaskColumns(g.ID)
+	if err != nil {
+		return entry, err
+	}
+	colAt := map[string]int{}
+	for i, c := range cols {
+		colAt[c.Slug] = i
+		entry.Columns = append(entry.Columns, taskboardColumnCount{Slug: c.Slug, Label: c.Label})
+	}
 	for _, v := range liveViews {
 		entry.Counts.Live++
+		i, inColumn := colAt[v.Column]
 		switch {
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
@@ -194,6 +220,9 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		case v.Assignee != nil && v.Assignee.Operator:
 			entry.Counts.WaitingOnYou++
 			entry.Counts.NeedsYou++
+		case inColumn && v.Column != "":
+			entry.Columns[i].Count++
+			entry.Counts.InColumns++
 		case v.Assignee != nil && !v.Held:
 			entry.Counts.InProgress++
 		case v.Stage == db.GroupTaskStageIdea:
@@ -268,6 +297,9 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
 	for _, route := range taskboardCommentRoutes {
+		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
+	}
+	for _, route := range taskboardColumnRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
 }

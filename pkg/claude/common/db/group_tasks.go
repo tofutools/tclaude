@@ -105,6 +105,9 @@ type GroupTask struct {
 	// StartedAt is when its assignee started it (tk_3826822a); zero for an
 	// assigned task it holds without starting, in its stage.
 	StartedAt time.Time
+	// Column is the slug of the group's custom column a live task of stage
+	// next stands in (In review, In CI, …), "" for none (tcl-plby5h).
+	Column string
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
@@ -141,14 +144,14 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at`
+	started_at, column_slug`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
 	var assigned, created, updated, closed, archived, started dbTimestamp
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
-		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started); err != nil {
+		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column); err != nil {
 		return nil, err
 	}
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()

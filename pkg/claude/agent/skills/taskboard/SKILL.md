@@ -35,6 +35,12 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
 - When a task is assigned to you, an inbox message from the assigner
   (`[taskboard] assigned to you by …: <group> · tk_… "title"`) carries the brief
   and the exact report commands. You don't need anything else.
+- If the board has a custom column such as *In review* or *In CI*
+  (`tclaude agent taskboard columns ls <group>`), move your task there when
+  you open its PR and are waiting on review, CI or merge:
+  `tclaude agent taskboard move tk_… --stage in-review`. A task in a custom
+  column never raises "went idle without reporting". Report done when it
+  merges.
 - `report` names the task with `--task`. You can leave it out when exactly one
   live task is assigned to you.
 - `done` closes the task. `failed` gives it back and counts a failure; after
