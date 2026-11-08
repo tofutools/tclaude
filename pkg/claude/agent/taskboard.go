@@ -666,6 +666,7 @@ type taskboardAddParams struct {
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
 	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write); with --assignee or --mine, queued for them, not started"`
 	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
+	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea or --done"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
@@ -743,8 +744,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if p.Assignee != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
-			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --mine, --blocked, --done and --attach are for one task")
+		if p.Assignee != "" || p.Stage != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --stage, --mine, --blocked, --done and --attach are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -773,7 +774,16 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		return rcInvalidArg
 	}
 	assigned := p.Mine || strings.TrimSpace(p.Assignee) != ""
+	stage := strings.TrimSpace(p.Stage)
 	switch {
+	case stage != "" && (p.Next || p.Idea):
+		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea, not both")
+		return rcInvalidArg
+	case stage != "" && p.Done:
+		fmt.Fprintln(stderr, "Error: a task logged as done sits in no column; drop --stage")
+		return rcInvalidArg
+	case stage != "":
+		req["stage"] = stage
 	case p.Next:
 		req["stage"] = "next"
 	case p.Idea:
@@ -1483,6 +1493,7 @@ type taskboardReopenParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…) of a done or dropped task"`
 	Next     bool   `long:"next" help:"Reopen it in the queue (next) instead of the stage it had"`
 	Idea     bool   `long:"idea" help:"Reopen it as an idea (an assigned task needs --unassign too)"`
+	Stage    string `long:"stage" optional:"true" help:"Reopen it in one of the board's custom columns (slug or label, as move --stage takes it); not with --next or --idea"`
 	Assignee string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
 	Unassign bool   `long:"unassign" help:"Reopen it with no assignee"`
 	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
@@ -1495,7 +1506,7 @@ func taskboardReopenCmd() *cobra.Command {
 		Use:   "reopen",
 		Short: "Reopen a done or dropped task, where it was or in another stage, and optionally with another assignee",
 		Long: "Puts a done or dropped task back on the board: by default in the stage and place it had, with the assignee it had. " +
-			"--next or --idea picks the stage, --assignee gives it to a member (or operator), --unassign takes the assignee off. " +
+			"--next or --idea picks the stage (--stage one of the board's custom columns), --assignee gives it to a member (or operator), --unassign takes the assignee off. " +
 			"Reopening your own task needs taskboard.own; anyone else's, taskboard.write. Changing the assignee is gated as assign and unassign are.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardReopenParams, _ *cobra.Command) error {
@@ -1514,6 +1525,9 @@ func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int 
 	case p.Next && p.Idea:
 		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
 		return rcInvalidArg
+	case strings.TrimSpace(p.Stage) != "" && (p.Next || p.Idea):
+		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea, not both")
+		return rcInvalidArg
 	case p.Unassign && assignee != "":
 		fmt.Fprintln(stderr, "Error: give --assignee or --unassign, not both")
 		return rcInvalidArg
@@ -1524,6 +1538,9 @@ func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int 
 	}
 	if p.Idea {
 		req["stage"] = "idea"
+	}
+	if stage := strings.TrimSpace(p.Stage); stage != "" {
+		req["stage"] = stage
 	}
 	if assignee != "" {
 		req["to"] = assignee
@@ -1898,10 +1915,11 @@ func nonEmpty(parts ...string) []string {
 // ---- archive ----
 
 type taskboardArchiveParams struct {
-	Target    string `pos:"true" help:"Task id (tk_…), or with --done the group whose board to tidy"`
+	Target    string `pos:"true" help:"Task id (tk_…), or with --done / --dropped the group whose board to tidy"`
 	Reason    string `long:"reason" optional:"true" help:"Why; a live task is dropped with it on the way"`
-	Done      bool   `long:"done" help:"Archive the group's done tasks (needs taskboard.write); dropped and live tasks stay"`
-	OlderThan string `long:"older-than" optional:"true" help:"With --done: only the tasks closed longer ago than this age, such as 1d, 7d or 36h"`
+	Done      bool   `long:"done" help:"Archive the group's done tasks (needs taskboard.write); live tasks stay"`
+	Dropped   bool   `long:"dropped" help:"Archive the group's dropped tasks (needs taskboard.write); with --done, both"`
+	OlderThan string `long:"older-than" optional:"true" help:"With --done / --dropped: only the tasks closed longer ago than this age, such as 1d, 7d or 36h"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
@@ -1910,10 +1928,11 @@ type taskboardArchiveParams struct {
 func taskboardArchiveCmd() *cobra.Command {
 	return boa.CmdT[taskboardArchiveParams]{
 		Use:   "archive",
-		Short: "Archive a task, or a group's done tasks with --done: they leave the board and the history, but are kept",
+		Short: "Archive a task, or a group's done / dropped tasks with --done / --dropped: they leave the board and the history, but are kept",
 		Long: "Archives a task. A done or dropped task leaves the history; a live one is dropped first (with --reason, " +
 			"gated as a drop is) and archived. `archive <group> --done [--older-than 7d]` archives the board's done tasks, " +
-			"or only those closed longer ago than the age, and needs taskboard.write. An archived task is on no list but " +
+			"`--dropped` its dropped ones, and both flags together both; --older-than keeps to those closed longer ago " +
+			"than the age. Archiving in bulk needs taskboard.write. An archived task is on no list but " +
 			"`ls --archived`; `unarchive` puts it back in the history, and `reopen` back on the board. It is purged with the " +
 			"other closed tasks after taskboard.retention_days.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1922,15 +1941,15 @@ func taskboardArchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardArchiveParams, _ *cobra.Command, _ []string) {
-			if p.Done {
+			if p.Done || p.Dropped {
 				if strings.TrimSpace(p.Reason) != "" {
-					fmt.Fprintln(cliStderr, "Error: --done takes no --reason")
+					fmt.Fprintln(cliStderr, "Error: --done and --dropped take no --reason")
 					taskboardExit(rcInvalidArg)
 				}
-				taskboardExit(runTaskboardArchiveDone(p, cliStdout, cliStderr))
+				taskboardExit(runTaskboardArchiveClosed(p, cliStdout, cliStderr))
 			}
 			if strings.TrimSpace(p.OlderThan) != "" {
-				fmt.Fprintln(cliStderr, "Error: --older-than is for --done")
+				fmt.Fprintln(cliStderr, "Error: --older-than is for --done or --dropped")
 				taskboardExit(rcInvalidArg)
 			}
 			req := map[string]any{}
@@ -1959,7 +1978,11 @@ func taskboardUnarchiveCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer) int {
+// runTaskboardArchiveClosed archives a board's done tasks, dropped ones or
+// both. Done alone goes through archive-done, which a linked node of any
+// version has; dropped needs archive-closed, which an older node answers
+// with a 404 rather than archiving the wrong tasks.
+func runTaskboardArchiveClosed(p *taskboardArchiveParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -1976,7 +1999,19 @@ func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer
 		Archived []string `json:"archived"`
 		Count    int      `json:"count"`
 	}
-	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Target)) + "/taskboard/archive-done"
+	statuses := []string{}
+	if p.Done {
+		statuses = append(statuses, "done")
+	}
+	if p.Dropped {
+		statuses = append(statuses, "dropped")
+	}
+	route := "/taskboard/archive-done"
+	if p.Dropped {
+		route = "/taskboard/archive-closed"
+		req["statuses"] = statuses
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Target)) + route
 	if err := remoteRequestOpts(p.Peer, http.MethodPost, path, req, &out, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -1984,6 +2019,6 @@ func runTaskboardArchiveDone(p *taskboardArchiveParams, stdout, stderr io.Writer
 	if p.JSON {
 		return writeJSONTo(stdout, out)
 	}
-	fmt.Fprintf(stdout, "archived %d done task(s) on %s\n", out.Count, out.Group)
+	fmt.Fprintf(stdout, "archived %d %s task(s) on %s\n", out.Count, strings.Join(statuses, " or "), out.Group)
 	return rcOK
 }

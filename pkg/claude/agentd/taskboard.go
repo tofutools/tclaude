@@ -75,10 +75,12 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/archive", handleTaskboardTask(taskboardOwnGate, handleTaskboardArchive))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/unarchive", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnarchive))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/archive-done", v1GroupRoute(handleTaskboardArchiveDone))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/archive-closed", v1GroupRoute(handleTaskboardArchiveClosed))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ref-lookup", v1GroupRoute(handleTaskboardRefLookup))
 	registerTaskboardAssignRoutes(mux)
 	registerTaskboardQuestionRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)
@@ -953,8 +955,16 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if err == nil {
 		pos, err = body.Position.position()
 	}
-	if err == nil && body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
-		err = errors.New("stage is idea or next")
+	// A custom column of the board stands in next (tcl-plby5h): the task
+	// starts there in the same write.
+	var column string
+	if err == nil {
+		var bad error
+		if body.Stage, column, bad, err = taskboardStageColumn(g, strings.TrimSpace(body.Stage)); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		err = bad
 	}
 	status := strings.TrimSpace(body.Status)
 	reason := strings.TrimSpace(body.BlockReason)
@@ -1073,7 +1083,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
 		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts,
-		Question: body.Question}
+		Question: body.Question, Column: column}
 	if blocks != nil {
 		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
 	}

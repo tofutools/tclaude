@@ -157,6 +157,17 @@ export function taskViewerFile(attachment) {
   };
 }
 
+// taskFileURL is a task's file as a blob URL, read once per content through
+// the viewer's cache; cachedTaskFileURL is that URL when it is already read
+// (a Markdown brief's images, groups-taskboard-files.js useMarkdownFiles).
+export function taskFileURL(api, taskId, attachment) {
+  return taskBlob(api, taskId, attachment).then((made) => made.url);
+}
+
+export function cachedTaskFileURL(api, taskId, attachment) {
+  return cacheOf(api).ready.get(taskFileKey(taskId, attachment)) || '';
+}
+
 // useTaskThumb is a stored image's thumbnail URL, read once per content
 // through the same cache the viewer reads from.
 export function useTaskThumb(api, taskId, attachment) {

@@ -23,11 +23,11 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
-import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
+import { Button, Seg } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
-import { createTaskboardApi, importRefs, taskboardApi } from './taskboard-actions.js';
+import { createTaskboardApi, taskboardApi } from './taskboard-actions.js';
 import { nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
@@ -38,8 +38,10 @@ import { FLAT_MODES, TaskboardFlat } from './groups-taskboard-lanes-flat.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
+import { TrackerTaskDialog } from './groups-taskboard-tracker.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
+import { TaskMoveDialog, offeredColumns } from './groups-taskboard-stage.js';
 import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
@@ -190,9 +192,15 @@ export function DepChips({ task, byId }) {
   });
 }
 
+// Who is the List's Who cell. A live task nobody holds has the lanes' yellow
+// "!", and one the operator holds the red "!", as a card in one row has
+// them: the List has no lane to say it.
 function Who({ task, group, snapshot }) {
   const agent = task.assignee?.agent_id;
-  if (!agent) return html`<span class="tb-unassigned">unassigned</span>`;
+  const live = task.status === 'open' || task.status === 'blocked';
+  if (!agent) {
+    return html`<span class="tb-who">${live && html`<span class="tb-who-mark tb-marker-unassigned" aria-hidden="true">!</span>`}<span class="tb-unassigned">unassigned</span></span>`;
+  }
   const operator = !!task.assignee?.operator;
   const name = operator ? operatorName(group) : task.assignee?.name || agentLabel(agent, group, snapshot);
   const by = actorLabel(task.assigned_by, group, snapshot);
@@ -204,7 +212,8 @@ function Who({ task, group, snapshot }) {
   const member = !operator && (group?.members || []).some((m) => m.agent_id === agent);
   const link = member ? { ...agentLink({ group: group.name, node: group.fleet_node?.id || '', id: agent, name }), title: undefined } : {};
   return html`<span class=${`tb-who${operator ? ' tb-who-operator' : ''}`} title=${detail ? `${name} · ${detail}` : `${name} · ${agent}`}>
-    <span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>
+    ${operator && live ? html`<span class="tb-who-mark tb-marker-operator" aria-hidden="true">!</span>`
+      : html`<span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>`}
     <span class=${`tb-who-name${member ? ' tb-xlink' : ''}`} ...${link}>${name}</span>
   </span>`;
 }
@@ -349,29 +358,15 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
       },
     }));
   }
-  if (closed) {
-    const reopen = (key, label, title, opts) => items.push(item(key, label, title, { run: run('reopen', 'Reopen', (api) => api.reopen(task.id, opts)) }));
-    reopen('reopen', 'Reopen', 'taskboard reopen: back on the list where it was, with its assignee', {});
-    if (task.stage === 'idea' || task.assignee?.agent_id) reopen('reopen-next', 'Reopen in Next', 'taskboard reopen --next', { stage: 'next' });
-    if (task.stage !== 'idea' || task.assignee?.agent_id) {
-      if (!task.assignee?.agent_id) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea', { stage: 'idea' });
-      else if (canAssign(actions)) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea --unassign: without its assignee', { stage: 'idea', to: '' });
-    }
-  }
-  // The board's custom columns (In review, In CI): move it into one, or
-  // back out to next (`taskboard move --stage`).
-  if (!closed && task.status === 'open' && columns.length) {
-    items.push(item('column', 'Move to column', 'taskboard move --stage <column>: a column of the board\'s own, where the task never stalls', {
-      children: () => [
-        ...columns.map((column) => item('to-column', `${column.label}${task.column === column.slug ? ' ✓' : ''}`, `taskboard move --stage ${column.slug}`, {
-          key: `col:${column.slug}`, disabled: task.column === column.slug,
-          run: () => actions.run(`${task.id}:column`, `Move to ${column.label}`, (api) => api.stage(task.id, column.slug)),
-        })),
-        ...(task.column ? [item('out-of-column', task.assignee?.agent_id && !task.held ? 'Back to In progress' : 'Back to Next', 'taskboard move --stage next', {
-          key: 'out-of-column', run: () => actions.run(`${task.id}:column`, 'Out of the column', (api) => api.stage(task.id, 'next')),
-        })] : []),
-      ],
-    }));
+  // Reopen…: the same picker, where it was by default (↺ on the row does
+  // that in one click), or Idea, Next or a custom column, in one write.
+  if (closed) items.push(item('reopen', 'Reopen…', 'taskboard reopen [--next|--idea|--stage <column>]: back on the board, where it was or elsewhere', { run: () => onForm('reopen') }));
+
+  // Move to…, on a board with custom columns (In review, In CI): the stage
+  // picker (groups-taskboard-stage.js) over Idea, Next and the columns,
+  // `taskboard move --stage`.
+  if (!closed && task.status === 'open' && offeredColumns(columns).length) {
+    items.push(item('move-to', 'Move to…', 'taskboard move --stage <column>: Idea, Next or a column of the board\'s own (In review, …)', { run: () => onForm('move') }));
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
@@ -682,93 +677,63 @@ function isClosed(task) {
   return task?.status === 'done' || task?.status === 'dropped';
 }
 
-// importSummary says what an import did beyond the count: the items that
-// kept their id as the title (with the server's note, e.g. a GitHub ref read
-// from the dashboard) and the refused ones.
-function importSummary(out) {
-  const results = out?.results || [];
-  const notes = results.filter((result) => result.task && result.note);
-  const refused = results.filter((result) => result.error);
-  const parts = [];
-  if (notes.length) parts.push(`${notes.length} kept the id as the title (${notes.map((result) => `${result.input}: ${result.note}`).join('; ')})`);
-  if (refused.length) parts.push(`${refused.length} refused (${refused.map((result) => `${result.input}: ${result.code || result.error}`).join('; ')})`);
-  return parts.join(' · ');
-}
-
-// ImportPanel is "+ New task › From awb/Linear/GitHub…": paste tracker ids, one task per id,
-// titled from the tracker (taskboard add --from-awb / --from-linear /
-// --from-github).
-function ImportPanel({ group, actions, initial = {}, onClose }) {
-  const [kind, setKind] = useState('awb');
-  const [ids, setIds] = useState('');
-  // An import lands in Ideas or Next: a cell's Next (or an agent's lane)
-  // starts it queued; its assignee or block is set on the board afterwards.
-  const [next, setNext] = useState(!!initial.start && initial.start !== 'idea' && initial.start !== 'done');
-  const later = initial.to || initial.start === 'blocked' || initial.start === 'done';
-  const [note, setNote] = useState('');
-  const refs = importRefs(kind, ids);
-  const submit = async () => {
-    if (!refs.length || actions.busy) return;
-    setNote(`looking up ${refs.length} title${refs.length === 1 ? '' : 's'}…`);
-    const out = await actions.run('import', 'Import', (api) => api.importRefs(group.name, refs, { next }));
-    if (!out) { setNote(''); return; }
-    const more = importSummary(out);
-    if (!more && !out.failed) { onClose(); return; }
-    // Only the refs that were not sent stay in the box, so Import again
-    // never adds the landed ones twice.
-    setIds(out.failed ? out.failed.remaining.join(', ') : '');
-    setNote(`${out.created || 0} added${more ? ` · ${more}` : ''}${out.failed
-      ? ` · stopped: ${out.failed.message}; ${out.failed.remaining.length} not sent, left in the box` : ''}`);
-  };
-  return html`<div class="tb-import" data-taskboard-import=${group.name}>
-    <span class="ui-eyebrow">Import from a tracker · one task per id, titled from the tracker</span>
-    <div class="tb-import-row">
-      <${Select} size="sm" aria-label="Tracker" value=${kind} onChange=${(event) => setKind(event.currentTarget.value)}>
-        <option value="awb">awb</option><option value="linear">Linear</option><option value="github">GitHub</option>
-      <//>
-      <${Textarea} size="sm" class="tb-import-ids" rows="2" aria-label="Tracker ids" value=${ids} autoFocus
-        placeholder=${kind === 'github' ? 'owner/repo#12, or issue / PR URLs' : kind === 'linear' ? 'LIN-12, LIN-34' : 'tcl-a1b2c3, tcl-d4e5f6'}
-        onInput=${(event) => setIds(event.currentTarget.value)} />
-    </div>
-    <div class="tb-import-row">
-      <${Check} checked=${next} onChange=${(event) => setNext(event.currentTarget.checked)}>add to the queue (next)<//>
-      ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
-      ${!note && later && html`<span class="ui-hint tb-import-later">an import lands in Ideas or Next; assign, block or close the tasks on the board afterwards</span>`}
-      <span class="tb-spacer"></span>
-      <${Button} size="sm" variant="primary" busy=${actions.busy === 'import'} disabled=${!refs.length || !!actions.busy}
-        onClick=${() => void submit()}>Import ${refs.length || ''}<//>
-      <${Button} size="sm" variant="ghost" onClick=${onClose}>Close<//>
-    </div>
-  </div>`;
-}
-
 // HistoryLine is the "n done this week · ▸ history" line: a row of the list's
 // table under its tasks (the closed ones follow it, in the same columns),
 // or a line of its own under an empty list.
-// ARCHIVE_AGES are the "Archive done" choices: every done task, or those
-// closed longer ago than an age (`taskboard archive <group> --done --older-than`).
+// ARCHIVE_AGES are the "Archive closed" ages: every such task, or those
+// closed longer ago than an age (`taskboard archive <group> --done
+// --dropped --older-than`).
 export const ARCHIVE_AGES = [
-  { age: '', label: 'All done tasks' },
-  { age: '1d', label: 'Done over a day ago' },
-  { age: '7d', label: 'Done over a week ago' },
-  { age: '30d', label: 'Done over 30 days ago' },
+  { age: '', label: 'All of them' },
+  { age: '1d', label: 'Closed over a day ago' },
+  { age: '7d', label: 'Closed over a week ago' },
+  { age: '30d', label: 'Closed over 30 days ago' },
 ];
+
+// ARCHIVE_KINDS are what "Archive closed ▾" archives: the done tasks, the
+// dropped ones, or both. Done alone goes through archiveDone, which a
+// linked node of any version has.
+const ARCHIVE_KINDS = [
+  { key: 'done', label: 'Done tasks', statuses: ['done'], flags: '--done' },
+  { key: 'dropped', label: 'Dropped tasks', statuses: ['dropped'], flags: '--dropped' },
+  { key: 'both', label: 'Done and dropped', statuses: ['done', 'dropped'], flags: '--done --dropped' },
+];
+
+// archiveMenu is the "Archive closed ▾" items: a kind the board has
+// closed tasks of, then the ages. Null when there is nothing to archive or
+// no way to.
+function archiveMenu(group, actions, closed, counts) {
+  if (!group || !actions || actions.busy || typeof actions.api?.archiveDone !== 'function') return null;
+  const has = {
+    // The closed list is capped: a count says so too when it holds none.
+    done: closed.some((task) => task.status === 'done') || (counts.done_this_week || 0) > 0,
+    dropped: typeof actions.api?.archiveClosed === 'function' && (closed.some((task) => task.status === 'dropped') || (counts.dropped || 0) > 0),
+  };
+  const kinds = ARCHIVE_KINDS.filter((kind) => kind.statuses.every((status) => has[status]));
+  if (!kinds.length) return null;
+  return kinds.map((kind) => ({
+    key: kind.key, label: kind.label, attrs: { 'data-archive-kind': kind.key },
+    children: ARCHIVE_AGES.map(({ age, label }) => ({
+      key: `${kind.key}-${age || 'all'}`, label,
+      attrs: { 'data-archive-age': age || 'all', title: `taskboard archive ${group.name} ${kind.flags}${age ? ` --older-than ${age}` : ''}` },
+      run: () => actions.run(`${group.name}:archive-closed`, 'Archive closed', (api) => (kind.key === 'done'
+        ? api.archiveDone(group.name, age)
+        : api.archiveClosed(group.name, kind.statuses, age))),
+    })),
+  }));
+}
 
 function HistoryLine({ entry, group = null, actions = null, open, onToggle, wizard, row = false }) {
   const counts = entry.counts || {};
   const closed = entry.closed || [];
   const parts = [`${counts.done_this_week || 0} done this week`];
   if (counts.dropped) parts.push(`${counts.dropped} dropped`);
-  const archivable = !!group && !!actions && !actions.busy && typeof actions.api?.archiveDone === 'function' && closed.some((task) => task.status === 'done');
-  const archive = archivable && ARCHIVE_AGES.map(({ age, label }) => ({
-    key: age || 'all', label, attrs: { 'data-archive-done': age || 'all', title: `taskboard archive ${group.name} --done${age ? ` --older-than ${age}` : ''}` },
-    run: () => actions.run(`${group.name}:archive-done`, 'Archive done', (api) => api.archiveDone(group.name, age)),
-  }));
+  const archive = archiveMenu(group, actions, closed, counts);
   const body = html`${parts.join(' · ')}
     ${closed.length > 0 && html` · <${Button} size="sm" variant="link" class="tb-history-toggle" aria-expanded=${open ? 'true' : 'false'}
       onClick=${onToggle}>${open ? '▾' : '▸'} ${wizard ? 'chronicle' : 'history'}<//>`}
-    ${archive && html` · <span class="tb-archive-done"><${RowMenu} label="done tasks" items=${archive} glyph="Archive done ▾"
-      title="Archive done tasks: they leave the history, kept (ls --archived)" buttonClass="tb-archive-done-btn" /></span>`}
+    ${archive && html` · <span class="tb-archive-done"><${RowMenu} label="closed tasks" items=${archive} glyph="Archive closed ▾"
+      title="Archive done or dropped tasks: they leave the history, kept (ls --archived)" buttonClass="tb-archive-done-btn" /></span>`}
     <span class="tb-history-note"> — ${wizard
       ? 'a quest leaves the board when it is fulfilled; it stays in the chronicle'
       : 'a task leaves the list when it is done or dropped; it stays in history'}</span>`;
@@ -780,7 +745,7 @@ function HistoryLine({ entry, group = null, actions = null, open, onToggle, wiza
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
   // The List's Filter (ListFilter) hides task states; done and dropped are
   // the history, which the history line's toggle shows or hides together.
   const shows = (task) => !hidden.includes(taskRowState(task));
@@ -799,9 +764,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [editing, setEditing] = useState('');
   const [reasoning, setReasoning] = useState(null);
   const [answering, setAnswering] = useState('');
+  const [moving, setMoving] = useState(null);
   const onForm = (id, mode) => {
     if (mode === 'edit') setEditing(id);
     else if (mode === 'answer') setAnswering(id);
+    else if (mode === 'move' || mode === 'reopen') setMoving({ id, reopen: mode === 'reopen' });
     else setReasoning(mode ? { id, kind: mode } : null);
   };
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
@@ -838,11 +805,15 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
       (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
   const answerTask = answering && tasks.find((task) => task.id === answering);
+  const moveTask = moving && actions && [...tasks, ...(entry.closed || [])].find((task) => task.id === moving.id);
+  const moveDialog = moveTask && html`<${TaskMoveDialog} key=${`${moveTask.id}-${moving.reopen}`} task=${moveTask} reopen=${moving.reopen}
+    columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
+    onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${editDialog}
     ${reasonDialog}
+    ${moveDialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
-    ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
@@ -986,9 +957,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const { source, api, readApi } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
-  const [importing, setImporting] = useState(false);
-  const [importInitial, setImportInitial] = useState({});
-  // adding is the open "+ New task" dialog: { kind: 'form' | 'ask',
+  // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);
   const prefs = useViewPrefs(shown.name);
@@ -1004,7 +973,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // choose opens what the add menu picked; a lanes cell's "+" passes its
   // start state (and the lane's agent) along.
   const choose = (what, initial = {}) => {
-    if (what === 'import') { setImportInitial(initial); setImporting(true); } else setAdding({ kind: what, initial });
+    setAdding({ kind: what, initial });
   };
   // As Agents and Resources: open, the controls are a toolbar row heading
   // the section (＋▾, then the view switch); folded, the ＋▾ rides the
@@ -1016,13 +985,15 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
         members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
-    : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />` : null;
+    : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />`
+    : adding.kind === 'import' ? html`<${TrackerTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial}
+        onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />` : null;
   return html`${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
-      closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
+      closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
-      importing=${importing} importInitial=${importInitial} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
+      view=${prefs.view} lanesBy=${prefs.by}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;
 }

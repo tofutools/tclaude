@@ -21,7 +21,8 @@ import (
 // The dashboard shell, feature islands, and retained imperative integrations
 // load source JS as native ES modules.
 // Preact, HTM, and Signals are vendored under dashboard/third_party/preact/, and
-// markdown-it (the Markdown viewer's parser) under dashboard/third_party/markdown-it/;
+// markdown-it (the Markdown viewer's parser) under dashboard/third_party/markdown-it/,
+// and CodeMirror (the Markdown editor) under dashboard/third_party/codemirror/;
 // an import map gives application modules normal package specifiers. Islands are
 // dynamically loaded so a missing optional feature module cannot prevent the
 // static entry graph from linking.

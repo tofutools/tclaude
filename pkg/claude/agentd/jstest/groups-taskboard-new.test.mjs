@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 
 const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], ...extra });
 
@@ -92,7 +93,7 @@ test('"+ New task" opens a menu of three ways to add, modelled on the Resources 
   await click(button);
   assert.equal(c.querySelector('[data-taskboard-new]').getAttribute('aria-expanded'), 'true');
   const names = [...c.querySelectorAll('.tb-new-menu .gr-new-name')].map((el) => el.textContent);
-  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From awb/Linear/GitHub…']);
+  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From a tracker…']);
   assert.equal(c.querySelector('[data-taskboard-new-ask]').disabled, false);
 });
 
@@ -134,9 +135,9 @@ test('Write it myself sends every field, the assignee included, in one add', asy
   const submit = () => dialog().querySelector('#taskboard-new-submit');
   assert.equal(submit().disabled, true, 'the title is required');
   await harness.input(dialog().querySelector('.tb-new-title'), 'Port the sweep');
-  await harness.input(dialog().querySelector('.tb-new-body'), 'see the review notes');
+  await harness.input(dialog().querySelector('.tb-new-body textarea'), 'see the review notes');
   await harness.input(dialog().querySelector('.tb-new-ref'), 'tcl-a1b2c3');
-  await harness.act(async () => { harness.fireEvent(dialog().querySelector('input[name="tb-new-stage"][value="next"]'), 'change'); });
+  await comboChoose(harness, dialog().querySelector('[data-stage-pick="taskboard-new-stage"]'), 'next');
   // After: the type-to-filter list adds a dependency, shown as a chip.
   const deps = dialog().querySelector('.tb-deps-picker input');
   await harness.act(async () => { harness.fireEvent(deps, 'focus'); });
@@ -215,7 +216,7 @@ test('a pasted list is one task per line, and a title that is only a tracker id 
   await choose('form');
   await harness.input(dialog().querySelector('.tb-new-title'), 'LIN-231');
   assert.equal(dialog().querySelector('.tb-new-ref').disabled, true, 'the title is the ref');
-  await harness.input(dialog().querySelector('.tb-new-body'), 'brief');
+  await harness.input(dialog().querySelector('.tb-new-body textarea'), 'brief');
   await click(dialog().querySelector('#taskboard-new-submit'));
   assert.deepEqual(api.calls, [
     ['capture', 'tbn-list', 'LIN-231', { next: false }],
@@ -332,9 +333,9 @@ test('on a linked node\'s group in the fused view, the board is found and every 
 test('the form starts a task in any column: In progress needs an assignee, Blocked a reason, Done logs work', async (t) => {
   const { harness, api, choose, dialog, click } = await mountBoard(t, 'tbn-start');
   await choose('form');
-  const states = () => [...dialog().querySelectorAll('input[name="tb-new-stage"]')].map((el) => el.getAttribute('value'));
-  assert.deepEqual(states(), ['idea', 'next', 'progress', 'blocked', 'done']);
-  const pick = (key) => harness.act(async () => { harness.fireEvent(dialog().querySelector(`input[name="tb-new-stage"][value="${key}"]`), 'change'); });
+  const box = () => dialog().querySelector('[data-stage-pick="taskboard-new-stage"]');
+  assert.deepEqual(await comboKeys(harness, box()), ['idea', 'next', 'progress', 'blocked', 'done']);
+  const pick = (key) => comboChoose(harness, box(), key);
   const submit = () => dialog().querySelector('#taskboard-new-submit');
   await harness.input(dialog().querySelector('.tb-new-title'), 'started');
 
@@ -362,10 +363,11 @@ test('the form starts a task in any column: In progress needs an assignee, Block
 test('without the assign grant the form offers no In progress', async (t) => {
   const api = fakeApi();
   api.can = { assign: false };
-  const { dialog, choose } = await mountBoard(t, 'tbn-start-noassign', { api });
+  const { harness, dialog, choose } = await mountBoard(t, 'tbn-start-noassign', { api });
   await choose('form');
-  const states = [...dialog().querySelectorAll('input[name="tb-new-stage"]')].map((el) => el.getAttribute('value'));
-  assert.deepEqual(states, ['idea', 'next', 'blocked', 'done']);
+  const box = dialog().querySelector('[data-stage-pick="taskboard-new-stage"]');
+  assert.deepEqual(await comboKeys(harness, box), ['idea', 'next', 'progress', 'blocked', 'done']);
+  assert.equal(box.querySelector('[role="option"][data-key="progress"]').getAttribute('aria-disabled'), 'true', 'In progress is offered off, with why');
 });
 
 test('a tracker id with a start state is one add with the id as its ref, so nobody is mailed for done work', async (t) => {

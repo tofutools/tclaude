@@ -171,6 +171,13 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       }
       return importBatches(group, 'lines', lines, stage);
     },
+    // lookupRef says what a pasted ticket would be on the board, adding
+    // nothing: { kind, url, label, title, resolved, note }, its title from
+    // the tracker as an import takes it (the id, and a note, when the lookup
+    // did not resolve). The "from a tracker" form fills its title with it.
+    lookupRef(group, ref) {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/ref-lookup`, { ref });
+    },
     // importRefs adds one task per tracker ref (`add --from-awb` and kin).
     importRefs(group, refs, { next = false } = {}) {
       return importBatches(group, 'refs', refs, next ? 'next' : undefined);
@@ -183,10 +190,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // (in progress, or who did it).
     // hold assigns `to` without starting the task: it waits in its stage in
     // their lane (tk_3826822a).
-    create(group, { title, body = '', ref = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
+    create(group, { title, body = '', ref = '', refLabel = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
       const payload = { title };
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
+      if (ref && refLabel) payload.ref_label = refLabel;
       if (ref && resolveRef) payload.resolve_ref = true;
       if (stage === 'next') payload.stage = 'next';
       if (after.length) payload.after = after;
@@ -244,7 +252,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     },
     // resolveRef links a bare awb or Linear id through its tracker, as
     // create's does (`edit --resolve-ref`).
-    edit(id, { title, body, ref, clearRef = false, resolveRef = false, addDeps, rmDeps }) {
+    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps }) {
       const payload = {};
       if (title !== undefined) payload.title = title;
       if (body !== undefined) payload.body = body;
@@ -252,6 +260,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (rmDeps !== undefined) payload.rm_deps = rmDeps;
       if (clearRef) payload.clear_ref = true;
       else if (ref !== undefined) payload.ref = ref;
+      if (!clearRef && refLabel !== undefined) payload.ref_label = refLabel;
       if (resolveRef && !clearRef) payload.resolve_ref = true;
       return call('PATCH', taskPath(id), payload);
     },
@@ -324,6 +333,13 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // ago than olderThan ('7d'): `taskboard archive <group> --done`.
     archiveDone(group, olderThan = '') {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
+    },
+    // archiveClosed archives a board's tasks in statuses (['done'],
+    // ['dropped'] or both), or only those closed longer ago than olderThan:
+    // `taskboard archive <group> --done --dropped`.
+    archiveClosed(group, statuses, olderThan = '') {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-closed`,
+        olderThan ? { statuses, older_than: olderThan } : { statuses });
     },
     // answer answers question n of a task (`taskboard answer`; n 0: its
     // only open question, as a question task's own route): picked option

@@ -26,7 +26,7 @@ import { usePanelPlacement } from './pr-checks-hover.js';
 import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
-import { useThumb } from './groups-taskboard-files.js';
+import { useThumb, useMarkdownFiles } from './groups-taskboard-files.js';
 
 const html = htm.bind(h);
 
@@ -119,6 +119,8 @@ function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, 
     : 'visibility:hidden';
   const files = task.attachments || [];
   const images = files.filter((f) => f.image).slice(0, 4);
+  // The brief names its images among the task's files.
+  const briefFiles = useMarkdownFiles(api, task, [], read?.body || '');
   const deps = task.depends_on || [];
   const n = task.comment_count || 0;
   const who = (actor) => (nameOf ? nameOf(actor) : actor);
@@ -142,7 +144,7 @@ function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, 
     <div class="tb-task-panel-brief">
       ${read === null ? html`<span class="ui-hint">reading…</span>`
         : read.body === null ? html`<span class="ui-hint">the brief could not be read</span>`
-          : read.body ? html`<div class="tb-task-brief-clamp"><${MarkdownDocument} source=${read.body} className="markdown-document tb-comment-md" /></div>`
+          : read.body ? html`<div class="tb-task-brief-clamp"><${MarkdownDocument} source=${read.body} attachments=${briefFiles} className="markdown-document tb-comment-md" /></div>`
             : html`<span class="ui-hint">no brief</span>`}
     </div>
     ${(files.length > 0 || n > 0) && html`<div class="tb-task-panel-extra">

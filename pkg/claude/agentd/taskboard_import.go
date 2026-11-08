@@ -464,3 +464,49 @@ func taskboardProxyRead(r *http.Request, path string, body any) (int, []byte, st
 type httpNoopCloser struct{ *bytes.Reader }
 
 func (httpNoopCloser) Close() error { return nil }
+
+// taskboardRefLookupBudget bounds one interactive ref lookup: the New task
+// from a tracker form waits for it to fill in the title.
+const taskboardRefLookupBudget = 10 * time.Second
+
+// POST /v1/groups/{name}/taskboard/ref-lookup {ref} — what a ref
+// would be on this board, without adding anything: its kind, link and label
+// as `add --ref` stores them, and its title from the tracker, as an import
+// would take it. Title is the fallback (the id, owner/repo#n or the URL) when
+// the lookup did not resolve, and note says why. The dashboard's "from a
+// tracker" form uses it to fill in an editable title. The lookup goes through
+// the caller's tracker proxies, as an import does, so it needs the board's
+// read access and whatever proxy.*.read the tracker takes.
+func handleTaskboardRefLookup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if !taskboardEnabled(w) {
+		return
+	}
+	var body struct {
+		Ref string `json:"ref"`
+	}
+	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	if !requireTaskboard(w, r, g, false) {
+		return
+	}
+	if strings.TrimSpace(body.Ref) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "give a ref: a ticket URL or a tracker id")
+		return
+	}
+	kind, refURL, label, err := parseTaskRef(body.Ref, "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), taskboardRefLookupBudget)
+	defer cancel()
+	title, resolvedURL, note := lookupTaskboardRef(r.WithContext(ctx), kind, refURL, label)
+	if refURL == "" {
+		refURL = resolvedURL
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"kind": kind, "url": refURL, "label": label, "title": title,
+		"resolved": note == "", "note": note,
+	})
+}

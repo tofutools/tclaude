@@ -66,6 +66,8 @@ tclaude agent taskboard columns rm crew in-ci
 
 tclaude agent taskboard move tk_… --stage in-review         # into the column
 tclaude agent taskboard move tk_… --stage next              # back out
+tclaude agent taskboard add crew "Ship it" --stage in-review    # start there
+tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
 ```
 
 - **Who.** Adding, renaming, reordering and removing columns needs
@@ -85,7 +87,11 @@ tclaude agent taskboard move tk_… --stage next              # back out
   is in progress once more, and a held one is queued. Blocking a task keeps
   its column, and unblocking it puts it back there. Closing it (done or
   dropped), demoting it to the ideas, or moving it to a group that has no
-  column with the same slug takes it out. A reopened task comes back in next.
+  column with the same slug takes it out. A reopened task comes back in next,
+  unless `reopen --stage <column>` puts it straight into a column. `add
+  --stage <column>` starts a new task in one. Either is one write; the add
+  records one *created* entry, the reopen its reopen and the move into the
+  column.
 - **It never stalls.** A task in a custom column waits on something outside
   its agent's turn, such as a review or CI, so the [idle
   check](#idle-without-report) skips it.
@@ -113,7 +119,7 @@ tclaude agent taskboard comment rm <task> <#id>
 tclaude agent taskboard comment ls <task> [--save <dir>]
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
-                                    [--next] [--after tk_a,tk_b] [--top|--before tk_x]
+                                    [--next|--stage <custom column>] [--after tk_a,tk_b] [--top|--before tk_x]
                                     [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
 tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
 tclaude agent taskboard ask-operator <task|group> "question?" [--option "A: why"]… [--block|--blocks tk_mine] [--wait 10m]
@@ -135,7 +141,7 @@ tclaude agent taskboard block <task> --on tk_…        # wait on an operator ta
 tclaude agent taskboard unblock <task>
 tclaude agent taskboard drop <task> [--reason "parked in awb"]
 tclaude agent taskboard done <task>
-tclaude agent taskboard reopen <task> [--next|--idea] [--assignee <agent>|operator|--unassign]
+tclaude agent taskboard reopen <task> [--next|--idea|--stage <custom column>] [--assignee <agent>|operator|--unassign]
 
 tclaude agent taskboard assign <task> --to <agent>|operator
 tclaude agent taskboard unassign <task>
@@ -902,7 +908,9 @@ closed tasks after `taskboard.retention_days`.
   wait on it are told, as for a drop.
 - `archive <group> --done [--older-than 7d]` archives every done task on the
   board, or only those closed longer ago than the age (`1d`, `7d`, `36h`).
-  Dropped tasks stay. It needs `taskboard.write`.
+  `--dropped` does the same for the dropped tasks, and `--done --dropped`
+  for both; `--older-than` applies to either. Live tasks stay. It needs
+  `taskboard.write`.
 - `ls <group> --archived` lists the archive, most recently closed first.
 - `unarchive <task>` puts a task back in the history, done or dropped as it
   was. One closed longer ago than `taskboard.archive_after_days` is archived
@@ -913,8 +921,8 @@ In the dashboard, a done or dropped task's ⋯ menu has *Archive*: in the
 List's history and on a lanes card in *Done*. Right-clicking a List row or a
 lanes card opens that menu. A live task is dropped first (⋯ *Drop…*, which
 asks the reason), then archived. The
-history line's *Archive done ▾* archives every done task, or those done over
-a day, a week or 30 days ago. Bringing a task back is CLI-only.
+history line's *Archive closed ▾* archives the done tasks, the dropped ones,
+or both: every one, or those closed over a day, a week or 30 days ago. Bringing a task back is CLI-only.
 
 A group holds at most 500 live tasks, and a task can have at most 50
 dependencies. Deleting a group deletes its board.
@@ -942,7 +950,8 @@ the **Quest board**), below its Agents and Resources sections.
   *Name* (the task's title), *State*,
   *Last* (its last change) and *Age*, in line with the Agents table's
   columns of the same names. After those come *Who* holds it (the tooltip
-  says who assigned it, and when), *Ref* (a chip that links to the tracker),
+  says who assigned it, and when; a live task nobody holds has a yellow **!**,
+  and one you hold a red **!**, as cards in *one row* do), *Ref* (a chip that links to the tracker),
   *Deps* (`after` and the task's title, amber until that task is done; the
   tooltip has its whole title and id) and *Files* (📎 and the count; a
   click opens the task's first viewable file in the attachment viewer). A blocked
@@ -970,7 +979,8 @@ a CLI verb:
 | *+ New task › Write it myself* | `add <group> "title" --body … --ref … --resolve-ref [--next] --after … [--assignee …] [--blocked "…"\|--done]` |
 | A pasted list in *Write it myself* | `add <group> --lines-file -` |
 | *+ New task › Ask an agent* | `ask <group> --to <agent> "…"` |
-| *+ New task › From awb/Linear/GitHub…* | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
+| *+ New task › From a tracker…*, one ticket | `add <group> "title" --ref <url> --ref-label … --body … --resolve-ref [--next]` |
+| *+ New task › From a tracker…*, several ids | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
@@ -982,7 +992,8 @@ a CLI verb:
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen* or ⋯ *Reopen*, on a task under *history* | `reopen <task>` |
-| ⋯ *Reopen in Next* / *Reopen as an idea* | `reopen <task> --next` / `reopen <task> --idea [--unassign]` |
+| ⋯ *Reopen…* (the stage picker: where it was, *Idea*, *Next* or a custom column) | `reopen <task>` / `--idea [--unassign]` / `--next` / `--stage <column>` |
+| ⋯ *Move to…*, on a board with custom columns (the stage picker: *Idea*, *Next* or a column) | `move <task> --stage idea\|next\|<column>` |
 | Drag a task under *history* among the live tasks, onto the Ideas line, or onto an agent's row | `reopen` beside that task, in its stage, in one write (`POST …/reopen {"before"\|"after"}`), or `reopen <task> --assignee <agent>` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | ⋯ *Assign › You (operator)*, or drag a card onto the *You* lane | `assign <task> --to operator` |
@@ -994,11 +1005,12 @@ a CLI verb:
   - *Write it myself* opens a form: a title (required, one line, as for
     `add`), a brief, a ref, where it starts, dependencies picked from the
     board's live tasks, and, if you may assign, an assignee from the group's
-    members. It can start in any column (see
-    [Where a new task starts](#where-a-new-task-starts)): *Idea* (the
-    default), *Next*, *In progress* (only if you may assign; it needs the
-    assignee), *Blocked* (it asks for the reason) or *Done* (the assignee,
-    optional, is who did it). A bare awb or Linear ref gets its
+    members. *Starts in* picks any column (see
+    [Where a new task starts](#where-a-new-task-starts)) in a type-to-filter
+    list: *Idea* (the default), *Next*, *In progress* (only if you may
+    assign; it needs the assignee), *Blocked* (it asks for the reason),
+    *Done* (the assignee, optional, is who did it), then the board's [custom
+    columns](#custom-columns), as `add --stage <column>`. A bare awb or Linear ref gets its
     link, as with `--resolve-ref`. If you paste a list into the title, the
     form adds one task per line instead. A title that is only an awb, Linear
     or GitHub id becomes that ref, titled from the tracker. Files go with the
@@ -1008,7 +1020,13 @@ a CLI verb:
     does. It picks the group's owner when one is online. You can pick any
     other online member who holds `taskboard.write` there and passes the
     writer lock. With no such member online, the item is off, and says why. Files go with the request.
-  - *From awb/Linear/GitHub…* opens the import: one task per tracker id.
+  - *From a tracker…* opens a form for a ticket. Paste its full URL (awb,
+    Linear, GitHub…) first; the title is looked up through the tracker and
+    stays yours to change. A label for the link (the text the Task column
+    would show) and a brief (Markdown, in the same editor as the other forms) are
+    optional, and *Starts in* picks Idea or Next in the stage picker.
+    *Several ids* switches the form to the bulk import: one task per tracker
+    id.
 - **✎ *Edit*** on a row, or a click on a task's title (in the list or on a
   lanes card; Enter on a focused title does the same), opens the edit form.
   Renaming happens there. A press on the title never starts a drag. The
@@ -1016,7 +1034,8 @@ a CLI verb:
   brief, the ref (its URL, with the ref as a link beside it while unchanged;
   a new bare awb or Linear id is linked on *Save*, as `edit --resolve-ref`
   does), *Where it is* (*Idea*, *Next*,
-  *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
+  *In progress*, *Blocked* with its reason, *Done*, *Dropped*, or one of the
+  board's custom columns, picked in the same type-to-filter list), the
   assignee (if you may assign), the dependencies (✕ takes one off, and
   *＋ dependency* adds one of the board's other live tasks) and the files.
   Picking an assignee for an unassigned idea or queued task makes it *In
@@ -1026,6 +1045,21 @@ a CLI verb:
   (say, a close that needs `taskboard.assign`), the rest still land, and the
   form stays open and names what was not saved. A done or dropped task
   reopens when you pick another place for it.
+- **The brief and comments are written in a Markdown editor**, in *Write
+  it myself*, the edit form and a comment (new or edited). Its toolbar has a
+  heading level, bold, italic, inline code, strikethrough, bullet, numbered
+  and task lists, quote, code block, table, rule, link, 📎 and a syntax
+  reference (?); a comment's toolbar has the everyday ones. *Write*,
+  *Preview* and (for a brief) *Split* switch between the text, the rendered
+  brief as the card shows it, and both side by side; the choice is
+  remembered. Ctrl+B, Ctrl+I, Ctrl+E and Ctrl+K format (Cmd on macOS), Enter
+  continues a list, Tab and Shift+Tab nest a list item, and Ctrl+Enter adds
+  or saves the task, or sends the comment. A screenshot or file pasted or
+  dropped on the text is added to the task's (or comment's) files and linked
+  where it landed: `![name](name.png)` shows an image inline, wherever the
+  brief or comment is rendered. A task list (`- [ ]`, `- [x]`) renders as
+  checkboxes. The editor (CodeMirror) loads the first time one opens; until
+  then, or if it cannot load, it is a plain text box with the same toolbar.
 - **Hovering a title** shows the task's card: its title, its id, where it
   is (and why it is blocked), who holds it, who made it and when, its last
   change, its ref and dependencies, its files, and 💬 with the latest comment.
@@ -1113,8 +1147,10 @@ A custom column's head has a ⋯ with *Rename…*, *Move left*, *Move right* and
 *Remove*, and the last head has *＋ column*, while the board has room for
 another. They are `taskboard columns rename`, `move`, `add` and `rm`, and need
 `taskboard.manage`. In the *List*, the *State* says the column, and a row's ⋯
-*Move to column ›* moves the task into one, or back out
-(`taskboard move --stage`).
+*Move to…* opens the stage picker, where you can move the task into a column,
+or back out to *Next* or *Idea* (`taskboard move --stage`). Every place a
+stage or column is picked by hand (*Starts in*, *Where it is*, *Move to…* and
+*Reopen…*) uses the same picker.
 
 A cell shows its first three cards. When it holds more, *+ n more* opens it in
 place, so one busy cell does not stretch its whole row. An open cell grows up
@@ -1203,7 +1239,7 @@ the cell:
 - *Ask an agent* opens with a first line that says where the tasks should
   land, such as "Land the tasks in Next for builder", for you to add your
   request to.
-- *From awb/Linear/GitHub…* imports into the queue from a Next cell or an
+- *From a tracker…* imports into the queue from a Next cell or an
   agent's lane. An import lands in Ideas or Next only, so you assign, block or
   close the tasks on the board afterwards. Order within the queue is set in the
 *List* view.
@@ -1218,10 +1254,12 @@ want to see what nobody holds and what waits on you:
   together.
 - **one row** puts every task in a single row.
 
-In these modes each card says who holds it in its top-right corner: a yellow
+In *one row* each card says who holds it in its top-right corner: a yellow
 **!** when nobody does, a red **!** when you (the operator) do, otherwise the
 agent's avatar. The two **!** cards also get an edge in their colour. A done
-card carries no **!**. A cell shows its first five cards, then *+ n more*.
+card carries no **!**. In *triage* the *You* and *Unassigned* lanes already
+say who holds their cards, so those carry no marker and no coloured edge;
+only the *Agents* lane's cards show their agent's avatar. A cell shows its first five cards, then *+ n more*.
 
 Drags work as in the lanes. In *triage*, a card dropped onto *You* is
 assigned to you, and one dropped onto *Unassigned* is unassigned. *Agents*
@@ -1250,7 +1288,7 @@ those drags aren't accepted in the lanes.
 | `comment add` | `POST /v1/taskboard/tasks/{id}/comments {"body","key"?}` (multipart: a `comment` JSON part and `file` parts) → 201 `{id, group, comment}`, 200 on a repeated key |
 | `comment edit` / `rm` | `PATCH` `{"body"}` / `DELETE /v1/taskboard/tasks/{id}/comments/{cid}` → `{id, group, comment}`; 403 `not_author` for anyone else |
 | `comment ls` | `GET /v1/taskboard/tasks/{id}/comments` → `{id, group, comments}`; a comment's file is read through `…/attachments/{aid}` |
-| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`) |
+| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`; `--stage <column>` sends `"stage":"<column slug or label>"`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`) |
@@ -1267,8 +1305,9 @@ those drags aren't accepted in the lanes.
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |
 | `archive <group> --done` | `POST /v1/groups/{name}/taskboard/archive-done {"older_than"?: "7d"}` (answers `{"group","archived":[ids],"count"}`) |
+| `archive <group> --dropped [--done]` | `POST /v1/groups/{name}/taskboard/archive-closed {"statuses": ["done"?, "dropped"?], "older_than"?: "7d"}` (answers `{"group","statuses","archived":[ids],"count"}`; a node without it answers 404) |
 | `ls --archived` | `GET /v1/groups/{name}/taskboard?archived=1` |
-| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
+| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea"\|"<column slug or label>", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `assign --idea` / `--next` / `--hold` | `POST /v1/taskboard/tasks/{id}/assign {"to":…,"start":false,"stage"?:"idea"\|"next"}` |
@@ -1278,6 +1317,7 @@ those drags aren't accepted in the lanes.
 | `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
 | `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
 | `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
+| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","resolved","note"}`), titled through the tracker proxy as an import is; adds nothing, needs board read |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

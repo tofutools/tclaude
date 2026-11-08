@@ -25,7 +25,7 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
-    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone') };
+    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone'), archiveClosed: record('archiveClosed') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -153,8 +153,8 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   const closed = rowOf('tk_00000005');
   assert.ok(closed.matches('.tb-closed') && closed.closest('table') === rowOf('tk_00000001').closest('table'), 'history rows share the list\'s table');
   assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit']);
-  assert.deepEqual((await menu('tk_00000005')).filter((label) => label.startsWith('Reopen')), ['Reopen', 'Reopen as an idea'],
-    'the ⋯ menu reopens it where it was, or elsewhere');
+  assert.deepEqual((await menu('tk_00000005')).filter((label) => label.startsWith('Reopen')), ['Reopen…'],
+    'the ⋯ menu reopens it where it was, or elsewhere, through the stage picker');
   await click(button('tk_00000005', 'Reopen'));
   assert.deepEqual(api.calls, [['reopen', 'tk_00000005']]);
 });
@@ -201,15 +201,18 @@ test('dragging a row reorders it; dropping a queued task on the Ideas band demot
   assert.deepEqual(api.calls, []);
 });
 
-test('"+ New task › From awb/Linear/GitHub…" imports tracker ids with the tracker prefix', async (t) => {
+test('"+ New task › From a tracker… › Several ids" imports tracker ids with the tracker prefix', async (t) => {
   const { harness, c, api, click } = await mountBoard(t, 'tba-import');
   await click(c.querySelector('[data-taskboard-new]'));
   await click(c.querySelector('[data-taskboard-new-import]'));
-  const panel = c.querySelector('[data-taskboard-import]');
-  await harness.input(panel.querySelector('.tb-import-ids'), 'tcl-a1b2c3, tcl-d4e5f6');
-  await click([...c.querySelector('[data-taskboard-import]').querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('Import')));
+  const dialog = () => harness.document.querySelector('#taskboard-tracker-modal');
+  assert.ok(dialog(), 'the tracker form opens as a dialog');
+  await click(dialog().querySelector('[data-tracker-mode="many"]'));
+  await harness.input(dialog().querySelector('.tb-import-ids'), 'tcl-a1b2c3, tcl-d4e5f6');
+  await click(dialog().querySelector('#taskboard-tracker-submit'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['importRefs', 'tba-import', ['awb:tcl-a1b2c3', 'awb:tcl-d4e5f6'], { next: false }]]);
-  assert.equal(c.querySelector('[data-taskboard-import]'), null, 'a clean import closes the panel');
+  assert.equal(dialog(), null, 'a clean import closes the dialog');
 });
 
 test('the client sends the CLI routes with an idempotency key', async (t) => {
@@ -411,10 +414,79 @@ test('a task archives from its ⋯ or a right-click, and the history line archiv
   await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive'));
   assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
 
-  // Archive done ▾: every done task, or those done longer ago than an age.
+  // Archive closed ▾ › Done tasks: every done task, or those closed longer
+  // ago than an age. A board with no dropped task offers only done.
   api.calls.length = 0;
   await click(c.querySelector('.tb-archive-done-btn'));
-  assert.deepEqual([...c.querySelectorAll('[data-archive-done]')].map((b) => b.dataset.archiveDone), ['all', '1d', '7d', '30d']);
-  await click(c.querySelector('[data-archive-done="7d"]'));
-  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']]);
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
+  await click(c.querySelector('[data-archive-kind="done"]'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-age]')].map((b) => b.dataset.archiveAge), ['all', '1d', '7d', '30d']);
+  assert.equal(c.querySelector('[data-archive-age="7d"]').getAttribute('title'), 'taskboard archive tba-archive --done --older-than 7d');
+  await click(c.querySelector('[data-archive-age="7d"]'));
+  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']], 'done alone keeps the route every node has');
+});
+
+test('Archive closed covers the dropped tasks too: dropped, or done and dropped, with the age', async (t) => {
+  const context = { groups: [{ ...board('tba-dropped'), counts: { ...board('tba-dropped').counts, dropped: 1 },
+    closed: [...board('tba-dropped').closed, row('tk_00000006', 'parked', { status: 'dropped', closed_at: ago(90) })] }] };
+  const { c, api, click } = await mountBoard(t, 'tba-dropped', { context });
+  const open = async (kind) => {
+    await click(c.querySelector('.tb-archive-done-btn'));
+    await click(c.querySelector(`[data-archive-kind="${kind}"]`));
+  };
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.equal(c.querySelector('.tb-archive-done-btn').textContent.trim(), 'Archive closed ▾');
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done', 'dropped', 'both']);
+  await click(c.querySelector('.tb-archive-done-btn'));
+
+  await open('dropped');
+  assert.equal(c.querySelector('[data-archive-age="all"]').getAttribute('title'), 'taskboard archive tba-dropped --dropped');
+  await click(c.querySelector('[data-archive-age="all"]'));
+  await open('both');
+  assert.equal(c.querySelector('[data-archive-age="30d"]').getAttribute('title'), 'taskboard archive tba-dropped --done --dropped --older-than 30d');
+  await click(c.querySelector('[data-archive-age="30d"]'));
+  assert.deepEqual(api.calls, [['archiveClosed', 'tba-dropped', ['dropped'], ''], ['archiveClosed', 'tba-dropped', ['done', 'dropped'], '30d']]);
+});
+
+test('a board whose api predates archiveClosed offers done only', async (t) => {
+  const context = { groups: [{ ...board('tba-old'), closed: [...board('tba-old').closed, row('tk_00000006', 'parked', { status: 'dropped' })] }] };
+  const api = fakeApi();
+  delete api.archiveClosed;
+  const { c, click } = await mountBoard(t, 'tba-old', { context, api });
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
+});
+
+test('a tracker ticket is added by its link, and a label never stands in for a bare id', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { trackerTaskPlan, sameRef } = await harness.importDashboardModule('js/groups-taskboard-tracker.js');
+  const linked = trackerTaskPlan({ ref: 'LIN-7', link: 'https://linear.app/acme/issue/LIN-7', title: 'Checkout', label: 'Cart', start: 'next' });
+  assert.equal(linked.task.ref, 'https://linear.app/acme/issue/LIN-7');
+  assert.equal(linked.task.refLabel, 'Cart');
+  assert.equal(linked.task.stage, 'next');
+  const bare = trackerTaskPlan({ ref: 'LIN-7', title: 'Checkout', label: 'Cart' });
+  assert.equal(bare.task.ref, 'LIN-7');
+  assert.equal(bare.task.refLabel, '', 'with no link the id is the ref\'s name');
+  const live = [{ id: 'tk_1', title: 'x', status: 'open', ref: { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7' } }];
+  assert.equal(sameRef(live, { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7/' })?.id, 'tk_1');
+});
+
+test('the tracker form\'s brief is the Markdown editor, and its text goes with the add', async (t) => {
+  const api = fakeApi();
+  api.create = async (...args) => { api.calls.push(['create', ...args]); return { id: 'tk_new' }; };
+  const { harness, c, click } = await mountBoard(t, 'tba-tracker-brief', { api });
+  await click(c.querySelector('[data-taskboard-new]'));
+  await click(c.querySelector('[data-taskboard-new-import]'));
+  const dialog = () => harness.document.querySelector('#taskboard-tracker-modal');
+  const brief = dialog().querySelector('.tb-tracker-body');
+  assert.ok(brief.matches('.md-ed'), 'the Brief is the Markdown editor');
+  await harness.input(dialog().querySelector('.tb-tracker-ref'), 'https://example.com/issues/7');
+  await harness.input(dialog().querySelector('.tb-tracker-title'), 'Fix the checkout');
+  await harness.input(brief.querySelector('textarea'), '## Why\n\n- **carts** vanish');
+  await click(dialog().querySelector('#taskboard-tracker-submit'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const create = api.calls.find((call) => call[0] === 'create');
+  assert.ok(create, 'one add');
+  assert.equal(create[2].body, '## Why\n\n- **carts** vanish');
+  assert.equal(create[2].stage, 'idea');
 });

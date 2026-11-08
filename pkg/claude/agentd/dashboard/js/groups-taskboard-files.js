@@ -11,7 +11,7 @@
 // before: a PDF in a new tab, anything else as a download.
 
 import { Fragment, h } from 'preact';
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { AttachmentList } from './attachment-intake.js';
@@ -19,7 +19,7 @@ import { formatAttachmentSize } from './attachment-files.js';
 import { TASK_FILE_MAX, TASK_FILE_MAX_BYTES } from './taskboard-actions.js';
 import { shortcutText } from './keybindings.js';
 import { downloadBlob } from './download.js';
-import { readTaskFile, taskFileSource, taskViewerFile, useTaskThumb } from './attachment-source.js';
+import { cachedTaskFileURL, readTaskFile, taskFileSource, taskFileURL, taskViewerFile, useTaskThumb } from './attachment-source.js';
 import { AttachmentViewer, firstViewable, viewerKind } from './attachment-viewer.js';
 
 const html = htm.bind(h);
@@ -170,4 +170,55 @@ export function FilesCount({ api, task }) {
   return html`<${Fragment}><button data-ui-exempt type="button" class="tb-files tb-files-count"
       title=${`${title}: view ${viewer.first.filename}`} aria-label=${`${title}; view ${viewer.first.filename}`}
       onClick=${(event) => { event.stopPropagation(); viewer.open(viewer.first); }}>📎 ${files.length}</button>${viewer.viewer}</${Fragment}>`;
+}
+
+// taskPastedName names a pasted file (a screenshot has no name) by the time
+// it was pasted, so a second paste into the same task's brief, in a later
+// edit, does not reuse the first one's name: the brief links files by name.
+export function taskPastedName(file, n, now = new Date()) {
+  const extension = (file?.type && file.type.split('/')[1]) || 'png';
+  const pad = (v) => String(v).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `pasted-${stamp}-${n}.${extension}`;
+}
+
+// useMarkdownFiles is a task's files as a Markdown brief or comment refers
+// to them (MarkdownDocument's attachments: { filename, url, previewable }):
+// the stored images, read once each through the board's api (the thumbnails'
+// cache), and the files picked but not saved yet. Only images are listed: a
+// reference to anything else stays a link or its text. With `source`, only
+// the images that text names are read, so a hover or a comment does not
+// fetch every picture on the task.
+export function namesFile(source, name) {
+  if (source == null) return true;
+  const text = String(source);
+  if (!name || !text) return false;
+  if (text.includes(name)) return true;
+  try { return decodeURIComponent(text).includes(name); } catch { return text.includes(encodeURI(name)); }
+}
+
+export function useMarkdownFiles(api, task, pending = [], source = undefined) {
+  const stored = (task?.attachments || []).filter((attachment) => attachment.image && attachment.sha256 && namesFile(source, attachment.name));
+  const cached = (a) => (api?.fileData && task?.id ? cachedTaskFileURL(api, task.id, a) : '');
+  const [urls, setUrls] = useState(() => new Map(stored.map((a) => [a.sha256, cached(a)])));
+  const key = stored.map((a) => a.sha256).join(',');
+  useEffect(() => {
+    if (!api?.fileData || !task?.id) return undefined;
+    let live = true;
+    for (const attachment of stored) {
+      const ready = cached(attachment);
+      if (ready) {
+        setUrls((before) => (before.get(attachment.sha256) ? before : new Map(before).set(attachment.sha256, ready)));
+        continue;
+      }
+      taskFileURL(api, task.id, attachment).then((made) => {
+        if (live) setUrls((before) => new Map(before).set(attachment.sha256, made));
+      }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, [task?.id, key]);
+  return [
+    ...stored.filter((a) => urls.get(a.sha256)).map((a) => ({ filename: a.name, url: urls.get(a.sha256), previewable: true })),
+    ...pending.filter((p) => p.url).map((p) => ({ filename: p.name, url: p.url, previewable: true })),
+  ];
 }
