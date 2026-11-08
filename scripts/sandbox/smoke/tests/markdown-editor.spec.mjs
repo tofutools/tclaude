@@ -80,6 +80,7 @@ async function exercise(page, editor) {
   expect(Math.abs((await height(editor)) - before), 'Write keeps the height').toBeLessThanOrEqual(1);
 
   // The corner still resizes it, and Preview keeps the new height.
+  await editor.scrollIntoViewIfNeeded();
   const box = await editor.boundingBox();
   await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3);
   await page.mouse.down();
@@ -88,8 +89,10 @@ async function exercise(page, editor) {
   const resized = await height(editor);
   expect(resized, 'dragging the corner makes it taller').toBeGreaterThan(before + 60);
   await editor.getByRole('tab', { name: 'Preview' }).click();
+  await expect(editor).toHaveClass(/md-ed-preview/);
   expect(Math.abs((await height(editor)) - resized), 'Preview keeps the resized height').toBeLessThanOrEqual(1);
   await editor.getByRole('tab', { name: 'Write' }).click();
+  await expect(editor).toHaveClass(/md-ed-write/);
   expect(Math.abs((await height(editor)) - resized), 'Write keeps the resized height').toBeLessThanOrEqual(1);
 }
 
