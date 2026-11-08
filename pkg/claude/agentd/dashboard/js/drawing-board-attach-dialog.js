@@ -61,7 +61,8 @@ export function existingDrawing(task, board, digest) {
   if (digest == null) return null;
   return (task?.attachments || []).find((a) => {
     const d = a?.drawing;
-    return d && d.board === board && !d.region && (d.selection || '') === digest && !a.comment_id;
+    // This node's own board: a linked node's board of the same id is another.
+    return d && d.board === board && !d.node && !d.region && (d.selection || '') === digest && !a.comment_id;
   }) || null;
 }
 

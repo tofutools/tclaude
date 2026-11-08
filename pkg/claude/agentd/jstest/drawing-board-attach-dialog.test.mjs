@@ -40,6 +40,8 @@ test('the list puts the board\'s group and the work under way first, open tasks 
   assert.equal(m.existingDrawing({ attachments: [file] }, 'arch', digest(['b', 'a'])), file);
   assert.equal(m.existingDrawing({ attachments: [file] }, 'arch', ''), null, 'the whole board is another part');
   assert.equal(m.existingDrawing({ attachments: [file] }, 'plan', digest(['a', 'b'])), null);
+  const remote = { ...file, drawing: { ...file.drawing, node: 'inst_bob' } };
+  assert.equal(m.existingDrawing({ attachments: [remote] }, 'arch', digest(['a', 'b'])), null, "a linked node's board of the same id is another board");
 });
 
 test('the dialog previews the part, says an attach updates the drawing there, and attaches', async (t) => {
