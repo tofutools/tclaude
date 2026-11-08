@@ -141,4 +141,17 @@ test('↑ and ↓ choose among the tasks shown, from the search box or a row', a
   assert.equal(chosen(), 'tk_idea', 'a row takes the keys too');
   assert.equal(root.activeElement?.getAttribute('data-task'), 'tk_idea', 'and focus follows from a row');
   assert.ok(!(await key(search, 'Enter')).defaultPrevented, 'other keys are the input\'s');
+
+  // While an input method composes, its candidate list owns the arrows.
+  let composing;
+  await harness.act(() => { composing = harness.fireEvent(search, 'keydown', { key: 'ArrowDown', isComposing: true }); });
+  await settle();
+  assert.ok(!composing.defaultPrevented, 'a composing ↓ is the input method\'s');
+  assert.equal(chosen(), 'tk_idea', 'and chooses nothing');
+
+  // The list is expanded only while it shows a task.
+  assert.equal(search.getAttribute('aria-expanded'), 'true');
+  await harness.act(() => harness.input(search, 'zzz no such task'));
+  await settle();
+  assert.equal(search.getAttribute('aria-expanded'), 'false', 'an empty list is not expanded');
 });
