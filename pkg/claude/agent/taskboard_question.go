@@ -107,7 +107,7 @@ type taskboardAskOperatorParams struct {
 	Multi       bool     `long:"multi" help:"The operator may pick several options"`
 	Recommend   string   `long:"recommend" optional:"true" help:"The option you recommend: its number (from 1), key or label"`
 	Blocks      string   `long:"blocks" optional:"true" help:"A task of the board (tk_…, typically yours) that waits on the answer: blocked on the question until it is answered"`
-	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail; on a --peer board, read it with taskboard show)"`
+	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail)"`
 	Idea        bool     `long:"idea" help:"Put it in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
 	Attach      []string `long:"attach" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each)"`
 	Peer        string   `long:"peer" optional:"true" help:"Ask the operator of a linked node, on its board, under the grants it gave this node"`
@@ -234,7 +234,7 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 		if p.JSON {
 			return writeJSONTo(stdout, t)
 		}
-		fmt.Fprintf(stdout, "asked %s: %s  [%s]; %s\n", t.ID, t.Title, t.Stage, answerWhere(p.Peer, t.ID))
+		fmt.Fprintf(stdout, "asked %s: %s  [%s]; %s\n", t.ID, t.Title, t.Stage, answerWhere(p.Peer))
 		return rcOK
 	}
 	if !p.JSON {
@@ -243,14 +243,13 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	return waitTaskboardAnswer(p.Peer, t.ID, wait, p.JSON, stdout, stderr)
 }
 
-// answerWhere says where the answer to a question comes: the inbox for a
-// local question; a linked node's daemon cannot mail this one, so a --peer
-// question's answer is read on its board.
-func answerWhere(peer, id string) string {
+// answerWhere says where the answer to a question comes: the inbox, also
+// from a linked node's board (as federation mail).
+func answerWhere(peer string) string {
 	if peer == "" {
 		return "the answer comes to your inbox"
 	}
-	return fmt.Sprintf("read the answer with `tclaude agent taskboard show %s --peer %s`", id, peer)
+	return "the answer comes to your inbox as remote mail from " + peer
 }
 
 // taskboardAnswerState is GET …/answer.
@@ -268,7 +267,7 @@ func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdou
 	for {
 		left := time.Until(deadline)
 		if left <= 0 {
-			fmt.Fprintf(stderr, "no answer within %s; %s stays open: %s\n", wait, id, answerWhere(peer, id))
+			fmt.Fprintf(stderr, "no answer within %s; %s stays open: %s\n", wait, id, answerWhere(peer))
 			return rcAskTimeout
 		}
 		step := min(left, 30*time.Second).Round(time.Second)

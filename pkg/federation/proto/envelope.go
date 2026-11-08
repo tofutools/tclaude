@@ -156,6 +156,10 @@ type MailPayload struct {
 	Subject     string                  `json:"subject,omitempty"`
 	Body        string                  `json:"body"`
 	Attachments []AttachmentPayload     `json:"attachments,omitempty"`
+	// TaskboardAnswer, when set, is the task id of a question the
+	// recipient asked the sender's operator (ask-operator --peer): the
+	// recipient's node lets the mail in once if it recorded that question.
+	TaskboardAnswer string `json:"taskboard_answer,omitempty"`
 }
 
 // AttachmentPayload is one file carried by a mail. The receiver derives

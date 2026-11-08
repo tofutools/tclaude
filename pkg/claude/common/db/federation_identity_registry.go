@@ -32,6 +32,8 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"federation_route_proxies", "peer", IdentityClose},
 	{"federation_peer_grants", "peer", IdentityRebind},
 	{"federation_peer_agent_views", "peer", IdentityRebind},
+	// A question asked of a peer that rotates is still answered by it.
+	{"federation_peer_questions", "peer", IdentityRebind},
 	{"agent_cron_jobs", "owner_peer", IdentityRebind},
 	{"sandbox_profile_peer_owners", "peer", IdentityRebind},
 	{"federation_peer_access_requests", "peer", IdentityRebind},

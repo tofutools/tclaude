@@ -977,6 +977,8 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			writeTaskboardError(w, err)
 			return
 		}
+		// Who asked is the daemon's to say, never the body's.
+		body.Question.AskedBy, body.Question.AskedVia = "", taskboardPeerAskerPrincipal(r)
 		to = db.OperatorAssignee
 	}
 	if body.Mine {

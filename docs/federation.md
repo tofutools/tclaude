@@ -76,6 +76,13 @@ For example, Bob’s operator grants Alice’s **instance** mail access to
 `message.direct` with `peer=bob/builders`. Both grants are needed for a
 spontaneous agent send. Trust alone grants no group access.
 
+Replies are the exception that needs no grant on the receiving side. An
+answer to mail your agent sent is let in while that mail is live. So is
+the answer to a question your agent asked a peer's operator with
+`taskboard ask-operator --peer`: your instance records the question when
+it is asked, and lets in one answer mail from that peer, for that agent,
+within 30 days (see [Questions for the operator](taskboard.md#questions-for-the-operator)).
+
 ## Upgrading
 
 The envelope format is versioned. Instances on different envelope versions

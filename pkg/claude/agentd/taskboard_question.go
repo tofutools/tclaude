@@ -76,19 +76,15 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 
-// mailTaskboardAnswer sends the answer to the agent that asked, when a
-// local agent did: a readable line, then the answer as JSON. A peer's asker
-// reads it with ask-operator --wait or taskboard show --peer.
+// mailTaskboardAnswer sends the answer to the agent that asked: a readable
+// line, then the answer as JSON. A linked node's agent gets it as federation
+// mail.
 func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *db.GroupTaskQuestion) {
-	asker, ok := strings.CutPrefix(t.Asker(), "agent:")
-	if !ok || q == nil || q.Answer == nil {
+	if q == nil || q.Answer == nil {
 		return
 	}
-	conv, err := db.CurrentConvForAgent(asker)
-	if err != nil || conv == "" {
-		return
-	}
-	if state, err := db.AgentState(conv); err != nil || state == db.AgentStateRetired {
+	asker, local := strings.CutPrefix(t.Asker(), "agent:")
+	if !local && q.AskedVia == "" {
 		return
 	}
 	raw, _ := json.Marshal(q.Answer)
@@ -105,6 +101,19 @@ func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *
 		fmt.Fprintf(&b, "Said: %s\n", q.Answer.Text)
 	}
 	fmt.Fprintf(&b, "\n%s\n", raw)
+	if !local {
+		// A linked node's agent asked: the answer goes back over the
+		// federation (taskboard_question_peer.go).
+		mailTaskboardAnswerToPeer(t, q, taskboardSubject(g, t, "answered"), b.String())
+		return
+	}
+	conv, err := db.CurrentConvForAgent(asker)
+	if err != nil || conv == "" {
+		return
+	}
+	if state, err := db.AgentState(conv); err != nil || state == db.AgentStateRetired {
+		return
+	}
 	mailTaskboard(r, g, conv, taskboardSubject(g, t, "answered"), b.String())
 }
 

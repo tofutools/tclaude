@@ -929,7 +929,14 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		senderName = proto.SafeName(origin.Sender.Name, false)
 		senderDisplay = origin.Sender.Instance
 	}
+	// undo restores a recorded question this mail consumed, when the mail
+	// is refused after all (taskboard_question_peer.go).
+	var undo func()
 	refuse := func(code, reason string) {
+		if undo != nil {
+			undo()
+			undo = nil
+		}
 		slog.Info("federation: refused inbound mail", "from", env.From.Instance, "to_agent", env.To.Agent, "code", code, "reason", reason)
 		recordFederationAudit("federation.mail.in", senderName+"@"+peerDisplay(peer), "", "", code+": "+reason, 403)
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckRefused, Code: code, Reason: reason})
@@ -993,6 +1000,11 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	groupID, ok := federationInboundAuthorized(peer.InstanceID, env, conv)
+	if !ok && origin == nil {
+		// The answer to a question this agent asked the peer's operator
+		// (taskboard_question_peer.go): let in once, as a reply.
+		ok, undo = taskboardAnswerMailAuthorized(peer.InstanceID, env, mp)
+	}
 	if !ok {
 		refuse(fedCodeNotExported, "recipient is not in a group exported to this instance with mail")
 		return

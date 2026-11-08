@@ -39,8 +39,12 @@ type GroupTaskQuestion struct {
 	// AskedBy is the actor that asked ("agent:<id>", "peer: <author>",
 	// "operator"), fixed at create: assign and unassign rewrite the task's
 	// assigned_by, but the answer still goes back to the asker.
-	AskedBy string           `json:"asked_by,omitempty"`
-	Answer  *GroupTaskAnswer `json:"answer,omitempty"`
+	AskedBy string `json:"asked_by,omitempty"`
+	// AskedVia is a linked node's asking agent by stable ids
+	// ("peer:<instance>/agent:<id>"), set by the daemon when a peer's agent
+	// asked: the answer goes back to it as federation mail.
+	AskedVia string           `json:"asked_via,omitempty"`
+	Answer   *GroupTaskAnswer `json:"answer,omitempty"`
 }
 
 // GroupTaskQuestionOption is one choice.
