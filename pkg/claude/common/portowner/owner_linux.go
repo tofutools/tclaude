@@ -108,24 +108,19 @@ func ProcessInSubtree(rootPID, candidatePID int) bool {
 // ProcessSubtree returns rootPID followed by its descendants, breadth-first.
 // The walk is bounded so a pathological or adversarial process tree cannot turn
 // an ownership check into an unbounded scan.
+//
+// A process's children are read from every one of its threads: the kernel
+// lists a child under the thread that forked it (/proc/<pid>/task/<tid>/
+// children), and a multithreaded parent such as a Go program forks from
+// whichever thread the call happens to run on, not only its main one.
 func ProcessSubtree(rootPID int) []int {
 	if rootPID <= 1 {
 		return nil
 	}
 	result := []int{rootPID}
 	seen := map[int]struct{}{rootPID: {}}
-	for cursor := 0; cursor < len(result) && len(result) < 256; cursor++ {
-		pid := result[cursor]
-		data, err := os.ReadFile(filepath.Join(
-			"/proc", strconv.Itoa(pid), "task", strconv.Itoa(pid), "children"))
-		if err != nil {
-			continue
-		}
-		for rawChild := range strings.FieldsSeq(string(data)) {
-			child, err := strconv.Atoi(rawChild)
-			if err != nil || child <= 1 {
-				continue
-			}
+	for cursor := 0; cursor < len(result) && len(result) < maxSubtree; cursor++ {
+		for _, child := range processChildren(result[cursor]) {
 			if _, exists := seen[child]; exists {
 				continue
 			}
@@ -134,6 +129,33 @@ func ProcessSubtree(rootPID int) []int {
 		}
 	}
 	return result
+}
+
+// maxSubtree bounds ProcessSubtree's walk.
+const maxSubtree = 256
+
+// processChildren are pid's children, from all of its threads.
+func processChildren(pid int) []int {
+	taskDir := filepath.Join("/proc", strconv.Itoa(pid), "task")
+	threads, err := os.ReadDir(taskDir)
+	if err != nil {
+		return nil
+	}
+	var children []int
+	for _, thread := range threads {
+		data, err := os.ReadFile(filepath.Join(taskDir, thread.Name(), "children"))
+		if err != nil {
+			continue
+		}
+		for rawChild := range strings.FieldsSeq(string(data)) {
+			child, err := strconv.Atoi(rawChild)
+			if err != nil || child <= 1 {
+				continue
+			}
+			children = append(children, child)
+		}
+	}
+	return children
 }
 
 // hexPort renders a port the way /proc/net/tcp spells it: uppercase hex.
