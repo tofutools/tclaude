@@ -34,6 +34,7 @@ import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes } from './groups-taskboard-lanes.js';
+import { FLAT_MODES, TaskboardFlat } from './groups-taskboard-lanes-flat.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
@@ -129,7 +130,7 @@ function boardOf(group, source, api, boards) {
 
 // agentLabel names an agent from the snapshot: the group's own members
 // first (an assignee is one), then any group's.
-function agentLabel(agentId, group, snapshot) {
+export function agentLabel(agentId, group, snapshot) {
   if (!agentId) return '';
   const find = (members) => (members || []).find((member) => member.agent_id === agentId);
   const member = find(group?.members)
@@ -771,7 +772,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
-    ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
+    ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
+      onEdit=${(id) => setEditing(id)} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
       onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
@@ -811,7 +813,15 @@ export function listHidden(group) {
 }
 
 const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
-const LANES_BY = ['agent', 'role', 'subgroup'];
+// The "lanes" modes: a lane per agent, grouped by agent, role or subgroup;
+// or triage (You · Unassigned · Agents) and one row
+// (groups-taskboard-lanes-flat.js).
+const LANES_BY = ['agent', 'role', 'subgroup', 'triage', 'row'];
+const LANES_BY_LABEL = { row: 'one row' };
+const LANES_BY_TITLE = {
+  triage: 'Three lanes: you, unassigned, and every agent\'s tasks together',
+  row: 'Every task in one row',
+};
 
 export function taskboardView(group) {
   return dashPrefs.getItem(VIEW_PREF(group)) === 'lanes' ? 'lanes' : 'list';
@@ -848,15 +858,15 @@ function useViewPrefs(group) {
 }
 
 // ViewSelector is the section's List | Lanes switch and, in Lanes, the
-// "lanes by" agent | role | subgroup switch, with "reset order" once the
+// "lanes" agent | role | subgroup | triage | one row switch, with "reset order" once the
 // lanes have been reordered.
 function ViewSelector({ prefs }) {
   return html`<${Seg} class="tb-view" aria-label="Task board view">
     <${Button} size="sm" pressed=${prefs.view === 'list'} onClick=${() => prefs.setView('list')}>☰ List<//>
     <${Button} size="sm" pressed=${prefs.view === 'lanes'} onClick=${() => prefs.setView('lanes')}>⇶ Lanes<//>
-  <//>${prefs.view === 'lanes' && html`<span class="ui-hint tb-lanes-by-label">lanes by</span><${Seg} class="tb-view" aria-label="Lanes by">
-    ${LANES_BY.map((by) => html`<${Button} key=${by} size="sm" pressed=${prefs.by === by} onClick=${() => prefs.setBy(by)}>${by}<//>`)}
-  <//>${prefs.customOrder && html`<${Button} size="sm" variant="link" class="tb-lanes-reset" title="Put the lanes and their headings back in the default order"
+  <//>${prefs.view === 'lanes' && html`<span class="ui-hint tb-lanes-by-label">lanes</span><${Seg} class="tb-view" aria-label="Lanes">
+    ${LANES_BY.map((by) => html`<${Button} key=${by} size="sm" pressed=${prefs.by === by} title=${LANES_BY_TITLE[by]} onClick=${() => prefs.setBy(by)}>${LANES_BY_LABEL[by] || by}<//>`)}
+  <//>${prefs.customOrder && !FLAT_MODES.includes(prefs.by) && html`<${Button} size="sm" variant="link" class="tb-lanes-reset" title="Put the lanes and their headings back in the default order"
     onClick=${prefs.resetOrder}>reset order<//>`}`}`;
 }
 

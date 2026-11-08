@@ -282,19 +282,63 @@ function cardHint(task) {
 // A card's title opens the edit form (onEdit), as the List's does, and so
 // does a double-click on the card; hovering the title shows the task's
 // card (groups-taskboard-card.js), which carries its id.
-function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null }) {
+// `marker` (lanes triage and one row, groups-taskboard-lanes-flat.js) is a corner badge
+// saying who holds the task, with a class for the card's edge.
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null }) {
   const done = task.status === 'done';
-  return html`<div class=${`ui-card tb-card${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
+  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
+    ${marker?.badge}
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
   </div>`;
 }
 
-function useLaneDrag(actions, group, tasks = []) {
+// CellCards is a cell's cards with its toggle. Closed, a cell holding more
+// than `limit` cards draws the first ones and "+ n more". Open, it draws them
+// all, growing up to a height cap and then scrolling inside, with "▴ Show
+// less" under the scroll area so it stays in reach. Show less scrolls the
+// cards back to the top and keeps the toggle in view, so the page does not
+// jump away from where the pointer is. card(task) draws one card. `reveal`
+// is a task just dropped into the cell: once its card is drawn, the cell
+// scrolls to it, so it does not land below the fold.
+export function CellCards({ list, limit, open, onToggle, card, reveal = '' }) {
+  const scrollRef = useRef(null);
+  const lessRef = useRef(null);
+  const revealed = useRef('');
+  useLayoutEffect(() => {
+    if (!reveal || revealed.current === reveal) return;
+    const el = scrollRef.current?.querySelector?.(`[data-task-id="${reveal}"]`);
+    if (!el) return;
+    revealed.current = reveal;
+    el.scrollIntoView?.({ block: 'nearest' });
+  });
+  const capped = list.length > limit;
+  const visible = capped && !open ? list.slice(0, limit) : list;
+  const collapse = () => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    onToggle(false);
+    const later = globalThis.requestAnimationFrame || ((fn) => globalThis.setTimeout(fn, 0));
+    const cell = lessRef.current?.closest?.('.tb-cell');
+    later(() => cell?.scrollIntoView?.({ block: 'nearest' }));
+  };
+  return html`<div ref=${scrollRef} class=${`tb-cell-cards${capped && open ? ' tb-cell-cards-open' : ''}`}>${visible.map(card)}</div>
+    ${capped && (open
+    ? html`<${Button} size="sm" variant="ghost" class="tb-cell-more tb-cell-less" aria-expanded="true" domRef=${lessRef}
+        title="Show only the first cards again" onClick=${collapse}>▴ Show less<//>`
+    : html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded="false"
+        onClick=${() => onToggle(true)}>+ ${list.length - visible.length} more<//>`)}`;
+}
+
+// useLaneDrag drives the card drags. A drop target `to` names its lane, or
+// carries resolve(fromLane) instead: the lane a drop from fromLane means
+// there, or null where the cell takes none (triage's Agents row and one row,
+// groups-taskboard-lanes-flat.js), and a
+// key of its own for the cell it marks.
+export function useLaneDrag(actions, group, tasks = []) {
   const dragged = useRef(null);
   const [dragging, setDragging] = useState('');
   const [over, setOver] = useState(null);
@@ -312,7 +356,9 @@ function useLaneDrag(actions, group, tasks = []) {
     const types = event.dataTransfer?.types;
     if (types && !Array.from(types).includes(TASK_DRAG_TYPE)) return null;
     const from = dragged.current;
-    const drop = from && laneDrop(from.task, from, to, { assign });
+    const lane = from && to.resolve ? to.resolve(from.lane) : to.lane;
+    if (lane === null || lane === undefined) return null;
+    const drop = from && laneDrop(from.task, from, { ...to, lane }, { assign });
     if (!drop) return null;
     event.preventDefault();
     event.stopPropagation();
@@ -335,7 +381,7 @@ function useLaneDrag(actions, group, tasks = []) {
     end() { transferOff.current?.({ ended: true }); clear(); },
     overCell(event, to) {
       const drop = hit(event, to);
-      const key = drop ? `${to.lane}|${to.column}` : '';
+      const key = drop ? to.key || `${to.lane}|${to.column}` : '';
       if ((over?.key || '') !== key) setOver(drop ? { key, label: drop.label } : null);
     },
     leaveGrid(event) {
@@ -356,7 +402,7 @@ function useLaneDrag(actions, group, tasks = []) {
 // BlockDialog asks the reason a drop onto Blocked needs, in the board's
 // reason dialog, then runs the drop (with an assign or unassign first, for a
 // move across lanes too).
-function BlockDialog({ task, drop, actions, group, onClose }) {
+export function BlockDialog({ task, drop, actions, group, onClose }) {
   const submit = async (reason) => {
     const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason));
     if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
@@ -366,7 +412,7 @@ function BlockDialog({ task, drop, actions, group, onClose }) {
     busy=${actions.busy === `${task.id}:lane`} onSubmit=${submit} onClose=${onClose} />`;
 }
 
-function LaneHead({ lane, order }) {
+export function LaneHead({ lane, order }) {
   if (lane.id === OPERATOR) {
     const you = lane.name === 'you';
     return html`<div class="tb-lane-head tb-lane-head-operator" data-lane-operator="true" title=${you ? 'Tasks assigned to you, the operator: agents wait on them' : `Tasks assigned to the ${lane.name}`}>
@@ -533,7 +579,7 @@ function useColumnResize(group, onChange) {
 // opens the add menu (the section's ＋▾ menu, anchored here); whichever
 // choice is made starts from the cell: its column, and the lane's agent as
 // the assignee.
-function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
+export function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
   const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.id === OPERATOR && lane.name === 'you' ? 'You' : lane.name} · ${wizard ? column.wizard : column.label}`;
   const what = wizard ? 'quest' : 'task';
   const initial = { start: add.start, to: add.to, toName: add.to ? lane.name : '' };
@@ -558,7 +604,11 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
-  const landIn = (key, list) => { if (list.length >= CELL_SHOWN && !open[key]) setOpen({ ...open, [key]: true }); };
+  const [landed, setLanded] = useState(null);
+  const landIn = (key, list, id = '') => {
+    if (list.length >= CELL_SHOWN && !open[key]) setOpen({ ...open, [key]: true });
+    if (id) setLanded({ key, id });
+  };
   const cell = (lane, column) => {
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
@@ -566,18 +616,15 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
     const target = { lane: lane.id, column: column.key, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
-    const capped = list.length > CELL_SHOWN;
-    const shown = capped && !open[key] ? list.slice(0, CELL_SHOWN) : list;
     const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
-        onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
-      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
-        drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-        onEdit=${actions ? onEdit : null} />`)}
-      ${capped && html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded=${open[key] ? 'true' : 'false'}
-        onClick=${() => setOpen({ ...open, [key]: !open[key] })}>${open[key] ? 'Show fewer' : `+ ${list.length - shown.length} more`}<//>`}
+        onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
+      <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
+        card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+          drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
+          onEdit=${actions ? onEdit : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;

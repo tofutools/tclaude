@@ -831,17 +831,19 @@ a CLI verb:
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view. In *Lanes*,
-*lanes by agent | role | subgroup* picks how the lanes are grouped: by agent
-unless you pick another. The dashboard remembers both per group, for you
-only.
+*lanes agent | role | subgroup | triage | one row* picks the lanes: one per
+agent, grouped by agent, role or subgroup (by agent unless you pick another),
+or the two modes without a lane per agent, described below. The dashboard
+remembers both per group, for you only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
 needs you* also holds stalled tasks.
 
 A cell shows its first three cards. When it holds more, *+ n more* opens it in
-place and *Show fewer* closes it again, so one busy cell does not stretch its
-whole row. The column heads still count every task. When the card is too
+place, so one busy cell does not stretch its whole row. An open cell grows up
+to about a dozen cards, then scrolls inside. *▴ Show less*, under its cards,
+closes it again. The column heads still count every task. When the card is too
 narrow for every column, the grid scrolls sideways and the lane names stay
 pinned on the left.
 
@@ -868,7 +870,7 @@ else sees it.
   *Unassigned* lane always stays first, and a new agent's lane joins at the
   end. With lanes by role or by subgroup, a lane moves within its heading, and
   you drag a heading to reorder the headings. A focused lane head or heading
-  also moves with Alt+↑ and Alt+↓. *reset order*, next to the *lanes by*
+  also moves with Alt+↑ and Alt+↓. *reset order*, next to the *lanes*
   switch, puts the default order back.
 
 A lane group whose agents are all offline folds; click *show offline lanes* to
@@ -920,6 +922,28 @@ the cell:
   agent's lane. An import lands in Ideas or Next only, so you assign, block or
   close the tasks on the board afterwards. Order within the queue is set in the
 *List* view.
+
+#### Triage and one row
+
+Two *lanes* modes do without a lane per agent, for a board where you mostly
+want to see what nobody holds and what waits on you:
+
+- **triage** has three lanes: *You* (the operator's tasks, tinted as the
+  operator's lane is), *Unassigned*, and *Agents*, every agent's tasks
+  together.
+- **one row** puts every task in a single row.
+
+In these modes each card says who holds it in its top-right corner: a yellow
+**!** when nobody does, a red **!** when you (the operator) do, otherwise the
+agent's avatar. The two **!** cards also get an edge in their colour. A done
+card carries no **!**. A cell shows its first five cards, then *+ n more*.
+
+Drags work as in the lanes. In *triage*, a card dropped onto *You* is
+assigned to you, and one dropped onto *Unassigned* is unassigned. *Agents*
+does not say which agent, so it takes only an agent's own card, moving it to
+another column; assign a task to an agent in its edit form (click its
+title) or in *lanes agent*. In *one row*, a drag changes the column and keeps the assignee. A
+cell's **+** starts an unassigned task, or in *You* one assigned to you.
 
 The dashboard shows a board only to someone who can read it. The operator sees
 every group. The section is missing while `features.taskboard` is off. A

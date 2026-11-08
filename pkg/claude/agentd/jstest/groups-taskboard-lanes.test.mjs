@@ -68,7 +68,7 @@ async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}
     await harness.act(async () => { harness.fireEvent(cell(lane, column), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
     return { taken: over.defaultPrevented, label };
   };
-  return { harness, c, api, cell, ids, card, drag, dashPrefs };
+  return { harness, c, api, cell, ids, card, drag, dashPrefs, source };
 }
 
 test('laneColumn derives the five columns as the design says', async (t) => {
@@ -379,10 +379,19 @@ test('a cell holding many tasks draws the first three and "+ n more", which open
   assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more'), null, 'a cell within the cap has no toggle');
   await harness.act(async () => { harness.fireEvent(more(), 'click'); });
   assert.equal(ids('unassigned', 'ideas').length, 6, 'opened, every card is drawn');
-  assert.equal(more().textContent, 'Show fewer');
+  const cards = cell('unassigned', 'ideas').querySelector('.tb-cell-cards');
+  assert.ok(cards.classList.contains('tb-cell-cards-open'), 'an opened cell scrolls inside past its height cap');
+  assert.ok(more().classList.contains('tb-cell-less'), 'and offers Show less');
+  assert.equal(more().textContent.trim(), '▴ Show less');
   assert.equal(more().getAttribute('aria-expanded'), 'true');
+  assert.equal(cards.contains(more()), false, 'Show less sits outside the scroll area, always in reach');
+  cards.scrollTop = 120;
   await harness.act(async () => { harness.fireEvent(more(), 'click'); });
   assert.equal(ids('unassigned', 'ideas').length, 3, 'and closes again');
+  assert.equal(cards.scrollTop, 0, 'closing scrolls the cards back to the top');
+  assert.equal(cards.classList.contains('tb-cell-cards-open'), false);
+  const css = (await import('node:fs')).readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tb-cell-cards\.tb-cell-cards-open \{[^}]*max-height:[^}]*overflow-y: auto/, 'the open cell\'s height cap scrolls');
   const grid = c.querySelector('.tb-lanes');
   assert.match(grid.getAttribute('style'), /--tb-lane-min: 620px/, 'rows are at least the grid\'s minimum width, so the sideways scroll keeps the lane column pinned');
 });
@@ -396,6 +405,27 @@ test('a task dropped into a full cell opens it, so the card does not land behind
   assert.equal(out.taken, true);
   assert.ok(api.calls.length > 0, 'the drop ran');
   assert.equal(more().getAttribute('aria-expanded'), 'true', 'the full cell opened for the card dropped into it');
+});
+
+test('a card dropped into a long open cell is scrolled into view once it lands', async (t) => {
+  const queued = Array.from({ length: 14 }, (_, i) => row(`tk_000000c${i.toString(16)}`, `queued ${i}`));
+  const { cell, drag, card, harness, source } = await mountLanes(t, 'tbl-reveal', { extraTasks: queued });
+  const seen = [];
+  const proto = Object.getPrototypeOf(card('tk_00000004'));
+  const had = Object.prototype.hasOwnProperty.call(proto, 'scrollIntoView');
+  const before = proto.scrollIntoView;
+  proto.scrollIntoView = function scrollIntoView() { seen.push(this.dataset?.taskId || this.className); };
+  t.after(() => { if (had) proto.scrollIntoView = before; else delete proto.scrollIntoView; });
+  await drag('tk_00000004', 'unassigned', 'next');
+  assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(seen, [], 'nothing to reveal until the card lands');
+  // The board refreshes with the idea promoted, at the end of the queue.
+  const b = source.context.value.groups[0];
+  const tasks = b.tasks.filter((task) => task.id !== 'tk_00000004').concat({ ...b.tasks.find((task) => task.id === 'tk_00000004'), stage: 'next' });
+  await harness.act(async () => { source.context.value = { groups: [{ ...b, tasks }] }; });
+  assert.deepEqual(seen, ['tk_00000004'], 'the landed card is scrolled into view, once');
+  await harness.act(async () => { source.context.value = { groups: [{ ...b, tasks: [...tasks] }] }; });
+  assert.deepEqual(seen, ['tk_00000004'], 'a later refresh does not scroll to it again');
 });
 
 test('a stored lane width sets the grid\'s minimum width with its columns', async (t) => {
