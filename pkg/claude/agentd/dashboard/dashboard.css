@@ -3496,7 +3496,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 1px; flex: none;
 }
-.debug-table { border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.debug-table { font-size: 12px; margin-top: 8px; }
 
 .debug-table td { white-space: nowrap; }
 .debug-table td .debug-legend-chip { margin-right: 6px; }
@@ -3516,7 +3516,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Daemon profiling (profiles-island.js): capture list above the poll cards. */
 .profile-section { margin-bottom: 18px; }
 .profile-notice { margin: 4px 0 8px; font-size: 12px; }
-.profile-table { width: 100%; }
 /* Centered so the one-line cells and the share/delete buttons sit level with
    the two-line Started/Label cells. */
 .profile-table td { vertical-align: middle; }
@@ -3539,7 +3538,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
    The message column is greedy + monospace; When / Level shrink to fit.
    Warn/error rows get a faint tinted gutter so they catch the eye. */
-.logs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.logs-table { font-size: 12px; }
 
 
 .logs-table td.logs-nowrap { white-space: nowrap; width: 1%; }
@@ -3662,7 +3661,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-node-item.locked { opacity: .55; cursor: not-allowed; }
 .usage-node-peak { margin-left: auto; color: #8b949e; }
 .fused-usage { margin: 0 0 14px; padding: 8px 12px; }
-.fused-usage-table { border-collapse: collapse; font-size: 12.5px; min-width: 460px; }
+.fused-usage-table { font-size: 12.5px; min-width: 460px; }
 
 .fused-usage-table .n { text-align: right; font-variant-numeric: tabular-nums; }
 .fused-usage-table .muted { color: #8b949e; }
@@ -4327,7 +4326,6 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-ignored > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .cost-ignored > summary span { color: #8b949e; }
 .cost-ignored p { margin: 6px 0; font-size: 12px; }
-.cost-ignored table { width: 100%; border-collapse: collapse; }
 .cost-ignored td { white-space: nowrap; width: 1%; }
 .cost-ignored td:first-child { width: auto; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cost-ignored .rowname { color: #8b949e; text-decoration: line-through; }
@@ -4835,7 +4833,7 @@ body.show-group-description .group-descr { display: inline; }
 .spawn-queue-chip.room { color: #3fb950; border-color: #238636; }
 .spawn-queue-chip.waiting { color: #58a6ff; border-color: #1f6feb; }
 .spawn-queue-limits { font-size: 11.5px; }
-.spawn-queue-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.spawn-queue-table { font-size: 12px; }
 .spawn-queue-table td { vertical-align: middle; }
 .spawn-queue-table tr:last-child td { border-bottom: 0; }
 .spawn-queue-pos { font-variant-numeric: tabular-nums; font-weight: 700; color: #58a6ff; width: 2.5em; }
@@ -5789,7 +5787,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .term-files-error { margin: 4px 0; }
 .term-files-link:where(:not(.ui-btn)) { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
 .term-files-link:where(:not(.ui-btn)):hover { text-decoration: underline; }
-.term-files-table { width: 100%; border-collapse: collapse; }
 
 .term-files-acts { text-align: right; white-space: nowrap; }
 .term-files-text { margin: 0; max-height: 40vh; overflow: auto; white-space: pre; font-size: 12px; color: #d4d4d4; }
@@ -8761,7 +8758,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-rung.native { background: #12301d; color: #3fb950; border-color: #238636; }
 .paf-rung.translated { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
 .paf-rung.none { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
-.paf-member-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.paf-member-table { font-size: 12px; margin-top: 6px; }
 
 /* The id names the overlay; size the dialog inside it, so the backdrop
    still covers the whole viewport. */
@@ -8900,7 +8897,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .tpl-concepts-body b { color: #e6edf3; }
 .tpl-concepts-list { margin: 0 0 10px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .tpl-concepts-wizard { display: none; }
-.tpl-concepts-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.tpl-concepts-table { font-size: 11px; }
 .tpl-concepts-table th, .tpl-concepts-table td {
   border: 1px solid #2a3340;
 }
@@ -9397,7 +9394,7 @@ label.cfg-label { cursor: pointer; }
 .relaunch-policy-layers { margin-top: 8px; font-size: 12px; color: #8b949e; }
 .relaunch-policy-layers ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 /* Config › Launch: the relaunch policy table (relaunch-policy-table.js). */
-.rlp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rlp-table { font-size: 13px; }
 .rlp-table thead th { text-align: left; font-weight: 600; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .rlp-table :is(th, td) { vertical-align: top; text-align: left; }
 .rlp-table tbody th[scope="row"] { font-weight: 500; color: #c9d1d9; width: 32%; text-transform: none; letter-spacing: normal; font-size: 13px; }
@@ -10179,7 +10176,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-open:disabled { color: #8b949e; cursor: default; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
-.process-list table { width: 100%; border-collapse: collapse; }
 /* Keep the action cell a real table-cell: `display: flex` on a <td> drops it
    out of the row's height sync, so on a taller (multi-line) row its bottom
    border lands above the neighbouring cells' and the row rule looks broken
@@ -12011,7 +12007,7 @@ body.wizard #cron-create-modal .cron-spawn-action-body .trigger-action-fields la
 .cron-action-kind.spawn { color: #d2a8ff; border-color: #593a78; background: #241536; }
 .cron-spawn-summary { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cron-feature-note { margin-top: 3px; color: #e3b341; font-size: 10px; }
-.cron-run-inspector-row > td { padding: 0 !important; background: #0f151c; }
+.cron-run-inspector-row > td, .trigger-inspector-row > td { padding: 0 !important; background: #0f151c; }
 .cron-run-inspector { padding: 12px 18px 16px 34px; border-bottom: 1px solid #30363d; }
 .cron-run-inspector-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .cron-run-inspector-head .muted { flex: 1; }
@@ -12023,7 +12019,7 @@ body.wizard #cron-create-modal .cron-spawn-action-body .trigger-action-fields la
 .cron-run:last-child { border-bottom: 0; }
 .cron-run-detail { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .cron-run-worker { white-space: nowrap; }
-body.wizard .cron-run-inspector-row > td { background: #140f28; }
+body.wizard .cron-run-inspector-row > td, body.wizard .trigger-inspector-row > td { background: #140f28; }
 body.wizard .cron-runs { background: #18122b; border-color: rgba(122, 93, 176, .55); }
 @media (max-width: 900px) {
   .cron-run { grid-template-columns: 1fr; gap: 4px; }
@@ -13894,7 +13890,6 @@ body.wizard #activity-performance .debug-table td {
 .trigger-switch span::after { content: ''; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; border-radius: 50%; background: #c9d1d9; transition: transform .12s; }
 .trigger-switch input:checked + span { background: #1f6feb; }
 .trigger-switch input:checked + span::after { transform: translateX(13px); background: white; }
-.trigger-inspector-row > td { padding: 0 !important; background: #0f151c; }
 .trigger-inspector { padding: 12px 18px 16px 34px; border-bottom: 1px solid #30363d; }
 .trigger-inspector-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .trigger-inspector-head > div { display: flex; flex-direction: column; gap: 2px; }
@@ -14034,7 +14029,6 @@ body.wizard #trigger-modal .trigger-placeholder-chips button:hover {
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
 body.wizard .trigger-row:hover, body.wizard .trigger-row.selected { background: #211934; }
-body.wizard .trigger-inspector-row > td { background: #140f28; }
 body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
   background: #18122b; border-color: rgba(122, 93, 176, .55);
 }
@@ -16716,7 +16710,7 @@ body.wizard .usage-history-note {
 .route-map-node-meta { fill: var(--muted, #8b949e); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .route-map-empty-graph { margin: 0; padding: 16px; color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-table-wrap { overflow: auto; border: 1px solid var(--border, #30363d); border-radius: 7px; background: var(--panel, #0d1117); }
-.route-map-table { width: 100%; min-width: 740px; border-collapse: collapse; font-size: 12px; }
+.route-map-table { min-width: 740px; font-size: 12px; }
 .route-map-table td { color: var(--text, #e6edf3); }
 .route-map-table tbody tr { cursor: pointer; }
 .route-map-table tbody tr:hover, .route-map-table tbody tr.is-selected { background: rgba(88, 166, 255, .09); }
@@ -17329,7 +17323,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* Narrow windows wrap whole tabs onto a second row, never their labels. */
 .ui-tabs.fa-subnav { margin: 12px 0 8px; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
-.fa-table { width: 100%; border-collapse: collapse; }
 .fa-table td { vertical-align: middle; }
 .fa-acts { text-align: right; white-space: nowrap; }
 .fa-acts button + button { margin-left: 6px; }
@@ -18518,7 +18511,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 /* Batch preview (batch-preview.js): per-item select/deselect before an apply. */
 .batch-preview { margin-top: 8px; }
 .batch-preview-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b949e; }
-.batch-preview-table { width: 100%; margin-top: 4px; }
+.batch-preview-table { margin-top: 4px; }
 .batch-preview-notes { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #8b949e; }
 .hc-repair-widened { color: #f85149; }
 .hc-repair-narrowed { color: #d29922; }
