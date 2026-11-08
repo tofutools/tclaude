@@ -33,7 +33,7 @@ import { registerResourceRemover } from './resource-dnd.js';
 import { askResourceName } from './resource-name-dialog.js';
 import { groupContextEntry } from './process-context.js';
 import { RowMenu } from './row-menu.js';
-import { ColGroup, TableHead } from './table-kit.js';
+import { ColGroup, onActivateKey, TableHead } from './table-kit.js';
 
 export { RowMenu };
 
@@ -268,7 +268,7 @@ function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, times, pri
     <td class="name-cell gr-namecell">${renaming ? html`<span class="gr-glyph" aria-hidden="true">${glyph}</span><${RenameField} ...${renaming} label=${label} />`
       : rename ? html`<span ref=${nameRef} role="button" tabindex="0" class="rowname-text gr-name gr-name-rename" data-resource-name-rename=""
         title=${`Click to rename ${label} — Enter saves, Esc cancels`} onClick=${(event) => { event.stopPropagation(); rename(); }}
-        onKeyDown=${(event) => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); event.stopPropagation(); rename(); }}
+        onKeyDown=${onActivateKey(() => rename(), { stop: true })}
         ><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}</span>`
       : html`<${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
       onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>`}</td>

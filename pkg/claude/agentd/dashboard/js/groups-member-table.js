@@ -36,6 +36,7 @@ import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabe
 import { modClickText } from './keybindings.js';
 
 import { AgentTaskIndicator } from './taskboard-agent-indicator.js';
+import { onActivateKey } from './table-kit.js';
 const html = htm.bind(h);
 
 function ThemeText({ regular, wizard = regular }) {
@@ -1198,11 +1199,7 @@ function editableMemberCellAttrs(member, group, actions, act, focus) {
     'data-act': act, 'data-group': group.name, ...memberAttrs(member),
     role: 'button', tabindex: '0',
     onClick: (event) => openMemberCellEditor(event, actions, member, group, focus),
-    onKeyDown: (event) => {
-      if (event.isComposing || event.keyCode === 229) return;
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      openMemberCellEditor(event, actions, member, group, focus);
-    },
+    onKeyDown: onActivateKey((event) => openMemberCellEditor(event, actions, member, group, focus), { prevent: false, ime: true }),
   };
 }
 

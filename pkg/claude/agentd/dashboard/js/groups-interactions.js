@@ -8,6 +8,7 @@ import {
 import { isWizardActive } from './slop.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button } from './ui-components.js';
+import { onActivateKey } from './table-kit.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -257,12 +258,7 @@ export function InlineEditor({
         event.stopPropagation();
         interactions.beginEditor(editorKey, event.currentTarget);
       },
-      onKeyDown: (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        event.stopPropagation();
-        interactions.beginEditor(editorKey, event.currentTarget);
-      },
+      onKeyDown: onActivateKey((event) => interactions.beginEditor(editorKey, event.currentTarget), { stop: true }),
     }, children);
   }
 
