@@ -97,17 +97,17 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
 
     <h4 class="ui-eyebrow">Nodes</h4>
     <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes ui-compact">
-      <thead><tr><th>Node</th><th class="num">Today</th><th class="num">This week</th><th class="num">This month</th><th>Its limits</th><th>Shares with you</th><th></th></tr></thead>
+      <thead><tr><th>Node</th><th class="num usage-fleet-wide">Today</th><th class="num usage-fleet-wide">This week</th><th class="num">This month</th><th>Its limits</th><th>Shares with you</th><th></th></tr></thead>
       <tbody>
         ${selfTotals ? html`<tr class="usage-fleet-self"><td>this node</td>
-          <td class="num">${money(selfTotals.day?.total_usd)}</td><td class="num">${money(selfTotals.week?.total_usd)}</td><td class="num">${money(selfTotals.month?.total_usd)}</td>
+          <td class="num usage-fleet-wide">${money(selfTotals.day?.total_usd)}</td><td class="num usage-fleet-wide">${money(selfTotals.week?.total_usd)}</td><td class="num">${money(selfTotals.month?.total_usd)}</td>
           <td>${limitCell(fleet.self)}</td><td></td><td></td></tr>` : null}
         ${(fleet.nodes || []).map((n) => {
           const t = n.summary?.totals;
           const g = nodeGrants(n);
           return html`<tr key=${n.node} data-fleet-node=${n.node}>
             <td>${n.label}${n.pools?.length ? html` <span class="muted">${n.pools.join(', ')}</span>` : null}${n.error ? html` <span class="usage-fleet-err" title=${n.error}>⚠ ${n.error === 'offline' ? 'offline' : 'unread'}</span>` : null}</td>
-            ${t ? html`<td class="num">${money(t.day?.total_usd)}</td><td class="num">${money(t.week?.total_usd)}</td><td class="num">${money(t.month?.total_usd)}</td><td>${limitCell(n.summary)}</td>`
+            ${t ? html`<td class="num usage-fleet-wide">${money(t.day?.total_usd)}</td><td class="num usage-fleet-wide">${money(t.week?.total_usd)}</td><td class="num">${money(t.month?.total_usd)}</td><td>${limitCell(n.summary)}</td>`
               : html`<td class="muted" colspan="4">${n.summary ? 'shares no usage with you' : 'not read'}</td>`}
             <td><${GrantChips} node=${n}/></td>
             <td>${g.manage ? html`<${Button} size="sm" disabled=${busy} onClick=${() => onManageNode(n)}>manage its rules…<//>` : null}</td>

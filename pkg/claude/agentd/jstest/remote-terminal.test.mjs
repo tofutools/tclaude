@@ -80,6 +80,32 @@ test('the map\'s terminal picker lists one peer\'s sessions with how each opens,
   await mounted.unmount();
 });
 
+test('the terminal picker copies the CLI command over plain http, where navigator.clipboard is missing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/remote-terminal.js');
+  const doc = harness.document;
+  doc.defaultView.HTMLElement.prototype.select ||= () => {};
+  const copied = [];
+  doc.execCommand = (cmd) => { copied.push([cmd, doc.querySelector('textarea')?.value]); return true; };
+  t.after(() => { delete doc.execCommand; });
+  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true, writable: true });
+  t.after(() => { if (nav) Object.defineProperty(globalThis, 'navigator', nav); else delete globalThis.navigator; });
+  const toasts = [];
+  const mounted = await harness.mount(harness.html`<${m.RemoteSessionsDialog} node=${{ id: 'inst_forge7', name: 'forge' }} onClose=${() => {}}
+    fetchImpl=${async () => ({ ok: true, json: async () => ROWS })} toast=${(x) => toasts.push(x)} open=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  await harness.act(() => harness.document.querySelector('[data-agent="agt_cy3x"] [data-copy-cli]').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.deepEqual(copied, [['copy', 'tclaude federation attach agt_cy3x@inst_forge7']]);
+  assert.deepEqual(toasts, ['Command copied']);
+  doc.execCommand = () => false;
+  await harness.act(() => harness.document.querySelector('[data-agent="agt_cy3x"] [data-copy-cli]').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(toasts.at(-1), 'Run in a terminal: tclaude federation attach agt_cy3x@inst_forge7', 'a failed copy shows the command instead');
+  await mounted.unmount();
+});
+
 test('by default a remote terminal opens as a Terminals tab pane, not the overlay', async (t) => {
   const harness = await createPreactHarness(t);
   const tab = await harness.importDashboardModule('js/terminals-tab.js');
