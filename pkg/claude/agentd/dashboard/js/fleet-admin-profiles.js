@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
-import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
+import { changeText, grantText, peerLabelFor, POOL_NAME_RE, profileSummary, UNRESTRICTED_CONSEQUENCE } from './fleet-admin-model.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText } from './cell-format.js';
 import { FaTable } from './fa-table.js';
@@ -95,7 +95,8 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
   const done = (msg) => { toast(msg, false); refresh(); };
   const summaries = profiles ? profiles.map((p) => profileSummary(p, new Map(pools.map((x) => [x.id, x.name])))) : null;
   const fail = (what) => (e) => toast(`${what} failed: ${errText(e)}`, true);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const poolGrants = async (name) => {
     try { return await actions.grants(`group:${name}`); } catch (_) { return null; }
   };
@@ -167,7 +168,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
         const candidates = view.trusted.filter((r) => !ids.includes(r.id));
         return html`<tr key=${pool.name} data-pool=${pool.name}>
           <td><b>${pool.name}</b></td>
-          <td>${ids.length ? ids.map((id) => html`<span key=${id} class="fa-member">${label(id)} <${Button} size="sm" variant="link" class="fa-link" data-fa="remove-member" title="Remove from the pool" onClick=${() => removeMember(pool, id)}>×<//></span>`) : html`<span class="muted">none</span>`}</td>
+          <td>${ids.length ? ids.map((id) => html`<span key=${id} class="fa-member">${cellLabel(id)} <${Button} size="sm" variant="link" class="fa-link" data-fa="remove-member" title="Remove from the pool" onClick=${() => removeMember(pool, id)}>×<//></span>`) : html`<span class="muted">none</span>`}</td>
           <td>${candidates.length ? html`<${PeerCombobox} attrs=${{ 'data-fa': 'member-pick' }} value=${adding[pool.name] || ''} noneLabel="trusted peer…" floating=${false}
               ariaLabel=${`Add a peer to ${pool.name}`} items=${namedItems(candidates.map((r) => ({ name: r.id, label: r.label })))}
               onChange=${(next) => setAdding({ ...adding, [pool.name]: next })} /> <${Button} size="sm" data-fa="add-member" disabled=${!adding[pool.name]} onClick=${() => addMember(pool)}>Add…<//>` : html`<span class="muted">—</span>`}</td>

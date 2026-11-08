@@ -1292,7 +1292,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} />${!ungrouped && html`<${AgentTaskIndicator} group=${group} member=${member} />`}</td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
-    case 'last': return html`<td><span class="last-hook">${relTime(state.last_hook)}</span></td>`;
+    case 'last': return html`<td><span class="last-hook" title=${state.last_hook || ''}>${relTime(state.last_hook)}</span></td>`;
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
     case 'cwd': return html`<td><${CwdCell} member=${member} group=${group} /></td>`;
     case 'branch': return html`<td><${BranchCell} member=${member} /></td>`;

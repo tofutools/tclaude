@@ -6,6 +6,7 @@ import { Button } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp } from './cell-format.js';
 import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -142,7 +143,8 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   const [tick, setTick] = useState(0);
   const [blocking, setBlocking] = useState({});
   const [dialog, setDialog] = useState(null);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const reload = () => setTick((n) => n + 1);
 
   useEffect(() => {
@@ -236,7 +238,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td>${(p.models || []).length ? p.models.join(', ') : html`<span class="fa-warn">none</span>`}</td>
         <td>${limitText(p.daily_requests, p.daily_tokens)} · ${limitText(p.peer_daily_requests, p.peer_daily_tokens)} · ${limitText(p.session_daily_requests, p.session_daily_tokens)}</td>
         <td class="muted">${[p.max_input_tokens ? `≤${num(p.max_input_tokens)} in` : '', p.max_output_tokens ? `≤${num(p.max_output_tokens)} out` : '', p.max_concurrent ? `${p.max_concurrent} at once` : '', p.requests_per_minute ? `${p.requests_per_minute}/min` : '', `leases idle out after ${p.lease_idle_hours || 24}h`].filter(Boolean).join(' · ')}</td>
-        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${label(b)} <${Button} size="sm" variant="link" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×<//></span> `)}
+        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${cellLabel(b)} <${Button} size="sm" variant="link" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×<//></span> `)}
           ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<${PeerCombobox} className="fa-model-block" ariaLabel=${`Block a peer on ${name}`} value=${blocking[name] || ''} noneLabel="block a peer…" floating=${false}
             items=${namedItems(peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => ({ name: r.id, label: r.label })))}
             onChange=${(next) => setBlocking({ ...blocking, [name]: next })} />
@@ -250,7 +252,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     ${leases?.error ? html`<div class="fa-danger">${leases.error}</div>` : !leases ? html`<div class="empty">Loading…</div>` : leaseList.length === 0 ? html`<div class="empty">No leases.</div>` : html`
     <${FaTable} id="fleet-model-leases" head=${['Lease', 'Peer', 'Gateway', 'Worker', 'Last used', '']}>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
         <td><code title=${l.id}>${l.id.slice(0, 12)}</code>${l.kind ? html` <span class="muted">${l.kind}</span>` : ''}</td>
-        <td>${label(l.peer)}</td>
+        <td>${cellLabel(l.peer)}</td>
         <td><code>${l.proxy}</code></td>
         <td>${l.worker ? html`<code title=${l.worker}>${l.worker.slice(0, 14)}</code>` : '—'}</td>
         <td class="muted">${localStamp(l.touched_at, { empty: '' })}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
@@ -259,7 +261,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
     ${usage?.error ? html`<div class="fa-danger">${usage.error}</div>` : !usage ? html`<div class="empty">Loading…</div>` : used.length === 0 ? html`<div class="empty">No model requests on ${day}.</div>` : html`
     <${FaTable} id="fleet-model-usage" head=${['Gateway', 'Peer', 'Model', 'Requests', 'Charged tokens', 'In · out', 'Cost']}>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
-        <td><code>${u.proxy}</code></td><td>${label(u.peer)}</td><td>${u.model || '—'}</td>
+        <td><code>${u.proxy}</code></td><td>${cellLabel(u.peer)}</td><td>${u.model || '—'}</td>
         <td>${u.requests}${u.running ? html` <span class="muted">(${u.running} in progress)</span>` : ''}${u.failed ? html` <span class="fa-danger">(${u.failed} failed)</span>` : ''}</td>
         <td>${num(u.charged)}</td><td class="muted">${num(u.input)} · ${num(u.output)}</td>
         <td data-cost=${u.microUSD}>${usdText(u.microUSD)}${u.unpriced ? html` <span class="muted" title="No price is known for this model; add one under model_policy.prices">(${u.unpriced} unpriced)</span>` : ''}</td>

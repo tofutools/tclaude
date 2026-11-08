@@ -5,6 +5,7 @@ import { viewersFocus } from './remote-viewers.js';
 import { Button } from './ui-components.js';
 import { errText } from './cell-format.js';
 import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -34,7 +35,8 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     loop();
     return () => { off = true; timers.clearTimeout(t); };
   }, [tick]);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const unrestricted = (id) => view.trusted.find((r) => r.id === id)?.level === 'unrestricted';
   const kick = (v) => confirm({
     title: `Disconnect ${label(v.peer)} from ${v.session || v.agent}?`,
@@ -56,7 +58,7 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     ${focus && html`<div class="muted" id="fleet-viewers-focus">${shown.length ? 'Showing who views' : 'No one is viewing'} <code title=${focus}>${shown[0]?.session || focus}</code> now · <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { viewersFocus.value = ''; }}>show all<//></div>`}
     ${error && html`<div class="fa-danger">${error}</div>`}
     ${shown.length > 0 && html`<${FaTable} head=${['Peer', 'Agent', 'Group', 'Mode', 'For', '']}>${shown.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
-        <td>${label(v.peer)}</td>
+        <td>${cellLabel(v.peer)}</td>
         <td><code title=${v.agent}>${v.session || v.agent}</code></td>
         <td>${v.group || ''}</td>
         <td class=${v.read_only ? 'muted' : 'fa-warn'}>${v.read_only ? 'watching' : 'interactive'}</td>
