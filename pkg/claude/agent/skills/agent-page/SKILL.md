@@ -145,8 +145,8 @@ tclaude agent page patches landing --reset     # drop them all (or --reset 3)
 
 - Each css or dom call is patch #N: applied in every open view, replayed after
   each reload, shown in `page snapshot`, until you reset it or the page closes.
-  The operator's header says "⚡ live patch #N · not in source", with **Show
-  without** to compare.
+  The operator's header says "⚡ live patch #N · not in source", with **View ›
+  Without the live patches** to compare.
 - `eval` runs once in one open view and prints the value as JSON; it is not
   replayed. It needs the page open.
 - **Patches never write your files.** When the operator approves, port the

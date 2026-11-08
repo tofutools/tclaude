@@ -172,3 +172,20 @@ test('with a menu open, a pointer that moves onto another label and clicks it le
   await open('view');
   assert.equal(c.querySelector('.reh-menu'), null, 'a second click closes it');
 });
+
+test('an open menu closes when the window loses focus (a press in a frame under it), and ↑/↓ reach checked items', async (t) => {
+  const { harness, c, label, open } = await mountHeader(t, () => ({
+    title: 'Plan',
+    menus: [{ key: 'view', label: 'View', items: [
+      { key: 'a', label: 'A', run() {} },
+      { key: 'b', label: 'B', checked: true, run() {} },
+    ] }],
+  }));
+  await open('view');
+  await harness.act(async () => { harness.fireEvent(label('view'), 'keydown', { key: 'ArrowDown' }); await wait(5); });
+  assert.equal(harness.document.activeElement.textContent.trim(), 'A');
+  await harness.act(async () => { harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'ArrowDown' }); await wait(); });
+  assert.equal(harness.document.activeElement.getAttribute('role'), 'menuitemcheckbox', '↓ reaches the checked item');
+  await harness.act(async () => { harness.document.defaultView.dispatchEvent(new harness.document.defaultView.Event('blur')); await wait(); });
+  assert.equal(c.querySelector('.reh-menu'), null, 'the menu closed');
+});

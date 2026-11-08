@@ -95,8 +95,16 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
       shut();
       if (inside) all()[i]?.focus();
     };
+    // A press in a frame under the menu (a live page) never reaches this
+    // document; the window losing focus to it closes the menu instead.
+    const win = doc?.defaultView;
+    const onBlur = () => latest.current.close();
     doc?.addEventListener('keydown', onKey);
-    return () => doc?.removeEventListener('keydown', onKey);
+    win?.addEventListener('blur', onBlur);
+    return () => {
+      doc?.removeEventListener('keydown', onKey);
+      win?.removeEventListener('blur', onBlur);
+    };
   }, [!!open]);
   const show = (key) => { setSub(null); setOpen(key); };
   // hovered is the menu a pointer opened by passing over its label while
@@ -113,13 +121,13 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       show(live[i].key);
-      setTimeout(() => ref.current?.querySelector('.reh-menu [role="menuitem"]:not([disabled])')?.focus());
+      setTimeout(() => ref.current?.querySelector('.reh-menu [role^="menuitem"]:not([disabled])')?.focus());
     }
   };
   const onMenuKey = (event) => {
     // A control drawn in the menu (a picker) keeps its own keys.
     if (event.target?.closest?.('.reh-menu-node')) return;
-    const items = [...(ref.current?.querySelectorAll('.reh-menu [role="menuitem"]:not([disabled])') || [])];
+    const items = [...(ref.current?.querySelectorAll('.reh-menu [role^="menuitem"]:not([disabled])') || [])];
     const at = items.indexOf(event.target);
     if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && items.length) {
       event.preventDefault();
