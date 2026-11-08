@@ -152,8 +152,10 @@ export function DrawingBoardAttachDialog({ request, close }) {
   const shownTask = task && shown.some((t) => t.id === task.id);
 
   // ↑ and ↓ choose among the tasks shown, from the search box or a task's
-  // row; focus stays where it is, as a combobox's does.
+  // row; focus stays where it is, as a combobox's does. While an input
+  // method is composing, the arrows belong to its candidate list.
   const onListKey = (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     const next = stepChoice(shown, task?.id, event.key === 'ArrowDown' ? 1 : -1);
     if (!next) return;
@@ -196,7 +198,7 @@ export function DrawingBoardAttachDialog({ request, close }) {
     <label class="cron-create-row">
       <span class="cron-create-label">Task</span>
       <${Input} domRef=${searchRef} id="drawing-board-attach-search" value=${query} placeholder="Find a task by title or id"
-        autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list"
+        autocomplete="off" spellcheck="false" role="combobox" aria-expanded=${shown.length ? 'true' : 'false'} aria-autocomplete="list"
         aria-controls="drawing-board-attach-tasks" aria-activedescendant=${shownTask ? optionId(task.id) : undefined}
         onInput=${(event) => setQuery(event.currentTarget.value)} onKeyDown=${onListKey} />
     </label>
