@@ -2288,6 +2288,10 @@ export class ProcessTemplateEditor {
 
   onEditorKeyDown(event) {
     if (event.defaultPrevented) return;
+    // The header's menus keep their own keys: Escape closes a menu rather
+    // than leaving a subgraph, and Delete on a menu item deletes nothing.
+    // Ctrl/⌘ shortcuts (save, undo) still reach the editor.
+    if (event.target?.closest?.('.reh-menubar') && !event.ctrlKey && !event.metaKey) return;
     const inInput = isProcessEditorFormControl(event.target);
     if (this.diffReview && !inInput && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const review = {
