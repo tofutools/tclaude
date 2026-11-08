@@ -252,7 +252,7 @@ function cardHint(task) {
 // A card's title opens the edit form (onEdit), as the List's does, and so
 // does a double-click on the card; hovering the title shows the task's
 // card (groups-taskboard-card.js), which carries its id.
-// `marker` (the Board view's, groups-taskboard-board.js) is a corner badge
+// `marker` (lanes triage and one row, groups-taskboard-lanes-flat.js) is a corner badge
 // saying who holds the task, with a class for the card's edge.
 export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null }) {
   const done = task.status === 'done';
@@ -269,7 +269,8 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
 
 // useLaneDrag drives the card drags. A drop target `to` names its lane, or
 // carries resolve(fromLane) instead: the lane a drop from fromLane means
-// there, or null where the cell takes none (the Board view's rows), and a
+// there, or null where the cell takes none (triage's Agents row and one row,
+// groups-taskboard-lanes-flat.js), and a
 // key of its own for the cell it marks.
 export function useLaneDrag(actions, group, tasks = []) {
   const dragged = useRef(null);

@@ -21,6 +21,7 @@ function board(group, extra = []) {
     closed: [
       row('tk_00000005', 'finished', { status: 'done', closed_at: ago(30), assignee: builder }),
       row('tk_00000006', 'closed unassigned', { status: 'done', closed_at: ago(40) }),
+      row('tk_00000007', 'answered', { status: 'done', closed_at: ago(50), assignee: operator }),
     ],
   };
 }
@@ -92,6 +93,8 @@ test('lanes: triage draws You, Unassigned and Agents, each card marked with who 
   assert.equal(marker('tk_00000002').textContent, 'B');
   assert.equal(marker('tk_00000002').getAttribute('title'), 'builder');
   assert.equal(marker('tk_00000006'), null, 'a done task needs nobody: no !');
+  assert.ok(marker('tk_00000007').classList.contains('tb-avatar-operator'), 'the operator\'s done task: their avatar, no !');
+  assert.equal(marker('tk_00000007').textContent, '★');
 });
 
 test('the lanes switch offers triage and one row, remembered per group; one row holds every task', async (t) => {
@@ -103,7 +106,7 @@ test('the lanes switch offers triage and one row, remembered per group; one row 
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tlf-mode'), 'row');
   assert.deepEqual(rows(), ['row']);
   assert.deepEqual(ids('row', 'progress'), ['tk_00000002', 'tk_00000003'], 'agents\' and the operator\'s tasks share the row, in board order');
-  assert.deepEqual(ids('row', 'done'), ['tk_00000005', 'tk_00000006']);
+  assert.deepEqual(ids('row', 'done'), ['tk_00000005', 'tk_00000006', 'tk_00000007']);
   assert.equal(c.querySelector('.tb-col-lane'), null, 'no row heads in one row');
 });
 
@@ -117,6 +120,7 @@ test('Triage drags: onto You assigns to the operator, onto Unassigned unassigns,
   api.calls.length = 0;
   const out = await drag('tk_00000001', 'agents', 'progress');
   assert.equal(out.taken, false, 'Agents does not say which agent');
+  assert.equal((await drag('tk_00000003', 'agents', 'progress')).taken, false, 'nor for the operator\'s card');
   assert.deepEqual(api.calls, []);
   await drag('tk_00000002', 'agents', 'done');
   assert.deepEqual(api.calls, [['status', 'tk_00000002', 'done']], 'an agent\'s card moves along Agents');
@@ -147,4 +151,15 @@ test('a read-only triage has no drags and no cell +', async (t) => {
   assert.equal(ro.c.querySelector('.tb-card[draggable]'), null);
   assert.equal(ro.c.querySelector('.tb-cell-add'), null);
   assert.deepEqual(ro.rows(), ['operator', 'unassigned', 'agents'], 'You still shows while the operator holds a task');
+});
+
+test('without the assign grant, triage takes no drop onto You or Unassigned from another lane; columns still move', async (t) => {
+  const api = fakeApi();
+  api.can = { assign: false };
+  const { drag, cell } = await mountFlat(t, 'tlf-noassign', { api });
+  assert.equal((await drag('tk_00000001', 'operator', 'progress')).taken, false, 'no assign to the operator');
+  assert.equal((await drag('tk_00000002', 'unassigned', 'next')).taken, false, 'no unassign');
+  await drag('tk_00000004', 'unassigned', 'next');
+  assert.deepEqual(api.calls, [['stage', 'tk_00000004', 'next']], 'a column move in a lane still works');
+  assert.ok(cell('unassigned', 'next').querySelector('.tb-cell-add'), 'Unassigned keeps its +');
 });

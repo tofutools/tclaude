@@ -43,7 +43,7 @@ function taskLane(task) {
   return task.assignee?.agent_id || UNASSIGNED;
 }
 
-// boardRow is the row a task stands in for a mode.
+// flatRow is the row a task stands in for a mode.
 export function flatRow(task, mode) {
   if (mode === ALL) return ALL;
   const lane = taskLane(task);
@@ -80,7 +80,10 @@ export function cardMarker(task, group, snapshot) {
     if (done) return { class: '', badge: html`<span class="tb-card-marker tb-avatar tb-avatar-operator" title=${title} aria-label=${title}>★</span>` };
     return { class: 'tb-card-operator', badge: html`<span class="tb-card-marker tb-marker-operator" title=${title} aria-label=${title}>!</span>` };
   }
-  const name = task.assignee?.name || agentLabel(lane, group, snapshot) || lane;
+  // The member's current title, as its lane would say; a former member by
+  // the name the task recorded.
+  const member = (group?.members || []).find((m) => m.agent_id === lane);
+  const name = member?.title || task.assignee?.name || agentLabel(lane, group, snapshot) || lane;
   return { class: '', badge: html`<span class="tb-card-marker tb-avatar" title=${name} aria-label=${`Assigned to ${name}`}>${String(name).slice(0, 1).toUpperCase()}</span>` };
 }
 
