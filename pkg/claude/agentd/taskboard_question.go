@@ -264,7 +264,7 @@ func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *
 	if state, err := db.AgentState(conv); err != nil || state == db.AgentStateRetired {
 		return
 	}
-	mailTaskboard(r, g, conv, subject, b.String())
+	mailTaskboard(r, g, conv, subject, taskboardLinked(g, t, b.String()))
 }
 
 // GET /v1/taskboard/tasks/{id}/questions/{n}[?wait=30s] (or …/answer for

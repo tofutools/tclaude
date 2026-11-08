@@ -26,7 +26,7 @@ The group's Task board is the short-term view of what is happening now and next 
 ```bash
 tclaude agent taskboard ls                 # your group's board: the queue (next), then ideas
 tclaude agent taskboard ls --mine          # the tasks assigned to you, in every group
-tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it
+tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it, and its dashboard link
 tclaude agent taskboard take tk_1a2b3c4d   # take an open, unassigned task yourself (an idea is promoted)
 # … do the work …
 tclaude agent taskboard report done --note "merged #4126"

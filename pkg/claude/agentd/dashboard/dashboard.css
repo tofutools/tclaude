@@ -18752,6 +18752,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-history-row .tb-history { margin: 0; }
 .tb-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .tb-title { color: #e6edf3; }
+a.tb-title { text-decoration: none; }
 /* A task's title opens the task (groups-taskboard-card.js), in the List and
    on a Lanes card; hovering it shows the task's card. */
 .tb-title-open { cursor: pointer; }
@@ -18761,6 +18762,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .tb-id-copy { border: 0; padding: 0 4px; background: none; color: #8b949e; font: inherit; cursor: pointer; }
 .tb-id-copy:hover, .tb-id-copy:focus-visible { color: #e6edf3; }
 .tb-task-panel-id { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 11px; color: #8b949e; }
+.tb-task-panel-link { margin: -4px 0 6px; font-size: 11px; color: #6e7681; }
 .tb-task-panel .prd-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .tb-task-where { text-transform: capitalize; color: #e6edf3; }
 .tb-task-where-blocked { color: #f85149; }

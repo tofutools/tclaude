@@ -140,7 +140,7 @@ func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, st
 			fmt.Fprintf(&b, "\nYour task stays blocked: %s\nUnblock it: tclaude agent taskboard unblock %s\n", d.BlockReason, d.ID)
 		}
 		fmt.Fprintf(&b, "Read the activity: tclaude agent taskboard activity %s\n", t.ID)
-		mailTaskboard(r, g, conv, taskboardSubject(g, d, what+": "+t.ID+" is "+map[bool]string{true: "done", false: "dropped"}[status == db.GroupTaskDone]), b.String())
+		mailTaskboard(r, g, conv, taskboardSubject(g, d, what+": "+t.ID+" is "+map[bool]string{true: "done", false: "dropped"}[status == db.GroupTaskDone]), taskboardLinked(g, d, b.String()))
 	}
 }
 

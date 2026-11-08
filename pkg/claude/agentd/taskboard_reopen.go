@@ -106,18 +106,18 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if out.AssigneeID != t.AssigneeID {
 		if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee && targetConv != "" {
 			setAuditTargetConv(r, targetConv)
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardBrief(g, out, by))
+			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
 		if t.AssigneeID != "" && t.AssigneeID != self {
 			if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
 				mailTaskboard(r, g, conv, taskboardSubject(g, out, "reopened by "+by),
-					fmt.Sprintf("Task %s %q in %s was reopened by %s and no longer assigned to you.\n", out.ID, out.Title, g.Name, by))
+					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reopened by %s and no longer assigned to you.\n", out.ID, out.Title, g.Name, by)))
 			}
 		}
 	} else if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee {
 		if conv := activeGroupMember(g, out.AssigneeID); conv != "" {
 			mailTaskboard(r, g, conv, taskboardSubject(g, out, "reopened by "+by),
-				fmt.Sprintf("Task %s %q in %s was reopened by %s and is yours again.\n\n%s", out.ID, out.Title, g.Name, by, taskboardBrief(g, out, by)))
+				taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reopened by %s and is yours again.\n\n%s", out.ID, out.Title, g.Name, by, taskboardBrief(g, out, by))))
 		}
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)

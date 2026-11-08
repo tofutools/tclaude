@@ -112,7 +112,10 @@ func RunTaskboardCLI(args []string, stdout, stderr io.Writer) (rc int) {
 
 // taskboardTask is the daemon's wire shape for one task.
 type taskboardTask struct {
-	ID               string   `json:"id"`
+	ID string `json:"id"`
+	// URL is the task's dashboard link, on show and add (the daemon's
+	// dashboard listener; absent from a linked node).
+	URL              string   `json:"url,omitempty"`
 	Group            string   `json:"group"`
 	Title            string   `json:"title"`
 	Body             string   `json:"body,omitempty"`
@@ -200,6 +203,10 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.where(), t.Status)
+	// Only add's reply carries the link (the daemon's show and add).
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
+	}
 	return rcOK
 }
 
@@ -663,6 +670,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if t.ClosedAt != "" {
 		fmt.Fprintf(stdout, "  closed:  %s\n", t.ClosedAt)
 	}
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link:    %s\n", t.URL)
+	}
 	printTaskboardQuestion(stdout, t)
 	if t.Body != "" {
 		fmt.Fprintf(stdout, "\n%s\n", t.Body)
@@ -851,6 +861,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "added %s: %s  [%s, %s]\n", t.ID, t.Title, t.Stage, t.Status)
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
+	}
 	printTaskboardAttachments(stdout, "  ", t.Attachments)
 	return rcOK
 }

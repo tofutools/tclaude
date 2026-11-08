@@ -1020,6 +1020,7 @@ a CLI verb:
 | ✓ *Done* | `done <task>` |
 | ⋯ *Drop…* (asks an optional reason in a dialog), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
 | ✎ *Edit*, or a click on the task's title (in the list or on a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
+| ⋯ *Copy link*, or the title's own link (see [A task's link](#a-tasks-link)) | `show <task>` and `add` print it |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen* or ⋯ *Reopen*, on a task under *history* | `reopen <task>` |
@@ -1159,6 +1160,45 @@ board.
 
 With *reduce motion* set in your system, the scroll jumps and the flash only
 fades.
+
+### A task's link
+
+Every task has its own dashboard link:
+
+```
+http://127.0.0.1:<port>/groups?task=<task-id>:<group>
+```
+
+A linked node's task shown here adds that node's id after the task's id
+(`?task=<task-id>@<node-id>:<group>`). The group name comes last and as it
+is, so a name holding `:` or `@` still reads back.
+
+Opening the link unfolds the group and its Task board, scrolls to the task
+and opens its edit form. That works for a task in history or archived as
+well. You can share it with an agent or paste it back to ask about the task.
+A link to a task that has moved to another group since, or is gone, opens
+nothing and leaves the address bar.
+
+- A task's title is that link, in the List and on a lanes card. A plain
+  click still opens the edit form in place. A middle click or a Ctrl/⌘-click
+  opens the task in a new browser tab, and the browser's *Copy link address*
+  copies it. The hover card says so; the card itself is not clickable.
+- ⋯ *Copy link* copies the whole link, from a row's ⋯ (or a right-click on
+  the row) and from a lanes card's ⋯.
+- Opening the edit form adds a browser history step, and closing it steps
+  back. **Back** closes an open form, **Forward** opens it again, and a
+  reload keeps it open. If the form has unsaved input, Back first asks
+  *Discard input?*, as *Cancel* does. Choose *Cancel* there to keep editing
+  with the form's entry back in the history.
+- `tclaude agent taskboard show <task>` and `add` print the link as
+  `link:`, and every `[taskboard]` mail ends with it (*Open it in the
+  dashboard: …*). The CLI prints none for a linked node's task (`--peer`):
+  that node's dashboard is not this one.
+
+The port is the dashboard listener's. By default it is random and changes
+when the daemon restarts, so a printed or mailed link works only until then.
+The task id beside it keeps working. To keep links working, fix the port with
+**Dashboard port** in [Config › Daemon & network](dashboard-config.md#daemon-network).
 
 ### Swim lanes
 

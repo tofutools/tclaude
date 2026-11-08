@@ -20,13 +20,14 @@
 // button, so a press on it is never a drag (row-drag.js).
 
 import { h } from 'preact';
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { usePanelPlacement } from './pr-checks-hover.js';
 import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { useThumb, useMarkdownFiles } from './groups-taskboard-files.js';
+import { TaskLink, taskPath } from './task-route.js';
 
 const html = htm.bind(h);
 
@@ -112,7 +113,7 @@ function Thumb({ api, task, attachment }) {
 }
 
 // TaskCardPanel is the card itself.
-function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, placement, chips }) {
+function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, placement, chips, linked = false }) {
   const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;`
       + (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
@@ -131,6 +132,7 @@ function TaskCardPanel({ task, api, read, nameOf, panelID, headingID, panelRef, 
       data-task-card=${task.id}>
     <div class="prd-title tb-task-panel-title" id=${headingID}>${task.title}</div>
     <div class="tb-task-panel-id"><code>${task.id}</code></div>
+    ${linked && html`<div class="tb-task-panel-link">The title is the task's link: Ctrl/⌘-click opens a new tab.</div>`}
     <div class="prd-meta">
       <span class=${`tb-task-where tb-task-where-${whereText(task).replace(/\s+/g, '-')}`}>${whereText(task)}</span>
       ${assignee && html`<span>with ${assignee}</span>`}
@@ -234,7 +236,14 @@ export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = nul
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
   const panelID = `tb-task-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
+  // On a board the title is the task's link (task-route.js): a plain click
+  // opens the form here, a middle or Mod-click (or Copy link address) is
+  // the browser's, a new tab at the task.
+  const board = useContext(TaskLink);
+  const href = onOpen && board ? taskPath({ taskId: task.id, node: board.node, group: board.group }) : '';
   const openForm = (event) => {
+    if (href && (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) { event.stopPropagation(); return; }
+    event.preventDefault?.();
     event.stopPropagation();
     handOff();
     onOpen();
@@ -246,11 +255,15 @@ export function TaskTitle({ task, api, nameOf = null, onOpen = null, chips = nul
     openForm(event);
   };
   return html`<span ref=${rootRef} class=${`ci-hover tb-task-hover${open ? ' is-open' : ''}`}>
-    <span role=${onOpen ? 'button' : undefined} tabindex="0" class=${`tb-title${onOpen ? ' tb-title-open' : ''}${extra ? ` ${extra}` : ''}`}
-      aria-describedby=${open ? panelID : undefined}
-      aria-label=${onOpen ? `${task.title}: opens the task` : undefined}
-      onClick=${onOpen ? openForm : undefined} onKeyDown=${key} ...${titleProps}>${task.title}</span>
+    ${h(href ? 'a' : 'span', {
+      role: onOpen && !href ? 'button' : undefined, tabindex: '0', href: href || undefined,
+      class: `tb-title${onOpen ? ' tb-title-open' : ''}${extra ? ` ${extra}` : ''}`,
+      draggable: href ? 'false' : undefined,
+      'aria-describedby': open ? panelID : undefined,
+      'aria-label': onOpen ? `${task.title}: opens the task` : undefined,
+      onClick: onOpen ? openForm : undefined, onKeyDown: key, ...titleProps,
+    }, task.title)}
     ${open && html`<${TaskCardPanel} task=${task} api=${api} read=${read} nameOf=${nameOf}
-        panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} chips=${chips} />`}
+        panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} chips=${chips} linked=${!!href} />`}
   </span>`;
 }
