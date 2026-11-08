@@ -1246,6 +1246,7 @@ those drags aren't accepted in the lanes.
 | `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
 | `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
 | `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
+| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","resolved","note"}`), titled through the tracker proxy as an import is; adds nothing, needs board read |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

@@ -456,3 +456,17 @@ test('a board whose api predates archiveClosed offers done only', async (t) => {
   await click(c.querySelector('.tb-archive-done-btn'));
   assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
 });
+
+test('a tracker ticket is added by its link, and a label never stands in for a bare id', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { trackerTaskPlan, sameRef } = await harness.importDashboardModule('js/groups-taskboard-tracker.js');
+  const linked = trackerTaskPlan({ ref: 'LIN-7', link: 'https://linear.app/acme/issue/LIN-7', title: 'Checkout', label: 'Cart', start: 'next' });
+  assert.equal(linked.task.ref, 'https://linear.app/acme/issue/LIN-7');
+  assert.equal(linked.task.refLabel, 'Cart');
+  assert.equal(linked.task.stage, 'next');
+  const bare = trackerTaskPlan({ ref: 'LIN-7', title: 'Checkout', label: 'Cart' });
+  assert.equal(bare.task.ref, 'LIN-7');
+  assert.equal(bare.task.refLabel, '', 'with no link the id is the ref\'s name');
+  const live = [{ id: 'tk_1', title: 'x', status: 'open', ref: { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7' } }];
+  assert.equal(sameRef(live, { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7/' })?.id, 'tk_1');
+});

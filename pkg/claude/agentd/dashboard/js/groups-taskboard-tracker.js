@@ -57,11 +57,14 @@ export function sameRef(tasks, found) {
 // trackerTaskPlan is the one-ticket form's write. With a title, one add that
 // carries the ref (linked through its tracker), its label, the brief and the
 // stage. Without one, an import, which takes the tracker's title; the brief
-// and the label follow as an edit.
+// and the label follow as an edit. `link` is the ticket's URL as the lookup
+// found it: the add sends it, so a label never stands in for the tracker id
+// (a ref with no link is named by its id, and a label would replace it).
 export function trackerTaskPlan(draft) {
-  const ref = String(draft.ref || '').trim();
+  const link = String(draft.link || '').trim();
+  const ref = link || String(draft.ref || '').trim();
   const title = String(draft.title || '').trim();
-  const refLabel = String(draft.label || '').trim();
+  const refLabel = /^https?:\/\//i.test(ref) ? String(draft.label || '').trim() : '';
   const body = String(draft.body || '').trim();
   const next = draft.start === 'next';
   if (title) {
@@ -85,7 +88,7 @@ export async function submitTrackerTask(api, groupName, draft) {
     try {
       const change = {};
       if (plan.body) change.body = plan.body;
-      if (plan.refLabel) { change.ref = task.ref?.url || plan.ref; change.refLabel = plan.refLabel; }
+      if (plan.refLabel && task.ref?.url) { change.ref = task.ref.url; change.refLabel = plan.refLabel; }
       task = await api.edit(task.id, change) || task;
     } catch (cause) {
       return { task, warning: `added as ${task.id}, but its ${plan.body ? 'brief' : 'label'} was not saved: ${cause?.message || cause}` };
@@ -162,15 +165,20 @@ export function TrackerTaskDialog({ group, entry, api, wizard = false, initial =
     setDraft((current) => (current.title === looked ? current : { ...current, title: looked }));
   }, [found, titleTyped]);
   const existing = sameRef(entry?.tasks, found);
+  // A ref with no link (a bare id its tracker did not resolve) is named by
+  // that id: a label would replace it.
+  const unlinked = !!found && !found.url && !/^https?:\/\//i.test(draft.ref.trim());
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const refs = importRefs(kind, ids);
   const noun = wizard ? 'quest' : 'task';
-  const oneReady = isTrackerLine(draft.ref) && lookup.state !== 'looking' && !(lookup.state === 'failed' && lookup.code === 'invalid_arg');
+  // A ticket already on the board is not added twice (the import refused it
+  // as a duplicate; an add with a title would not).
+  const oneReady = !existing && isTrackerLine(draft.ref) && lookup.state !== 'looking' && !(lookup.state === 'failed' && lookup.code === 'invalid_arg');
   const ready = mode === 'one' ? oneReady : refs.length > 0;
   const dirty = mode === 'one' ? Object.keys(EMPTY).some((key) => key !== 'start' && draft[key].trim()) : ids.trim().length > 0;
 
   const submitOne = async () => {
-    const out = await submitTrackerTask(api, group.name, draft);
+    const out = await submitTrackerTask(api, group.name, { ...draft, link: found?.url || '' });
     if (out.warning) shellToast(out.warning, true);
     else shellToast(`Added ${out.task?.id || ''} to ${group.name}`);
     onDone(out);
@@ -241,8 +249,8 @@ export function TrackerTaskDialog({ group, entry, api, wizard = false, initial =
       ${row('Title', html`<${Input} class="tb-tracker-title" aria-label="Title" maxLength=${200} value=${draft.title} disabled=${busy}
         placeholder=${found && !found.resolved ? `empty: “${found.title}” (the ticket's id)` : 'from the tracker, or type your own'}
         onInput=${(event) => { setTitleTyped(event.currentTarget.value.trim() !== ''); set('title')(event.currentTarget.value); }} onKeyDown=${enter} />`)}
-      ${row('Label', html`<${Input} class="tb-tracker-label" aria-label="Label" maxLength=${80} value=${draft.label} disabled=${busy}
-        placeholder=${found?.label ? `optional; shown instead of “${found.label}”` : 'optional: the name the ref shows as'}
+      ${row('Label', html`<${Input} class="tb-tracker-label" aria-label="Label" maxLength=${80} value=${draft.label} disabled=${busy || unlinked}
+        placeholder=${unlinked ? `none: with no link, the ref shows as its id “${found.label}”` : found?.label ? `optional; shown instead of “${found.label}”` : 'optional: the name the ref shows as'}
         onInput=${(event) => set('label')(event.currentTarget.value)} onKeyDown=${enter} />`)}
       ${row('Brief', html`<${Textarea} class="tb-tracker-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
         placeholder="optional: what the assignee needs to know beyond the ticket" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}`

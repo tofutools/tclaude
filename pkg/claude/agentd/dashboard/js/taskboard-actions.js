@@ -175,10 +175,8 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // nothing: { kind, url, label, title, resolved, note }, its title from
     // the tracker as an import takes it (the id, and a note, when the lookup
     // did not resolve). The "from a tracker" form fills its title with it.
-    lookupRef(group, ref, refLabel = '') {
-      const payload = { ref };
-      if (refLabel) payload.ref_label = refLabel;
-      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/ref-lookup`, payload);
+    lookupRef(group, ref) {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/ref-lookup`, { ref });
     },
     // importRefs adds one task per tracker ref (`add --from-awb` and kin).
     importRefs(group, refs, { next = false } = {}) {

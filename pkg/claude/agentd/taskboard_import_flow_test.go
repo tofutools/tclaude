@@ -260,9 +260,10 @@ func TestTaskboardRefLookupTitlesATicketWithoutAddingIt(t *testing.T) {
 	assert.Equal(t, "Title of tcl-abc123", got.Title)
 	assert.True(t, got.Resolved)
 
-	got = h.lookupRef(member, map[string]any{"ref": "tcl-abc123", "ref_label": "Checkout"}, http.StatusOK)
-	assert.Equal(t, "Checkout", got.Label, "a given label is kept, as --ref-label does")
+	got = h.lookupRef(member, map[string]any{"ref": "tcl-abc123"}, http.StatusOK)
+	assert.Equal(t, "tcl-abc123", got.Label)
 	assert.Equal(t, "https://awb.example/#/issues/tcl-abc123", got.URL, "a bare id gets its link")
+	assert.Equal(t, "Title of tcl-abc123", got.Title)
 
 	// No proxy.linear.read: the id is the title, and the note says why.
 	got = h.lookupRef(member, map[string]any{"ref": "LIN-7"}, http.StatusOK)

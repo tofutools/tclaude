@@ -469,7 +469,7 @@ func (httpNoopCloser) Close() error { return nil }
 // from a tracker form waits for it to fill in the title.
 const taskboardRefLookupBudget = 10 * time.Second
 
-// POST /v1/groups/{name}/taskboard/ref-lookup {ref, ref_label?} — what a ref
+// POST /v1/groups/{name}/taskboard/ref-lookup {ref} — what a ref
 // would be on this board, without adding anything: its kind, link and label
 // as `add --ref` stores them, and its title from the tracker, as an import
 // would take it. Title is the fallback (the id, owner/repo#n or the URL) when
@@ -482,8 +482,7 @@ func handleTaskboardRefLookup(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	var body struct {
-		Ref      string `json:"ref"`
-		RefLabel string `json:"ref_label"`
+		Ref string `json:"ref"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -495,7 +494,7 @@ func handleTaskboardRefLookup(w http.ResponseWriter, r *http.Request, g *db.Agen
 		writeError(w, http.StatusBadRequest, "invalid_arg", "give a ref: a ticket URL or a tracker id")
 		return
 	}
-	kind, refURL, label, err := parseTaskRef(body.Ref, body.RefLabel)
+	kind, refURL, label, err := parseTaskRef(body.Ref, "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
