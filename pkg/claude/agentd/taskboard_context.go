@@ -72,9 +72,9 @@ type taskboardColumnCount struct {
 }
 
 type taskboardGroupContext struct {
-	GroupID int64                  `json:"group_id"`
-	Group   string                 `json:"group"`
-	Counts  taskboardCounts        `json:"counts"`
+	GroupID int64           `json:"group_id"`
+	Group   string          `json:"group"`
+	Counts  taskboardCounts `json:"counts"`
 	// Columns are the board's custom columns in its order, each with how
 	// many open tasks stand in it (tcl-plby5h); those are not in the
 	// counts' InProgress or Next. A blocked task in one counts as Blocked.
