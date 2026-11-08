@@ -30,13 +30,14 @@ import (
 // that defeats that posture from outside the argv, which is why the ask surface
 // scrubs it (TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment).
 
-// askDeadline bounds one ask scenario. A healthy headless turn against the mock
-// takes ~2s; the tool-posture arms add one provider round trip. Startup is
-// normally most of the run, however, and reached 18.6s on a loaded host where a
-// still-working turn finished at 29s. Sixty seconds leaves load margin without
-// adding wall clock to successful runs; a progress-relative deadline would
-// require changing the shared argv runner for a suite-local timing problem.
-const askDeadline = 60 * time.Second
+// askDeadline is a liveness guard, not a verdict. An ask scenario is a headless
+// argv run, and it already ends on its own event: the process exits with its
+// answer (or its refusal), which is what every scenario here asserts on.
+// Nothing classifies on elapsed time, so the bound only has to catch a CLI
+// that never exits, and must sit well above any run a loaded runner produces:
+// the smoke job runs eight CLIs on four vCPUs on purpose, and a healthy ~2s
+// capture took over 60s there (tk_ca70bf44). A clean run pays none of it.
+const askDeadline = 4 * time.Minute
 
 // askArgv is the production ask argv, with the binary left as-is.
 func askArgv(t *testing.T, spec harness.AskSpec) []string {

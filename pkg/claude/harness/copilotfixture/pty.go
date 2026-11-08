@@ -119,10 +119,16 @@ type PTYResult struct {
 	// it never wrote one.
 	FirstOutput time.Duration
 
-	// Blocked reports that the run ended early on BlockedAfter: alive, and
+	// Blocked reports that the run ended early on BlockedAfter (or
+	// BlockedWhen): alive, and
 	// silent for longer than any working turn goes silent. It is the same
 	// state a deadline-reaching run lands in, observed sooner.
 	Blocked bool
+
+	// WindowClosed reports that PTYOptions.KeystrokesWindow ended the run: the
+	// keys were all delivered and the window after them passed with the
+	// process still alive.
+	WindowClosed bool
 }
 
 // TranscriptText strips ANSI control sequences so a scenario can match on
@@ -178,6 +184,16 @@ type PTYOptions struct {
 	// passed the ANSI-stripped transcript; After delays start once it is true.
 	// The process exit and run deadline still bound the wait.
 	KeystrokesWhen func(string) bool
+
+	// KeystrokesWindow, when non-zero, ends the run this long after the last
+	// scheduled keystroke was written, if the process has not exited first.
+	//
+	// A scenario that asks "what does the TUI do with these keys" has its
+	// verdict window after the keys, not after launch: a deadline counted from
+	// launch spends part of that window on startup, which a loaded runner
+	// stretches until the window is gone. With this set, Deadline is only the
+	// liveness guard and can sit far above any observed run.
+	KeystrokesWindow time.Duration
 
 	// SettledWhen, when non-nil, ends the run as soon as it returns true.
 	//
@@ -285,6 +301,8 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 		lastWrite  = start
 		maxGap     time.Duration
 		firstWrite time.Time
+		// keysDoneAt is when the last scheduled keystroke was written.
+		keysDoneAt time.Time
 	)
 	readDone := make(chan struct{})
 	go func() {
@@ -390,6 +408,9 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 					return
 				}
 			}
+			mu.Lock()
+			keysDoneAt = time.Now()
+			mu.Unlock()
 		}()
 	}
 
@@ -417,6 +438,7 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	gotExit := false
 	settled := false
 	blocked := false
+	windowClosed := false
 	blockedReady := opts.BlockedAfterReady == nil
 	blockedReadyAt := start
 loop:
@@ -468,6 +490,15 @@ loop:
 				blocked = true
 				break loop
 			}
+			if opts.KeystrokesWindow > 0 {
+				mu.Lock()
+				done := keysDoneAt
+				mu.Unlock()
+				if !done.IsZero() && time.Since(done) >= opts.KeystrokesWindow {
+					windowClosed = true
+					break loop
+				}
+			}
 		}
 	}
 	if !gotExit {
@@ -506,10 +537,11 @@ loop:
 	}
 
 	res := PTYResult{
-		Quiesced: quiesced,
-		Settled:  settled,
-		Blocked:  blocked,
-		Elapsed:  time.Since(start),
+		Quiesced:     quiesced,
+		Settled:      settled,
+		Blocked:      blocked,
+		Elapsed:      time.Since(start),
+		WindowClosed: windowClosed,
 	}
 	mu.Lock()
 	res.Transcript = transcript.String()
@@ -554,6 +586,8 @@ func logPTYTiming(t *testing.T, res PTYResult) {
 		end = "settled"
 	case res.Blocked:
 		end = "blocked-early"
+	case res.WindowClosed:
+		end = "keystrokes-window"
 	}
 	t.Logf("PTY TIMING elapsed=%s ended=%s first-output=%s max-output-gap=%s",
 		res.Elapsed.Round(100*time.Millisecond), end,
