@@ -1808,6 +1808,15 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .overlay-window.snapped { border-radius: 0; box-shadow: 0 0 24px rgba(0, 0, 0, .5); }
 /* Focused from a click on its chrome, for its border. */
 .overlay-window:focus { outline: none; }
+/* Minimize and restore (overlay-window-motion.js): a window flying to the dock
+   shows, a minimized chat's warm hiding included, but takes no input; one about
+   to grow out of the dock stays out of sight until its flight starts. */
+.overlay-window.overlay-window-leaving { visibility: visible !important; pointer-events: none !important; }
+.overlay-window.overlay-window-waiting { opacity: 0 !important; pointer-events: none !important; }
+/* What a window shows while its content comes up: its last frame, or a placeholder. */
+.overlay-live-frame { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; background: var(--cmp-bg, #0d1117); }
+.overlay-live-frame.placeholder { display: flex; align-items: center; justify-content: center; color: var(--cmp-muted, #8b949e); font-size: 12px; }
+.overlay-live-frame-copy { height: 100%; }
 .overlay-window-edge { position: absolute; z-index: 2; touch-action: none; }
 .overlay-window-edge:is(.e, .w) { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 .overlay-window-edge:is(.n, .s) { left: 0; right: 0; height: 6px; cursor: ns-resize; }

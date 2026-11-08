@@ -9,6 +9,7 @@ import htm from 'htm';
 import { closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
+import { useLiveTerminal } from './overlay-window-motion.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { TERMINAL_WINDOW_KIND, paneSeedOf } from './terminal-window-model.js';
@@ -66,6 +67,11 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, more = null
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const look = windowControlsLook(snapshot.value?.window_controls);
   const leave = () => closeOverlayTab(instance.id);
+  // Its terminal is what a minimize or restore shows, live or its last frame.
+  const onStatus = useLiveTerminal({
+    windowId: open ? instance.windowId : '', tabId: instance.id, widgetRef, win, setStatus,
+    host: () => overlay.windowRef.current?.querySelector?.('.companion-term-host') || null,
+  });
   const { toCollab, toWindow } = tabMoves(instance);
   const toSeparateWindow = () => toWindow({ rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify });
   const title = html`${strip}
@@ -88,7 +94,7 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, more = null
         <${Terminal} key=${instance.paneKey} agent=${{ agentId: instance.paneKey, harness: '' }} wsPath=${instance.ws} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${widgetRef}
           fontSize=${() => readTerminalFont('companion', instance.paneKey, prefs)} onFontChange=${onFontChange}
-          onStatus=${setStatus} onReconnectChange=${setCanReconnect} onDisconnect=${(info) => { if (info?.closeTab) leave(); }} />`}
+          onStatus=${onStatus} onReconnectChange=${setCanReconnect} onDisconnect=${(info) => { if (info?.closeTab) leave(); }} />`}
     </div>
   <//>`;
 }

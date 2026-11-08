@@ -34,6 +34,7 @@ import { postDismiss } from './decision-dismiss.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { CollabSnapTargets, overlayWindowsByStack, readPref, reducedMotion, setSnapAssistEnabled, writePref } from './overlay-window.js';
+import { addOverlayMotionTarget } from './overlay-window-motion.js';
 import { registerTabMoves } from './overlay-tab-moves.js';
 import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, openTabInWindow, overlayHostUp, overlayTabs, overlayWindows, swapOverlayTab, tearOverlayTabOut } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
@@ -314,8 +315,7 @@ export function CompanionApp({
   const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
   // A window opened from the chips, which saves its placement as the companion
   // did, opens at their spot until the operator moves it.
-  const homeOverlay = useRef(null);
-  const chipRects = useRef(new Map());
+  const chipNodes = useRef(new Map());
   const home = {
     place: COMPANION_PLACEMENT_PREF,
     spotted: (base, viewport, top) => {
@@ -323,12 +323,6 @@ export function CompanionApp({
       return spot ? spotPlacement(parseChipSpot(spot), base, viewport, top) : null;
     },
     onPlaced: () => writePref(prefs, COMPANION_WINDOW_SPOT_PREF, ''),
-    // The window holding the Steward plays down into its chip.
-    shrinks: (window, overlay) => {
-      if (!window.tabs.some((tab) => tab.agent === steward?.agentId)) return null;
-      homeOverlay.current = overlay;
-      return () => overlay.shrinkTo(chipRects.current.get(steward.agentId), () => minimizeOverlayWindow(window.active));
-    },
   };
   const [busy, setBusy] = useState(false);
   // The Steward just shut down, { agentId, name }. It reads as gone from here
@@ -675,9 +669,7 @@ export function CompanionApp({
       || (!steward && windows.find((candidate) => candidate.id === landingId())) || null;
     const docked = !holder && !!steward && overlayTabs.peek().some((tab) => tab.id === chatWindowId(steward.agentId));
     if (window && !window.minimized && !docked) {
-      const shrinks = home.shrinks(window, homeOverlay.current);
-      if (shrinks && homeOverlay.current) shrinks();
-      else minimizeOverlayWindow(window.active);
+      minimizeOverlayWindow(window.active);
       return;
     }
     if (steward && (holder || steward.online) && steward.agentId !== shutDown?.agentId) showAgent(steward.agentId);
@@ -752,6 +744,15 @@ export function CompanionApp({
 
   // A row saved in the footer rests at its last spot in the room when it doesn't fit.
   const chipRow = useRef(null);
+  // A window with a chip and no dock pill (the Steward's, or the start tab's)
+  // minimizes into its chip and comes back out of it.
+  useEffect(() => addOverlayMotionTarget((window) => {
+    for (const tab of window.tabs) {
+      const node = tab.agent && chipNodes.current.get(tab.agent);
+      if (node?.isConnected) return node;
+    }
+    return window.tabs.some((tab) => tab.kind === START_WINDOW_KIND) ? chipRow.current?.querySelector?.('.companion-chip') || null : null;
+  }), []);
   const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow, spot: chipSpot });
   const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_ROOM_CHIP_SPOT : spot; };
   const shownSpot = isFooterSpot(chipSpot) && !footerRest.fits ? restSpot() : chipSpot;
@@ -777,7 +778,6 @@ export function CompanionApp({
       openAccessPanel({ agentId, launcher: event.currentTarget, documentRef: win?.document });
       return;
     }
-    if (homeOverlay.current) homeOverlay.current.openFrom.current = event.currentTarget.getBoundingClientRect();
     if (agentId) showAgent(agentId);
     else putStart();
   }
@@ -1187,7 +1187,7 @@ export function CompanionApp({
       const peekAt = (behind || chipAgent).agentId;
       return html`<button key=${chipAgent.agentId} type="button" data-ui-exempt
         class=${`companion-chip ${status}`}
-        ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
+        ref=${(node) => { if (node) chipNodes.current.set(chipAgent.agentId, node); }}
         aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (${shortcutText('steward')})`}
         onMouseEnter=${(event) => startPeek(peekAt, event.currentTarget)}
         onMouseLeave=${stopPeek}
