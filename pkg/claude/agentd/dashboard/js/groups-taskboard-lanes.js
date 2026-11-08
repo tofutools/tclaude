@@ -15,6 +15,12 @@
 //   card → another lane AND column     both, in that order: assign then block
 //                                      --reason; unassign then demote or block
 //
+//   card → a custom column          move <task> --stage <column> (In review,
+//                                      In CI: a column of the board's own,
+//                                      groups-taskboard-columns.js); out of
+//                                      one onto Next or In progress,
+//                                      --stage next
+//
 // The one cell that cannot hold a card is striped: In progress in the
 // Unassigned lane. An agent's (or the operator's) Ideas and Next hold what
 // it was given and has not started (tk_3826822a). A cell a new task can
@@ -28,7 +34,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import {
-  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
+  applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { REVEAL_FRESH_MS, agentLink, taskRevealRequest } from './cross-links.js';
@@ -38,6 +44,8 @@ import { RowMenu } from './row-menu.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
+import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
+import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { AnswerFor, QuestionTag, askerOf, questionOpen } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
@@ -49,6 +57,21 @@ export const LANE_COLUMNS = [
   { key: 'blocked', label: 'Blocked · needs you', wizard: 'Blocked · needs you' },
   { key: 'done', label: 'Done this week', wizard: 'Fulfilled this week' },
 ];
+
+// isCustomColumn reports a custom column's key (`col:<slug>`).
+export const isCustomColumn = (key) => typeof key === 'string' && key.startsWith(COLUMN_STATE);
+
+// boardColumns are a board's lanes columns: LANE_COLUMNS with the board's
+// custom columns (entry.columns, In review, In CI, …) after In progress,
+// keyed `col:<slug>`.
+export function boardColumns(entry) {
+  const custom = (entry?.columns || []).map((column) => ({
+    key: COLUMN_STATE + column.slug, label: column.label, wizard: column.label, slug: column.slug, custom: true,
+  }));
+  if (!custom.length) return LANE_COLUMNS;
+  const at = LANE_COLUMNS.findIndex((column) => column.key === 'progress') + 1;
+  return [...LANE_COLUMNS.slice(0, at), ...custom, ...LANE_COLUMNS.slice(at)];
+}
 
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 // CELL_SHOWN is how many cards a cell draws before "+ n more": a cell
@@ -72,6 +95,9 @@ export function laneColumn(task, now = Date.now()) {
   }
   const assigned = !!task.assignee?.agent_id;
   if (task.status === 'blocked' || (assigned && task.stalled)) return 'blocked';
+  // A task in one of the board's custom columns stands there, whoever holds
+  // it (tcl-plby5h).
+  if (task.column) return COLUMN_STATE + task.column;
   // A held task (assigned, not started) sits in its stage; a node that
   // predates holding sends no held, so its assigned tasks are in progress.
   if (assigned && !task.held) return 'progress';
@@ -184,11 +210,35 @@ function twoStep(first, second) {
   };
 }
 
-export function laneDrop(task, from, to, { assign = true } = {}) {
+export function laneDrop(task, from, to, opts = {}) {
+  const drop = baseLaneDrop(task, from, to, opts);
+  // A card in a custom column dropped onto Next or In progress leaves the
+  // column too, whatever else the drop does (an assign, an unassign, an
+  // unblock): the column write goes last, so the card lands where it was
+  // dropped rather than back in its column.
+  if (!drop || !task?.column || drop.kind.startsWith('uncolumn') || (to.column !== 'next' && to.column !== 'progress')) return drop;
+  const out = (api) => api.stage(task.id, 'next');
+  return { ...drop, kind: `${drop.kind}+uncolumn`, label: `${drop.label} · out of ${columnLabel(COLUMN_STATE + task.column, to.columns)}`,
+    run: twoStep(drop.run, out) };
+}
+
+function baseLaneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
   const open = task.status === 'open';
   const block = (api, reason) => api.status(task.id, 'blocked', reason);
+  if (isCustomColumn(to.column)) return columnDrop(task, from, to, { assign });
   if (task.status === 'done') return reopenDrop(task, from, to, { assign, block });
+  // Out of a custom column onto Next or In progress, in its own lane:
+  // `move --stage next`; onto In progress a held task is started too, and
+  // onto Next a started one is held back, so it lands where it was dropped.
+  if (task.column && open && from.lane === to.lane && (to.column === 'next' || to.column === 'progress')) {
+    const label = `out of ${columnLabel(COLUMN_STATE + task.column, to.columns)}`;
+    const out = (api) => api.stage(task.id, 'next');
+    const started = !!task.assignee?.agent_id && !task.held;
+    if (to.column === 'progress' && task.held) return { kind: 'uncolumn+start', label: `${label} · start`, run: twoStep(out, (api) => api.start(task.id)) };
+    if (to.column === 'next' && started) return { kind: 'uncolumn+hold', label: `${label}, not started`, run: twoStep(out, (api) => api.hold(task.id, 'next')) };
+    return { kind: 'uncolumn', label, run: out };
+  }
   if (from.lane !== to.lane) {
     if (!assign) return null;
     if (to.lane === UNASSIGNED) {
@@ -255,6 +305,33 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
   }
 }
 
+// columnDrop is a card dragged onto a custom column (`move --stage
+// <column>`): in its own lane it moves there (a blocked one is unblocked
+// first); onto another lane it is assigned (or unassigned) first, as any
+// lane change, and needs the assign right. A done card is not taken: reopen
+// it first.
+function columnDrop(task, from, to, { assign }) {
+  if (task.status !== 'open' && task.status !== 'blocked') return null;
+  const slug = to.column.slice(COLUMN_STATE.length);
+  if (task.column === slug && task.status === 'open' && from.lane === to.lane) return null;
+  const label = `to ${to.columnLabel || columnLabel(to.column, to.columns)}`;
+  const move = (api) => api.stage(task.id, slug);
+  if (from.lane === to.lane) {
+    if (task.status === 'blocked') {
+      return { kind: 'unblock+column', label: `unblock · ${label}`, run: twoStep((api) => api.status(task.id, 'open'), move) };
+    }
+    return { kind: 'column', label, run: move };
+  }
+  if (!assign || task.status !== 'open') return null;
+  if (to.lane === UNASSIGNED) {
+    if (!task.assignee?.agent_id) return null;
+    return { kind: 'unassign+column', label: `unassign · ${label}`, run: twoStep((api) => api.unassign(task.id), move) };
+  }
+  if (to.member === false) return null;
+  const name = to.name || to.lane;
+  return { kind: 'assign+column', label: `assign to ${name} · ${label}`, agent: to.lane, run: twoStep((api) => api.assign(task.id, to.lane), move) };
+}
+
 // reopenDrop is a done card dragged out of Done (`taskboard reopen`): it is
 // reopened in the column's stage and the lane's hands, in one write, and
 // onto Blocked it is blocked after (asking why). A move to another lane
@@ -304,6 +381,10 @@ export function cellAdd(lane, column, { assign = true, member = true } = {}) {
 function cardHint(task) {
   if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why" title=${task.block_reason || undefined}>${task.block_reason || 'blocked'}</span>`;
   if (task.stalled && task.assignee?.agent_id) return html`<span class="ui-tag ui-tag-warn" title="its agent went idle without reporting">idle, no report</span>`;
+  // In a custom column (In review, …) its agent may idle: no stall alarm.
+  if (task.column && task.assignee?.agent_id && !task.assignee?.operator && !task.held) {
+    return html`<span class="tb-paused" title="In a custom column the idle check is paused: its agent waits on a review or CI, not on the work">⏸ no idle alarm</span>`;
+  }
   return null;
 }
 
@@ -577,7 +658,8 @@ function useLaneOrder(group, groups, by, onChange) {
 // useColumnResize drags a column head's right edge to resize the column;
 // a double-click resets every width. Arrow keys on a focused edge move it
 // 16px. Widths are stored per group for this viewer.
-function useColumnResize(group, onChange) {
+function useColumnResize(group, onChange, columns = LANE_COLUMNS) {
+  const keys = ['lane', ...columns.map((column) => column.key)];
   const [live, setLive] = useState(null);
   const gridRef = useRef(null);
   const measure = () => {
@@ -589,13 +671,13 @@ function useColumnResize(group, onChange) {
   const handle = (index, label) => ({
     role: 'separator', 'aria-orientation': 'vertical', tabindex: '0', 'aria-label': `Resize the ${label} column`,
     title: 'Drag to resize · double-click to reset all widths · ←/→ when focused',
-    'data-col-resize': LAYOUT_COLUMNS[index],
+    'data-col-resize': keys[index],
     onPointerDown: (event) => {
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       const measured = measure();
-      if (measured.length !== LAYOUT_COLUMNS.length) return;
+      if (measured.length !== keys.length) return;
       const startX = event.clientX;
       let latest = null;
       const move = (e) => { latest = resizeColumns(measured, index, e.clientX - startX); setLive(latest); };
@@ -614,13 +696,20 @@ function useColumnResize(group, onChange) {
     onKeyDown: (event) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       const measured = measure();
-      if (measured.length !== LAYOUT_COLUMNS.length) return;
+      if (measured.length !== keys.length) return;
       event.preventDefault();
       commit(resizeColumns(measured, index, event.key === 'ArrowLeft' ? -16 : 16));
     },
     onClick: (event) => event.stopPropagation(),
   });
-  return { gridRef, handle, widths: live || laneWidths(layoutKey(group)) };
+  return { gridRef, handle, stages: columns.length, widths: live || laneWidths(layoutKey(group), columns.length) };
+}
+
+// laneGridStyle sizes the grid for its columns: the stored widths, or the
+// default template when a board's custom columns make more than five.
+export function laneGridStyle(resize) {
+  const cols = gridColumns(resize.widths, resize.stages);
+  return `${cols ? `--tb-lane-cols: ${cols}; ` : ''}--tb-lane-min: ${gridMinWidth(resize.widths, resize.stages)}px`;
 }
 
 // TaskboardLanes is the section's swim-lane view of the same board the list
@@ -645,15 +734,18 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const relayout = () => { bumpLayout((n) => n + 1); onLayout?.(); };
   const model = laneModel(entry, group, by, snapshot, now);
   const { cells } = model;
+  const columns = boardColumns(entry);
+  const custom = entry.columns || [];
   const groups = applyLaneOrder(model.groups, laneOrder(layoutKey(group)), by);
   const drag = useLaneDrag(actions, group, tasks);
   const order = useLaneOrder(group, groups, by, relayout);
-  const resize = useColumnResize(group, relayout);
+  const resize = useColumnResize(group, relayout, columns);
+  const naming = useColumnNaming(group, actions);
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useState({});
   useCellReveal(cells, CELL_SHOWN, setOpen);
   // laneTasks are the ids of the tasks in a lane's cells.
-  const laneTasks = (lane) => LANE_COLUMNS.flatMap((column) => (cells.get(`${lane.id}|${column.key}`) || []).map((task) => task.id));
+  const laneTasks = (lane) => columns.flatMap((column) => (cells.get(`${lane.id}|${column.key}`) || []).map((task) => task.id));
   // A cross-link to a task in a folded offline lane unfolds that lane group,
   // as its cell opens past the cap (useCellReveal).
   const want = taskRevealRequest.value;
@@ -676,10 +768,10 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const list = cells.get(key) || [];
     const stripe = striped(lane.id, column.key);
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
-    const target = { lane: lane.id, column: column.key, name: lane.name, member: assignable };
+    const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
     const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${column.custom ? ' tb-cell-custom' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
@@ -693,27 +785,30 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class=${`tb-lane${lane.id === OPERATOR ? ' tb-lane-operator' : ''}`} data-lane-row=${lane.id || 'unassigned'}>
     <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED || lane.id === OPERATOR ? null : order}
-      link=${lane.member ? agentLink({ group: group.name, node: group.fleet_node?.id || '', id: lane.id, name: lane.name }) : null} />${LANE_COLUMNS.map((column) => cell(lane, column))}
+      link=${lane.member ? agentLink({ group: group.name, node: group.fleet_node?.id || '', id: lane.id, name: lane.name }) : null} />${columns.map((column) => cell(lane, column))}
   </div>`;
   // The operator's lane shows while it holds a task, or for a viewer who
   // may give the operator one (by a drag or its "+").
   const operatorLane = ([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions))
     && { id: OPERATOR, name: operatorName(group), holds: model.operatorHolds };
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
-    count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
+    count: columns.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
   const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-lanes-wrap">
+    ${naming.dialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
-        style=${`${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}; ` : ''}--tb-lane-min: ${gridMinWidth(resize.widths)}px`}
+        style=${laneGridStyle(resize)}
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
-        ${LANE_COLUMNS.map((column, i) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          i < LANE_COLUMNS.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
+        ${columns.map((column, i) => html`<div key=${column.key} class=${`ui-eyebrow ${column.custom ? 'tb-col-custom' : `tb-col-${column.key}`}`} data-col=${column.key}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
+          column.custom && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} onRename=${(c) => naming.open('rename', c)} />`}${
+          i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}${
+          i < columns.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>
       ${operatorLane && row(operatorLane)}
       ${row(unassigned)}

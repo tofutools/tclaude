@@ -2,7 +2,8 @@
 // every group task board this viewer can read (docs/taskboard.md):
 //
 //   { groups: [{ group_id, group, truncated,
-//                counts: { live, needs_you, in_progress, next, ideas, blocked, stalled, queued, done_this_week, dropped },
+//                counts: { live, needs_you, in_progress, next, ideas, blocked, stalled, queued, done_this_week, dropped, in_columns },
+//                columns: [{ slug, label, count }],   the board's custom columns (In review, …)
 //                tasks: [row], closed: [row] }] }
 //
 // A row is the task view less its body, plus assignee: { agent_id },
@@ -103,13 +104,18 @@ export function taskboardGroupEntry(context, groupName) {
 // waiting_on_you (the tasks the operator holds) counts in needs_you too; it
 // is its own part, first, and needs you is the rest. who names the operator
 // ('you', or a linked node's operator).
-export function taskboardCountParts(counts, who = 'you') {
+// columns are the board's custom columns with their counts (the context's
+// per-group columns): each non-empty one is a part after in progress.
+export function taskboardCountParts(counts, who = 'you', columns = []) {
   const c = counts || {};
   const parts = [];
   const waiting = c.waiting_on_you || 0;
   if (waiting) parts.push({ key: 'waiting-on-you', text: `${waiting} waiting on ${who}` });
   if ((c.needs_you || 0) > waiting) parts.push({ key: 'needs-you', text: `${c.needs_you - waiting} needs you` });
   if (c.in_progress) parts.push({ key: 'in-progress', text: `${c.in_progress} in progress` });
+  for (const column of columns || []) {
+    if (column?.count) parts.push({ key: `column-${column.slug}`, text: `${column.count} ${column.label}` });
+  }
   if (c.next) parts.push({ key: 'next', text: `${c.next} next` });
   if (c.ideas) parts.push({ key: 'ideas', text: `${c.ideas} idea${c.ideas === 1 ? '' : 's'}` });
   const mine = c.ideas_for_you || 0;
@@ -119,10 +125,22 @@ export function taskboardCountParts(counts, who = 'you') {
 
 // taskboardCountsText is the folded section's one line:
 // "9 · 1 needs you · 2 in progress · 6 next · 3 ideas".
-export function taskboardCountsText(counts, who = 'you') {
+export function taskboardCountsText(counts, who = 'you', columns = []) {
   const live = counts?.live || 0;
   if (!live) return counts?.done_this_week ? `0 · ${counts.done_this_week} done this week` : 'empty';
-  return [String(live), ...taskboardCountParts(counts, who).map((part) => part.text)].join(' · ');
+  return [String(live), ...taskboardCountParts(counts, who, columns).map((part) => part.text)].join(' · ');
+}
+
+// COLUMN_STATE prefixes the state of a task in one of the board's custom
+// columns (In review, In CI, …): `col:<slug>`. The lanes key their custom
+// columns the same way.
+export const COLUMN_STATE = 'col:';
+
+// columnLabel is a custom column's label from its state or key
+// (`col:<slug>`), the slug when the board does not list it.
+export function columnLabel(state, columns = []) {
+  const slug = String(state || '').slice(COLUMN_STATE.length);
+  return (columns || []).find((column) => column.slug === slug)?.label || slug;
 }
 
 // taskRowState is what a row's state column says, derived exactly as the
@@ -137,6 +155,8 @@ export function taskRowState(task) {
   if (task.stalled && task.assignee?.agent_id) return 'stalled';
   const ideaHeld = task.held && task.stage === 'idea';
   if (task.assignee?.operator && !ideaHeld) return 'waiting';
+  // A task in a custom column (tcl-plby5h) reads as that column.
+  if (task.column && task.status === 'open') return COLUMN_STATE + task.column;
   if (task.assignee?.agent_id && !task.held) return 'in-progress';
   if (task.queued) return 'queued';
   if (task.stage === 'idea') return 'idea';

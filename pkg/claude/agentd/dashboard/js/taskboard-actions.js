@@ -25,6 +25,10 @@
 //   node             (move-to-group <task> <group>@<peer>)
 //   files            add --attach … · ask --attach … · attach <task> … ·
 //                    detach <task> <name|#id>
+//   drag onto / ⋯    move <task> --stage <column> (a custom column, such as
+//   Move to a column In review; --stage next takes it out)
+//   column head ⋯ /  columns add|rename|move|rm <group> …
+//   ＋ column
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
@@ -73,6 +77,7 @@ export function taskForm(task, files, part = 'task') {
 
 const taskPath = (id, suffix = '') => `/v1/taskboard/tasks/${encodeURIComponent(id)}${suffix}`;
 const boardPath = (group) => `/v1/groups/${encodeURIComponent(group)}/taskboard/tasks`;
+const columnsPath = (group, slug = '') => `/v1/groups/${encodeURIComponent(group)}/taskboard/columns${slug ? `/${encodeURIComponent(slug)}` : ''}`;
 
 // TRACKER_ID is a line that is only a tracker id or link: such a line is an
 // import (its title comes from the tracker), any other line is a title. A
@@ -255,8 +260,26 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     move(id, position) {
       return call('POST', taskPath(id, '/move'), position);
     },
+    // stage promotes (next), demotes (idea), or puts the task in one of
+    // the board's custom columns (its slug); next takes it out of one.
     stage(id, stage) {
       return call('POST', taskPath(id, '/stage'), { stage });
+    },
+    // The board's custom columns (`taskboard columns …`, taskboard.manage):
+    // add one before another column (slug) or at the end; rename or move
+    // one (before a slug, or toEnd); remove one (its tasks go back to next).
+    addColumn(group, label, { before = '' } = {}) {
+      return call('POST', columnsPath(group), before ? { label, before } : { label });
+    },
+    changeColumn(group, slug, { label = '', before = '', toEnd = false } = {}) {
+      const body = {};
+      if (label) body.label = label;
+      if (before) body.before = before;
+      if (toEnd) body.to_end = true;
+      return call('PATCH', columnsPath(group, slug), body);
+    },
+    removeColumn(group, slug) {
+      return call('DELETE', columnsPath(group, slug));
     },
     status(id, status, reason = '') {
       return call('POST', taskPath(id, '/status'), reason ? { status, reason } : { status });
