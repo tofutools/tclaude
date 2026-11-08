@@ -105,7 +105,8 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeTaskboardTransfer(w, target, out, taskboardTransferResult{Group: target.Name, From: g.Name, Clone: true})
 		return
 	}
-	keep := t.AssigneeID != "" && activeGroupMember(target, t.AssigneeID) != ""
+	// The operator holds tasks on every board of this node.
+	keep := t.AssigneeID == db.OperatorAssignee || (t.AssigneeID != "" && activeGroupMember(target, t.AssigneeID) != "")
 	res, err := db.RegroupGroupTask(t.ID, db.GroupTaskRegroup{ToGroupID: target.ID, FromGroup: g.Name, ToGroup: target.Name,
 		Stage: stage, KeepAssignee: keep, Actor: actor})
 	if err != nil {

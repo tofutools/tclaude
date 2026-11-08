@@ -85,7 +85,8 @@ func newTaskboardStaller(now time.Time) *taskboardStaller {
 // stalled reports whether t is stalled, and since when its assignee has been
 // idle on it.
 func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
-	if s == nil || s.grace <= 0 || t.Status != db.GroupTaskOpen || t.AssigneeID == "" {
+	if s == nil || s.grace <= 0 || t.Status != db.GroupTaskOpen || t.AssigneeID == "" ||
+		t.AssigneeID == db.OperatorAssignee {
 		return time.Time{}, false
 	}
 	idle, ok := s.seen[t.AssigneeID]

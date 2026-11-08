@@ -111,6 +111,7 @@ type taskboardTask struct {
 	Stage            string   `json:"stage"`
 	Status           string   `json:"status"`
 	BlockReason      string   `json:"block_reason,omitempty"`
+	BlockedOn        string   `json:"blocked_on,omitempty"`
 	DependsOn        []string `json:"depends_on"`
 	Unmet            []string `json:"unmet,omitempty"`
 	Queued           bool     `json:"queued,omitempty"`
@@ -409,6 +410,7 @@ type TaskboardCounts struct {
 	Ideas        int `json:"ideas"`
 	Blocked      int `json:"blocked"`
 	Stalled      int `json:"stalled"`
+	WaitingOnYou int `json:"waiting_on_you"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -473,6 +475,9 @@ func taskboardCountsLine(c TaskboardCounts) string {
 		if c.Blocked > 0 {
 			why = append(why, fmt.Sprintf("%d blocked", c.Blocked))
 		}
+		if c.WaitingOnYou > 0 {
+			why = append(why, fmt.Sprintf("%d waiting on you", c.WaitingOnYou))
+		}
 		label := "needs you"
 		if len(why) > 0 {
 			label += " (" + strings.Join(why, ", ") + ")"
@@ -527,6 +532,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  group:   %s\n  stage:   %s\n  status:  %s\n", t.Group, t.Stage, t.Status)
 	if t.BlockReason != "" {
 		fmt.Fprintf(stdout, "  blocked: %s\n", t.BlockReason)
+	}
+	if t.BlockedOn != "" {
+		fmt.Fprintf(stdout, "  waits on: %s (closing it as done reopens this task)\n", t.BlockedOn)
 	}
 	if t.Stalled {
 		fmt.Fprintf(stdout, "  stalled: its assignee has been idle since %s without reporting\n", t.IdleSince)
@@ -591,7 +599,8 @@ type taskboardAddParams struct {
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
 	// Start state: the task is created in it, in one call.
-	Assignee string `long:"assignee" optional:"true" help:"Assign it as it is created (name or id of an active member): it starts in progress, in next; with --done, who did it. Someone else needs taskboard.assign"`
+	Assignee string `long:"assignee" optional:"true" help:"Assign it as it is created (name or id of an active member, or operator for the operator of the board's node): it starts in progress, in next; with --done, who did it. Someone else needs taskboard.assign; asking the operator about your own work needs only taskboard.own"`
+	Blocks   string `long:"blocks" optional:"true" help:"With --assignee operator: this task of the board (tk_…, typically yours) waits on the new one. It gains it as a dependency and is blocked on it, in the same write; closing the operator task as done reopens it"`
 	Blocked  string `long:"blocked" optional:"true" help:"Start it blocked, with this reason"`
 	Done     bool   `long:"done" help:"Log work already done: it is created done, in done this week (with --assignee, who did it; nobody is mailed)"`
 	// Import flags: one task per ref or line, titles looked up through the
@@ -702,6 +711,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	if p.Mine {
 		req["mine"] = true
+	}
+	if b := strings.TrimSpace(p.Blocks); b != "" {
+		req["blocks"] = b
 	}
 	switch {
 	case strings.TrimSpace(p.Blocked) != "":
@@ -1327,7 +1339,8 @@ func taskboardStatusCmd(use, status, short string, withReason bool) *cobra.Comma
 
 type taskboardBlockParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
-	Reason   string `long:"reason" help:"Why the task is blocked"`
+	Reason   string `long:"reason" optional:"true" help:"Why the task is blocked"`
+	On       string `long:"on" optional:"true" help:"Block it waiting on this task of the board (tk_…, typically one assigned to the operator), instead of a reason: it becomes a dependency, and closing it as done reopens this task"`
 	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -1343,8 +1356,18 @@ func taskboardBlockCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardBlockParams, _ *cobra.Command, _ []string) {
+			reason, on := strings.TrimSpace(p.Reason), strings.TrimSpace(p.On)
+			if (reason == "") == (on == "") {
+				fmt.Fprintln(cliStderr, "Error: give --reason or --on, one of them")
+				taskboardExit(rcInvalidArg)
+				return
+			}
+			req := map[string]any{"status": "blocked", "reason": reason}
+			if on != "" {
+				req = map[string]any{"status": "blocked", "on": on}
+			}
 			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/status"),
-				map[string]any{"status": "blocked", "reason": p.Reason}, p.AskHuman, p.JSON, "blocked", cliStdout, cliStderr))
+				req, p.AskHuman, p.JSON, "blocked", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1389,7 +1412,7 @@ func fetchTaskboardMine(stderr io.Writer) ([]taskboardTask, int) {
 
 type taskboardAssignParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
-	To       string `long:"to" help:"Agent to assign it to (name or id); an active member of the task's group"`
+	To       string `long:"to" help:"Agent to assign it to (name or id; an active member of the task's group), or operator for the operator of the board's node"`
 	Peer     string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`

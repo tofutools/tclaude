@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -326,6 +327,12 @@ func mailTaskboardComment(r *http.Request, g *db.AgentGroup, t *db.GroupTask, c 
 	}
 	if creator, ok := strings.CutPrefix(t.CreatedBy, "agent:"); ok && creator != self && creator != t.AssigneeID {
 		to = append(to, creator)
+	}
+	// An operator task's comments (the operator's answer, say) reach the
+	// agent that asked.
+	if asker, ok := strings.CutPrefix(t.AssignedBy, "agent:"); ok && t.AssigneeID == db.OperatorAssignee &&
+		asker != self && !slices.Contains(to, asker) {
+		to = append(to, asker)
 	}
 	if len(to) == 0 {
 		return

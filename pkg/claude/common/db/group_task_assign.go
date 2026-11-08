@@ -75,8 +75,7 @@ func AssignGroupTask(id, agentID, assignedBy string, take bool, actor, expectAss
 				return err
 			}
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = ?, assigned_at = ? WHERE id = ?`,
-			agentID, assignedBy, dbTime(now), id); err != nil {
+		if err := setGroupTaskAssigneeTx(tx, id, agentID, assignedBy, now); err != nil {
 			return err
 		}
 		kind, detail := GroupTaskEventAssigned, "→ "+agentID
@@ -101,7 +100,7 @@ func UnassignGroupTask(id string, release bool, detail, actor, expectAssignee st
 		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
 			return errAssigneeChanged(id)
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
+		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`,
 			id); err != nil {
 			return err
 		}
@@ -180,7 +179,7 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 		}
 		failures := t.Failures + 1
 		if _, err := tx.Exec(`UPDATE group_tasks SET outcome = ?, outcome_note = ?, failures = ?,
-			assignee_id = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
+			assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`,
 			outcome, note, failures, id); err != nil {
 			return err
 		}
@@ -340,7 +339,7 @@ func unassignAgentGroupTasksTx(tx taskTx, agentID, actor, detail string, now tim
 		dbTime(now), actor, GroupTaskEventUnassigned, detail, agentID); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = ?
+	_, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL, updated_at = ?
 		WHERE assignee_id = ? AND status IN ('open','blocked')`, dbTime(now), agentID)
 	return err
 }
