@@ -100,6 +100,13 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	rules["POST /v1/taskboard/tasks/{id}/move-to-group"] = moveTo
 	group("GET /v1/groups/{name}/taskboard/writers", read)
 	group("POST /v1/groups/{name}/taskboard/writers", peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true})
+	// Custom stage columns (taskboard_columns.go): read with the board,
+	// changed under taskboard.manage.
+	group("GET /v1/groups/{name}/taskboard/columns", read)
+	manage := peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true}
+	group("POST /v1/groups/{name}/taskboard/columns", manage)
+	group("PATCH /v1/groups/{name}/taskboard/columns/{slug}", manage)
+	group("DELETE /v1/groups/{name}/taskboard/columns/{slug}", manage)
 }
 
 // taskboardPeerAuthorKey carries, on an unrestricted peer's request (which

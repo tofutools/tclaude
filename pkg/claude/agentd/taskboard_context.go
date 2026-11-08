@@ -60,10 +60,23 @@ type taskboardCounts struct {
 	Dropped      int `json:"dropped"`
 }
 
+// taskboardColumnCount is one custom column and how many open tasks stand
+// in it.
+type taskboardColumnCount struct {
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
 type taskboardGroupContext struct {
 	GroupID int64                  `json:"group_id"`
 	Group   string                 `json:"group"`
 	Counts  taskboardCounts        `json:"counts"`
+	// Columns are the board's custom columns in its order, each with how
+	// many open tasks stand in it (tcl-plby5h); those are not in the
+	// counts' InProgress or Next. A blocked task in one counts as Blocked.
+	// Kept apart from Counts, whose values are all numbers.
+	Columns []taskboardColumnCount `json:"columns,omitempty"`
 	Tasks   []taskboardContextTask `json:"tasks"`
 	Closed  []taskboardContextTask `json:"closed"`
 	// Truncated says the live rows stop short of Counts.Live.
@@ -180,12 +193,24 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	if err != nil {
 		return entry, err
 	}
+	cols, err := db.ListGroupTaskColumns(g.ID)
+	if err != nil {
+		return entry, err
+	}
+	colAt := map[string]int{}
+	for i, c := range cols {
+		colAt[c.Slug] = i
+		entry.Columns = append(entry.Columns, taskboardColumnCount{Slug: c.Slug, Label: c.Label})
+	}
 	for _, v := range liveViews {
 		entry.Counts.Live++
+		i, inColumn := colAt[v.Column]
 		switch {
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
 			entry.Counts.NeedsYou++
+		case inColumn && v.Column != "":
+			entry.Columns[i].Count++
 		case v.Stalled:
 			entry.Counts.Stalled++
 			entry.Counts.NeedsYou++
@@ -265,6 +290,9 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
 	for _, route := range taskboardCommentRoutes {
+		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
+	}
+	for _, route := range taskboardColumnRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
 }

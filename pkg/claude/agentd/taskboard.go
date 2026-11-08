@@ -69,6 +69,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardOwnGate, handleTaskboardEdit))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardOwnGate, handleTaskboardStage))
+	registerTaskboardColumnRoutes(mux)
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/reopen", handleTaskboardTask(taskboardOwnGate, handleTaskboardReopen))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup))
@@ -321,8 +322,12 @@ type taskboardTaskView struct {
 	// sits in its stage in the assignee's lane, not in progress
 	// (tk_3826822a). StartedAt is when a started one was started. A node
 	// that predates holding sends neither: its assigned tasks are started.
-	Held        bool   `json:"held,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
+	Held      bool   `json:"held,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+	// Column is the custom column (its slug) a live task of stage next
+	// stands in, such as in-review; absent for none (tcl-plby5h). A task in
+	// a custom column never stalls.
+	Column      string `json:"column,omitempty"`
 	Outcome     string `json:"outcome,omitempty"`
 	OutcomeNote string `json:"outcome_note,omitempty"`
 	Failures    int    `json:"failures,omitempty"`
@@ -460,7 +465,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 			v.Held, v.StartedAt = t.Live() && !t.Started(), rfc3339(t.StartedAt)
 		}
-		v.BlockedOn = t.BlockedOn
+		v.BlockedOn, v.Column = t.BlockedOn, t.Column
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
 		if atts := files[t.ID]; len(atts) > 0 {
 			v.Attachments = taskboardAttachmentViews(atts)
@@ -692,7 +697,12 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
-	out := map[string]any{"group": g.Name, "tasks": views, "locked": lock.Locked}
+	columns, err := taskboardColumnViews(g)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	out := map[string]any{"group": g.Name, "tasks": views, "locked": lock.Locked, "columns": columns}
 	if lock.Locked {
 		out["writers"] = lock.Writers
 		// writer_names reads the same list as a person would say it.
@@ -1078,16 +1088,38 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
 	}
-	if body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
+	stage := strings.TrimSpace(body.Stage)
+	var out *db.GroupTask
+	var err error
+	switch stage {
+	case "":
+		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea, next or a custom column of the board")
 		return
+	case db.GroupTaskStageNext:
+		// Back to next from a custom column (In progress for a started task).
+		if t.Column != "" {
+			out, err = db.SetGroupTaskColumn(t.ID, "", taskboardActor(r), t.AssigneeID)
+			break
+		}
+		out, err = db.SetGroupTaskStage(t.ID, stage, taskboardActor(r))
+	case db.GroupTaskStageIdea:
+		out, err = db.SetGroupTaskStage(t.ID, stage, taskboardActor(r))
+	default:
+		// A custom column of the board (tcl-plby5h), by slug or label.
+		col, ok := findTaskboardColumn(g, stage)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("stage is idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)))
+			return
+		}
+		stage = col.Slug
+		out, err = db.SetGroupTaskColumn(t.ID, col.Slug, taskboardActor(r), t.AssigneeID)
 	}
-	out, err := db.SetGroupTaskStage(t.ID, body.Stage, taskboardActor(r))
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
-	setAuditDetail(r, t.ID+" to "+body.Stage)
+	setAuditDetail(r, t.ID+" to "+stage)
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 

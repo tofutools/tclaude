@@ -85,8 +85,10 @@ func newTaskboardStaller(now time.Time) *taskboardStaller {
 // stalled reports whether t is stalled, and since when its assignee has been
 // idle on it.
 func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
+	// A task in a custom column (In review, In CI, …) waits on something
+	// outside the agent's turn, so its agent's idling is not a stall.
 	if s == nil || s.grace <= 0 || t.Status != db.GroupTaskOpen || !t.Started() ||
-		t.AssigneeID == db.OperatorAssignee {
+		t.AssigneeID == db.OperatorAssignee || t.Column != "" {
 		return time.Time{}, false
 	}
 	idle, ok := s.seen[t.AssigneeID]

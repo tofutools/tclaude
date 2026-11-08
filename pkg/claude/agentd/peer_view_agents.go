@@ -232,6 +232,11 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/taskboard/tasks/{id}/moved-away":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	"GET /v1/groups/{name}/taskboard/writers":      {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
 	"POST /v1/groups/{name}/taskboard/writers":     {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	// Custom stage columns.
+	"GET /v1/groups/{name}/taskboard/columns":           {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/columns":          {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	"PATCH /v1/groups/{name}/taskboard/columns/{slug}":  {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	"DELETE /v1/groups/{name}/taskboard/columns/{slug}": {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
