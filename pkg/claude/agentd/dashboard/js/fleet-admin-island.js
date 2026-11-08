@@ -37,7 +37,7 @@ import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './fleet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
 import { writeClipboard } from './insecure-origin.js';
 import { errText } from './cell-format.js';
-import { FaTable } from './fa-table.js';
+import { CopyCode, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -141,8 +141,7 @@ function ago(iso, now) {
 
 function Fingerprint({ value, copy, toast }) {
   if (!value) return html`<span class="muted">—</span>`;
-  const onCopy = () => copy(value).then(() => toast('Fingerprint copied', false)).catch(() => toast(`Fingerprint: ${value}`, false));
-  return html`<span class="fa-fp"><code>${value}</code> <${Button} size="sm" variant="link" class="fa-link" onClick=${onCopy} title="Copy the fingerprint">copy<//></span>`;
+  return html`<${CopyCode} class="fa-fp" value=${value} what="Fingerprint" copy=${copy} toast=${toast} />`;
 }
 
 function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSettings }) {

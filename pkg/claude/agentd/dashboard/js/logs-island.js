@@ -1,13 +1,13 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { relTime } from './helpers.js';
 import { fieldsText, fmtAbsTime, fmtBytes, fmtInt, levelKey, LOG_PAGE_SIZES, logsExportUrl } from './logs-model.js';
 import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 import { nodeDownloadPath } from './node-api.js';
 import { Pager } from './pager.js';
 import { Button, Input, Select } from './ui-components.js';
 import { tableState } from './table-kit.js';
+import { StampAgo } from './cell-parts.js';
 
 const html = htm.bind(h);
 const STREAM_MS = 2000;
@@ -48,7 +48,7 @@ function LogRows({ current }) {
   if (placeholder) return placeholder;
   return html`<table class="logs-table ui-compact"><thead><tr><th>When</th><th>Level</th><th>Message</th></tr></thead><tbody>
     ${current.rows.map(({ row, key }) => { const level = levelKey(row.level); const fields = fieldsText(row.fields); return html`<tr key=${key} data-key=${key} class=${`log-row log-row-${level}`}>
-      <td class="logs-nowrap"><span class="last-hook" title=${row.time || ''}>${fmtAbsTime(row.time)}</span>${relTime(row.time) && html` <span class="muted">(${relTime(row.time)})</span>`}</td>
+      <td class="logs-nowrap"><${StampAgo} iso=${row.time} title=${row.time || ''} text=${fmtAbsTime(row.time)} /></td>
       <td class="logs-nowrap"><span class=${`log-level log-${level}`} title=${level === 'raw' ? 'not a structured log line' : undefined}>${level}</span></td>
       <td class="logs-msg-cell"><span class="logs-msg">${row.msg || ''}</span>${fields && html` <span class="logs-fields muted" title=${fields}>${fields}</span>`}</td>
     </tr>`; })}

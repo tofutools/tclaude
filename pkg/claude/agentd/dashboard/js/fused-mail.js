@@ -49,6 +49,7 @@ import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, newWalk, pageCou
 import { Button } from './ui-components.js';
 import { requestJSON } from './request-json.js';
 import { errText, localStamp } from './cell-format.js';
+import { NodePill } from './cell-parts.js';
 
 const html = htm.bind(h);
 
@@ -105,10 +106,6 @@ export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(
 // do from here lives: it leaves the fused view.
 function defaultOpenOnNode(node) {
   globalThis.location.assign(nodeHref(node.local ? '' : node.id, { pathname: '/messages', search: withFused(globalThis.location.search, null) }));
-}
-
-function NodePill({ node }) {
-  return html`<span class="scope-pill" style=${`--nc:${node.color}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
 }
 
 // folderKey names a sidebar folder: a fused folder spans the nodes in view,
