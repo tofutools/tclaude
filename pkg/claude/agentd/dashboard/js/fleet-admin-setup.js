@@ -7,7 +7,7 @@ import { ClaimDialog } from './fleet-admin-hub.js';
 import { Button, Select } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
 import { errText, localStamp } from './cell-format.js';
-import { FaTable } from './fa-table.js';
+import { CopyCode, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -123,9 +123,8 @@ export function hubProblem(self) {
 
 function problemInvite(self) { return !!hubProblem(self)?.invite; }
 
-function Copyable({ value, what, copy, toast }) {
-  const onCopy = () => copy(value).then(() => toast(`${what} copied`, false)).catch(() => toast(`${what}: ${value}`, false));
-  return html`<span class="fs-copy"><code>${value}</code> <${Button} size="sm" variant="link" class="fa-link" onClick=${onCopy} title=${`Copy the ${what.toLowerCase()}`}>copy<//></span>`;
+function Copyable(props) {
+  return html`<${CopyCode} class="fs-copy" ...${props} />`;
 }
 
 function Cli({ children }) {

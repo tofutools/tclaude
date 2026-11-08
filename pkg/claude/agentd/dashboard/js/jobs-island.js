@@ -23,6 +23,7 @@ import { Button, Input } from './ui-components.js';
 import { triggersAvailable } from './feature-availability.js';
 import { groupScopeLabel, localStamp } from './cell-format.js';
 import { TableHead } from './table-kit.js';
+import { NodePill } from './cell-parts.js';
 
 const html = htm.bind(h);
 
@@ -383,7 +384,7 @@ function FusedPeerJobs({ state, fleet, active, triggersEnabled, confirm, notify,
   return peers.map((node) => {
     const entry = byNode[node.id];
     return html`<tbody key=${node.id} class="fused-jobs-node" style=${`--nc:${node.color}`}>
-      <tr class="fused-jobs-head"><td colspan=${JOBS_COLS.length}><span class="scope-pill" style=${`--nc:${node.color}`}>${node.name}</span>
+      <tr class="fused-jobs-head"><td colspan=${JOBS_COLS.length}><${NodePill} node=${node} />
         ${!entry ? html` <span class="muted">loading…</span>`
           : entry.why ? html` <span class="muted">not shared</span> <${LockReason} why=${entry.why} />`
           : html` <span class="muted">${entry.rows.length} ${entry.rows.length === 1 ? 'automation' : 'automations'}</span>`}</td></tr>

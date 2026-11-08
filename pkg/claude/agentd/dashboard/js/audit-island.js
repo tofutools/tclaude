@@ -1,7 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { idTooltip, shortAgentId } from './helpers.js';
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
@@ -9,6 +9,7 @@ import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, 
 import { useDismissablePopover } from './hover-popover.js';
 import { Input, Select } from './ui-components.js';
 import { TableHead, tableState } from './table-kit.js';
+import { NodePill, StampAgo } from './cell-parts.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -72,7 +73,7 @@ function Rows({ current, state, actions }) {
   });
   if (placeholder) return placeholder;
   return html`<table class="audit-table"><${Header} current=${current} state=${state} actions=${actions} /><tbody>${current.rows.map((entry) => { const id = shortAgentId(entry.actor_agent, entry.actor_conv); const status = statusView(entry.status); const key = entry.node ? `${entry.node.id}-${entry.id}` : entry.id; return html`<tr key=${key} data-key=${`audit-${key}`}>
-    <td class="audit-nowrap">${entry.node && html`<span class="scope-pill audit-node" style=${`--nc:${entry.node.color}`}>${entry.node.local ? '⌂ ' : ''}${entry.node.name}</span> `}<span class="last-hook" title=${entry.at}>${fmtAuditTime(entry.at)}</span>${relTime(entry.at) && html` <span class="muted">(${relTime(entry.at)})</span>`}</td>
+    <td class="audit-nowrap">${entry.node && html`<${NodePill} node=${entry.node} class="audit-node" /> `}<${StampAgo} iso=${entry.at} text=${fmtAuditTime(entry.at)} /></td>
     <td class="audit-trunc" title=${actorTitle(entry, id)}><${Actor} entry=${entry} /></td>
     <td class="audit-trunc" title=${entry.verb || ''}><span class=${verbClass(entry.verb)}>${entry.verb}</span>${entry.source === 'dashboard' && html` <span class="id" title="run from the dashboard">⊞</span>`}</td>
     <td class="audit-trunc" title=${targetTitle(entry)}><${Target} entry=${entry} /></td>

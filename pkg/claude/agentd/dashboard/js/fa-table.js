@@ -5,6 +5,7 @@
 
 import { h } from 'preact';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -31,4 +32,12 @@ export function ChangeTable({ id, changes, skip, onSkip, locked = false }) {
     <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
     <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
   </tr>`)}<//>`;
+}
+
+// CopyCode shows a value to read out or paste elsewhere (an instance ID, a
+// fingerprint) as code with a copy link; the toast says it was copied, or
+// shows the value when the clipboard is unavailable.
+export function CopyCode({ value, what, copy, toast, class: cls }) {
+  const onCopy = () => copy(value).then(() => toast(`${what} copied`, false)).catch(() => toast(`${what}: ${value}`, false));
+  return html`<span class=${cls}><code>${value}</code> <${Button} size="sm" variant="link" class="fa-link" onClick=${onCopy} title=${`Copy the ${what.toLowerCase()}`}>copy<//></span>`;
 }
