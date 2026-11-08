@@ -566,6 +566,47 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   `activity` shows them in the stream. The board stays quiet: a question
   raises no popup and no Messages entry.
 
+#### Questions from Messages and access requests
+
+The operator's other inboxes put their questions on the board too, so
+everything waiting on the operator is in one place. The originals stay
+exactly where they are; the board's question is a mirror of each, answered in
+either place.
+
+- A **notify-human message that asks something** (it has `--option`s, or its
+  subject, or with no subject its first line, ends in `?`) is a 📨 question.
+  A plain notification is not mirrored. Answering it on the board is the
+  Messages reply or decision: the agent gets the answer only as it would
+  from Messages (`Re: …`, the decision mail), never a `[taskboard]` mail.
+  A decision takes a pick (a note may go with it); a question in words is
+  replied to, and only while the agent is online, as in Messages. Answered
+  in Messages, the board's question is answered; dismissed, withdrawn or
+  deleted there, it closes.
+- An agent's pending **`--ask-human` prompt** is a 🔐 question, *`<agent>`
+  asks for `<slug>`*, with Allow, Always allow (where the prompt offers it,
+  scoped too) and Deny. Picking one decides the prompt as Messages →
+  Access requests does. However it ends (decided anywhere, by away cover, or
+  timed out), the board records it: the pick, or `Timed out: denied`. A
+  daemon restart ends pending prompts; the next start closes their
+  questions (`Expired: the daemon restarted`). A linked node's access
+  request is not mirrored.
+- **Where it lands.** On the board of the group the original names (a
+  message's group, a prompt's target group) if the agent is a member there;
+  else the group of the task it started most recently; else its first
+  group. An agent in no active group, or a board that is off, is not
+  mirrored. In that group it is asked on the agent's current task (the one
+  it started most recently), or, when it works on none, on a new question
+  task for the operator. A question task made for a prompt is archived
+  when it closes, so prompts do not fill *Done this week*.
+- Only the operator answers a mirrored question on the board; the agent
+  that asked does not withdraw it there, and a task that closes or reopens
+  leaves the original as it is. Each original is mirrored once.
+- **Linked nodes.** A node acting as this node's operator (unrestricted
+  trust) sees mirrored questions as the operator does. A node reading the
+  board under its taskboard grants sees only that the operator has a
+  question there, not what it asks or the answer. Either answers the
+  original in this node's human inbox, under its rules, not on the board.
+
 ### Idle without report
 
 An open task is **stalled** when its assignee has sat idle for

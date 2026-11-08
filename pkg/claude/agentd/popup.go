@@ -254,6 +254,7 @@ func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) 
 		slog.Warn("access request: failed to persist resolved request",
 			"id", req.id, "perm", req.perm, "outcome", outcome, "err", err)
 	}
+	approvalResolved(req, outcome)
 }
 
 // outcomeLabel maps a decided outcome to its history label. The timeout path
@@ -505,6 +506,7 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		slog.Warn("access request: failed to persist pending request",
 			"id", req.id, "perm", req.perm, "conv", req.convID, "err", err)
 	}
+	mirrorApproval(req)
 	forwardAwayApproval(req)
 	for {
 		select {

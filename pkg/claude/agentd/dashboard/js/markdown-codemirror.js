@@ -67,6 +67,17 @@ export async function mountCodeMirror(parent, doc, options = {}) {
   ];
   const editable = new Compartment();
   const hint = new Compartment();
+  // The form hears of an edit inside CodeMirror's update, and a render it
+  // runs there can write back (the placeholder, disabled, the text): such a
+  // write waits for the update to end, since CodeMirror refuses a dispatch
+  // during one.
+  let reporting = false;
+  let destroyed = false;
+  const write = (fn) => {
+    if (destroyed) return;
+    if (!reporting) { fn(); return; }
+    queueMicrotask(() => { if (!destroyed) fn(); });
+  };
   const start = Math.min(selection?.anchor ?? doc.length, doc.length);
   const head = Math.min(selection?.head ?? start, doc.length);
   const view = new EditorView({
@@ -105,8 +116,13 @@ export async function mountCodeMirror(parent, doc, options = {}) {
           // setDoc's own change is the form's text arriving, not an edit:
           // reporting it back would hand the form its own value again.
           const external = update.transactions.every((tr) => !tr.docChanged || tr.isUserEvent(EXTERNAL));
-          if (update.docChanged && !external) onChange(update.state.doc.toString());
-          if (update.docChanged || update.selectionSet) onSelection();
+          reporting = true;
+          try {
+            if (update.docChanged && !external) onChange(update.state.doc.toString());
+            if (update.docChanged || update.selectionSet) onSelection();
+          } finally {
+            reporting = false;
+          }
         }),
       ],
     }),
@@ -117,21 +133,21 @@ export async function mountCodeMirror(parent, doc, options = {}) {
     lineAt: (pos) => view.state.doc.lineAt(Math.min(pos, view.state.doc.length)).text,
     selection: () => view.state.selection.main,
     // apply takes an edit from markdown-edits.js.
-    apply: (edit) => {
+    apply: (edit) => write(() => {
       view.dispatch({ changes: edit.changes.map((c) => ({ from: c.from, to: c.to ?? c.from, insert: c.insert })), selection: edit.selection, scrollIntoView: true });
       view.focus();
-    },
+    }),
     // setDoc replaces the whole text (the form reset it, or the brief arrived).
-    setDoc: (text) => {
+    setDoc: (text) => write(() => {
       if (text === view.state.doc.toString()) return;
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: EXTERNAL });
-    },
+    }),
     // posAt is the text position under a pointer event, for a drop.
     posAt: (event) => view.posAtCoords({ x: event.clientX, y: event.clientY }),
-    setPlaceholder: (text) => { view.dispatch({ effects: hint.reconfigure(placeholder(text || '')) }); },
-    setDisabled: (disabled) => { view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!disabled)) }); },
+    setPlaceholder: (text) => write(() => { view.dispatch({ effects: hint.reconfigure(placeholder(text || '')) }); }),
+    setDisabled: (disabled) => write(() => { view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!disabled)) }); }),
     focus: () => view.focus(),
     hasFocus: () => view.hasFocus,
-    destroy: () => view.destroy(),
+    destroy: () => { destroyed = true; view.destroy(); },
   };
 }

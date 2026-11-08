@@ -124,7 +124,11 @@ comments on it come to you as mail too.
   `block tk_mine --on tk_…`. A task blocked with a plain `--reason` is not
   reopened for you; you only get mail.
 - This complements `notify-human` and `--ask-human`; use it for something that
-  can wait on the board rather than a popup now.
+  can wait on the board rather than a popup now. A `notify-human` question
+  (options, or a subject ending in `?`) and a pending `--ask-human` prompt
+  also show on your current task (or a new operator task) as a mirror: the
+  answer still comes to you only the usual way, and you do not withdraw the
+  mirror on the board.
 - You may ask about your own work under `taskboard.own`. Handing the operator a
   task someone else holds needs `taskboard.assign`.
 - You can edit, block or drop (withdraw) an operator task you asked. Only the

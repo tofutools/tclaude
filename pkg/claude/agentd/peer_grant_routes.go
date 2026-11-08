@@ -210,6 +210,13 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 		}
 	}
 	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerGrantKey{}, a)
+	if strings.HasPrefix(rule.feature, "groups.taskboard") {
+		// Mirrored questions are the human inbox's to show (taskboard_mirror_peer.go).
+		rw := newRedactMirroredWriter(w)
+		peerDashboardMux().ServeHTTP(rw, r.Clone(ctx))
+		rw.finish()
+		return
+	}
 	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
 }
 
