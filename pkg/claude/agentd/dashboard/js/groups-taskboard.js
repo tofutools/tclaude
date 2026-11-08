@@ -136,6 +136,16 @@ function agentLabel(agentId, group, snapshot) {
   return member?.title || shortAgentId(agentId, '');
 }
 
+// operatorName names the operator a board's "operator" assignee is: you on
+// this node's boards, the linked node's operator on its boards (the fused
+// view, or that node's page).
+export function operatorName(group) {
+  const node = group?.fleet_node;
+  if (node && !node.local) return `operator of ${node.name || node.id}`;
+  if (onPeerPage()) return 'their operator';
+  return 'you';
+}
+
 export function actorLabel(actor, group, snapshot) {
   if (actor === 'human:operator') return 'operator';
   const id = actorAgentId(actor);
@@ -143,7 +153,7 @@ export function actorLabel(actor, group, snapshot) {
 }
 
 const STATE_LABELS = {
-  blocked: 'blocked', stalled: 'stalled', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
+  blocked: 'blocked', stalled: 'stalled', waiting: 'waiting', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
 };
 
 export function RefChip({ task }) {
@@ -187,13 +197,14 @@ export function DepChips({ task, byId }) {
 function Who({ task, group, snapshot }) {
   const agent = task.assignee?.agent_id;
   if (!agent) return html`<span class="tb-unassigned">unassigned</span>`;
-  const name = task.assignee?.name || agentLabel(agent, group, snapshot);
+  const operator = !!task.assignee?.operator;
+  const name = operator ? operatorName(group) : task.assignee?.name || agentLabel(agent, group, snapshot);
   const by = actorLabel(task.assigned_by, group, snapshot);
   // The name ellipsizes in its cell; who assigned it, and when, is the
   // tooltip.
   const detail = [task.assigned_at && `assigned ${relTime(task.assigned_at)}`, by && `by ${by}`].filter(Boolean).join(' ');
-  return html`<span class="tb-who" title=${detail ? `${name} · ${detail}` : `${name} · ${agent}`}>
-    <span class="tb-avatar" aria-hidden="true">${name.slice(0, 1).toUpperCase()}</span>
+  return html`<span class=${`tb-who${operator ? ' tb-who-operator' : ''}`} title=${detail ? `${name} · ${detail}` : `${name} · ${agent}`}>
+    <span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>
     <span class="tb-who-name">${name}</span>
   </span>`;
 }
@@ -202,7 +213,7 @@ function Who({ task, group, snapshot }) {
 // more to say.
 const STATE_MEANING = {
   open: 'next in the queue', idea: 'captured, not yet in the queue', queued: 'waits on other tasks',
-  'in-progress': 'an agent holds it', stalled: 'its agent went idle without reporting', blocked: 'waits on something outside the board',
+  'in-progress': 'an agent holds it', waiting: 'the operator holds it: an answer or a step an agent waits on', stalled: 'its agent went idle without reporting', blocked: 'waits on something outside the board',
   done: 'finished', dropped: 'dropped without being done',
 };
 
@@ -215,6 +226,7 @@ function StatePill({ task, byId, assignee = '' }) {
   const state = taskRowState(task);
   const word = STATE_LABELS[state];
   const details = [];
+  if (state === 'waiting' && task.assigned_by) details.push(`asked by ${assignee || task.assigned_by}`);
   if (state === 'in-progress' || state === 'stalled') {
     const who = task.assignee?.name || assignee || task.assignee?.agent_id || '';
     if (who) details.push(`with ${who}`);
@@ -313,8 +325,14 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
     items.push(item('assign', 'Assign', `taskboard assign --to: give it to a member, the brief goes to its inbox${task.stage === 'idea' ? ' and the idea joins the queue' : ''} (or drag the row onto an agent)`, {
       children: () => {
         const members = assignableMembers(group);
-        if (!members.length) return [{ label: 'No member to assign to', disabled: true }];
-        return members.map((member) => {
+        const mine = !!task.assignee?.operator;
+        const operator = item('assign-operator', `${operatorName(group) === 'you' ? 'You (operator)' : operatorName(group)}${mine ? ' ✓' : ''}`,
+          'taskboard assign --to operator: the operator answers or does it, and closes it as done', {
+            key: 'operator', disabled: mine,
+            run: () => actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, 'operator')),
+          });
+        if (!members.length) return [operator, { label: 'No member to assign to', disabled: true }];
+        return [operator, ...members.map((member) => {
           const here = task.assignee?.agent_id === member.agent_id;
           return item(`assign-to`, `${member.title || member.agent_id}${member.online ? '' : ' (offline)'}${here ? ' ✓' : ''}`, `taskboard assign --to ${member.agent_id}`, {
             key: member.agent_id,
@@ -322,7 +340,7 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
             run: () => actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, member.agent_id))
               .then((ok) => { if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [member.agent_id] }); }),
           });
-        });
+        })];
       },
     }));
   }
@@ -389,7 +407,8 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
-    <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
+    <td><${StatePill} task=${task} byId=${byId} assignee=${task.assignee?.operator ? actorLabel(task.assigned_by, group, snapshot)
+      : task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
@@ -800,7 +819,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
         members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
     : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />` : null;
   return html`${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} />`} auto=${autoOpened.current}
+      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} />`} auto=${autoOpened.current}
       closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
@@ -811,9 +830,12 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
 
 // TaskboardCounts is the section head's total; the columns (and the group's
 // summary line) show the breakdown, which the tooltip carries too.
-function TaskboardCounts({ counts }) {
-  return html`<span class="tb-counts" title=${taskboardCountsText(counts)}>
+// The tasks waiting on the operator stand out beside it.
+function TaskboardCounts({ counts, who = 'you' }) {
+  const waiting = counts.waiting_on_you || 0;
+  return html`<span class="tb-counts" title=${taskboardCountsText(counts, who)}>
     <span class=${`gf-count${counts.live ? '' : ' zero'}`}>${counts.live || 0}</span>
+    ${waiting > 0 && html`<span class="ui-tag tb-waiting-tag" data-tb-waiting=${waiting}>${waiting} waiting on ${who}</span>`}
   </span>`;
 }
 
@@ -824,9 +846,10 @@ export function TaskboardSummaryChip({ group: shown, source: ownSource = taskboa
   const { source } = boardOf(group, ownSource, null, boards);
   const entry = useTaskboardEntry(group.name, source);
   if (!entry || !entry.counts?.live) return null;
-  const parts = taskboardCountParts(entry.counts);
+  const who = operatorName(group);
+  const parts = taskboardCountParts(entry.counts, who);
   const wizard = isWizardActive();
-  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts)}`}>
+  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts, who)}`}>
     ${wizard ? 'quest board' : 'task board'}: ${parts.length
       ? parts.map((part, i) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${i ? ' · ' : ''}${part.text}</span>`)
       : `${entry.counts.live}`}

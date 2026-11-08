@@ -99,6 +99,9 @@ type GroupTask struct {
 	UpdatedAt   time.Time
 	ClosedAt    time.Time
 	ArchivedAt  time.Time
+	// BlockedOn is the operator task a blocked task waits on: closing that
+	// task as done reopens this one (tcl-p4t78f).
+	BlockedOn string
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
@@ -130,15 +133,15 @@ type GroupTaskEvent struct {
 }
 
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
-	COALESCE(assignee_id, ''), assigned_by, assigned_at, outcome, outcome_note, failures, created_by,
-	created_at, updated_at, closed_at, archived_at`
+	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
+	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
 	var assigned, created, updated, closed, archived dbTimestamp
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
-		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived); err != nil {
+		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn); err != nil {
 		return nil, err
 	}
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
@@ -204,6 +207,12 @@ type NewGroupTask struct {
 	BlockReason string
 	AssigneeID  string
 	AssignedBy  string
+	// Blocks, when set, names a live task of the same group that waits on
+	// the new one: in the same transaction it gains the new task as a
+	// dependency and is blocked on it (BlockGroupTaskOn). BlocksExpect is
+	// the holder the caller was authorised against for it.
+	Blocks       string
+	BlocksExpect string
 }
 
 type taskTx interface {
@@ -478,8 +487,7 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		return nil, err
 	}
 	if in.AssigneeID != "" {
-		if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = ?, assigned_at = ? WHERE id = ?`,
-			in.AssigneeID, in.AssignedBy, dbTime(now), id); err != nil {
+		if err := setGroupTaskAssigneeTx(tx, id, in.AssigneeID, in.AssignedBy, now); err != nil {
 			return nil, err
 		}
 		if err := addGroupTaskEventTx(tx, id, in.Actor, GroupTaskEventAssigned, "→ "+in.AssigneeID, now); err != nil {
@@ -508,6 +516,22 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	}
 	if err := insertGroupTaskAttachmentsTx(tx, id, 0, append([]GroupTaskAttachment(nil), in.Attachments...), in.Actor, now); err != nil {
 		return nil, err
+	}
+	if in.Blocks != "" {
+		if status != GroupTaskOpen {
+			return nil, taskConflict("invalid_arg", "a task that blocks another starts open")
+		}
+		created, err := getGroupTaskTx(tx, id)
+		if err != nil {
+			return nil, err
+		}
+		waiter, err := getGroupTaskTx(tx, in.Blocks)
+		if err != nil {
+			return nil, err
+		}
+		if err := blockGroupTaskOnTx(tx, waiter, created, in.Actor, in.BlocksExpect, now); err != nil {
+			return nil, err
+		}
 	}
 	out, err := getGroupTaskTx(tx, id)
 	if err != nil {
@@ -684,6 +708,10 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 			}
 			for _, dep := range e.RmDeps {
 				changed = append(changed, "-after "+dep)
+				// A task no longer waits on a dependency it dropped.
+				if _, err := tx.Exec(`UPDATE group_tasks SET blocked_on = '' WHERE id = ? AND blocked_on = ?`, id, dep); err != nil {
+					return err
+				}
 			}
 		}
 		if len(changed) == 0 {
@@ -800,7 +828,7 @@ func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*G
 			if t.Status == GroupTaskBlocked && t.BlockReason == reason {
 				return nil
 			}
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'blocked', block_reason = ? WHERE id = ?`, reason, id); err != nil {
+			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'blocked', block_reason = ?, blocked_on = '' WHERE id = ?`, reason, id); err != nil {
 				return err
 			}
 			kind, detail = GroupTaskEventBlocked, reason
@@ -811,13 +839,13 @@ func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*G
 				detail = "was " + t.Status
 			}
 			// Unblocking or reopening gives the task a fresh run of attempts.
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', closed_at = NULL,
+			if _, err := tx.Exec(`UPDATE group_tasks SET status = 'open', block_reason = '', blocked_on = '', closed_at = NULL,
 				archived_at = NULL, failures = 0 WHERE id = ?`, id); err != nil {
 				return err
 			}
 			// A task closed while assigned comes back without an assignee that
 			// has since been retired (the retire trigger only covers live tasks).
-			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL
+			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL
 				WHERE id = ? AND assignee_id IN (SELECT agent_id FROM agents WHERE retired_at IS NOT NULL)`, id); err != nil {
 				return err
 			}
@@ -851,9 +879,15 @@ func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*G
 				}
 			}
 		case GroupTaskDone, GroupTaskDropped:
-			if _, err := tx.Exec(`UPDATE group_tasks SET status = ?, closed_at = ?, archived_at = NULL WHERE id = ?`,
+			if _, err := tx.Exec(`UPDATE group_tasks SET status = ?, closed_at = ?, archived_at = NULL, blocked_on = '' WHERE id = ?`,
 				status, dbTime(now), id); err != nil {
 				return err
+			}
+			// Done releases the tasks blocked waiting on this one.
+			if status == GroupTaskDone {
+				if err := releaseGroupTaskWaitersTx(tx, t, actor, now); err != nil {
+					return err
+				}
 			}
 			kind, detail = status, reason
 			if t.Status == GroupTaskBlocked {

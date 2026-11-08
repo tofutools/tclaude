@@ -2410,13 +2410,15 @@ CREATE TABLE group_tasks (
 			updated_at   INTEGER NOT NULL,
 			closed_at    INTEGER,
 			archived_at  INTEGER
-		) STRICT;
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
 
 CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
 
 CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_blocked_on ON group_tasks(blocked_on) WHERE blocked_on <> '';
 
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,

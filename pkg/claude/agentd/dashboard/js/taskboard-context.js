@@ -100,10 +100,15 @@ export function taskboardGroupEntry(context, groupName) {
 
 // taskboardCountParts are the non-zero buckets of a board, in reading order:
 // what needs the operator, what is moving, what is next, what is only an idea.
-export function taskboardCountParts(counts) {
+// waiting_on_you (the tasks the operator holds) counts in needs_you too; it
+// is its own part, first, and needs you is the rest. who names the operator
+// ('you', or a linked node's operator).
+export function taskboardCountParts(counts, who = 'you') {
   const c = counts || {};
   const parts = [];
-  if (c.needs_you) parts.push({ key: 'needs-you', text: `${c.needs_you} needs you` });
+  const waiting = c.waiting_on_you || 0;
+  if (waiting) parts.push({ key: 'waiting-on-you', text: `${waiting} waiting on ${who}` });
+  if ((c.needs_you || 0) > waiting) parts.push({ key: 'needs-you', text: `${c.needs_you - waiting} needs you` });
   if (c.in_progress) parts.push({ key: 'in-progress', text: `${c.in_progress} in progress` });
   if (c.next) parts.push({ key: 'next', text: `${c.next} next` });
   if (c.ideas) parts.push({ key: 'ideas', text: `${c.ideas} idea${c.ideas === 1 ? '' : 's'}` });
@@ -112,20 +117,22 @@ export function taskboardCountParts(counts) {
 
 // taskboardCountsText is the folded section's one line:
 // "9 · 1 needs you · 2 in progress · 6 next · 3 ideas".
-export function taskboardCountsText(counts) {
+export function taskboardCountsText(counts, who = 'you') {
   const live = counts?.live || 0;
   if (!live) return counts?.done_this_week ? `0 · ${counts.done_this_week} done this week` : 'empty';
-  return [String(live), ...taskboardCountParts(counts).map((part) => part.text)].join(' · ');
+  return [String(live), ...taskboardCountParts(counts, who).map((part) => part.text)].join(' · ');
 }
 
 // taskRowState is what a row's state column says, derived exactly as the
 // lanes are (docs/taskboard.md): blocked, stalled (assigned to an agent idle
-// past taskboard.idle_grace without reporting), in progress (assigned),
+// past taskboard.idle_grace without reporting), waiting (the operator holds
+// it), in progress (assigned),
 // queued (open with an unmet dependency), idea, or open.
 export function taskRowState(task) {
   if (task.status === 'done' || task.status === 'dropped') return task.status;
   if (task.status === 'blocked') return 'blocked';
   if (task.stalled && task.assignee?.agent_id) return 'stalled';
+  if (task.assignee?.operator) return 'waiting';
   if (task.assignee?.agent_id) return 'in-progress';
   if (task.queued) return 'queued';
   if (task.stage === 'idea') return 'idea';

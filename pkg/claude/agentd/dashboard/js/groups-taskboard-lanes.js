@@ -28,7 +28,7 @@ import {
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
-import { DepChips, RefChip, actorLabel, boardTasks, assignableMembers, binDroppable, canAssign } from './groups-taskboard.js';
+import { DepChips, RefChip, actorLabel, boardTasks, assignableMembers, binDroppable, canAssign, operatorName } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
@@ -47,6 +47,10 @@ const WEEK_MS = 7 * 24 * 3600 * 1000;
 // DONE_SHOWN is how many done cards a cell draws before "+ n more".
 const DONE_SHOWN = 3;
 export const UNASSIGNED = '';
+// OPERATOR is the operator's lane: the tasks assigned to the operator of the
+// board's node ("You" here, a linked node's operator on its boards), pinned
+// above Unassigned.
+export const OPERATOR = 'operator';
 const TASK_DRAG_TYPE = 'application/x-tclaude-task';
 
 // laneColumn is the column a task stands in, derived as the design's table
@@ -98,7 +102,7 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
   const known = new Set(lanes.map((lane) => lane.id));
   for (const key of cells.keys()) {
     const id = key.slice(0, key.indexOf('|'));
-    if (id && !known.has(id)) {
+    if (id && id !== OPERATOR && !known.has(id)) {
       known.add(id);
       const task = [...cells.entries()].find(([k]) => k.startsWith(`${id}|`))[1][0];
       lanes.push({ id, member: null, name: task.assignee?.name || id.slice(0, 12) });
@@ -108,7 +112,7 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.state = memberState(lane.member);
     lane.holds = holds.get(lane.id) || 0;
   }
-  return { cells, groups: laneGroups(lanes, group, by, snapshot) };
+  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: (cells.get(`${OPERATOR}|progress`) || []).length };
 }
 
 function laneGroups(lanes, group, by, snapshot) {
@@ -331,6 +335,13 @@ function BlockDialog({ task, drop, actions, group, onClose }) {
 }
 
 function LaneHead({ lane, order }) {
+  if (lane.id === OPERATOR) {
+    const you = lane.name === 'you';
+    return html`<div class="tb-lane-head tb-lane-head-operator" data-lane-operator="true" title=${you ? 'Tasks assigned to you, the operator: agents wait on them' : `Tasks assigned to the ${lane.name}`}>
+      <span class="tb-lane-name"><span class="tb-avatar tb-avatar-operator" aria-hidden="true">★</span><span class="tb-lane-label">${you ? 'You' : lane.name}</span></span>
+      <span class="tb-lane-sub tb-lane-waiting">${lane.holds} waiting on ${lane.name}</span>
+    </div>`;
+  }
   if (lane.id === UNASSIGNED) {
     return html`<div class="tb-lane-head"><span class="tb-lane-name">Unassigned</span><span class="tb-lane-sub">${lane.count} task${lane.count === 1 ? '' : 's'} · operator order</span></div>`;
   }
@@ -491,7 +502,7 @@ function useColumnResize(group, onChange) {
 // choice is made starts from the cell: its column, and the lane's agent as
 // the assignee.
 function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
-  const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.name} · ${wizard ? column.wizard : column.label}`;
+  const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.id === OPERATOR && lane.name === 'you' ? 'You' : lane.name} · ${wizard ? column.wizard : column.label}`;
   const what = wizard ? 'quest' : 'task';
   const initial = { start: add.start, to: add.to, toName: add.to ? lane.name : '' };
   return html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard}
@@ -516,10 +527,11 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
     const stripe = striped(lane.id, column.key);
-    const target = { lane: lane.id, column: column.key, name: lane.name, member: lane.id === UNASSIGNED || !!lane.member };
+    const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
+    const target = { lane: lane.id, column: column.key, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
     const shown = column.key === 'done' && !doneOpen[lane.id] ? list.slice(0, DONE_SHOWN) : list;
-    const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: lane.id === UNASSIGNED || !!lane.member });
+    const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
@@ -532,9 +544,13 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} group=${group} entry=${entry} />`}
     </div>`;
   };
-  const row = (lane) => html`<div key=${lane.id || 'unassigned'} class="tb-lane" data-lane-row=${lane.id || 'unassigned'}>
-    <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED ? null : order} />${LANE_COLUMNS.map((column) => cell(lane, column))}
+  const row = (lane) => html`<div key=${lane.id || 'unassigned'} class=${`tb-lane${lane.id === OPERATOR ? ' tb-lane-operator' : ''}`} data-lane-row=${lane.id || 'unassigned'}>
+    <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED || lane.id === OPERATOR ? null : order} />${LANE_COLUMNS.map((column) => cell(lane, column))}
   </div>`;
+  // The operator's lane shows while it holds a task, or for a viewer who
+  // may give the operator one (by a drag or its "+").
+  const operatorLane = ([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions))
+    && { id: OPERATOR, name: operatorName(group), holds: model.operatorHolds };
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
@@ -549,6 +565,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         ${LANE_COLUMNS.map((column, i) => html`<div key=${column.key} class=${`ui-eyebrow tb-col-${column.key}`}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
           i < LANE_COLUMNS.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>
+      ${operatorLane && row(operatorLane)}
       ${row(unassigned)}
       ${groups.map((lg) => {
         const folded = lg.offline && !unfolded[lg.key];

@@ -37,16 +37,19 @@ type taskboardContextTask = taskboardTaskView
 // taskboardCounts are a board's counts. Live is every open or blocked task;
 // the stage buckets split the open ones: Stalled is assigned to an agent idle
 // past taskboard.idle_grace without reporting, InProgress is the other
-// assigned ones, Next and Ideas are unassigned in that stage. Queued (open
-// with an unmet dependency) overlaps Next. NeedsYou is Blocked plus Stalled.
+// assigned ones (WaitingOnYou the operator's), Next and Ideas are unassigned in that stage. Queued (open
+// with an unmet dependency) overlaps Next. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
 type taskboardCounts struct {
-	Live         int `json:"live"`
-	NeedsYou     int `json:"needs_you"`
-	InProgress   int `json:"in_progress"`
-	Next         int `json:"next"`
-	Ideas        int `json:"ideas"`
-	Blocked      int `json:"blocked"`
-	Stalled      int `json:"stalled"`
+	Live       int `json:"live"`
+	NeedsYou   int `json:"needs_you"`
+	InProgress int `json:"in_progress"`
+	Next       int `json:"next"`
+	Ideas      int `json:"ideas"`
+	Blocked    int `json:"blocked"`
+	Stalled    int `json:"stalled"`
+	// WaitingOnYou counts the open tasks assigned to the operator; they
+	// count in NeedsYou too.
+	WaitingOnYou int `json:"waiting_on_you"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -180,6 +183,9 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 			entry.Counts.NeedsYou++
 		case v.Stalled:
 			entry.Counts.Stalled++
+			entry.Counts.NeedsYou++
+		case v.Assignee != nil && v.Assignee.Operator:
+			entry.Counts.WaitingOnYou++
 			entry.Counts.NeedsYou++
 		case v.Assignee != nil:
 			entry.Counts.InProgress++

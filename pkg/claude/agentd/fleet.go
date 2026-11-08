@@ -57,6 +57,8 @@ type fleetTaskboard struct {
 	NeedsYou int    `json:"needs_you"`
 	Blocked  int    `json:"blocked"`
 	Stalled  int    `json:"stalled"`
+	// WaitingOnYou counts the open tasks assigned to the operator.
+	WaitingOnYou int `json:"waiting_on_you"`
 }
 
 type fleetCounts struct {
@@ -318,6 +320,10 @@ func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Tim
 	if err != nil {
 		return err
 	}
+	waiting, err := db.CountOperatorGroupTasks()
+	if err != nil {
+		return err
+	}
 	assigned, err := db.ListOpenAssignedGroupTasks()
 	if err != nil {
 		return err
@@ -330,13 +336,16 @@ func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Tim
 		}
 	}
 	for _, g := range groups {
-		if g.IsArchived() || blocked[g.ID]+stalled[g.ID] == 0 {
+		if g.IsArchived() || blocked[g.ID]+stalled[g.ID]+waiting[g.ID] == 0 {
 			continue
 		}
-		tb := fleetTaskboard{Group: g.Name, Blocked: blocked[g.ID], Stalled: stalled[g.ID]}
-		tb.NeedsYou = tb.Blocked + tb.Stalled
+		tb := fleetTaskboard{Group: g.Name, Blocked: blocked[g.ID], Stalled: stalled[g.ID], WaitingOnYou: waiting[g.ID]}
+		tb.NeedsYou = tb.Blocked + tb.Stalled + tb.WaitingOnYou
 		brief.Taskboards = append(brief.Taskboards, tb)
 		var parts []string
+		if tb.WaitingOnYou > 0 {
+			parts = append(parts, fmt.Sprintf("%d waiting on you", tb.WaitingOnYou))
+		}
 		if tb.Stalled > 0 {
 			parts = append(parts, fmt.Sprintf("%d stalled", tb.Stalled))
 		}

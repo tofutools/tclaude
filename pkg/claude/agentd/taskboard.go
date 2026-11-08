@@ -295,16 +295,19 @@ type taskboardRef struct {
 }
 
 type taskboardTaskView struct {
-	ID          string        `json:"id"`
-	Group       string        `json:"group"`
-	Title       string        `json:"title"`
-	Body        string        `json:"body,omitempty"`
-	Stage       string        `json:"stage"`
-	Status      string        `json:"status"`
-	Rank        string        `json:"rank"`
-	BlockReason string        `json:"block_reason,omitempty"`
-	Ref         *taskboardRef `json:"ref,omitempty"`
-	DependsOn   []string      `json:"depends_on"`
+	ID          string `json:"id"`
+	Group       string `json:"group"`
+	Title       string `json:"title"`
+	Body        string `json:"body,omitempty"`
+	Stage       string `json:"stage"`
+	Status      string `json:"status"`
+	Rank        string `json:"rank"`
+	BlockReason string `json:"block_reason,omitempty"`
+	// BlockedOn is the task a blocked task waits on (block --on, add
+	// --blocks): closing it as done reopens this one.
+	BlockedOn string        `json:"blocked_on,omitempty"`
+	Ref       *taskboardRef `json:"ref,omitempty"`
+	DependsOn []string      `json:"depends_on"`
 	// Unmet lists the dependencies not yet done; an open task with any is
 	// queued.
 	Unmet  []string `json:"unmet,omitempty"`
@@ -341,6 +344,9 @@ type taskboardTaskView struct {
 type taskboardAgentRef struct {
 	AgentID string `json:"agent_id"`
 	Name    string `json:"name,omitempty"`
+	// Operator marks the operator of the board's node as the assignee
+	// (agent_id and name are "operator").
+	Operator bool `json:"operator,omitempty"`
 }
 
 // taskboardAgentName is an agent's display name, "" when unknown.
@@ -436,10 +442,17 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			}
 		}
 		v.Queued = t.Status == db.GroupTaskOpen && len(v.Unmet) > 0
-		if t.AssigneeID != "" {
+		switch t.AssigneeID {
+		case "":
+		case db.OperatorAssignee:
+			v.Assignee = &taskboardAgentRef{AgentID: db.OperatorAssignee, Name: db.OperatorAssignee, Operator: true}
+		default:
 			v.Assignee = &taskboardAgentRef{AgentID: t.AssigneeID, Name: taskboardAgentName(t.AssigneeID)}
+		}
+		if t.AssigneeID != "" {
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 		}
+		v.BlockedOn = t.BlockedOn
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
 		if atts := files[t.ID]; len(atts) > 0 {
 			v.Attachments = taskboardAttachmentViews(atts)
@@ -752,6 +765,11 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		To          string `json:"to"`
 		// Mine assigns the task to the calling agent (`add --mine`).
 		Mine bool `json:"mine"`
+		// Blocks names a live task of the board that waits on the new
+		// operator task (`add --assignee operator --blocks tk_…`): in the
+		// same write it gains the new task as a dependency and is blocked on
+		// it. It is gated as a change of that task.
+		Blocks string `json:"blocks"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -778,7 +796,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || len(files) > 0 {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
@@ -851,11 +869,34 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	var assignee, assigneeConv string
 	if to != "" {
-		if assignee, assigneeConv, err = resolveTaskboardMember(g, to); err != nil {
+		if assignee, assigneeConv, err = resolveTaskboardAssignee(g, to); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		if !requireTaskboardAssigneeAction(w, r, g, assignee, true) {
+		if assignee == db.OperatorAssignee {
+			if !requireTaskboardOperatorAssign(w, r, g, nil) {
+				return
+			}
+		} else if !requireTaskboardAssigneeAction(w, r, g, assignee, true) {
+			return
+		}
+	}
+	// A task that waits on the new operator task is changed in the same
+	// write, so its change is gated here too.
+	var blocks *db.GroupTask
+	if b := strings.TrimSpace(body.Blocks); b != "" {
+		switch {
+		case assignee != db.OperatorAssignee:
+			err = errors.New("blocks is for a task assigned to the operator (to: operator)")
+		case status != "" && status != db.GroupTaskOpen:
+			err = errors.New("a task that blocks another starts open")
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		var ok bool
+		if blocks, ok = requireTaskboardWaitOn(w, g, b); !ok || !requireTaskboardTaskChange(w, r, g, blocks) {
 			return
 		}
 	}
@@ -867,9 +908,13 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !ok {
 		return
 	}
-	t, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
+	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
-		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Attachments: atts})
+		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Attachments: atts}
+	if blocks != nil {
+		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
+	}
+	t, err := db.CreateGroupTask(in)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
@@ -877,7 +922,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
 	// Someone else's new task is briefed as an assign is; work logged as
 	// done tells nobody.
-	if self, _ := callerAgentID(r); assignee != "" && assignee != self && t.Status != db.GroupTaskDone {
+	if self, _ := callerAgentID(r); assignee != "" && assignee != self && assignee != db.OperatorAssignee && t.Status != db.GroupTaskDone {
 		setAuditTargetConv(r, assigneeConv)
 		by := taskboardCallerName(r)
 		brief := taskboardBrief(g, t, by)
@@ -1023,8 +1068,17 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	var body struct {
 		Status string `json:"status"`
 		Reason string `json:"reason"`
+		// On, with status blocked, blocks the task waiting on another task
+		// of the board (`block --on tk_…`): it becomes a dependency, the
+		// reason says "waiting on operator: <title>", and closing it as
+		// done reopens this task.
+		On string `json:"on"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	if on := strings.TrimSpace(body.On); on != "" {
+		handleTaskboardBlockOn(w, r, t, g, on, body.Status, body.Reason)
 		return
 	}
 	reason, err := validateTaskText("the reason", strings.TrimSpace(body.Reason), maxTaskReasonLen)
@@ -1044,12 +1098,22 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	// (taskboard.own) or an assigner's (taskboard.assign); everything else is
 	// a write, or the assignee's own change of its task.
 	closing := body.Status == db.GroupTaskDone || body.Status == db.GroupTaskDropped
-	if closing && t.AssigneeID != "" && t.Live() {
-		if !requireTaskboardAssigneeAction(w, r, g, t.AssigneeID, false) {
+	if closing && body.Status == db.GroupTaskDone && t.AssigneeID == db.OperatorAssignee && t.Live() {
+		// Only the operator, or an assigner, closes an operator task as done:
+		// the agent that asked may withdraw it (drop), not answer it.
+		if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g, ActionContext{Group: g.Name}); !ok {
+			return
+		}
+	} else if closing && t.AssigneeID != "" && t.Live() {
+		if !requireTaskboardHolderAction(w, r, g, t, false) {
 			return
 		}
 	} else if !requireTaskboardTaskChange(w, r, g, t) {
 		return
+	}
+	var waiters []string
+	if closing {
+		waiters = taskboardWaitersBefore(t)
 	}
 	out, err := db.SetGroupTaskStatusFor(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID)
 	if err != nil {
@@ -1057,6 +1121,9 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		return
 	}
 	setAuditDetail(r, t.ID+" "+body.Status)
+	if closing && t.Live() {
+		mailTaskboardWaiters(r, g, out, body.Status, reason, waiters, t.AssigneeID == db.OperatorAssignee)
+	}
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 

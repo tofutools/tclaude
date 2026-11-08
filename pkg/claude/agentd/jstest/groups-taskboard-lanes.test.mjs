@@ -135,7 +135,7 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.ok(c.querySelector('[data-taskboard-lanes="tbl-role"][data-lanes-by="role"]'));
   assert.equal(c.querySelector('table.tb-table'), null, 'no list in the lanes view');
   const lanes = [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
-  assert.deepEqual(lanes, ['unassigned', 'agt_lead', 'agt_builder', 'agt_tester'], 'the offline researcher folds');
+  assert.deepEqual(lanes, ['operator', 'unassigned', 'agt_lead', 'agt_builder', 'agt_tester'], 'the offline researcher folds');
   assert.deepEqual([...c.querySelectorAll('[data-lane-group]')].map((el) => [...el.children].map((part) => part.textContent.trim())),
     [['lead', '1 agent'], ['dev', '2 agents'], ['researcher', '1 agent · offline', '▸ show offline lanes']]);
   assert.deepEqual(ids('unassigned', 'ideas'), ['tk_00000004']);
@@ -460,4 +460,35 @@ test('on a linked node\'s group in the fused view, a cell + and lane drags write
   await harness.input(reason.querySelector('textarea'), 'peer reason');
   await click(reason.querySelector('#taskboard-reason-submit'));
   assert.deepEqual(api.calls, [['status', 'tk_00000004', 'blocked', 'peer reason']]);
+});
+
+test('the operator lane: pinned above Unassigned, "You" with what waits on you, and a drop onto it assigns the operator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const name = 'tbl-operator';
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
+  const b = board(name);
+  b.tasks.push(row('tk_000000a1', 'which colour?', { assignee: { agent_id: 'operator', name: 'operator', operator: true }, assigned_by: 'agent:agt_builder' }));
+  b.counts = { ...b.counts, live: 7, needs_you: 3, waiting_on_you: 1 };
+  const source = { context: harness.signals.signal({ groups: [b] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const api = fakeApi();
+  const group = { name, members: members() };
+  const { container: c } = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
+  const lanes = [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
+  assert.deepEqual(lanes.slice(0, 2), ['operator', 'unassigned']);
+  const lane = c.querySelector('.tb-lane.tb-lane-operator');
+  assert.match(lane.querySelector('.tb-lane-head').textContent, /You\s*1 waiting on you/);
+  assert.deepEqual([...c.querySelectorAll('.tb-cell[data-lane="operator"][data-column="progress"] .tb-card')].map((el) => el.dataset.taskId), ['tk_000000a1']);
+  assert.match(c.querySelector('.tb-waiting-tag').textContent, /1 waiting on you/);
+
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
+  const target = c.querySelector('.tb-cell[data-lane="operator"][data-column="progress"]');
+  await harness.act(async () => { harness.fireEvent(c.querySelector('.tb-card[data-task-id="tk_00000001"]'), 'dragstart', { dataTransfer: transfer }); });
+  harness.fireEvent(target, 'dragover', { dataTransfer: transfer });
+  await harness.act(async () => {});
+  assert.equal(target.dataset.tbDrop, 'assign to you');
+  await harness.act(async () => { harness.fireEvent(target, 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls.find(([verb]) => verb === 'assign'), ['assign', 'tk_00000001', 'operator']);
 });

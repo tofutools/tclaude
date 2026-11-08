@@ -248,6 +248,13 @@ const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', start: 'idea', rea
 
 // NewTaskDialog is "Write it myself". `canAssign` shows the assignee
 // picker; `members` are the ones a task can go to.
+// operatorOptionLabel names the "operator" assignee in a picker: you on this
+// node's boards, a linked node's operator on its boards.
+export function operatorOptionLabel(group) {
+  const node = group?.fleet_node;
+  return node && !node.local ? `operator of ${node.name || node.id}` : 'You (operator)';
+}
+
 export function NewTaskDialog({ group, entry, api, canAssign = false, members = [], wizard = false, initial = {}, onClose, onDone = () => {} }) {
   const [draft, setDraft] = useState({ ...EMPTY_DRAFT, ...initial });
   const [busy, setBusy] = useState(false);
@@ -334,13 +341,13 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
     ${!listMode && row('After', html`<${DepsPick} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
     ${!listMode && row('Files', html`<${FilesField} intake=${intake} attachments=${files} busy=${busy} />`)}
-    ${!listMode && canAssign && row('Assignee', members.length
-      ? html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
+    ${!listMode && canAssign && row('Assignee', html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
           <option value="">— unassigned —</option>
+          <option value="operator">${operatorOptionLabel(group)}</option>
           ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}
-        <//>`
-      : html`<span class="ui-hint">No member to assign to.</span>`,
+        <//>`,
       draft.start === 'done' ? (draft.to ? 'who did it; nobody is mailed' : 'optional: who did it')
+        : draft.to === 'operator' ? 'it waits on the operator, who closes it as done'
         : draft.to ? `the brief goes to its inbox${draft.start === 'idea' ? '; the idea joins the queue' : ''}` : null)}
   <//>`;
 }

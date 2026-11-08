@@ -92,10 +92,11 @@ func requireTaskboardOwn(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 }
 
 // requireTaskboardTaskChange gates a change of task t on g's board: its
-// assignee changes it under taskboard.own, anyone else needs
+// assignee (or the agent that asked the operator, on an operator task)
+// changes it under taskboard.own, anyone else needs
 // taskboard.write. Both are narrowed by the writer lock.
 func requireTaskboardTaskChange(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, t *db.GroupTask) bool {
-	if self, conv := callerAgentID(r); self != "" && t.AssigneeID == self &&
+	if self, conv := callerAgentID(r); self != "" && (t.AssigneeID == self || taskboardAskedByCaller(r, t)) &&
 		!agentWritesTaskboard(r, conv, g) && agentOwnsTaskboard(r, conv, g) {
 		return requireTaskboardOwn(w, r, g, true)
 	}

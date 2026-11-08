@@ -280,7 +280,7 @@ test('Assign › lists the members; Unassign takes the task back', async (t) => 
   const { c, api, click, pick } = await mountBoard(t, 'tba-assign');
   await click(c.querySelector('tr[data-task-id="tk_00000004"] .tb-act-more'));
   await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Assign ›'));
-  assert.deepEqual([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].map((b) => b.textContent.trim()), ['‹ Back', 'builder', 'tester (offline)'],
+  assert.deepEqual([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].map((b) => b.textContent.trim()), ['‹ Back', 'You (operator)', 'builder', 'tester (offline)'],
     'members with a stable agent id, online first');
   await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'tester (offline)'));
   assert.equal(c.querySelector('.gr-add-menu'), null, 'picking closes the menu');

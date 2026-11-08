@@ -72,10 +72,10 @@ test('a stored order sorts lanes and headings; a lane it does not list appends a
 
 test('dragging a lane head reorders the lanes, remembered per group; Unassigned stays first', async (t) => {
   const { harness, c, lanes, head, dragOnto, dashPrefs } = await mountLanes(t, 'tbo-lanes');
-  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
   assert.equal(c.querySelector('[data-lane-row="unassigned"] .tb-lane-head').getAttribute('draggable'), null, 'Unassigned does not move');
   assert.equal(await dragOnto(head('agt_writer'), head('agt_builder')), true);
-  assert.deepEqual(lanes(), ['unassigned', 'agt_writer', 'agt_builder', 'agt_lead', 'agt_tester']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_writer', 'agt_builder', 'agt_lead', 'agt_tester']);
   assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-order.tbo-lanes')).lanes,
     { agent: ['agt_writer', 'agt_builder', 'agt_lead', 'agt_tester'] }, 'kept for lanes by agent');
   // A task drag over a lane head is not a lane drag.
@@ -87,23 +87,23 @@ test('dragging a lane head reorders the lanes, remembered per group; Unassigned 
 test('Alt+arrow moves a focused lane; reset order puts the default back', async (t) => {
   const { harness, c, lanes, head, dashPrefs } = await mountLanes(t, 'tbo-keys');
   await harness.act(async () => { harness.fireEvent(head('agt_tester'), 'keydown', { key: 'ArrowUp', altKey: true }); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_tester', 'agt_lead', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_builder', 'agt_tester', 'agt_lead', 'agt_writer']);
   await harness.act(async () => { harness.fireEvent(head('agt_builder'), 'keydown', { key: 'ArrowDown', altKey: true }); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer']);
   await harness.act(async () => { harness.fireEvent(head('agt_tester'), 'keydown', { key: 'ArrowUp' }); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer'], 'without Alt nothing moves');
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_tester', 'agt_builder', 'agt_lead', 'agt_writer'], 'without Alt nothing moves');
 
   // Focus stays on the moved head, so Alt+↑ can be pressed again.
   head('agt_writer').focus();
   await harness.act(async () => { harness.fireEvent(head('agt_writer'), 'keydown', { key: 'ArrowUp', altKey: true }); });
   assert.equal(harness.document.activeElement, head('agt_writer'), 'the moved head keeps the focus');
   await harness.act(async () => { harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'ArrowUp', altKey: true }); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_tester', 'agt_writer', 'agt_builder', 'agt_lead']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_tester', 'agt_writer', 'agt_builder', 'agt_lead']);
 
   const reset = c.querySelector('.tb-lanes-reset');
   assert.ok(reset);
   await harness.act(async () => { harness.fireEvent(reset, 'click'); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-order.tbo-keys'), null);
   assert.equal(c.querySelector('.tb-lanes-reset'), null);
 });
@@ -112,12 +112,12 @@ test('by role, lanes reorder within their heading and the headings reorder among
   const { c, lanes, heads, head, dragOnto } = await mountLanes(t, 'tbo-role', { by: 'role' });
   assert.deepEqual(heads(), ['role:lead', 'role:dev', 'role:docs']);
   assert.equal(await dragOnto(head('agt_tester'), head('agt_builder')), true);
-  assert.deepEqual(lanes(), ['unassigned', 'agt_lead', 'agt_tester', 'agt_builder', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_lead', 'agt_tester', 'agt_builder', 'agt_writer']);
   assert.equal(await dragOnto(head('agt_writer'), head('agt_lead')), false, 'not into another heading');
   const group = (key) => c.querySelector(`[data-lane-group="${key}"]`);
   assert.equal(await dragOnto(group('role:docs'), group('role:lead')), true);
   assert.deepEqual(heads(), ['role:docs', 'role:lead', 'role:dev']);
-  assert.deepEqual(lanes(), ['unassigned', 'agt_writer', 'agt_lead', 'agt_tester', 'agt_builder']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_writer', 'agt_lead', 'agt_tester', 'agt_builder']);
 });
 
 test('an order by role leaves the order by agent alone', async (t) => {
@@ -177,11 +177,11 @@ test('on a linked node\'s group in the fused view, a lane reorder is kept and re
   const c = mounted.container;
   const lanes = () => [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
   await harness.act(async () => { harness.fireEvent(c.querySelector('[data-lane-agent="agt_writer"]'), 'keydown', { key: 'ArrowUp', altKey: true }); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_writer', 'agt_tester']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_builder', 'agt_lead', 'agt_writer', 'agt_tester']);
   assert.ok(dashPrefs.getItem(`tclaude.dash.groups.taskboard.lanes-order.${shown}`), 'kept under the shown name');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-order.tbo-peer'), null, 'not under a local group of the same name');
   const reset = c.querySelector('.tb-lanes-reset');
   assert.ok(reset, 'reset order shows');
   await harness.act(async () => { harness.fireEvent(reset, 'click'); });
-  assert.deepEqual(lanes(), ['unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
+  assert.deepEqual(lanes(), ['operator', 'unassigned', 'agt_builder', 'agt_lead', 'agt_tester', 'agt_writer']);
 });

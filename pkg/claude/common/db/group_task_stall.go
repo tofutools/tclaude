@@ -124,11 +124,21 @@ func MarkGroupTaskStalled(id, assignee string, assignedAt time.Time, detail stri
 
 // CountBlockedGroupTasks is the number of blocked tasks per group id.
 func CountBlockedGroupTasks() (map[int64]int, error) {
+	return countGroupTasksWhere(`status = 'blocked'`)
+}
+
+// CountOperatorGroupTasks counts the open tasks the operator holds, per
+// group id (tcl-p4t78f).
+func CountOperatorGroupTasks() (map[int64]int, error) {
+	return countGroupTasksWhere(`status = 'open' AND assignee_kind = 'operator'`)
+}
+
+func countGroupTasksWhere(where string) (map[int64]int, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT group_id, COUNT(*) FROM group_tasks WHERE status = 'blocked' GROUP BY group_id`)
+	rows, err := d.Query(`SELECT group_id, COUNT(*) FROM group_tasks WHERE ` + where + ` GROUP BY group_id`)
 	if err != nil {
 		return nil, err
 	}

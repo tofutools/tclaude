@@ -5,7 +5,9 @@ description: >-
   your group is doing now and next (ls, show, activity, comment), capture and order tasks
   (add, edit, move, promote, demote, block, drop, done), track your own work
   (add it assigned to yourself), take an unassigned task or have one assigned
-  to you, and report done or failed on it (take, release, report). Use when a `[taskboard]` mail arrives in your inbox, when the
+  to you, and report done or failed on it (take, release, report), and give
+  the operator a task your work waits on (add --assignee operator --blocks).
+  Use when a `[taskboard]` mail arrives in your inbox, when the
   operator or your lead says "put it on the board", "what's next for the group",
   "take the next task", "track your work on the board", or when you finish or give up on a task you were
   assigned. Not the backlog: long-term work belongs in the external tracker
@@ -74,6 +76,36 @@ task (`--next`, an idea), importing, reordering and changing others' tasks
 need `taskboard.write`, which owners have. If you hold write, `add --mine`
 assigns the new task to you.
 
+## When your work waits on the operator
+
+When you need the operator to answer something or do a step before your task
+can go on, give the operator a task and make yours wait on it, in one call:
+
+```bash
+tclaude agent taskboard add <group> "Which colour for the lane?" --body "amber or purple; see the mock" \
+  --assignee operator --blocks tk_mine
+```
+
+The new task lands in the operator's lane on the dashboard ("You"). Your task
+gains it as a dependency and is blocked with the reason `waiting on operator:
+<title>`. When the operator closes it as done, your task is reopened and you
+get a `[taskboard] unblocked: tk_… is done` mail with the operator's closing
+note; read their comments with `taskboard activity tk_…`. The operator's
+comments on it come to you as mail too.
+
+- Two steps work too: `add … --assignee operator`, then
+  `block tk_mine --on tk_…`. A task blocked with a plain `--reason` is not
+  reopened for you; you only get mail.
+- This complements `notify-human` and `--ask-human`; use it for something that
+  can wait on the board rather than a popup now.
+- You may ask about your own work under `taskboard.own`. Handing the operator a
+  task someone else holds needs `taskboard.assign`.
+- You can edit, block or drop (withdraw) an operator task you asked. Only the
+  operator (or a `taskboard.assign` holder) closes it as done; you do not
+  `report` on it.
+- `operator` always means the operator of the node that holds the board: with
+  `--peer bob` it is bob's operator.
+
 ## Capturing and ordering
 
 ```bash
@@ -116,7 +148,9 @@ message with the task ids.
   tasks. Reports are never locked.
 - Assigning another agent, taking a task back from it, and closing a task
   assigned to someone else need `taskboard.assign`. Group owners have it for
-  their groups.
+  their groups. Giving the operator a task about your own work (a new task,
+  or one you hold) needs only `taskboard.own`; any other task needs
+  `taskboard.assign`.
 - Moving a task to another group needs `taskboard.transfer` on that group (its
   owners have it) and, on the source, `taskboard.write` for your own task or
   `taskboard.manage` for someone else's. `--clone` needs only read on the

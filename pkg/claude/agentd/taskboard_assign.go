@@ -56,6 +56,12 @@ func requireTaskboardAssigneeAction(w http.ResponseWriter, r *http.Request, g *d
 	if self, _ := callerAgentID(r); self != "" && self == assignee {
 		return requireTaskboardOwn(w, r, g, lockApplies)
 	}
+	// The operator is no agent: a grant narrowed to target agents does not
+	// reach it, so only the group scope is described.
+	if assignee == db.OperatorAssignee {
+		_, ok := requireGroupPermission(w, r, PermTaskboardAssign, g, ActionContext{Group: g.Name})
+		return ok
+	}
 	conv, _ := db.CurrentConvForAgent(assignee)
 	_, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
 		ActionContext{Group: g.Name, TargetAgent: assignee, targetConv: conv})
@@ -192,7 +198,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		target, targetConv = self, selfConv
 	} else {
 		var err error
-		if target, targetConv, err = resolveTaskboardMember(g, to); err != nil {
+		if target, targetConv, err = resolveTaskboardAssignee(g, to); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
@@ -207,7 +213,11 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			return
 		}
 	} else {
-		if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
+		if target == db.OperatorAssignee {
+			if !requireTaskboardOperatorAssign(w, r, g, t) {
+				return
+			}
+		} else if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g,
 			ActionContext{Group: g.Name, TargetAgent: target, targetConv: targetConv}); !ok {
 			return
 		}
@@ -231,8 +241,10 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	if !take && before != target {
 		by := taskboardCallerName(r)
-		mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardBrief(g, out, by))
-		if before != "" {
+		if target != db.OperatorAssignee {
+			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardBrief(g, out, by))
+		}
+		if before != "" && before != self {
 			if conv := activeGroupMember(g, before); conv != "" {
 				mailTaskboard(r, g, conv, taskboardSubject(g, out, "reassigned by "+by),
 					fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by))
@@ -330,6 +342,10 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	var waiters []string
+	if outcome == db.GroupTaskOutcomeSucceeded {
+		waiters = taskboardWaitersBefore(t)
+	}
 	rep, err := db.ReportGroupTask(t.ID, self, outcome, note, taskboardActor(r))
 	if errors.Is(err, db.ErrGroupTaskNotAssignee) {
 		setAuditDetail(r, "refused: not the assignee of "+t.ID)
@@ -348,6 +364,9 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	if !rep.Repeated {
 		taskboardNotifyAssigner(r, g, t, rep, outcome, note)
+		if outcome == db.GroupTaskOutcomeSucceeded {
+			mailTaskboardWaiters(r, g, rep.Task, db.GroupTaskDone, note, waiters, false)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": views[0], "repeated": rep.Repeated, "blocked": rep.Blocked})
 }
