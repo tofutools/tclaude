@@ -20,6 +20,9 @@ type GroupTaskReopen struct {
 	Actor      string
 	// ExpectAssignee is the holder the caller was authorised against.
 	ExpectAssignee string
+	// Position, when it names a task (Before or After), places the task
+	// beside it, in that task's stage, in the same write.
+	Position GroupTaskPosition
 }
 
 // KeepAssignee is a GroupTaskReopen that keeps the task's assignee.
@@ -57,9 +60,9 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 			}
 			stage = GroupTaskStageNext
 		}
-		switch {
-		case assignee == cur.AssigneeID:
-		case assignee == "":
+		switch assignee {
+		case cur.AssigneeID:
+		case "":
 			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`, id); err != nil {
 				return err
 			}
@@ -78,20 +81,28 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 				return err
 			}
 		}
-		if stage != cur.Stage {
-			pos := GroupTaskPosition{Bottom: true}
-			if stage == GroupTaskStageIdea {
-				pos = GroupTaskPosition{Top: true}
-			}
-			_, rank, err := placeTask(tx, cur.GroupID, stage, id, pos)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
-				return err
-			}
-			return stageChangeEvent(tx, cur, stage, in.Actor, "on reopen", now)
+		anchored := in.Position.Before != "" || in.Position.After != ""
+		if stage == cur.Stage && !anchored {
+			return nil
 		}
-		return nil
+		pos := GroupTaskPosition{Bottom: true}
+		if stage == GroupTaskStageIdea {
+			pos = GroupTaskPosition{Top: true}
+		}
+		if anchored {
+			pos = in.Position
+		}
+		// An anchor names its own stage.
+		stage, rank, err := placeTask(tx, cur.GroupID, stage, id, pos)
+		if err != nil {
+			return err
+		}
+		if assignee != "" && stage != GroupTaskStageNext {
+			return taskConflict("invalid_arg", "an assigned task is in next, not an idea; take the assignee off to reopen it as an idea")
+		}
+		if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
+			return err
+		}
+		return stageChangeEvent(tx, cur, stage, in.Actor, "on reopen", now)
 	})
 }

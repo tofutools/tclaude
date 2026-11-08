@@ -76,4 +76,26 @@ func TestTaskboardReopen(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	code, body = reopen(h.worker, mine.ID, map[string]any{"to": h.worker})
 	assert.Equal(t, http.StatusForbidden, code, body)
+
+	// A List drop: reopened beside a live idea, in its stage, in one write;
+	// as an idea it needs the assignee off.
+	idea := h.add("an idea", "")
+	code, body = reopen(h.lead, mine.ID, map[string]any{"before": idea.ID})
+	assert.Equal(t, http.StatusBadRequest, code, body)
+	code, body = reopen(h.lead, mine.ID, map[string]any{"before": idea.ID, "to": ""})
+	got = tbDecodeOperatorTask(t, code, body, http.StatusOK)
+	assert.Equal(t, "idea", got.Stage)
+	rec = h.call("", http.MethodGet, "/v1/groups/crew/taskboard", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Less(t, strings.Index(rec.Body.String(), mine.ID), strings.Index(rec.Body.String(), idea.ID), "placed before the idea")
+
+	// A kept assignee who left the group does not get it back.
+	code, body = h.post(h.lead, mine.ID, "assign", map[string]any{"to": h.peer})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post(h.peer, mine.ID, "report", map[string]any{"outcome": "done", "note": "y"})
+	require.Equal(t, http.StatusOK, code, body)
+	require.NoError(t, db.RemoveAgentGroupMember(h.crew.ID, h.peer))
+	code, body = reopen(h.lead, mine.ID, map[string]any{})
+	got = tbDecodeOperatorTask(t, code, body, http.StatusOK)
+	assert.Nil(t, got.Assignee, "the departed member is taken off")
 }

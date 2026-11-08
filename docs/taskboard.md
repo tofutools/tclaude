@@ -185,7 +185,8 @@ need more work. By default it comes back where it was: in its stage, at its
 place, with the assignee it had (unless that agent has been retired since).
 `--next` or `--idea` puts it in that stage instead, `--assignee` gives it to a
 member or the operator, and `--unassign` takes the assignee off. An assigned
-task is always in next, so `--idea` on an assigned task needs `--unassign`.
+task is always in next, so `--idea` on an assigned task needs `--unassign`. A
+kept assignee who has left the group is taken off.
 It is one write, and the history records each part: `reopened`, then
 `assigned` or `unassigned`, then `promoted` or `demoted`. A reopen resets the
 failure count, as an unblock does.
@@ -728,7 +729,7 @@ a CLI verb:
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen* or ⋯ *Reopen*, on a task under *history* | `reopen <task>` |
 | ⋯ *Reopen in Next* / *Reopen as an idea* | `reopen <task> --next` / `reopen <task> --idea [--unassign]` |
-| Drag a task under *history* among the live tasks, onto the Ideas line, or onto an agent's row | `reopen <task>` in that stage (or `--assignee <agent>`), then `move` |
+| Drag a task under *history* among the live tasks, onto the Ideas line, or onto an agent's row | `reopen` beside that task, in its stage, in one write (`POST …/reopen {"before"\|"after"}`), or `reopen <task> --assignee <agent>` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | ⋯ *Assign › You (operator)*, or drag a card onto the *You* lane | `assign <task> --to operator` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
@@ -934,7 +935,7 @@ those drags aren't accepted in the lanes.
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
-| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|""}` (no `to` keeps the assignee; `""` takes it off) |
+| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |

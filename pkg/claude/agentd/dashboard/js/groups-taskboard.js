@@ -587,14 +587,15 @@ function useRowDrag(tasks, actions, group = null) {
       clear();
       if (moving.id === task.id) return;
       if (isClosed(moving)) {
-        // A closed task dropped among the live ones is reopened there: in
-        // that task's stage (an idea without its assignee), then placed.
-        const opts = { stage: task.stage };
-        if (task.stage === 'idea' && moving.assignee?.agent_id) opts.to = '';
-        await actions.run(`${moving.id}:move`, 'Reopen', async (api) => {
-          await api.reopen(moving.id, opts);
-          return api.move(moving.id, { [where]: task.id });
-        });
+        // A closed task dropped among the live ones is reopened there, in
+        // that task's stage, in one write; among the ideas, without its
+        // assignee (which takes the assign right).
+        const opts = { [where]: task.id };
+        if (task.stage === 'idea' && moving.assignee?.agent_id) {
+          if (!canAssign(actions)) { shellToast('An assigned task reopens in Next: taking its assignee off needs taskboard.assign', true); return; }
+          opts.to = '';
+        }
+        await actions.run(`${moving.id}:move`, 'Reopen', (api) => api.reopen(moving.id, opts));
         return;
       }
       await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { [where]: task.id }));
@@ -605,11 +606,13 @@ function useRowDrag(tasks, actions, group = null) {
       clear();
       const firstIdea = tasks.find((t) => t.stage === 'idea' && t.id !== moving.id);
       if (isClosed(moving)) {
-        const opts = moving.assignee?.agent_id ? { stage: 'idea', to: '' } : { stage: 'idea' };
-        await actions.run(`${moving.id}:move`, 'Reopen', async (api) => {
-          const out = await api.reopen(moving.id, opts);
-          return firstIdea ? api.move(moving.id, { before: firstIdea.id }) : out;
-        });
+        if (moving.assignee?.agent_id && !canAssign(actions)) {
+          shellToast('An assigned task reopens in Next: taking its assignee off needs taskboard.assign', true);
+          return;
+        }
+        const opts = firstIdea ? { before: firstIdea.id } : { stage: 'idea' };
+        if (moving.assignee?.agent_id) opts.to = '';
+        await actions.run(`${moving.id}:move`, 'Reopen', (api) => api.reopen(moving.id, opts));
       } else if (moving.stage !== 'idea') {
         await actions.run(`${moving.id}:move`, 'Demote', (api) => api.stage(moving.id, 'idea'));
       } else if (firstIdea) {
