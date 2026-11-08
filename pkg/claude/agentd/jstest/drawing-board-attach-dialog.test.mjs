@@ -96,3 +96,49 @@ test('a comment post keeps its key for a retry and takes a fresh one when it cha
   assert.equal(commentKey(first, 'tk_idea', body, uuid).key, 'dash-u3', 'another task is another comment');
   assert.equal(commentKey(first, 'tk_now', { ...body, elements: ['db'] }, uuid).key, 'dash-u4', 'another part is another comment');
 });
+
+test('↑ and ↓ choose among the tasks shown, from the search box or a row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/drawing-board-attach-dialog.js');
+  const shown = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  assert.equal(m.stepChoice(shown, null, 1).id, 'a', '↓ from none is the first');
+  assert.equal(m.stepChoice(shown, null, -1).id, 'c', '↑ from none is the last');
+  assert.equal(m.stepChoice(shown, 'b', 1).id, 'c');
+  assert.equal(m.stepChoice(shown, 'c', 1).id, 'c', 'it stops at the end');
+  assert.equal(m.stepChoice(shown, 'a', -1).id, 'a', 'and at the start');
+  assert.equal(m.stepChoice([], 'a', 1), null);
+
+  const fetchImpl = async (url) => {
+    if (String(url) === '/v1/taskboard/context') return ok(context());
+    return ok({ content_type: 'image/png', data: btoa('png') });
+  };
+  const request = { drawingBoardId: 'arch', title: 'Architecture', group: 'crew', selection: [], fetchImpl, notify: () => {}, seq: 1 };
+  const view = await harness.mount(harness.html`<${m.DrawingBoardAttachDialog} request=${request} close=${() => {}} />`);
+  const root = view.container.ownerDocument;
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await harness.act(() => wait(5)); };
+  await settle();
+  const search = root.querySelector('#drawing-board-attach-search');
+  const chosen = () => root.querySelector('[data-task][aria-selected="true"]')?.getAttribute('data-task') || null;
+  const key = async (el, k) => {
+    let event;
+    await harness.act(() => { event = harness.fireEvent(el, 'keydown', { key: k }); });
+    await settle();
+    return event;
+  };
+
+  assert.equal(chosen(), null);
+  assert.equal(search.getAttribute('role'), 'combobox');
+  assert.ok((await key(search, 'ArrowDown')).defaultPrevented, 'the caret does not move');
+  assert.equal(chosen(), 'tk_now', '↓ chooses the first task');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'drawing-board-attach-task-tk_now');
+  await key(search, 'ArrowDown');
+  assert.equal(chosen(), 'tk_idea');
+  assert.match(root.querySelector('#drawing-board-attach-submit').textContent, /Attach to tk_idea/);
+  await key(search, 'ArrowDown');
+  await key(search, 'ArrowDown');
+  assert.equal(chosen(), 'tk_other', 'it stops at the last');
+  await key(root.querySelector('[data-task="tk_other"]'), 'ArrowUp');
+  assert.equal(chosen(), 'tk_idea', 'a row takes the keys too');
+  assert.equal(root.activeElement?.getAttribute('data-task'), 'tk_idea', 'and focus follows from a row');
+  assert.ok(!(await key(search, 'Enter')).defaultPrevented, 'other keys are the input\'s');
+});

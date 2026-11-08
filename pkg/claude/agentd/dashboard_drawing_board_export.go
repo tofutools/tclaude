@@ -30,7 +30,8 @@ import (
 const drawingBoardExportBodyLimit = 256 << 10
 
 // drawingBoardExportSlots bounds the renders running at once: a PNG at the
-// size cap holds a 64 MiB canvas.
+// size cap holds a 64 MiB canvas, and as much again for a translucent
+// element's layer.
 var drawingBoardExportSlots = make(chan struct{}, 2)
 
 // drawingBoardExportDeadline bounds one render, so a board that is costly to

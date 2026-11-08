@@ -194,6 +194,37 @@ func TestRenderPNGStopsWhenTheContextEnds(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+// A translucent element composes once, as the editor's opacity does: where
+// its strokes, its fill and its arrowhead overlap it is no darker than
+// elsewhere (tk_403ecc01).
+func TestRenderPNGAppliesOpacityPerElement(t *testing.T) {
+	half := 50.0
+	els := []Element{
+		// A zigzag that crosses itself, thick, so its segments overlap.
+		{ID: "z", Type: "line", Points: [][]float64{{0, 0}, {100, 100}, {100, 0}, {0, 100}}, StrokeWidth: 20, StrokeColor: "#000000", Opacity: &half},
+		// A box whose stroke lies over its fill.
+		{ID: "b", Type: "rectangle", X: 200, Y: 0, Width: 100, Height: 100, StrokeWidth: 10, StrokeColor: "#000000", BackgroundColor: "#000000", Opacity: &half},
+		// An arrow, whose head is drawn over its shaft's end.
+		{ID: "a", Type: "arrow", X: 400, Y: 50, Points: [][]float64{{0, 0}, {100, 0}}, StrokeWidth: 6, StrokeColor: "#000000", Opacity: &half},
+	}
+	img, err := Render(context.Background(), els, Options{Scale: 1})
+	require.NoError(t, err)
+	keep(t, "opacity.png", img.Data)
+	decoded, err := png.Decode(bytes.NewReader(img.Data))
+	require.NoError(t, err)
+	grey := func(x, y float64) uint32 {
+		r, _, _, _ := decoded.At(int(x-img.Crop.X), int(y-img.Crop.Y)).RGBA()
+		return r >> 8
+	}
+	assert.InDelta(t, 0x80, grey(50, 50), 2, "where the zigzag crosses itself")
+	assert.InDelta(t, 0x80, grey(25, 25), 2, "along one stroke")
+	assert.InDelta(t, 0x80, grey(200, 50), 2, "where the box's stroke lies over its fill")
+	assert.InDelta(t, 0x80, grey(250, 50), 2, "the fill alone")
+	assert.InDelta(t, 0x80, grey(450, 50), 2, "the arrow's shaft")
+	assert.InDelta(t, 0x80, grey(500, 50), 2, "the arrow's tip, under its head")
+	assert.Equal(t, uint32(0xff), grey(150, 50), "the paper between them")
+}
+
 // A dashed line keeps its pattern where it leaves the image and comes back.
 func TestDashesKeepTheirPhaseOffCanvas(t *testing.T) {
 	els := []Element{{ID: "d", Type: "line", X: 0, Y: 0, Points: [][]float64{{0, 0}, {2000, 0}}, StrokeStyle: "dashed", StrokeWidth: 2}}

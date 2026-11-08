@@ -32,18 +32,28 @@ import (
 // Every piece is wound the same way, so overlaps add up and never cancel.
 
 type raster struct {
-	ctx   context.Context
+	ctx context.Context
+	// dst is what draws land on: out, or layer while a translucent element
+	// is drawn.
 	dst   *image.RGBA
+	out   *image.RGBA
 	crop  Box
 	scale float64
 	faces map[string]font.Face
 	z     *vector.Rasterizer // reused across paints
+	// layer holds a translucent element drawn opaque, then put on out at
+	// its opacity in one go, as the editor's and the SVG's element opacity
+	// does: its fill, strokes and halo compose as one, never darker where
+	// they overlap. dirty is the part of layer drawn on.
+	layer *image.RGBA
+	dirty image.Rectangle
 }
 
 func renderPNG(ctx context.Context, sel, drawn []Element, crop Box, scale float64) ([]byte, int, int, error) {
 	w := max(1, int(math.Round(crop.Width*scale)))
 	h := max(1, int(math.Round(crop.Height*scale)))
-	r := &raster{ctx: ctx, dst: image.NewRGBA(image.Rect(0, 0, w, h)), crop: crop, scale: scale, faces: map[string]font.Face{}, z: &vector.Rasterizer{}}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	r := &raster{ctx: ctx, dst: img, out: img, crop: crop, scale: scale, faces: map[string]font.Face{}, z: &vector.Rasterizer{}}
 	defer func() {
 		for _, f := range r.faces {
 			_ = f.Close()
@@ -63,7 +73,7 @@ func renderPNG(ctx context.Context, sel, drawn []Element, crop Box, scale float6
 		return nil, 0, 0, err
 	}
 	var out bytes.Buffer
-	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&out, r.dst); err != nil {
+	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&out, r.out); err != nil {
 		return nil, 0, 0, err
 	}
 	return out.Bytes(), w, h, nil
@@ -231,6 +241,7 @@ func (r *raster) paint(polys [][][2]float64, c color.NRGBA) {
 	}
 	z.DrawOp = draw.Over
 	z.Draw(r.dst, box, image.NewUniform(c), image.Point{})
+	r.dirty = r.dirty.Union(box)
 }
 
 // signedArea is positive for a clockwise polygon in screen coordinates.
@@ -433,8 +444,32 @@ func smoothPoints(pts [][2]float64) [][2]float64 {
 	return append(out, pts[len(pts)-1])
 }
 
+// element draws e; a translucent one through layer, at its opacity once.
 func (r *raster) element(e Element, line bool) error {
 	s := styleOf(e)
+	if s.opacity >= 1 {
+		return r.draw(e, s, line)
+	}
+	alpha := uint8(math.Round(s.opacity * 255))
+	if alpha == 0 {
+		return nil
+	}
+	if r.layer == nil {
+		r.layer = image.NewRGBA(r.out.Bounds())
+	}
+	r.dst, r.dirty = r.layer, image.Rectangle{}
+	s.opacity = 1
+	err := r.draw(e, s, line)
+	r.dst = r.out
+	box := r.dirty.Intersect(r.out.Bounds())
+	if !box.Empty() {
+		draw.DrawMask(r.out, box, r.layer, box.Min, image.NewUniform(color.Alpha{A: alpha}), image.Point{}, draw.Over)
+		draw.Draw(r.layer, box, image.Transparent, image.Point{}, draw.Src)
+	}
+	return err
+}
+
+func (r *raster) draw(e Element, s style, line bool) error {
 	x, y, w, h := e.X, e.Y, e.Width, e.Height
 	switch e.Type {
 	case "rectangle":
@@ -578,6 +613,9 @@ func (r *raster) text(e Element, s style, line bool) error {
 			continue
 		}
 		visible := l[from:to]
+		// What the line's glyphs and halo may cover.
+		r.dirty = r.dirty.Union(image.Rect(int(math.Floor(startX-radius-px)), int(math.Floor(at[1]-2*px-radius)),
+			int(math.Ceil(x+radius+px)), int(math.Ceil(at[1]+px+radius))).Intersect(bounds))
 		put := func(src image.Image, dx, dy float64) {
 			d := font.Drawer{Dst: r.dst, Src: src, Face: face, Dot: fixed.Point26_6{X: fixed.Int26_6((startX + dx) * 64), Y: fixed.Int26_6((at[1] + dy) * 64)}}
 			d.DrawString(visible)

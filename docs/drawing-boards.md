@@ -374,7 +374,8 @@ tclaude agent drawing-board export plan --attach-to tk_4f0a --comment "Reworked 
 In the editor, **File › Export › Attach to a task…** does the same from a dialog:
 
 - find the task by title or id among the open tasks of the boards you read,
-  the drawing board's group first;
+  the drawing board's group first (↑ and ↓ move through the list from the
+  search box);
 - choose **Selection** or **Whole board**, with a preview of the image;
 - optionally **Post it as a new comment**.
 

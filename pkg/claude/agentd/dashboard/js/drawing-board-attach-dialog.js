@@ -91,6 +91,17 @@ export function taskChoices(context, group, query) {
   return rows.sort((a, b) => (b.group === group) - (a.group === group) || lane(a) - lane(b) || a.title.localeCompare(b.title));
 }
 
+// stepChoice is the task ↑ (delta -1) or ↓ (+1) chooses among the shown
+// ones: the first or last from none, and it stops at either end.
+export function stepChoice(shown, currentId, delta) {
+  if (!shown.length) return null;
+  const at = shown.findIndex((t) => t.id === currentId);
+  if (at < 0) return delta > 0 ? shown[0] : shown[shown.length - 1];
+  return shown[Math.max(0, Math.min(shown.length - 1, at + delta))];
+}
+
+const optionId = (id) => `drawing-board-attach-task-${id}`;
+
 function laneOf(t) {
   if (t.column) return t.column;
   if (t.assignee) return 'now';
@@ -137,6 +148,21 @@ export function DrawingBoardAttachDialog({ request, close }) {
 
   const choices = useMemo(() => taskChoices(context, group, query), [context, group, query]);
   const task = chosen && choices.find((t) => t.id === chosen.id) || chosen;
+  const shown = choices.slice(0, SHOWN);
+  const shownTask = task && shown.some((t) => t.id === task.id);
+
+  // ↑ and ↓ choose among the tasks shown, from the search box or a task's
+  // row; focus stays where it is, as a combobox's does.
+  const onListKey = (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const next = stepChoice(shown, task?.id, event.key === 'ArrowDown' ? 1 : -1);
+    if (!next) return;
+    event.preventDefault();
+    setChosen(next);
+    const row = event.currentTarget.ownerDocument?.getElementById(optionId(next.id));
+    if (event.currentTarget.getAttribute('role') === 'option') row?.focus?.();
+    row?.scrollIntoView?.({ block: 'nearest' });
+  };
   const existing = task && !asComment ? existingDrawing(task, drawingBoardId, digest) : null;
 
   const submit = async () => {
@@ -170,15 +196,16 @@ export function DrawingBoardAttachDialog({ request, close }) {
     <label class="cron-create-row">
       <span class="cron-create-label">Task</span>
       <${Input} domRef=${searchRef} id="drawing-board-attach-search" value=${query} placeholder="Find a task by title or id"
-        autocomplete="off" spellcheck="false" aria-controls="drawing-board-attach-tasks"
-        onInput=${(event) => setQuery(event.currentTarget.value)} />
+        autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list"
+        aria-controls="drawing-board-attach-tasks" aria-activedescendant=${shownTask ? optionId(task.id) : undefined}
+        onInput=${(event) => setQuery(event.currentTarget.value)} onKeyDown=${onListKey} />
     </label>
     <div class="drawing-board-attach-tasks" id="drawing-board-attach-tasks" role="listbox" aria-label="Tasks">
       ${!context && !error && html`<div class="ui-hint">Reading the task boards…</div>`}
       ${context && !choices.length && html`<div class="ui-hint">No open task matches.</div>`}
-      ${choices.slice(0, SHOWN).map((t) => html`<button type="button" role="option" key=${t.id} data-task=${t.id}
+      ${shown.map((t) => html`<button type="button" role="option" key=${t.id} id=${optionId(t.id)} data-task=${t.id}
         aria-selected=${task?.id === t.id ? 'true' : 'false'} class=${`ui-menu-item drawing-board-attach-task${task?.id === t.id ? ' on' : ''}`}
-        onClick=${() => setChosen(t)}>
+        onClick=${() => setChosen(t)} onKeyDown=${onListKey}>
         <span class="drawing-board-attach-title">${t.title}</span>
         <span class="drawing-board-attach-id">${t.id}${t.group !== group ? ` · ${t.group}` : ''}</span>
         <span class=${`ui-tag${laneOf(t) === 'now' ? ' ui-tag-accent' : ''}`}>${laneOf(t)}</span>
