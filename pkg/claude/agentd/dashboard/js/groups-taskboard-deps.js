@@ -11,9 +11,10 @@ import { FilterCombobox } from './filter-combobox.js';
 
 const html = htm.bind(h);
 
-// DEPS_CAP bounds the rows the list renders; a board holds at most 500 live
-// tasks, and the list scrolls.
-const DEPS_CAP = 200;
+// DEPS_CAP is a board's live-task cap (500): the list renders every task it
+// may offer, and scrolls, rather than a group summary that means nothing for
+// tasks.
+const DEPS_CAP = 500;
 
 // waitersOf is every task that depends on id, directly or through others:
 // choosing one of them as id's dependency would make a cycle.
