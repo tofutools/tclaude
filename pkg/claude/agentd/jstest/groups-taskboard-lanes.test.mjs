@@ -42,11 +42,11 @@ const members = () => [
   { conv_id: 'conv-no-agent', title: 'plain' },
 ];
 
-async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}, extraTasks = [], prefs = {} } = {}) {
+async function mountLanes(t, name, { api = fakeApi(), by = null, view = 'lanes', groupExtra = {}, extraTasks = [], prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
-  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  if (view !== 'default') dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   // No by: lanes by agent, set explicitly, since triage is the default.
   if (by !== 'default') dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by || 'agent');
@@ -171,10 +171,12 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.ok(c.querySelector('[data-lane-row="agt_old"]'), 'unfolded on click');
 });
 
-test('List | Lanes and the lanes-by switch are remembered per group; lanes default to triage', async (t) => {
-  const { c, harness, dashPrefs } = await mountLanes(t, 'tbl-prefs', { by: 'default' });
+test('List | Lanes and the lanes-by switch are remembered per group; the default is Lanes in triage', async (t) => {
+  const { c, harness, dashPrefs } = await mountLanes(t, 'tbl-prefs', { by: 'default', view: 'default' });
   const button = (text) => [...c.querySelectorAll('.tb-view button')].find((b) => b.textContent.trim() === text);
-  // Triage is the default.
+  // Lanes in triage is the default.
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.view.tbl-prefs'), null);
+  assert.equal(button('⇶ Lanes').getAttribute('aria-pressed'), 'true');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), null);
   assert.ok(c.querySelector('[data-lanes-by="triage"]'));
   assert.equal(button('triage').getAttribute('aria-pressed'), 'true');
