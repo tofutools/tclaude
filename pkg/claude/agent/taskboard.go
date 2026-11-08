@@ -139,6 +139,8 @@ type taskboardTask struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url,omitempty"`
 		Label string `json:"label,omitempty"`
+		Local bool   `json:"local,omitempty"`
+		ID    string `json:"id,omitempty"`
 	} `json:"ref,omitempty"`
 	Attachments []taskboardAttachment `json:"attachments,omitempty"`
 }
@@ -1201,9 +1203,16 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 	in := map[string]any{"title": t.Title, "body": t.Body, "stage": stage, "clone": p.Clone,
 		"origin": map[string]any{"group": t.Group, "task": t.ID}}
 	if t.Ref != nil {
-		if t.Ref.URL != "" {
+		switch {
+		case t.Ref.Local && t.Ref.ID != "":
+			// Linked on this node's awb server: the peer links the id on its own.
+			in["ref"] = "awb:" + t.Ref.ID
+			if t.Ref.Label != t.Ref.ID {
+				in["ref_label"] = t.Ref.Label
+			}
+		case t.Ref.URL != "":
 			in["ref"], in["ref_label"] = t.Ref.URL, t.Ref.Label
-		} else {
+		default:
 			in["ref"] = t.Ref.Label
 		}
 	}

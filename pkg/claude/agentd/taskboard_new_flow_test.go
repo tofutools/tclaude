@@ -81,6 +81,14 @@ func TestTaskboardEditResolvesRef(t *testing.T) {
 	require.NoError(t, err)
 	shown := h.task(h.call("", http.MethodGet, "/v1/taskboard/tasks/"+old.ID, nil), http.StatusOK)
 	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", shown.Ref.URL, "linked as it is read")
+	assert.True(t, shown.Ref.Local, "linked on this node's awb server: another node links the id itself")
+	assert.Equal(t, "tcl-0d0d0d", shown.Ref.ID)
+	elsewhere := h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "elsewhere", "ref": "https://awb.other/#/issues/tcl-0e0e0e"}), http.StatusCreated)
+	assert.Equal(t, "awb", elsewhere.Ref.Kind)
+	assert.False(t, elsewhere.Ref.Local, "a link on another awb server is the ref as given")
+	rec := h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+old.ID, map[string]any{"resolve_ref": true, "ref_label": "x"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "resolve_ref with only a label: body=%s", rec.Body.String())
 	stored := edit(old.ID, map[string]any{"resolve_ref": true})
 	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", stored.Ref.URL)
 	after, err := db.GetGroupTask(old.ID)
@@ -88,7 +96,7 @@ func TestTaskboardEditResolvesRef(t *testing.T) {
 	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", after.RefURL, "and stored by resolve_ref")
 
 	none := h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "no ref"}), http.StatusCreated)
-	rec := h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+none.ID, map[string]any{"resolve_ref": true})
+	rec = h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+none.ID, map[string]any{"resolve_ref": true})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 }
 

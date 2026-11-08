@@ -42,14 +42,14 @@ import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
-
-export { RefChip };
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
+
+export { RefChip };
 
 const html = htm.bind(h);
 

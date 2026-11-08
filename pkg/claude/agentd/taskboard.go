@@ -293,6 +293,12 @@ type taskboardRef struct {
 	Kind  string `json:"kind"`
 	URL   string `json:"url,omitempty"`
 	Label string `json:"label,omitempty"`
+	// Local marks an awb ref whose link is this node's awb server's (the
+	// configured agent.awb_proxy.url, which may be a local address). A move
+	// to another node sends the id instead (ID), and that node links it on
+	// its own awb server.
+	Local bool   `json:"local,omitempty"`
+	ID    string `json:"id,omitempty"`
 }
 
 type taskboardTaskView struct {
@@ -439,16 +445,12 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			v.Ref = &taskboardRef{Kind: t.RefKind, URL: t.RefURL, Label: t.RefLabel}
 			// An awb ref stored before refs were linked on write (its label
 			// the id) is linked as it is read, so every awb chip can be followed.
-			if v.Ref.URL == "" && v.Ref.Kind == "awb" {
+			if v.Ref.Kind == "awb" {
 				if awbBase == nil {
 					b := awbBaseURL()
 					awbBase = &b
 				}
-				if *awbBase != "" {
-					if id, fault := validateAWBIssueRef(t.RefLabel); fault == nil {
-						v.Ref.URL = *awbBase + "/#/issues/" + id
-					}
-				}
+				linkLocalAWBRef(v.Ref, *awbBase)
 			}
 		}
 		for _, dep := range t.DependsOn {
@@ -631,6 +633,30 @@ var awbBaseURL = func() string {
 	return base
 }
 
+// linkLocalAWBRef links a link-less awb ref (its label the id) on the awb
+// server at base, and marks a ref linked there as Local, with its id.
+func linkLocalAWBRef(ref *taskboardRef, base string) {
+	if base == "" {
+		return
+	}
+	if ref.URL == "" {
+		id, fault := validateAWBIssueRef(ref.Label)
+		if fault != nil {
+			return
+		}
+		u := base + "/#/issues/" + id
+		if validateTaskRefURL(u) != nil {
+			return
+		}
+		ref.URL = u
+	}
+	if strings.HasPrefix(ref.URL, base+"/#/issues/") {
+		if id, fault := validateAWBIssueRef(deriveTaskLabel(ref.URL)); fault == nil {
+			ref.Local, ref.ID = true, id
+		}
+	}
+}
+
 // awbIssueURL is an awb issue's link on the configured awb server, as
 // deriveTaskLabel reads it back: <base>/#/issues/<id>. It is "" without a
 // configured server or for something that is not an awb id.
@@ -643,7 +669,11 @@ func awbIssueURL(id string) string {
 	if base == "" {
 		return ""
 	}
-	return base + "/#/issues/" + norm
+	u := base + "/#/issues/" + norm
+	if validateTaskRefURL(u) != nil {
+		return ""
+	}
+	return u
 }
 
 func decodeTaskboardBody(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -1035,7 +1065,9 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 				}
 				edit.RefKind, edit.RefURL, edit.RefLabel = &kind, &refURL, &refLabel
 			}
-		case body.ResolveRef && body.RefLabel == nil:
+		case body.ResolveRef && body.RefLabel != nil:
+			err = errors.New("resolve_ref links a ref: give it with ref, or alone for the task's own")
+		case body.ResolveRef:
 			// The task's own ref, linked now if it has no link yet: the id
 			// is its label (an awb or Linear ref stored without a link).
 			if t.RefKind == "" {
