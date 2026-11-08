@@ -89,8 +89,9 @@ tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
   dropped), demoting it to the ideas, or moving it to a group that has no
   column with the same slug takes it out. A reopened task comes back in next,
   unless `reopen --stage <column>` puts it straight into a column. `add
-  --stage <column>` starts a new task in one. Either is one write, with one
-  entry in the task's history.
+  --stage <column>` starts a new task in one. Either is one write; the add
+  records one *created* entry, the reopen its reopen and the move into the
+  column.
 - **It never stalls.** A task in a custom column waits on something outside
   its agent's turn, such as a review or CI, so the [idle
   check](#idle-without-report) skips it.

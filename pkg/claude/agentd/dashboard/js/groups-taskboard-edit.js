@@ -136,10 +136,13 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   let open = status === 'open';
   // A closed task is blocked by reopening it first.
   // A closed task reopens into its column in the same write, with its
-  // assignee as the form has it.
+  // assignee as the form has it (kept, changed or taken off).
   let placed = false;
-  if (column && CLOSED.has(status) && !assigning) {
-    steps.push({ name: 'reopen', run: (api) => api.reopen(task.id, unassigning ? { stage: column, to: '' } : { stage: column }) });
+  if (column && CLOSED.has(status)) {
+    const opts = { stage: column };
+    if (unassigning) opts.to = '';
+    else if (assigning) opts.to = to;
+    steps.push({ name: 'reopen', run: (api) => api.reopen(task.id, opts) });
     open = true;
     placed = true;
   } else if (!open && (openTarget || assigning || (where === 'blocked' && CLOSED.has(status)))) {
@@ -165,11 +168,11 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   }
   if (starting) steps.push({ name: 'start', run: (api) => api.start(task.id) });
   if (holding) steps.push({ name: 'not started', run: (api) => api.hold(task.id, stage) });
-  if (assigning) {
+  if (assigning && !placed) {
     const hold = !column && (where === 'idea' || where === 'next') ? stage : '';
     steps.push({ name: 'assignee', run: (api) => (hold ? api.assign(task.id, to, { hold }) : api.assign(task.id, to)) });
   }
-  if (column && !placed && (task.column !== column || CLOSED.has(status) || assigning)) {
+  if (column && !placed && (task.column !== column || assigning)) {
     steps.push({ name: 'into the column', run: (api) => api.stage(task.id, column) });
   }
   const reason = draft.reason.trim();

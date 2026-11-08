@@ -68,6 +68,8 @@ test('the edit form moves a task into a column, out of it, and reopens a closed 
   assert.deepEqual(await runAll(editPlan(done, { ...draftOf(done), where: 'col:in-ci' })), [['reopen', 'tk_1', { stage: 'in-ci' }]],
     'a reopen into a column is one write');
   assert.deepEqual(await runAll(editPlan(done, { ...draftOf(done), where: 'col:in-ci', to: '' })), [['reopen', 'tk_1', { stage: 'in-ci', to: '' }]]);
+  assert.deepEqual(await runAll(editPlan(done, { ...draftOf(done), where: 'col:in-ci', to: 'agt_qa' })), [['reopen', 'tk_1', { stage: 'in-ci', to: 'agt_qa' }]],
+    'a new assignee goes with the reopen, not as a second write');
 });
 
 test('Move to… and Reopen… write one move, and the CLI line says it', async (t) => {
