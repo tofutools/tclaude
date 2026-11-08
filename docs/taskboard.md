@@ -819,8 +819,9 @@ The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 needs you* also holds stalled tasks.
 
 A cell shows its first three cards. When it holds more, *+ n more* opens it in
-place and *Show fewer* closes it again, so one busy cell does not stretch its
-whole row. The column heads still count every task. When the card is too
+place, so one busy cell does not stretch its whole row. An open cell grows up
+to about a dozen cards, then scrolls inside. *▴ Show less*, under its cards,
+closes it again. The column heads still count every task. When the card is too
 narrow for every column, the grid scrolls sideways and the lane names stay
 pinned on the left.
 

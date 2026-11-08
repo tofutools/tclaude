@@ -18946,6 +18946,15 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-card-meta .tb-ref, .tb-card-meta .tb-dep { display: inline-block; box-sizing: border-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .tb-card-why { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-cell-more { align-self: flex-start; font-size: 11px; }
+/* A cell's cards (CellCards). Opened past its cap, the cell grows up to about
+   a dozen cards, then scrolls inside with a thin scrollbar; "▴ Show less"
+   sits under the scroll area, across the cell, so it is always in reach. */
+.tb-cell-cards { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tb-cell-cards.tb-cell-cards-open { max-height: min(720px, 75vh); overflow-y: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: #30363d transparent; }
+.tb-cell-cards.tb-cell-cards-open::-webkit-scrollbar { width: 6px; }
+.tb-cell-cards.tb-cell-cards-open::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+.tb-cell .ui-btn.tb-cell-less { align-self: stretch; justify-content: center; font-size: 11px; color: #c9d1d9; border: 1px solid #30363d; background: #161b22; }
+.tb-cell .ui-btn.tb-cell-less:hover { border-color: #58a6ff; }
 .tb-lanes-by-label { margin: 0 4px 0 2px; }
 /* Lanes triage and one row (groups-taskboard-lanes-flat.js): each card's
    corner marker says who holds it. A yellow "!" is unassigned, a red "!" is the operator's (both

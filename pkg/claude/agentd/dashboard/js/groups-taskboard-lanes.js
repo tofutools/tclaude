@@ -267,6 +267,32 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
   </div>`;
 }
 
+// CellCards is a cell's cards with its toggle. Closed, a cell holding more
+// than `limit` cards draws the first ones and "+ n more". Open, it draws them
+// all, growing up to a height cap and then scrolling inside, with "▴ Show
+// less" under the scroll area so it stays in reach. Show less scrolls the
+// cards back to the top and keeps the toggle in view, so the page does not
+// jump away from where the pointer is. card(task) draws one card.
+export function CellCards({ list, limit, open, onToggle, card }) {
+  const scrollRef = useRef(null);
+  const lessRef = useRef(null);
+  const capped = list.length > limit;
+  const visible = capped && !open ? list.slice(0, limit) : list;
+  const collapse = () => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    onToggle(false);
+    const later = globalThis.requestAnimationFrame || ((fn) => globalThis.setTimeout(fn, 0));
+    const cell = lessRef.current?.closest?.('.tb-cell');
+    later(() => cell?.scrollIntoView?.({ block: 'nearest' }));
+  };
+  return html`<div ref=${scrollRef} class=${`tb-cell-cards${capped && open ? ' tb-cell-cards-open' : ''}`}>${visible.map(card)}</div>
+    ${capped && (open
+    ? html`<${Button} size="sm" variant="ghost" class="tb-cell-more tb-cell-less" aria-expanded="true" domRef=${lessRef}
+        title="Show only the first cards again" onClick=${collapse}>▴ Show less<//>`
+    : html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded="false"
+        onClick=${() => onToggle(true)}>+ ${list.length - visible.length} more<//>`)}`;
+}
+
 // useLaneDrag drives the card drags. A drop target `to` names its lane, or
 // carries resolve(fromLane) instead: the lane a drop from fromLane means
 // there, or null where the cell takes none (triage's Agents row and one row,
@@ -546,18 +572,15 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
     const target = { lane: lane.id, column: column.key, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
-    const capped = list.length > CELL_SHOWN;
-    const shown = capped && !open[key] ? list.slice(0, CELL_SHOWN) : list;
     const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
-      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
-        drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-        onEdit=${actions ? onEdit : null} />`)}
-      ${capped && html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded=${open[key] ? 'true' : 'false'}
-        onClick=${() => setOpen({ ...open, [key]: !open[key] })}>${open[key] ? 'Show fewer' : `+ ${list.length - shown.length} more`}<//>`}
+      <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} onToggle=${(on) => setOpen({ ...open, [key]: on })}
+        card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+          drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
+          onEdit=${actions ? onEdit : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;

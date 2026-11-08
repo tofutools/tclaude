@@ -18,9 +18,8 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
 import {
-  BlockDialog, Card, CellAdd, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useLaneDrag,
+  BlockDialog, Card, CellAdd, CellCards, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useLaneDrag,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 
@@ -118,8 +117,6 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     const stripe = rowStriped(row, column.key);
     const target = rowTarget(row, column.key, group);
     const over = drag.over?.key === key;
-    const capped = list.length > FLAT_SHOWN;
-    const shown = capped && !open[key] ? list.slice(0, FLAT_SHOWN) : list;
     // A cell's "+" starts a task in its column: unassigned, or in You the
     // operator's. Agents does not say which agent.
     const addLane = row === OPERATOR ? OPERATOR : row === AGENTS ? null : UNASSIGNED;
@@ -129,12 +126,11 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         data-board-row=${row || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
-      ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
-        marker=${cardMarker(task, group, snapshot)}
-        drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
-        onEdit=${actions ? onEdit : null} />`)}
-      ${capped && html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded=${open[key] ? 'true' : 'false'}
-        onClick=${() => setOpen({ ...open, [key]: !open[key] })}>${open[key] ? 'Show fewer' : `+ ${list.length - shown.length} more`}<//>`}
+      <${CellCards} list=${list} limit=${FLAT_SHOWN} open=${!!open[key]} onToggle=${(on) => setOpen({ ...open, [key]: on })}
+        card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
+          marker=${cardMarker(task, group, snapshot)}
+          drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
+          onEdit=${actions ? onEdit : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
