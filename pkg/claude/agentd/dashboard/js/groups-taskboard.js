@@ -474,7 +474,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
-    <td class="tb-ref-cell"><${RefChip} task=${task} /></td>
+    <td class="tb-ref-cell"><${RefChip} task=${task} max=${1} /></td>
     <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} byId=${byId} />` : html`<span class="tb-none">—</span>`}</td>
     <td class="tb-files-cell">${files ? html`<${FilesCount} api=${readApi} task=${task} />` : html`<span class="tb-none">—</span>`}</td>
   </tr>`;

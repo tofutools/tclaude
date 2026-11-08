@@ -234,6 +234,16 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     (`tracker`) as its last lookup found them. A lookup happens on
     `--resolve-ref`, an import, and the dashboard's ref lookup. A board read
     asks no tracker. A ref never looked up has none.
+  - In the dashboard each ref shows by its kind. A pull request is the agent
+    rows' chain: #N, CI and review, with their hover cards. An issue is its
+    id, its status and (in the tooltip) its title. Anything else is a link. A
+    lanes card shows every ref; the List's *Ref* column shows the first and
+    `+n`. The edit form's *Refs* row has one line per ref, with its title,
+    and ✕ takes it off on Save. Its add box adds one (Enter or *+ Add*), and
+    Save links a bare awb or Linear id. Opening the form looks each awb or
+    Linear issue up once, so its status is current there and on the board
+    after. A linked node from before several refs takes only one ref in the
+    form.
   - A linked node from before several refs keeps only the first: `add` and
     `edit` with `--add-ref` or `--rm-ref` on it fail, saying so. A move to
     such a node leaves the original where it is, with all its refs, and says so.
@@ -1028,7 +1038,7 @@ the **Quest board**), below its Agents and Resources sections.
   *Last* (its last change) and *Age*, in line with the Agents table's
   columns of the same names. After those come *Who* holds it (the tooltip
   says who assigned it, and when; a live task nobody holds has a yellow **!**,
-  and one you hold a red **!**, as cards in *one row* do), *Ref* (a chip that links to the tracker),
+  and one you hold a red **!**, as cards in *one row* do), *Ref* (the first ref and how many more, `+1`),
   *Deps* (`after` and the task's title, amber until that task is done; the
   tooltip has its whole title and id) and *Files* (📎 and the count; a
   click opens the task's first viewable file in the attachment viewer). A blocked

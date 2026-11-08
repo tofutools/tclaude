@@ -30,6 +30,14 @@ const EXTERNAL = 'tclaude.external';
 // Anywhere else Tab moves focus as usual, so the editor never traps it.
 const LIST_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s/;
 
+// canHostCodeMirror is whether a view can be built in parent: CodeMirror
+// needs the DOM selection of the document (or shadow root) it lives in.
+export function canHostCodeMirror(parent) {
+  const root = parent?.getRootNode?.();
+  const doc = parent?.ownerDocument;
+  return typeof (root && typeof root.getSelection === 'function' ? root : doc)?.getSelection === 'function';
+}
+
 // mountCodeMirror replaces nothing: it builds a view inside `parent` holding
 // `doc` and returns its host. Options:
 //
@@ -44,6 +52,13 @@ const LIST_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s/;
 //   onTool(id)           a toolbar shortcut (Mod-b, Mod-i, Mod-e, Mod-k)
 //   disabled             start read-only (the form is sending)
 export async function mountCodeMirror(parent, doc, options = {}) {
+  // CodeMirror reads the DOM selection while its view is being built. A
+  // document without one (a DOM shim, not a browser) makes the constructor
+  // throw half way, after its plugins started their timers: a view that is
+  // never finished nor destroyed, whose background parse later dispatches
+  // into it and throws "Calls to EditorView.update are not allowed while an
+  // update is in progress". So no view is begun there; the textarea stays.
+  if (!canHostCodeMirror(parent)) throw new Error('markdown editor: this document has no DOM selection');
   const cm = await loadCodeMirror();
   const {
     EditorView, EditorState, EditorSelection, keymap, placeholder, Prec, Compartment,

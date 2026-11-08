@@ -28,24 +28,74 @@ import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { useThumb, useMarkdownFiles } from './groups-taskboard-files.js';
 import { TaskLink, taskPath } from './task-route.js';
+import { PRChain } from './pr-chain.js';
 
 const html = htm.bind(h);
 
-// RefChip is a task's external ref: a link to its URL (the ref's main datum)
-// under its short label, as in Lanes, the List, the hover card and the edit
-// form.
-export function RefChip({ task }) {
-  const ref = task.ref;
-  if (!ref) return html`<span class="tb-ref-none">—</span>`;
+// refsOf is every ref of a task, the first one first. A node from before
+// tasks had several refs sends only `ref`.
+export function refsOf(task) {
+  if (Array.isArray(task?.refs)) return task.refs;
+  return task?.ref ? [task.ref] : [];
+}
+
+// refKey is what tells two refs apart: the link, or the id with none.
+export const refKey = (ref) => ref?.url || ref?.label || ref?.id || '';
+
+// trackerStatusClass is an issue status's ui-tag variant, by the words its
+// tracker uses: in progress needs attention (warn), in review is accent,
+// anything else (done, backlog, …) is the plain tag.
+export function trackerStatusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (/review/.test(s)) return 'ui-tag-accent';
+  if (/progress|started|doing|active/.test(s)) return 'ui-tag-warn';
+  return '';
+}
+
+// prOfRef is a PR ref in PRChain's shape, or null for any other ref.
+export function prOfRef(ref) {
+  if (!ref?.pr || !ref.url) return null;
+  const { number, state, title, checks, reviews } = ref.pr;
+  return { url: ref.url, number, state, title, checks, reviews };
+}
+
+// OneRef is one ref, shown by its kind with the richest display tclaude has:
+// a GitHub/GitLab PR is the agent rows' PRChain (#N, CI, review, with their
+// hover cards); an awb, Linear or GitHub issue is its id, with its status
+// and title from its last lookup; anything else is a link.
+export function OneRef({ of: ref }) {
+  const pr = prOfRef(ref);
+  if (pr) return html`<${PRChain} pr=${pr} className="tb-ref-pr" />`;
   const label = ref.label || ref.url || ref.kind;
-  const title = `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`;
+  const tracker = ref.tracker;
+  const title = [tracker?.title, `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`].filter(Boolean).join(' — ');
   // The store only keeps http(s) URLs; check again before making a link.
-  if (ref.url && /^https?:\/\//i.test(ref.url)) {
+  const linked = ref.url && /^https?:\/\//i.test(ref.url);
+  if (tracker || ref.kind === 'awb' || ref.kind === 'linear') {
+    const id = linked
+      ? html`<a class="tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>${label}</a>`
+      : html`<span class="tb-ref" title=${`${title} · not linked`}>${label}</span>`;
+    return html`<span class="tb-ref-issue">${ref.kind !== 'url' && html`<span class="tb-ref-kind">${ref.kind}</span>`}${id}${tracker?.status
+      && html`<span class=${`ui-tag tb-ref-status ${trackerStatusClass(tracker.status)}`.trim()}>${tracker.status}</span>`}</span>`;
+  }
+  if (linked) {
     return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
   }
   // A bare tracker id with no link yet (no awb server configured, or a
   // Linear id not looked up): `edit --resolve-ref` links it.
   return html`<span class="ui-tag ui-tag-accent tb-ref" title=${`${title} · not linked`}>🔗 ${label}</span>`;
+}
+
+// RefChip is a task's refs, each by its kind (OneRef): every one on a Lanes
+// card, the hover card and the edit form; the first and "+n" where `max` is
+// 1 (the List's Ref column).
+export function RefChip({ task, max = 0 }) {
+  const refs = refsOf(task);
+  if (!refs.length) return html`<span class="tb-ref-none">—</span>`;
+  const shown = max > 0 ? refs.slice(0, max) : refs;
+  const more = refs.length - shown.length;
+  return html`<span class="tb-refs">${shown.map((ref) => html`<${OneRef} key=${refKey(ref)} of=${ref} />`)}${more > 0
+    && html`<span class="tb-refs-more" title=${refs.slice(shown.length).map((r) => r.label || r.url).join(', ')}>+${more}</span>`}</span>`;
 }
 
 // TASK_CARD_HOVER_MS is the hover intent before the card reads the brief and
