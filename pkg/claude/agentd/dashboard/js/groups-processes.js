@@ -41,7 +41,7 @@ import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
-import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
+import { fusedSectionOpen, fusedSectionsRevision, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
 import { Button } from './ui-components.js';
@@ -657,6 +657,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // document's row-action handler sees the click.
 export function FusedSection({ group, section, label, count = null, summary = null, auto = true, force = false, attrs = {}, actions = null, closedActions = null, onToggle = null, children }) {
   const [, bump] = useState(0);
+  // Subscribes this section to a reveal set from outside it.
+  void fusedSectionsRevision.value;
   const open = force || fusedSectionOpen(group, section, auto);
   const toggle = (event) => {
     if (force) return;

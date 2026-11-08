@@ -18,7 +18,7 @@
 
 import { dashPrefs } from './prefs.js';
 import { fusedGroupListing } from './group-order.js';
-import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
+import { announceFusedSections, revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { featureState } from './feature-state-registry.js';
 import { isPageNode, selfNodeID } from './node-api.js';
 
@@ -66,6 +66,7 @@ export function revealDropTarget({ group = '', node = '', section = '', virtualK
       if (section) setFusedSectionOpen(where.name, section, true, prefs);
     }
   } catch (_) { /* a view preference must never break the drop */ }
+  announceFusedSections();
   featureState('groups')?.rerender?.();
   document.getElementById('fleetview-fused-groups-root')?.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
 }
