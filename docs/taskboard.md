@@ -828,7 +828,9 @@ closed tasks after `taskboard.retention_days`.
   wait on it are told, as for a drop.
 - `archive <group> --done [--older-than 7d]` archives every done task on the
   board, or only those closed longer ago than the age (`1d`, `7d`, `36h`).
-  Dropped tasks stay. It needs `taskboard.write`.
+  `--dropped` does the same for the dropped tasks, and `--done --dropped`
+  for both; `--older-than` applies to either. Live tasks stay. It needs
+  `taskboard.write`.
 - `ls <group> --archived` lists the archive, most recently closed first.
 - `unarchive <task>` puts a task back in the history, done or dropped as it
   was. One closed longer ago than `taskboard.archive_after_days` is archived
@@ -839,8 +841,8 @@ In the dashboard, a done or dropped task's ⋯ menu has *Archive*: in the
 List's history and on a lanes card in *Done*. Right-clicking a List row or a
 lanes card opens that menu. A live task is dropped first (⋯ *Drop…*, which
 asks the reason), then archived. The
-history line's *Archive done ▾* archives every done task, or those done over
-a day, a week or 30 days ago. Bringing a task back is CLI-only.
+history line's *Archive closed ▾* archives the done tasks, the dropped ones,
+or both: every one, or those closed over a day, a week or 30 days ago. Bringing a task back is CLI-only.
 
 A group holds at most 500 live tasks, and a task can have at most 50
 dependencies. Deleting a group deletes its board.
@@ -1192,6 +1194,7 @@ those drags aren't accepted in the lanes.
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |
 | `archive <group> --done` | `POST /v1/groups/{name}/taskboard/archive-done {"older_than"?: "7d"}` (answers `{"group","archived":[ids],"count"}`) |
+| `archive <group> --dropped [--done]` | `POST /v1/groups/{name}/taskboard/archive-closed {"statuses": ["done"?, "dropped"?], "older_than"?: "7d"}` (answers `{"group","statuses","archived":[ids],"count"}`; a node without it answers 404) |
 | `ls --archived` | `GET /v1/groups/{name}/taskboard?archived=1` |
 | `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
