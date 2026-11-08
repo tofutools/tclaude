@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], created_at: ago(5), ...extra });
@@ -315,7 +316,7 @@ test('a cell + opens the add menu; its choice starts from the cell: the column, 
     await harness.act(async () => { harness.fireEvent(cell(lane, column).querySelector('[data-taskboard-new-form]'), 'click'); });
     const modal = c.querySelector('#taskboard-new-modal');
     assert.ok(modal, `the form opens from ${lane} · ${column}`);
-    assert.equal(modal.querySelector('input[name="tb-new-stage"]:checked')?.getAttribute('value'),
+    assert.equal(modal.querySelector('[data-stage-pick="taskboard-new-stage"]')?.getAttribute('data-value'),
       { ideas: 'idea', next: 'next', progress: 'progress', blocked: 'blocked', done: 'done' }[column], 'the cell\'s column is picked');
     await harness.input(modal.querySelector('.tb-new-title'), title);
     await extra(modal);

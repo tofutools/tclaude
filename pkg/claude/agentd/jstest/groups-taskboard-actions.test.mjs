@@ -153,8 +153,8 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   const closed = rowOf('tk_00000005');
   assert.ok(closed.matches('.tb-closed') && closed.closest('table') === rowOf('tk_00000001').closest('table'), 'history rows share the list\'s table');
   assert.deepEqual(cluster('tk_00000005'), ['Reopen', 'Edit']);
-  assert.deepEqual((await menu('tk_00000005')).filter((label) => label.startsWith('Reopen')), ['Reopen', 'Reopen as an idea'],
-    'the ⋯ menu reopens it where it was, or elsewhere');
+  assert.deepEqual((await menu('tk_00000005')).filter((label) => label.startsWith('Reopen')), ['Reopen…'],
+    'the ⋯ menu reopens it where it was, or elsewhere, through the stage picker');
   await click(button('tk_00000005', 'Reopen'));
   assert.deepEqual(api.calls, [['reopen', 'tk_00000005']]);
 });
