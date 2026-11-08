@@ -651,9 +651,9 @@ a CLI verb:
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | ✓ *Next* on an idea | `promote <task>` |
-| ⋯ *Block…* (with a reason) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
+| ⋯ *Block…* (asks the reason in a dialog) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
 | ✓ *Done* | `done <task>` |
-| ⋯ *Drop…* (with an optional reason), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
+| ⋯ *Drop…* (asks an optional reason in a dialog), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
 | ✎ *Edit*, or a click on the task's title (in the list or on a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
@@ -795,6 +795,12 @@ Dragging a card is one action, the same as its CLI verb:
 | Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
 | From an agent's lane onto the Unassigned lane's *Ideas* | `unassign <task>`, then `demote <task>` |
 | From an agent's lane onto the Unassigned lane's *Blocked* (asks the reason) | `unassign <task>`, then `block <task> --reason …` |
+
+Where a drag asks the reason, it asks in the same reason dialog as ⋯
+*Block…*: the reason is required and may take several lines (Enter adds a
+line), Ctrl/Cmd+Enter blocks, Escape cancels and nothing is written. A
+refused write keeps the dialog open with the reason typed. A multiline
+reason keeps its line breaks under the task's title and on its hover card.
 
 A drag to another lane and another column at once runs both writes in that
 order, the lane first. A move the board cannot make in one step, such as

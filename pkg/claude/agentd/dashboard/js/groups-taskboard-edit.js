@@ -326,7 +326,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       draft.ref.trim() && draft.ref.trim() !== start.ref ? 'a bare awb or Linear id is linked through its tracker' : null)}
     ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />
-      ${reasonRow && html`<${Input} class="tb-edit-reason" aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
+      ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
         value=${draft.reason} disabled=${busy} placeholder=${draft.where === 'blocked' ? 'why it is blocked (required)' : 'why drop it (optional)'}
         onInput=${(event) => set('reason')(event.currentTarget.value)} />`}`, hint || null)}
     ${(canAssign || assignee) && row('Assignee', canAssign

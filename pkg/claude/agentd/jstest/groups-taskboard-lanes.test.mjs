@@ -207,15 +207,16 @@ test('dragging a card maps to the CLI routes: stage, status, assign and unassign
   // → Blocked asks the reason first.
   await drag('tk_00000001', 'unassigned', 'blocked');
   assert.deepEqual(api.calls, []);
-  const form = c.querySelector('.tb-lanes-block');
-  assert.ok(form);
-  harness.input(form.querySelector('input'), 'needs a design call');
+  const form = harness.document.querySelector('#taskboard-reason-modal');
+  assert.ok(form, 'the shared reason dialog asks, not an inline form');
+  assert.equal(form.querySelector('#taskboard-reason-submit').disabled, true, 'the reason is required');
+  await harness.input(form.querySelector('textarea'), 'needs a design call');
   await harness.act(async () => {
-    harness.fireEvent([...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block'), 'click');
+    harness.fireEvent(form.querySelector('#taskboard-reason-submit'), 'click');
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.deepEqual(api.calls, [['status', 'tk_00000001', 'blocked', 'needs a design call']]);
-  assert.equal(c.querySelector('.tb-lanes-block'), null);
+  assert.equal(harness.document.querySelector('#taskboard-reason-modal'), null);
 });
 
 test('without the assign grant, agent lanes take no drops', async (t) => {
@@ -242,11 +243,11 @@ test('a diagonal drag runs both writes through the real handlers, the lane first
   assert.equal(out.taken, true);
   assert.equal(out.label, 'assign to builder · block (asks why)');
   assert.deepEqual(api.calls, [], 'nothing runs before the reason');
-  const form = c.querySelector('.tb-lanes-block');
+  const form = harness.document.querySelector('#taskboard-reason-modal');
   assert.match(form.textContent, /assign to builder · block “queued one”/);
-  await harness.input(form.querySelector('input'), 'waits on the API');
+  await harness.input(form.querySelector('textarea'), 'waits on the API');
   await harness.act(async () => {
-    harness.fireEvent([...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Block'), 'click');
+    harness.fireEvent(form.querySelector('textarea'), 'keydown', { key: 'Enter', ctrlKey: true });
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.deepEqual(api.calls.splice(0), [['assign', 'tk_00000001', 'agt_builder'], ['status', 'tk_00000001', 'blocked', 'waits on the API']]);
@@ -446,4 +447,17 @@ test('on a linked node\'s group in the fused view, a cell + and lane drags write
   harness.fireEvent(cell('agt_tester', 'next'), 'dragover', { dataTransfer: transfer });
   await harness.act(async () => { harness.fireEvent(cell('agt_tester', 'next'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_tester']], 'an assign drag goes to the group\'s node');
+
+  // A drag onto Blocked asks its reason in the same dialog as a local board,
+  // and the block goes to the group's node.
+  api.calls.length = 0;
+  const card2 = c.querySelector('.tb-card[data-task-id="tk_00000004"]');
+  await harness.act(async () => { harness.fireEvent(card2, 'dragstart', { dataTransfer: transfer }); });
+  harness.fireEvent(cell('unassigned', 'blocked'), 'dragover', { dataTransfer: transfer });
+  await harness.act(async () => { harness.fireEvent(cell('unassigned', 'blocked'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  const reason = harness.document.querySelector('#taskboard-reason-modal');
+  assert.ok(reason, 'the reason dialog opens on a peer board too');
+  await harness.input(reason.querySelector('textarea'), 'peer reason');
+  await click(reason.querySelector('#taskboard-reason-submit'));
+  assert.deepEqual(api.calls, [['status', 'tk_00000004', 'blocked', 'peer reason']]);
 });

@@ -21,7 +21,8 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Input } from './ui-components.js';
+import { Button } from './ui-components.js';
+import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import {
   LAYOUT_COLUMNS, applyLaneOrder, gridColumns, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
@@ -157,7 +158,7 @@ function laneGroups(lanes, group, by, snapshot) {
 // column is the two writes in a row: the lane first (assign, unassign),
 // then the column (block, demote).
 // twoStep runs first, then second, and remembers a first write that landed:
-// a retry after the second was refused (the block form stays open) runs only
+// a retry after the second was refused (the block dialog stays open) runs only
 // the second, rather than repeating an unassign the server would refuse.
 function twoStep(first, second) {
   let firstDone = false;
@@ -237,7 +238,7 @@ export function cellAdd(lane, column, { assign = true, member = true } = {}) {
 // cardHint is what a card's column does not say: why it is blocked, or that
 // its agent went quiet. No times (the List's Last and Age carry them).
 function cardHint(task) {
-  if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why">${task.block_reason || 'blocked'}</span>`;
+  if (task.status === 'blocked') return html`<span class="ui-tag ui-tag-warn tb-card-why" title=${task.block_reason || undefined}>${task.block_reason || 'blocked'}</span>`;
   if (task.stalled && task.assignee?.agent_id) return html`<span class="ui-tag ui-tag-warn" title="its agent went idle without reporting">idle, no report</span>`;
   return null;
 }
@@ -316,27 +317,17 @@ function useLaneDrag(actions, group, tasks = []) {
   };
 }
 
-// BlockForm asks the reason a drop onto Blocked needs, then runs the drop
-// (with an assign or unassign first, for a move across lanes too).
-function BlockForm({ task, drop, actions, group, onClose }) {
-  const [reason, setReason] = useState('');
-  const submit = async () => {
-    if (!reason.trim() || actions.busy) return;
-    const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason.trim()));
+// BlockDialog asks the reason a drop onto Blocked needs, in the board's
+// reason dialog, then runs the drop (with an assign or unassign first, for a
+// move across lanes too).
+function BlockDialog({ task, drop, actions, group, onClose }) {
+  const submit = async (reason) => {
+    const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason));
     if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
-    if (ok) onClose();
+    return ok;
   };
-  return html`<div class="tb-form tb-lanes-block" data-task-form="block">
-    <span class="ui-hint">${drop.kind === 'block' ? 'Block' : drop.label.replace(/ \(asks why\)$/, '')} “${task.title}”:</span>
-    <${Input} size="sm" class="tb-form-reason" aria-label="Block reason" autoFocus placeholder="why is it blocked? (required)"
-      value=${reason} maxLength=${400} onInput=${(event) => setReason(event.currentTarget.value)}
-      onKeyDown=${(event) => {
-        if (event.key === 'Enter') { event.preventDefault(); void submit(); }
-        if (event.key === 'Escape') { event.preventDefault(); onClose(); }
-      }} />
-    <${Button} size="sm" variant="primary" busy=${actions.busy === `${task.id}:lane`} disabled=${!reason.trim()} onClick=${() => void submit()}>Block<//>
-    <${Button} size="sm" variant="ghost" onClick=${onClose}>Cancel<//>
-  </div>`;
+  return html`<${TaskReasonDialog} kind="block" task=${task} action=${drop.kind === 'block' ? '' : drop.label.replace(/ \(asks why\)$/, '')}
+    busy=${actions.busy === `${task.id}:lane`} onSubmit=${submit} onClose=${onClose} />`;
 }
 
 function LaneHead({ lane, order }) {
@@ -548,7 +539,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
   return html`<div class="tb-lanes-wrap">
-    ${drag.blocking && actions && html`<${BlockForm} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
+    ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
         style=${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}` : undefined}
