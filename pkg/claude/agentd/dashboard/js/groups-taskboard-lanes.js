@@ -209,19 +209,33 @@ function twoStep(first, second) {
   };
 }
 
-export function laneDrop(task, from, to, { assign = true } = {}) {
+export function laneDrop(task, from, to, opts = {}) {
+  const drop = baseLaneDrop(task, from, to, opts);
+  // A card in a custom column dropped onto Next or In progress leaves the
+  // column too, whatever else the drop does (an assign, an unassign, an
+  // unblock): the column write goes last, so the card lands where it was
+  // dropped rather than back in its column.
+  if (!drop || !task?.column || drop.kind.startsWith('uncolumn') || (to.column !== 'next' && to.column !== 'progress')) return drop;
+  const out = (api) => api.stage(task.id, 'next');
+  return { ...drop, kind: `${drop.kind}+uncolumn`, label: `${drop.label} · out of ${columnLabel(COLUMN_STATE + task.column, to.columns)}`,
+    run: twoStep(drop.run, out) };
+}
+
+function baseLaneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
   const open = task.status === 'open';
   const block = (api, reason) => api.status(task.id, 'blocked', reason);
   if (isCustomColumn(to.column)) return columnDrop(task, from, to, { assign });
   if (task.status === 'done') return reopenDrop(task, from, to, { assign, block });
   // Out of a custom column onto Next or In progress, in its own lane:
-  // `move --stage next` (a held task then waits in Next, a started one is in
-  // progress; onto In progress a held one is started too).
+  // `move --stage next`; onto In progress a held task is started too, and
+  // onto Next a started one is held back, so it lands where it was dropped.
   if (task.column && open && from.lane === to.lane && (to.column === 'next' || to.column === 'progress')) {
     const label = `out of ${columnLabel(COLUMN_STATE + task.column, to.columns)}`;
     const out = (api) => api.stage(task.id, 'next');
+    const started = !!task.assignee?.agent_id && !task.held;
     if (to.column === 'progress' && task.held) return { kind: 'uncolumn+start', label: `${label} · start`, run: twoStep(out, (api) => api.start(task.id)) };
+    if (to.column === 'next' && started) return { kind: 'uncolumn+hold', label: `${label}, not started`, run: twoStep(out, (api) => api.hold(task.id, 'next')) };
     return { kind: 'uncolumn', label, run: out };
   }
   if (from.lane !== to.lane) {

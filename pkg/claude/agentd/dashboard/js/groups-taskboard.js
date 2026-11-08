@@ -359,11 +359,11 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
     items.push(item('column', 'Move to column', 'taskboard move --stage <column>: a column of the board\'s own, where the task never stalls', {
       children: () => [
         ...columns.map((column) => item('to-column', `${column.label}${task.column === column.slug ? ' ✓' : ''}`, `taskboard move --stage ${column.slug}`, {
-          key: column.slug, disabled: task.column === column.slug,
+          key: `col:${column.slug}`, disabled: task.column === column.slug,
           run: () => actions.run(`${task.id}:column`, `Move to ${column.label}`, (api) => api.stage(task.id, column.slug)),
         })),
         ...(task.column ? [item('out-of-column', task.assignee?.agent_id && !task.held ? 'Back to In progress' : 'Back to Next', 'taskboard move --stage next', {
-          key: 'out', run: () => actions.run(`${task.id}:column`, 'Out of the column', (api) => api.stage(task.id, 'next')),
+          key: 'out-of-column', run: () => actions.run(`${task.id}:column`, 'Out of the column', (api) => api.stage(task.id, 'next')),
         })] : []),
       ],
     }));

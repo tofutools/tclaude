@@ -1053,7 +1053,8 @@ Dragging a card is one action, the same as its CLI verb:
 | Onto the Unassigned lane's *Next* | `unassign <task>` |
 | Onto a custom column, in the same lane | `move <task> --stage <column>` (a blocked task is unblocked first) |
 | Onto a custom column of another lane | `assign <task> --to <agent>` (or `unassign`), then `move <task> --stage <column>` |
-| Out of a custom column onto *Next* or *In progress*, same lane | `move <task> --stage next` (onto *In progress*, a held task is started too) |
+| Out of a custom column onto *Next* or *In progress*, same lane | `move <task> --stage next` (onto *In progress*, a held task is started too; onto *Next*, a started one is held back) |
+| Out of a custom column onto another lane's *Next* or *In progress*, or a blocked card in a column onto either | that drop's own write (`assign`, `unassign`, unblock), then `move <task> --stage next` |
 | Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
 | From an agent's lane onto the Unassigned lane's *Ideas* | `unassign <task>`, then `demote <task>` |
 | From an agent's lane onto the Unassigned lane's *Blocked* (asks the reason) | `unassign <task>`, then `block <task> --reason …` |

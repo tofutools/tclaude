@@ -87,15 +87,26 @@ test('boardColumns puts the custom columns after In progress; laneColumn and lan
   assert.equal(drop({ ...pr, status: 'blocked' }, at('agt_builder', 'blocked'), at('agt_builder', 'col:in-review')).kind, 'unblock+column');
   assert.equal(drop(queued, at('', 'next'), at('agt_builder', 'col:in-review')).kind, 'assign+column');
   assert.equal(drop(pr, at('agt_builder', 'col:in-review'), at('', 'col:in-review')).kind, 'unassign+column');
+  assert.equal(drop(pr, at('agt_builder', 'col:in-review'), at('agt_builder', 'next')).kind, 'uncolumn+hold', 'onto Next a started one is held back');
+  // Onto another lane's Next or In progress, or after an unblock, it leaves the column too.
+  assert.equal(drop(pr, at('agt_builder', 'col:in-review'), { ...at('agt_tester', 'next'), member: true }).kind, 'assign-hold+uncolumn');
+  assert.equal(drop(pr, at('agt_builder', 'col:in-review'), { ...at('agt_tester', 'progress'), member: true }).kind, 'assign+uncolumn');
+  assert.equal(drop(pr, at('agt_builder', 'col:in-review'), at('', 'next')).kind, 'unassign+uncolumn');
+  assert.equal(drop(pr, at('agt_builder', 'col:in-review'), at('', 'next')).label, 'unassign · out of In review');
+  assert.equal(drop({ ...pr, status: 'blocked' }, at('agt_builder', 'blocked'), at('agt_builder', 'progress')).kind, 'unblock+uncolumn');
   assert.equal(drop(queued, at('', 'next'), at('agt_builder', 'col:in-review'), { assign: false }), null, 'another lane needs assign');
   assert.equal(drop({ ...pr, status: 'done' }, at('agt_builder', 'done'), at('agt_builder', 'col:in-review')), null, 'a done card is reopened first');
 
   // Each drop is the CLI's route: stage with the slug, next to come out.
   const calls = [];
-  const api = { stage: async (...a) => calls.push(['stage', ...a]), assign: async (...a) => calls.push(['assign', ...a]), start: async (...a) => calls.push(['start', ...a]) };
+  const api = { stage: async (...a) => calls.push(['stage', ...a]), assign: async (...a) => calls.push(['assign', ...a]), start: async (...a) => calls.push(['start', ...a]),
+    hold: async (...a) => calls.push(['hold', ...a]), unassign: async (...a) => calls.push(['unassign', ...a]) };
   await drop(queued, at('', 'next'), at('agt_builder', 'col:in-ci')).run(api);
   await drop(pr, at('agt_builder', 'col:in-review'), at('agt_builder', 'next')).run(api);
-  assert.deepEqual(calls, [['assign', 'tk_00000001', 'agt_builder'], ['stage', 'tk_00000001', 'in-ci'], ['stage', 'tk_00000003', 'next']]);
+  await drop(pr, at('agt_builder', 'col:in-review'), at('', 'next')).run(api);
+  assert.deepEqual(calls, [['assign', 'tk_00000001', 'agt_builder'], ['stage', 'tk_00000001', 'in-ci'],
+    ['stage', 'tk_00000003', 'next'], ['hold', 'tk_00000003', 'next'],
+    ['unassign', 'tk_00000003'], ['stage', 'tk_00000003', 'next']]);
 });
 
 test('the lanes draw the custom columns with their counts; a drag in calls stage with the slug', async (t) => {
