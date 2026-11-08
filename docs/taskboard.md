@@ -49,6 +49,56 @@ An open task with a dependency that is not yet done shows as `queued`.
 A dropped dependency counts as not done, so the task stays queued until you
 remove the dependency (`edit --rm-dep`) or reopen the dropped task.
 
+### Custom columns
+
+A group's board may also have up to four **custom columns** of its own, such
+as *In review* or *In CI*. They sit between *In progress* and *Blocked*, in
+the group's order. The built-in columns (*Ideas*, *Next*, *In progress*,
+*Blocked*, *Done this week*) are fixed.
+
+```bash
+tclaude agent taskboard columns add crew "In review"       # slug in-review
+tclaude agent taskboard columns add crew "In CI" [--slug ci] [--before in-review]
+tclaude agent taskboard columns ls crew
+tclaude agent taskboard columns rename crew in-review "Awaiting review"
+tclaude agent taskboard columns move crew in-ci --before in-review | --last
+tclaude agent taskboard columns rm crew in-ci
+
+tclaude agent taskboard move tk_… --stage in-review         # into the column
+tclaude agent taskboard move tk_… --stage next              # back out
+```
+
+- **Who.** Adding, renaming, reordering and removing columns needs
+  `taskboard.manage` on the group. Owners hold it. Listing them needs
+  `taskboard.read`. Moving a task in or out is a change of that task:
+  `taskboard.write`, or `taskboard.own` on a task assigned to you. A worker
+  that opens its PR moves its own task to *In review*.
+- **Slugs.** A column's slug is made from its label (`In CI (macOS)` →
+  `in-ci-macos`) unless you give `--slug`, and it stays the same across a
+  rename. `--stage` takes the slug or the label. The names of the built-in
+  columns and states (`next`, `blocked`, `done`, `stalled` and the like) are
+  refused.
+- **A task in a column** is a live task in stage `next`. It keeps its
+  assignee and its lane, and it may be unassigned. An idea moved into a
+  column is promoted first. `--stage next` takes it out again: a started task
+  is in progress once more, and a held one is queued. Blocking a task keeps
+  its column, and unblocking it puts it back there. Closing it (done or
+  dropped), demoting it to the ideas, or moving it to a group that has no
+  column with the same slug takes it out. A reopened task comes back in next.
+- **It never stalls.** A task in a custom column waits on something outside
+  its agent's turn, such as a review or CI, so the [idle
+  check](#idle-without-report) skips it.
+- **Removing a column** puts its tasks back in next. Each one's history
+  records the change. The history records every move in or out as a `column`
+  change.
+- **Counts.** `ls` marks a task in a column with the column's slug where the
+  state goes, and lists the board's columns. `ls --summary` counts each column
+  (`2 in progress · 1 In review · 3 next`). Those tasks are not counted in
+  progress or next. A blocked task still counts as blocked.
+
+A move to another node does not carry the column; the task lands in the
+stage the move names.
+
 ## Commands
 
 ```bash
@@ -72,6 +122,8 @@ tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
+tclaude agent taskboard move <task> --stage idea|next|<custom column>
+tclaude agent taskboard columns ls|add|rename|move|rm <group> …   # custom columns
 tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage idea|next]
 tclaude agent taskboard promote <task>     # idea → end of the queue
 tclaude agent taskboard demote <task>      # next → top of the ideas
@@ -421,6 +473,10 @@ or take the task back with `unassign`.
 
 `idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns the check off.
 
+A task in a [custom column](#custom-columns), such as *In review*, never
+stalls. Its agent is waiting on a review or CI, not idling on the work. Move
+the task there when you open its PR.
+
 Stalled and blocked tasks are what the board needs you for. `ls --summary`, the
 dashboard and the context route count them as *needs you*, and
 `tclaude agent fleet` (the Steward's brief) lists every group whose board has
@@ -453,7 +509,7 @@ The operator passes every gate. For agents:
 | `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status. Implies read. | Owners of the group. Members only through a grant. |
 | `taskboard.own` | Tracking your own work: adding tasks that are assigned to you, changing and closing your own tasks, taking any unassigned task, releasing yours, reporting, and commenting on any task of the board | Members of the group, on their own group's board only |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
-| `taskboard.manage` | The writer lock, and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.manage` | The writer lock, the board's custom columns, and moving a task you do not hold to another group | Owners of the group |
 | `taskboard.transfer` | Moving or cloning a task into the group from another group. Scope it with the target `group`. | Owners of the group |
 | `self.taskboard` | Deprecated alias of `taskboard.own`. An existing grant keeps working and adds nothing. An explicit deny of it still denies `taskboard.own`. | No longer default-granted |
 
@@ -577,7 +633,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
-| `taskboard.manage` | Set the writer lock |
+| `taskboard.manage` | Set the writer lock, and add, rename, reorder and remove the board's custom columns |
 | `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
 - Any of these grants also lets the node read the board.
@@ -1010,6 +1066,11 @@ those drags aren't accepted in the lanes.
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
+| `move --stage` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"idea"\|"next"\|"<column slug or label>"}` |
+| `columns ls` | `GET /v1/groups/{g}/taskboard/columns` → `{group, columns:[{slug,label}], cap}` |
+| `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
+| `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
+| `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
@@ -1045,8 +1106,10 @@ comment carries `id`, `kind`, `body` (its current body, empty once deleted),
 `previous_body`. Each task carries `comment_count`, `created_by_name`,
 `last_edited_by`, `last_edited_by_name` and `last_edited_at`.
 
-The group listing also returns `locked`, and `writers` when the board is
-locked. Each task carries `assignee` (`agent_id`, `name`; for the operator
+The group listing also returns `locked`, `columns` (the custom columns,
+`[{slug,label}]`), and `writers` when the board is locked. A task in a custom
+column carries `column` (its slug). `GET /v1/taskboard/context` gives each
+group `columns`, `[{slug,label,count}]`, beside its `counts`. Each task carries `assignee` (`agent_id`, `name`; for the operator
 `{"agent_id":"operator","name":"operator","operator":true}`), `blocked_on`
 when it waits on an operator task, `assigned_by`,
 `assigned_at`, `outcome`, `outcome_note` and `failures` when they are set.
