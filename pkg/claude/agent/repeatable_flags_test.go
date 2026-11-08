@@ -27,6 +27,9 @@ func TestRepeatableFlags_ACommaStaysInsideItsValue(t *testing.T) {
 		{"notify-human --attach", notifyHumanCmd, "attach"},
 		{"message --attach", messageCmd, "attach"},
 		{"reply --attach", replyCmd, "attach"},
+		{"guide show --circle", guideShowCmd, "circle"},
+		{"guide show --underline", guideShowCmd, "underline"},
+		{"guide show --arrow", guideShowCmd, "arrow"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

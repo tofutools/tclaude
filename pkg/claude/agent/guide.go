@@ -318,9 +318,9 @@ type guideShowParams struct {
 	Target string `long:"target" optional:"true" help:"Visible text of the control or heading to highlight on that view, e.g. 'Save draft'"`
 	Note   string `long:"note" optional:"true" help:"Short note shown next to the highlight (or on its own)"`
 
-	Circle    []string `long:"circle" optional:"true" help:"Draw a circle around the control or text with this visible text (repeatable)"`
-	Underline []string `long:"underline" optional:"true" help:"Underline the control or text with this visible text (repeatable)"`
-	Arrow     []string `long:"arrow" optional:"true" help:"Draw an arrow between two controls by visible text, as 'From text -> To text' (repeatable)"`
+	Circle    []string `long:"circle" collection:"array" optional:"true" help:"Draw a circle around the control or text with this visible text (repeatable)"`
+	Underline []string `long:"underline" collection:"array" optional:"true" help:"Underline the control or text with this visible text (repeatable)"`
+	Arrow     []string `long:"arrow" collection:"array" optional:"true" help:"Draw an arrow between two controls by visible text, as 'From text -> To text' (repeatable)"`
 
 	Open string `long:"open" optional:"true" help:"Open this agent (agent_id or name) in the operator's companion window, e.g. the one that needs them"`
 }
