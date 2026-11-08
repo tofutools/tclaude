@@ -25,6 +25,10 @@ test('the digest is the daemon\'s: sorted distinct ids, one per line, SHA-256, 1
   const m = await harness.importDashboardModule('js/drawing-board-attach-dialog.js');
   assert.equal(await m.selectionDigest(['b', 'a', 'b'], webcrypto.subtle), digest(['a', 'b']));
   assert.equal(await m.selectionDigest([], webcrypto.subtle), '');
+  assert.equal(await m.selectionDigest(['a'], null), null, 'without WebCrypto (plain http) a pick cannot be told');
+  assert.equal(await m.selectionDigest([], null), '', 'the whole board needs no hash');
+  const whole = { id: 1, name: 'arch.png', drawing: { board: 'arch', version: 1 } };
+  assert.equal(m.existingDrawing({ attachments: [whole] }, 'arch', null), null, 'unknown is no match, not the whole board');
 });
 
 test('the list puts the board\'s group and the work under way first, open tasks only', async (t) => {

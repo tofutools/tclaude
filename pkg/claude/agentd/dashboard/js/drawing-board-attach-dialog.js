@@ -44,10 +44,12 @@ async function json(response) {
 
 // selectionDigest is the daemon's digest of a pick of element ids, in any
 // order: the first 16 bytes of the SHA-256 of the sorted, distinct ids, one
-// per line, in hex. "" for no ids (the whole board).
+// per line, in hex. "" for no ids (the whole board); null when it cannot be
+// told, on a page without WebCrypto (plain http, not localhost).
 export async function selectionDigest(ids, subtle = globalThis.crypto?.subtle) {
   const sorted = [...new Set(ids)].sort();
-  if (!sorted.length || !subtle) return '';
+  if (!sorted.length) return '';
+  if (!subtle) return null;
   const sum = new Uint8Array(await subtle.digest('SHA-256', new TextEncoder().encode(sorted.join('\n'))));
   return [...sum.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -55,6 +57,8 @@ export async function selectionDigest(ids, subtle = globalThis.crypto?.subtle) {
 // existingDrawing is the task's own file that shows this part of this
 // board, which attaching updates: the same board, the same pick, no region.
 export function existingDrawing(task, board, digest) {
+  // Unknown is not a match: the daemon still updates in place when it is one.
+  if (digest == null) return null;
   return (task?.attachments || []).find((a) => {
     const d = a?.drawing;
     return d && d.board === board && !d.region && (d.selection || '') === digest && !a.comment_id;
@@ -90,7 +94,7 @@ export function DrawingBoardAttachDialog({ request, close }) {
   const [chosen, setChosen] = useState(null);
   const [part, setPart] = useState(selection.length ? 'selection' : 'whole');
   const [preview, setPreview] = useState({ src: '', error: '' });
-  const [digest, setDigest] = useState('');
+  const [digest, setDigest] = useState(null);
   const [asComment, setAsComment] = useState(false);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
@@ -110,6 +114,7 @@ export function DrawingBoardAttachDialog({ request, close }) {
   useEffect(() => {
     let live = true;
     setPreview({ src: '', error: '' });
+    setDigest(null);
     fetchImpl(`/api/drawing-boards/${encodeURIComponent(drawingBoardId)}/export?format=json`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ format: 'png', scale: 1, ...(elements.length ? { elements } : {}) }),
