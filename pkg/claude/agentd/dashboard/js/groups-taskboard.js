@@ -41,6 +41,7 @@ import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-n
 import { TrackerTaskDialog } from './groups-taskboard-tracker.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
+import { TaskMoveDialog, offeredColumns } from './groups-taskboard-stage.js';
 import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
@@ -357,29 +358,15 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
       },
     }));
   }
-  if (closed) {
-    const reopen = (key, label, title, opts) => items.push(item(key, label, title, { run: run('reopen', 'Reopen', (api) => api.reopen(task.id, opts)) }));
-    reopen('reopen', 'Reopen', 'taskboard reopen: back on the list where it was, with its assignee', {});
-    if (task.stage === 'idea' || task.assignee?.agent_id) reopen('reopen-next', 'Reopen in Next', 'taskboard reopen --next', { stage: 'next' });
-    if (task.stage !== 'idea' || task.assignee?.agent_id) {
-      if (!task.assignee?.agent_id) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea', { stage: 'idea' });
-      else if (canAssign(actions)) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea --unassign: without its assignee', { stage: 'idea', to: '' });
-    }
-  }
-  // The board's custom columns (In review, In CI): move it into one, or
-  // back out to next (`taskboard move --stage`).
-  if (!closed && task.status === 'open' && columns.length) {
-    items.push(item('column', 'Move to column', 'taskboard move --stage <column>: a column of the board\'s own, where the task never stalls', {
-      children: () => [
-        ...columns.map((column) => item('to-column', `${column.label}${task.column === column.slug ? ' ✓' : ''}`, `taskboard move --stage ${column.slug}`, {
-          key: `col:${column.slug}`, disabled: task.column === column.slug,
-          run: () => actions.run(`${task.id}:column`, `Move to ${column.label}`, (api) => api.stage(task.id, column.slug)),
-        })),
-        ...(task.column ? [item('out-of-column', task.assignee?.agent_id && !task.held ? 'Back to In progress' : 'Back to Next', 'taskboard move --stage next', {
-          key: 'out-of-column', run: () => actions.run(`${task.id}:column`, 'Out of the column', (api) => api.stage(task.id, 'next')),
-        })] : []),
-      ],
-    }));
+  // Reopen…: the same picker, where it was by default (↺ on the row does
+  // that in one click), or Idea, Next or a custom column, in one write.
+  if (closed) items.push(item('reopen', 'Reopen…', 'taskboard reopen [--next|--idea|--stage <column>]: back on the board, where it was or elsewhere', { run: () => onForm('reopen') }));
+
+  // Move to…, on a board with custom columns (In review, In CI): the stage
+  // picker (groups-taskboard-stage.js) over Idea, Next and the columns,
+  // `taskboard move --stage`.
+  if (!closed && task.status === 'open' && offeredColumns(columns).length) {
+    items.push(item('move-to', 'Move to…', 'taskboard move --stage <column>: Idea, Next or a column of the board\'s own (In review, …)', { run: () => onForm('move') }));
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
@@ -777,9 +764,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [editing, setEditing] = useState('');
   const [reasoning, setReasoning] = useState(null);
   const [answering, setAnswering] = useState('');
+  const [moving, setMoving] = useState(null);
   const onForm = (id, mode) => {
     if (mode === 'edit') setEditing(id);
     else if (mode === 'answer') setAnswering(id);
+    else if (mode === 'move' || mode === 'reopen') setMoving({ id, reopen: mode === 'reopen' });
     else setReasoning(mode ? { id, kind: mode } : null);
   };
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
@@ -816,9 +805,14 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
       (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
   const answerTask = answering && tasks.find((task) => task.id === answering);
+  const moveTask = moving && actions && [...tasks, ...(entry.closed || [])].find((task) => task.id === moving.id);
+  const moveDialog = moveTask && html`<${TaskMoveDialog} key=${`${moveTask.id}-${moving.reopen}`} task=${moveTask} reopen=${moving.reopen}
+    columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
+    onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
   return html`<div class="tb-board" data-taskboard=${name}>
     ${editDialog}
     ${reasonDialog}
+    ${moveDialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}

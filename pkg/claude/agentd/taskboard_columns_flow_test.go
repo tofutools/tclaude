@@ -273,3 +273,58 @@ func TestTaskboardColumnsLeavingRestartsIdleClock(t *testing.T) {
 		})
 	}
 }
+
+// A task starts in, or reopens into, a custom column in one write: one
+// created (or reopened) entry, no move after it that could fail on its own.
+func TestTaskboardColumnsAddAndReopenInto(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	add := func(body map[string]any, want int) tbColumnTask {
+		t.Helper()
+		rec := h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", body)
+		if want >= 300 {
+			require.Equal(t, want, rec.Code, rec.Body.String())
+			return tbColumnTask{}
+		}
+		return tbDecodeColumnTask(t, rec.Code, rec.Body.String(), want)
+	}
+
+	got := add(map[string]any{"title": "review me", "stage": "In review"}, http.StatusCreated)
+	assert.Equal(t, "in-review", got.Column)
+	assert.Equal(t, "next", got.Stage)
+	assert.Equal(t, []string{"created"}, tbEventKinds(t, got.ID), "one write, one history entry")
+
+	add(map[string]any{"title": "nowhere", "stage": "no-such"}, http.StatusBadRequest)
+	add(map[string]any{"title": "logged", "stage": "in-review", "status": "done"}, http.StatusBadRequest)
+	blocked := add(map[string]any{"title": "stuck in review", "stage": "in-review", "status": "blocked", "block_reason": "waits on CI"}, http.StatusCreated)
+	assert.Equal(t, "in-review", blocked.Column)
+
+	// Reopened into the column: back in next, in it, in one write.
+	code, body := h.post("", got.ID, "status", map[string]any{"status": "done"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", got.ID, "reopen", map[string]any{"stage": "in-review"})
+	reopened := tbDecodeColumnTask(t, code, body, http.StatusOK)
+	assert.Equal(t, "in-review", reopened.Column)
+	assert.Equal(t, "next", reopened.Stage)
+	code, body = h.post("", got.ID, "status", map[string]any{"status": "dropped"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", got.ID, "reopen", map[string]any{"stage": "no-such"})
+	assert.Equal(t, http.StatusBadRequest, code, body)
+
+	// The CLI: add --stage and reopen --stage.
+	bridgeAgentClientToMux(t, h.f.Mux)
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		rc := agent.RunTaskboardCLI(args, stdout, stderr)
+		return rc, stdout.String(), stderr.String()
+	}
+	rc, out, errOut := run("add", "crew", "from the CLI", "--stage", "in-review")
+	require.Equal(t, 0, rc, errOut)
+	assert.Contains(t, out, "[in-review, open]")
+	rc, _, _ = run("add", "crew", "both", "--stage", "in-review", "--next")
+	assert.NotEqual(t, 0, rc, "--stage and --next")
+	rc, out, errOut = run("reopen", got.ID, "--stage", "in-review")
+	require.Equal(t, 0, rc, errOut)
+	assert.Contains(t, out, "in-review")
+}

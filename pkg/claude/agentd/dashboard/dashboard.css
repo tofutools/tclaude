@@ -18832,8 +18832,6 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-edit-ref-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tb-edit-ref-line > .ui-input { flex: 1; min-width: 0; box-sizing: border-box; }
 .tb-edit-ref-line > .tb-ref { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tb-new-stage { display: inline-flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 5px; }
-.tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 /* A task's dependencies (groups-taskboard-deps.js): the chosen ones as
    chips, over the type-to-filter list, which scrolls at a capped height. */
 .tb-deps-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }

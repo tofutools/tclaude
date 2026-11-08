@@ -33,6 +33,8 @@ import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
 import { RefChip } from './groups-taskboard-card.js';
 
+import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
+import { COLUMN_STATE } from './taskboard-context.js';
 const html = htm.bind(h);
 
 // WHERE are the places a task can be, as the form offers them.
@@ -50,6 +52,7 @@ const CLOSED = new Set(['done', 'dropped']);
 // whereOf is where a task is now.
 export function whereOf(task) {
   if (task.status === 'done' || task.status === 'dropped' || task.status === 'blocked') return task.status;
+  if (task.column) return COLUMN_STATE + task.column;
   if (task.assignee?.agent_id && !task.held) return 'progress';
   return task.stage === 'idea' ? 'idea' : 'next';
 }
@@ -118,7 +121,10 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   if (addDeps.length || rmDeps.length) names.push('dependencies');
   if (names.length) steps.push({ name: names.join(', '), run: (api) => api.edit(task.id, change) });
 
-  const where = draft.where;
+  // A custom column (In review, …) stands in next: the task is queued, then
+  // moved into it (`move --stage <column>`), or reopened straight into it.
+  const column = columnSlug(draft.where);
+  const where = column ? 'next' : draft.where;
   const from = task.assignee?.agent_id || '';
   const to = draft.to;
   const status = task.status || 'open';
@@ -129,28 +135,45 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   // and is blocked or closed again after.
   let open = status === 'open';
   // A closed task is blocked by reopening it first.
-  if (!open && (openTarget || assigning || (where === 'blocked' && CLOSED.has(status)))) {
+  // A closed task reopens into its column in the same write, with its
+  // assignee as the form has it (kept, changed or taken off).
+  let placed = false;
+  if (column && CLOSED.has(status)) {
+    const opts = { stage: column };
+    if (unassigning) opts.to = '';
+    else if (assigning) opts.to = to;
+    steps.push({ name: 'reopen', run: (api) => api.reopen(task.id, opts) });
+    open = true;
+    placed = true;
+  } else if (!open && (openTarget || assigning || (where === 'blocked' && CLOSED.has(status)))) {
     steps.push({ name: CLOSED.has(status) ? 'reopen' : 'unblock', run: (api) => api.status(task.id, 'open') });
     open = true;
   }
-  if (unassigning) steps.push({ name: 'unassign', run: (api) => api.unassign(task.id) });
+  if (unassigning && !placed) steps.push({ name: 'unassign', run: (api) => api.unassign(task.id) });
   // Blocked, done and dropped keep the stage the task is in.
   const stage = where === 'idea' ? 'idea' : where === 'next' || where === 'progress' ? 'next' : '';
   // The same assignee starts a task it held, or holds a started one in its
   // stage: either write also moves the stage.
   const kept = !!to && to === from;
   const starting = kept && open && where === 'progress' && !!task.held;
-  const holding = kept && open && (where === 'idea' || where === 'next') && !task.held;
+  const holding = !column && kept && open && (where === 'idea' || where === 'next') && !task.held;
   // An assignment places the task on its own: in Next started, or held in
   // the stage it lands in.
-  if (stage && stage !== (task.stage || 'idea') && !assigning && !starting && !holding) {
+  if (!placed && !column && stage && stage !== (task.stage || 'idea') && !assigning && !starting && !holding) {
     steps.push({ name: stage === 'idea' ? 'back to the ideas' : 'into Next', run: (api) => api.stage(task.id, stage) });
+  }
+  // Out of its column: back in Next (in progress for a started task).
+  if (!placed && !column && task.column && !CLOSED.has(task.status) && (where === 'next' || where === 'progress')) {
+    steps.push({ name: 'out of the column', run: (api) => api.stage(task.id, 'next') });
   }
   if (starting) steps.push({ name: 'start', run: (api) => api.start(task.id) });
   if (holding) steps.push({ name: 'not started', run: (api) => api.hold(task.id, stage) });
-  if (assigning) {
-    const hold = where === 'idea' || where === 'next' ? stage : '';
+  if (assigning && !placed) {
+    const hold = !column && (where === 'idea' || where === 'next') ? stage : '';
     steps.push({ name: 'assignee', run: (api) => (hold ? api.assign(task.id, to, { hold }) : api.assign(task.id, to)) });
+  }
+  if (column && !placed && (task.column !== column || assigning)) {
+    steps.push({ name: 'into the column', run: (api) => api.stage(task.id, column) });
   }
   const reason = draft.reason.trim();
   if (where === 'blocked' && (open || status !== 'blocked' || reason !== (task.block_reason || ''))) {
@@ -183,15 +206,17 @@ export async function runPlan(api, steps) {
   return { saved, refused };
 }
 
-function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current }) {
+function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current, columns = [] }) {
   // In progress takes an assignee: only a viewer who may assign moves a task
   // there. Done and Dropped follow who may close it.
-  const off = (key) => key !== current && ((key === 'progress' && !canAssign) || (CLOSED.has(key) && !canClose));
-  return html`<span class="tb-new-stage" role="radiogroup" aria-label="Where it is">
-    ${WHERE.map((w) => html`<label key=${w.key} class="tb-new-stage-opt">
-      <input type="radio" name="tb-edit-where" value=${w.key} checked=${value === w.key} disabled=${disabled || off(w.key)} onChange=${() => onChange(w.key)} />
-      <span>${wizard ? w.wizard : w.label}</span></label>`)}
-  </span>`;
+  const off = (key) => {
+    if (key === current) return '';
+    if (key === 'progress' && !canAssign) return 'needs taskboard.assign: in progress is with an assignee';
+    if (CLOSED.has(key) && !canClose) return 'not yours to close';
+    return '';
+  };
+  return html`<${StagePicker} id="taskboard-edit-where" value=${value} onChange=${(key) => { if (key) onChange(key); }} places=${WHERE}
+    columns=${columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Where it is" />`;
 }
 
 function whereHint(draft, task) {
@@ -201,6 +226,7 @@ function whereHint(draft, task) {
     case 'done': return task.status === 'done' ? 'closed; pick another place to reopen it' : 'closes it';
     case 'progress': return draft.to ? '' : 'pick its assignee below';
     default:
+      if (columnSlug(draft.where)) return CLOSED.has(task.status) ? 'reopens it in that column' : 'a column of the board\'s own: its agent may wait there without an idle alarm';
       if (CLOSED.has(task.status)) return 'reopens it';
       return draft.to ? `held by its assignee, not started` : '';
   }
@@ -328,7 +354,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />
       ${task.ref && draft.ref.trim() === start.ref && html`<${RefChip} task=${task} />`}</span>`,
       draft.ref.trim() && draft.ref.trim() !== start.ref ? 'a bare awb or Linear id is linked through its tracker' : null)}
-    ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy}
+    ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />
       ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
         value=${draft.reason} disabled=${busy} placeholder=${draft.where === 'blocked' ? 'why it is blocked (required)' : 'why drop it (optional)'}

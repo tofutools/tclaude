@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const task = (extra = {}) => ({ id: 'tk_00000001', group: 'crew', title: 'Release notes', body: 'draft them', stage: 'next', status: 'open',
@@ -98,8 +99,9 @@ async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose =
   const dialog = harness.document.querySelector('#taskboard-edit-modal');
   const flush = () => harness.act(() => new Promise((r) => setTimeout(r, 0)));
   const click = async (el) => { await harness.act(() => harness.fireEvent(el, 'click')); await flush(); };
-  const radio = (key) => dialog.querySelector(`input[name="tb-edit-where"][value="${key}"]`);
-  const pick = async (key) => { await harness.act(() => harness.fireEvent(radio(key), 'change')); };
+  const where = () => dialog.querySelector('[data-stage-pick="taskboard-edit-where"]');
+  const pick = (key) => comboChoose(harness, where(), key);
+  const radio = (key) => ({ get disabled() { return where().querySelector(`[role="option"][data-key="${key}"]`)?.getAttribute('aria-disabled') === 'true'; } });
   const select = async (el, value) => {
     for (const option of el.querySelectorAll('option')) {
       const on = option.getAttribute('value') === value;
@@ -108,7 +110,7 @@ async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose =
     }
     await harness.act(() => harness.fireEvent(el, 'change'));
   };
-  return { harness, dialog, api, click, pick, radio, select, flush, closed: () => closed, saved: () => saved,
+  return { harness, dialog, api, click, pick, radio, where, select, flush, closed: () => closed, saved: () => saved,
     save: () => click(dialog.querySelector('#taskboard-edit-save')) };
 }
 
@@ -129,8 +131,8 @@ test('the ref shows as a link while unchanged; a new one is linked through its t
 
 test('Where it is, the assignee and a file change land as their own writes', async (t) => {
   const the = task({ attachments: [{ id: 7, name: 'old.log', size: 10, content_type: 'text/plain' }] });
-  const { harness, dialog, api, pick, select, click, save, closed, saved } = await mountEdit(t, the);
-  assert.equal(dialog.querySelector('input[name="tb-edit-where"]:checked')?.value ?? [...dialog.querySelectorAll('input[name="tb-edit-where"]')].find((r) => r.hasAttribute('checked'))?.value, 'next');
+  const { harness, dialog, api, pick, where, select, click, save, closed, saved } = await mountEdit(t, the);
+  assert.equal(where().getAttribute('data-value'), 'next');
   await select(dialog.querySelector('.tb-edit-assignee'), 'agt_dev');
   await pick('blocked');
   assert.equal(dialog.querySelector('#taskboard-edit-save').disabled, true, 'a block needs its reason');
@@ -161,8 +163,9 @@ test('a refused write is named, the rest land, and the form stays open', async (
 });
 
 test('without can.assign there is no assignee picker, and In progress is off', async (t) => {
-  const { dialog, radio } = await mountEdit(t, task(), { canAssign: false, canClose: false });
+  const { harness, dialog, radio, where } = await mountEdit(t, task(), { canAssign: false, canClose: false });
   assert.equal(dialog.querySelector('.tb-edit-assignee'), null);
+  await comboKeys(harness, where());
   assert.equal(radio('progress').disabled, true);
   assert.equal(radio('done').disabled, true);
   assert.equal(radio('dropped').disabled, true);
