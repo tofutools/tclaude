@@ -2,6 +2,7 @@ package drawingboard
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -31,25 +32,35 @@ import (
 // Every piece is wound the same way, so overlaps add up and never cancel.
 
 type raster struct {
+	ctx   context.Context
 	dst   *image.RGBA
 	crop  Box
 	scale float64
 	faces map[string]font.Face
+	z     *vector.Rasterizer // reused across paints
 }
 
-func renderPNG(sel, drawn []Element, crop Box, scale float64) ([]byte, int, int, error) {
+func renderPNG(ctx context.Context, sel, drawn []Element, crop Box, scale float64) ([]byte, int, int, error) {
 	w := max(1, int(math.Round(crop.Width*scale)))
 	h := max(1, int(math.Round(crop.Height*scale)))
-	r := &raster{dst: image.NewRGBA(image.Rect(0, 0, w, h)), crop: crop, scale: scale, faces: map[string]font.Face{}}
+	r := &raster{ctx: ctx, dst: image.NewRGBA(image.Rect(0, 0, w, h)), crop: crop, scale: scale, faces: map[string]font.Face{}, z: &vector.Rasterizer{}}
+	defer func() {
+		for _, f := range r.faces {
+			_ = f.Close()
+		}
+	}()
 	draw.Draw(r.dst, r.dst.Bounds(), image.White, image.Point{}, draw.Src)
 	all := byID(drawn)
 	for _, e := range sel {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, 0, err
+		}
 		if err := r.element(e, onLine(e, all)); err != nil {
 			return nil, 0, 0, err
 		}
 	}
-	for _, f := range r.faces {
-		_ = f.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, 0, 0, err
 	}
 	var out bytes.Buffer
 	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&out, r.dst); err != nil {
@@ -98,29 +109,120 @@ func (r *raster) toPx(pts [][2]float64, closed bool) shape {
 	return shape{pts: out, closed: closed}
 }
 
-// paint fills polygons with c, rasterised over the pixel box they cover.
+// rect is a pixel rectangle, for clipping.
+type rect struct{ x0, y0, x1, y1 float64 }
+
+// canvas is the image's pixel box grown by margin.
+func (r *raster) canvas(margin float64) rect {
+	b := r.dst.Bounds()
+	return rect{-margin, -margin, float64(b.Dx()) + margin, float64(b.Dy()) + margin}
+}
+
+// clipPoly clips a polygon to c (Sutherland–Hodgman). What lies outside
+// the canvas costs nothing to rasterise then, however far a board's
+// coordinates reach.
+func clipPoly(poly [][2]float64, c rect) [][2]float64 {
+	edges := []struct {
+		in    func(p [2]float64) bool
+		cross func(a, b [2]float64) [2]float64
+	}{
+		{func(p [2]float64) bool { return p[0] >= c.x0 }, func(a, b [2]float64) [2]float64 { return lerpX(a, b, c.x0) }},
+		{func(p [2]float64) bool { return p[0] <= c.x1 }, func(a, b [2]float64) [2]float64 { return lerpX(a, b, c.x1) }},
+		{func(p [2]float64) bool { return p[1] >= c.y0 }, func(a, b [2]float64) [2]float64 { return lerpY(a, b, c.y0) }},
+		{func(p [2]float64) bool { return p[1] <= c.y1 }, func(a, b [2]float64) [2]float64 { return lerpY(a, b, c.y1) }},
+	}
+	out := poly
+	for _, e := range edges {
+		if len(out) == 0 {
+			return nil
+		}
+		in := out
+		out = make([][2]float64, 0, len(in)+4)
+		prev := in[len(in)-1]
+		for _, cur := range in {
+			switch {
+			case e.in(cur):
+				if !e.in(prev) {
+					out = append(out, e.cross(prev, cur))
+				}
+				out = append(out, cur)
+			case e.in(prev):
+				out = append(out, e.cross(prev, cur))
+			}
+			prev = cur
+		}
+	}
+	return out
+}
+
+func lerpX(a, b [2]float64, x float64) [2]float64 {
+	t := (x - a[0]) / (b[0] - a[0])
+	return [2]float64{x, a[1] + (b[1]-a[1])*t}
+}
+
+func lerpY(a, b [2]float64, y float64) [2]float64 {
+	t := (y - a[1]) / (b[1] - a[1])
+	return [2]float64{a[0] + (b[0]-a[0])*t, y}
+}
+
+// clipSegment clips the segment a→b to c (Liang–Barsky), as fractions of
+// its length; ok is false when no part of it is inside.
+func clipSegment(a, b [2]float64, c rect) (t0, t1 float64, ok bool) {
+	t0, t1 = 0, 1
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	for _, e := range [4][2]float64{{-dx, a[0] - c.x0}, {dx, c.x1 - a[0]}, {-dy, a[1] - c.y0}, {dy, c.y1 - a[1]}} {
+		p, q := e[0], e[1]
+		if p == 0 {
+			if q < 0 {
+				return 0, 0, false
+			}
+			continue
+		}
+		t := q / p
+		if p < 0 {
+			t0 = math.Max(t0, t)
+		} else {
+			t1 = math.Min(t1, t)
+		}
+		if t0 > t1 {
+			return 0, 0, false
+		}
+	}
+	return t0, t1, true
+}
+
+// paint fills polygons with c, each clipped to the canvas, rasterised over
+// the pixel box they cover.
 func (r *raster) paint(polys [][][2]float64, c color.NRGBA) {
 	if c.A == 0 || len(polys) == 0 {
 		return
 	}
+	bounds := r.dst.Bounds()
+	clip := r.canvas(1)
 	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	kept := polys[:0:0]
 	for _, poly := range polys {
+		poly = clipPoly(poly, clip)
+		if len(poly) < 3 {
+			continue
+		}
+		kept = append(kept, poly)
 		for _, p := range poly {
 			minX, maxX = math.Min(minX, p[0]), math.Max(maxX, p[0])
 			minY, maxY = math.Min(minY, p[1]), math.Max(maxY, p[1])
 		}
 	}
-	bounds := r.dst.Bounds()
+	if len(kept) == 0 {
+		return
+	}
 	box := image.Rect(int(math.Floor(minX))-1, int(math.Floor(minY))-1, int(math.Ceil(maxX))+1, int(math.Ceil(maxY))+1).Intersect(bounds)
 	if box.Empty() {
 		return
 	}
-	z := vector.NewRasterizer(box.Dx(), box.Dy())
+	z := r.z
+	z.Reset(box.Dx(), box.Dy())
 	ox, oy := float32(box.Min.X), float32(box.Min.Y)
-	for _, poly := range polys {
-		if len(poly) < 3 {
-			continue
-		}
+	for _, poly := range kept {
 		z.MoveTo(float32(poly[0][0])-ox, float32(poly[0][1])-oy)
 		for _, p := range poly[1:] {
 			z.LineTo(float32(p[0])-ox, float32(p[1])-oy)
@@ -157,66 +259,36 @@ func disc(c [2]float64, radius float64) [][2]float64 {
 		a := 2 * math.Pi * float64(i) / float64(n)
 		out[i] = [2]float64{c[0] + radius*math.Cos(a), c[1] + radius*math.Sin(a)}
 	}
-	return out
+	return clockwise(out)
 }
 
-// strokePolys outlines a polyline of the given pixel width.
-func strokePolys(pts [][2]float64, width float64) [][][2]float64 {
-	hw := width / 2
-	var out [][][2]float64
-	for i := range pts {
-		out = append(out, clockwise(disc(pts[i], hw)))
-		if i == 0 {
-			continue
-		}
-		a, b := pts[i-1], pts[i]
-		dx, dy := b[0]-a[0], b[1]-a[1]
-		l := math.Hypot(dx, dy)
-		if l == 0 {
-			continue
-		}
+// segmentPolys outlines one straight piece of a stroke: a quad and a disc
+// at each end (round caps and joins).
+func segmentPolys(a, b [2]float64, hw float64) [][][2]float64 {
+	out := [][][2]float64{disc(a, hw)}
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	if l := math.Hypot(dx, dy); l > 0 {
 		nx, ny := -dy/l*hw, dx/l*hw
-		out = append(out, clockwise([][2]float64{{a[0] + nx, a[1] + ny}, {b[0] + nx, b[1] + ny}, {b[0] - nx, b[1] - ny}, {a[0] - nx, a[1] - ny}}))
+		out = append(out, clockwise([][2]float64{{a[0] + nx, a[1] + ny}, {b[0] + nx, b[1] + ny}, {b[0] - nx, b[1] - ny}, {a[0] - nx, a[1] - ny}}),
+			disc(b, hw))
 	}
 	return out
 }
 
-// dashes splits a polyline into its dashes (on, off lengths in pixels).
-func dashes(pts [][2]float64, on, off float64) [][][2]float64 {
-	var out [][][2]float64
-	var cur [][2]float64
-	drawing, left := true, on
-	cur = append(cur, pts[0])
-	for i := 1; i < len(pts); i++ {
-		a, b := pts[i-1], pts[i]
-		l := math.Hypot(b[0]-a[0], b[1]-a[1])
-		at := 0.0
-		for l-at > left {
-			at += left
-			t := at / l
-			p := [2]float64{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t}
-			if drawing {
-				piece := make([][2]float64, 0, len(cur)+1)
-				out = append(out, append(append(piece, cur...), p))
-				cur = nil
-				left = off
-			} else {
-				cur = [][2]float64{p}
-				left = on
-			}
-			drawing = !drawing
-		}
-		left -= l - at
-		if drawing {
-			cur = append(cur, b)
-		}
-	}
-	if drawing && len(cur) > 1 {
-		out = append(out, cur)
-	}
-	return out
-}
+const (
+	// minDashPeriod is the finest dash pattern drawn as dashes, in pixels;
+	// finer reads as a solid line anyway.
+	minDashPeriod = 3.0
+	// maxDashes bounds the dashes one element draws on the canvas; a line
+	// that would need more is drawn solid.
+	maxDashes = 20000
+	// paintBatch is how many polygons one rasterisation takes.
+	paintBatch = 512
+)
 
+// stroke draws a polyline of the element's width, clipped to the canvas:
+// only the parts on it are dashed and rasterised, while the dash pattern
+// keeps its place along the whole line.
 func (r *raster) stroke(sh shape, s style) {
 	pts := sh.pts
 	if sh.closed && len(pts) > 0 {
@@ -226,15 +298,86 @@ func (r *raster) stroke(sh shape, s style) {
 		return
 	}
 	width := math.Max(s.width*r.scale, 0.5)
-	pieces := [][][2]float64{pts}
+	hw := width / 2
+	clip := r.canvas(hw + 2)
+	c := parseColor(s.stroke, s.opacity)
+	var on, period float64
 	if len(s.dash) == 2 {
-		pieces = dashes(pts, s.dash[0]*r.scale, s.dash[1]*r.scale)
+		on, period = s.dash[0]*r.scale, (s.dash[0]+s.dash[1])*r.scale
+		if period < minDashPeriod {
+			period = 0
+		} else {
+			visible := 0.0
+			for i := 1; i < len(pts); i++ {
+				if t0, t1, ok := clipSegment(pts[i-1], pts[i], clip); ok {
+					visible += (t1 - t0) * math.Hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1])
+				}
+			}
+			if visible/period > maxDashes {
+				period = 0
+			}
+		}
 	}
-	var polys [][][2]float64
-	for _, p := range pieces {
-		polys = append(polys, strokePolys(p, width)...)
+	var batch [][][2]float64
+	flush := func() {
+		r.paint(batch, c)
+		batch = batch[:0]
 	}
-	r.paint(polys, parseColor(s.stroke, s.opacity))
+	if len(pts) == 1 {
+		if _, _, ok := clipSegment(pts[0], pts[0], clip); ok {
+			batch = append(batch, disc(pts[0], hw))
+		}
+	}
+	phase := 0.0 // where along the dash pattern the line is
+	for i := 1; i < len(pts); i++ {
+		if len(batch) >= paintBatch {
+			if r.ctx.Err() != nil {
+				return
+			}
+			flush()
+		}
+		a, b := pts[i-1], pts[i]
+		l := math.Hypot(b[0]-a[0], b[1]-a[1])
+		t0, t1, ok := clipSegment(a, b, clip)
+		at := func(d float64) [2]float64 {
+			if l == 0 {
+				return a
+			}
+			return [2]float64{a[0] + (b[0]-a[0])*d/l, a[1] + (b[1]-a[1])*d/l}
+		}
+		if !ok {
+			if period > 0 {
+				phase = math.Mod(phase+l, period)
+			}
+			continue
+		}
+		if period == 0 {
+			batch = append(batch, segmentPolys(at(t0*l), at(t1*l), hw)...)
+			continue
+		}
+		pos, end := t0*l, t1*l
+		phase = math.Mod(phase+pos, period)
+		for pos < end {
+			if phase < on {
+				next := math.Min(end, pos+on-phase)
+				batch = append(batch, segmentPolys(at(pos), at(next), hw)...)
+				phase += next - pos
+				pos = next
+			} else {
+				next := math.Min(end, pos+period-phase)
+				phase += next - pos
+				pos = next
+			}
+			if phase >= period {
+				phase -= period
+			}
+			if len(batch) >= paintBatch {
+				flush()
+			}
+		}
+		phase = math.Mod(phase+(l-end), period)
+	}
+	flush()
 }
 
 func (r *raster) fill(sh shape, s style) {
@@ -397,12 +540,18 @@ func (r *raster) text(e Element, s style, line bool) error {
 	}
 	fg := image.NewUniform(parseColor(s.stroke, s.opacity))
 	halo := image.NewUniform(parseColor(paperColor, s.opacity))
+	radius := 2.5 * r.scale // the editor's 5-unit paper stroke behind text on a line
+	bounds := r.dst.Bounds()
 	ax := textAnchorX(e)
 	for i, l := range textLines(e) {
 		if l == "" {
 			continue
 		}
 		at := r.px([2]float64{ax, e.Y + size + float64(i)*size*1.25})
+		// A line wholly above or below the image draws nothing.
+		if at[1]+px/2+radius < 0 || at[1]-px-radius > float64(bounds.Dy()) {
+			continue
+		}
 		adv := float64(font.MeasureString(face, l)) / 64
 		switch e.TextAlign {
 		case "center":
@@ -410,15 +559,32 @@ func (r *raster) text(e Element, s style, line bool) error {
 		case "right":
 			at[0] -= adv
 		}
+		// Only the glyphs that reach the image are drawn.
+		x, from, to := at[0], -1, len(l)
+		startX := x
+		for k, ch := range l {
+			a, _ := face.GlyphAdvance(ch)
+			w := float64(a) / 64
+			if from < 0 && x+w+px+radius >= 0 {
+				from, startX = k, x
+			}
+			if x-px-radius > float64(bounds.Dx()) {
+				to = k
+				break
+			}
+			x += w
+		}
+		if from < 0 || from >= to {
+			continue
+		}
+		visible := l[from:to]
 		put := func(src image.Image, dx, dy float64) {
-			d := font.Drawer{Dst: r.dst, Src: src, Face: face, Dot: fixed.Point26_6{X: fixed.Int26_6((at[0] + dx) * 64), Y: fixed.Int26_6((at[1] + dy) * 64)}}
-			d.DrawString(l)
+			d := font.Drawer{Dst: r.dst, Src: src, Face: face, Dot: fixed.Point26_6{X: fixed.Int26_6((startX + dx) * 64), Y: fixed.Int26_6((at[1] + dy) * 64)}}
+			d.DrawString(visible)
 		}
 		if line {
-			// The editor's 5-unit paper stroke behind text on a line.
-			radius := 2.5 * r.scale
-			for k := range 12 {
-				a := 2 * math.Pi * float64(k) / 12
+			for k := range 8 {
+				a := 2 * math.Pi * float64(k) / 8
 				put(halo, radius*math.Cos(a), radius*math.Sin(a))
 			}
 		}

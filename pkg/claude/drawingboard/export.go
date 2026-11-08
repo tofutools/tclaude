@@ -1,6 +1,7 @@
 package drawingboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -68,8 +69,9 @@ type Image struct {
 }
 
 // Render draws the selected part of a board. elements are the stored
-// elements in their stored order, tombstones included or not.
-func Render(elements []Element, opts Options) (*Image, error) {
+// elements in their stored order, tombstones included or not. A PNG stops
+// early with ctx's error when ctx ends.
+func Render(ctx context.Context, elements []Element, opts Options) (*Image, error) {
 	format := strings.ToLower(strings.TrimSpace(opts.Format))
 	if format == "" {
 		format = FormatPNG
@@ -101,7 +103,7 @@ func Render(elements []Element, opts Options) (*Image, error) {
 		return img, nil
 	}
 	scale = math.Min(scale, MaxSide/math.Max(crop.Width, crop.Height))
-	data, w, h, err := renderPNG(sel, drawn, crop, scale)
+	data, w, h, err := renderPNG(ctx, sel, drawn, crop, scale)
 	if err != nil {
 		return nil, err
 	}

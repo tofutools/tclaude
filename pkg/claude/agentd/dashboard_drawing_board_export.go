@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/drawingboard"
@@ -28,6 +30,10 @@ const drawingBoardExportBodyLimit = 256 << 10
 // drawingBoardExportSlots bounds the renders running at once: a PNG at the
 // size cap holds a 64 MiB canvas.
 var drawingBoardExportSlots = make(chan struct{}, 2)
+
+// drawingBoardExportDeadline bounds one render, so a board that is costly to
+// draw cannot hold a slot.
+const drawingBoardExportDeadline = 30 * time.Second
 
 type drawingBoardExportRequest struct {
 	Format   string            `json:"format"`
@@ -100,11 +106,17 @@ func serveDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string) 
 	case <-r.Context().Done():
 		return
 	}
-	img, err := drawingboard.Render(drawingboard.DecodeElements(bodies), drawingboard.Options{
+	ctx, cancel := context.WithTimeout(r.Context(), drawingBoardExportDeadline)
+	defer cancel()
+	img, err := drawingboard.Render(ctx, drawingboard.DecodeElements(bodies), drawingboard.Options{
 		Format: req.Format, Elements: req.Elements, Region: req.Region, Scale: req.Scale,
 	})
 	var missing *drawingboard.MissingElementsError
 	switch {
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+		writeError(w, http.StatusServiceUnavailable, "export_timeout",
+			"the export took too long to draw; export a part of the drawing board, or at a smaller scale")
+		return
 	case errors.As(err, &missing):
 		writeError(w, http.StatusNotFound, "unknown_elements", err.Error())
 		return

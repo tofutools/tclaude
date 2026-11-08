@@ -2,6 +2,7 @@ package drawingboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -97,7 +98,7 @@ func TestSelectTakesLabelsAndLinesBetween(t *testing.T) {
 }
 
 func TestRenderSVGIsWellFormedAndEscapesText(t *testing.T) {
-	img, err := Render(sample(t), Options{Format: FormatSVG})
+	img, err := Render(context.Background(), sample(t), Options{Format: FormatSVG})
 	require.NoError(t, err)
 	keep(t, "sample.svg", img.Data)
 	assert.Equal(t, "image/svg+xml", img.ContentType)
@@ -118,7 +119,7 @@ func TestRenderSVGIsWellFormedAndEscapesText(t *testing.T) {
 }
 
 func TestRenderPNGDrawsTheBoard(t *testing.T) {
-	img, err := Render(sample(t), Options{})
+	img, err := Render(context.Background(), sample(t), Options{})
 	require.NoError(t, err)
 	keep(t, "sample.png", img.Data)
 	assert.Equal(t, "image/png", img.ContentType)
@@ -142,12 +143,71 @@ func TestRenderPNGDrawsTheBoard(t *testing.T) {
 
 func TestRenderPNGCapsTheSize(t *testing.T) {
 	wide := []Element{{ID: "w", Type: "rectangle", X: 0, Y: 0, Width: 100000, Height: 10}}
-	img, err := Render(wide, Options{Scale: 4})
+	img, err := Render(context.Background(), wide, Options{Scale: 4})
 	require.NoError(t, err)
 	assert.LessOrEqual(t, img.Width, MaxSide)
 
-	_, err = Render(wide, Options{Scale: 9})
+	_, err = Render(context.Background(), wide, Options{Scale: 9})
 	assert.Error(t, err)
-	_, err = Render(wide, Options{Format: "gif"})
+	_, err = Render(context.Background(), wide, Options{Format: "gif"})
 	assert.True(t, err != nil && strings.Contains(err.Error(), "format"))
+}
+
+// costly is boards the store accepts that are cheap to draw only when the
+// renderer draws what reaches the image: dotted lines a million units long,
+// a zigzag of 5000 points across them, and a long text in a big font on a
+// line. Each must render in bounded time and memory, as a whole board and
+// as a small region.
+func TestRenderPNGStaysCheapOnCostlyBoards(t *testing.T) {
+	var zigzag [][]float64
+	for i := range 5000 {
+		y := 1e6
+		if i%2 == 0 {
+			y = -1e6
+		}
+		zigzag = append(zigzag, []float64{float64(i), y})
+	}
+	long := strings.Repeat("costly text ", 330)
+	boards := map[string][]Element{
+		"dotted": {{ID: "d", Type: "line", Points: [][]float64{{-1e6, 0}, {1e6, 0}}, StrokeStyle: "dotted"}},
+		"zigzag": {{ID: "z", Type: "line", Points: zigzag, StrokeStyle: "dashed"}},
+		"text": {
+			{ID: "l", Type: "arrow", Points: [][]float64{{0, 0}, {400, 0}}},
+			{ID: "t", Type: "text", Text: long + "\n" + long, FontSize: 200, ContainerID: "l", Width: 10, Height: 10},
+		},
+	}
+	for name, els := range boards {
+		t.Run(name, func(t *testing.T) {
+			img, err := Render(context.Background(), els, Options{Scale: MaxScale})
+			require.NoError(t, err)
+			assert.LessOrEqual(t, max(img.Width, img.Height), MaxSide)
+			_, err = Render(context.Background(), els, Options{Scale: MaxScale, Region: &Box{X: 0, Y: -20, Width: 50, Height: 40}})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRenderPNGStopsWhenTheContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Render(ctx, sample(t), Options{})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// A dashed line keeps its pattern where it leaves the image and comes back.
+func TestDashesKeepTheirPhaseOffCanvas(t *testing.T) {
+	els := []Element{{ID: "d", Type: "line", X: 0, Y: 0, Points: [][]float64{{0, 0}, {2000, 0}}, StrokeStyle: "dashed", StrokeWidth: 2}}
+	whole, err := Render(context.Background(), els, Options{Scale: 1})
+	require.NoError(t, err)
+	part, err := Render(context.Background(), els, Options{Scale: 1, Region: &Box{X: 1000, Y: -10, Width: 100, Height: 20}})
+	require.NoError(t, err)
+	a, err := png.Decode(bytes.NewReader(whole.Data))
+	require.NoError(t, err)
+	b, err := png.Decode(bytes.NewReader(part.Data))
+	require.NoError(t, err)
+	for x := 0; x < 100; x++ {
+		ra, _, _, _ := a.At(int(1000-whole.Crop.X)+x, int(-whole.Crop.Y)).RGBA()
+		rb, _, _, _ := b.At(x, 10).RGBA()
+		assert.InDelta(t, ra>>8, rb>>8, 40, "pixel %d along the line", x)
+	}
 }
