@@ -19,7 +19,8 @@ async function mountLanes(t, name, { by = null, groupMembers = members() } = {})
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
-  if (by) dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by);
+  // No by: lanes by agent, set explicitly, since triage is the default.
+  if (by !== 'default') dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by || 'agent');
   const source = { context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const group = { name, members: groupMembers };
   const api = { capture: async () => ({}), create: async () => ({}), assign: async () => ({}) };
@@ -171,6 +172,7 @@ test('on a linked node\'s group in the fused view, a lane reorder is kept and re
   setNodeSnapshotSource((node) => (node === 'nd_forge' ? { peer_view: { level: 'unrestricted' } } : null));
   const shown = 'tbo-peer@forge';
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${shown}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${shown}`, 'agent');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${shown}`, '1');
   const source = { context: harness.signals.signal({ groups: [board('tbo-peer')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const api = { capture: async () => ({}), create: async () => ({}), assign: async () => ({}) };
