@@ -10,7 +10,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Textarea } from './ui-components.js';
 import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { useAttachmentIntake } from './attachment-intake.js';
