@@ -5,7 +5,7 @@ import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { Button, Input } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { TableHead } from './table-kit.js';
+import { TableHead, tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -15,10 +15,11 @@ function SlugTags({ values, denied = false }) {
 }
 
 function PermissionsView({ current }) {
-  if (!current.snapshotLoaded) return html`<div class="empty">Loading permissions…</div>`;
-  if (current.snapshotLoaded && !current.permissions) {
-    return html`<div role="alert" class="island-error">Permissions data is unavailable in the latest snapshot.</div>`;
-  }
+  const placeholder = tableState({
+    loading: !current.snapshotLoaded && 'Loading permissions…',
+    error: !current.permissions && 'Permissions data is unavailable in the latest snapshot.',
+  });
+  if (placeholder) return placeholder;
   return html`<${Fragment}>
     <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
     ${current.defaults.length === 0
@@ -46,10 +47,11 @@ function ownerGrantLabel(scopeDims = []) {
 
 function SlugsView({ state, current }) {
   const filterRef = useRef(null);
-  if (!current.snapshotLoaded) return html`<div class="empty">Loading slug registry…</div>`;
-  if (current.snapshotLoaded && !current.slugs) {
-    return html`<div role="alert" class="island-error">The permission slug registry is unavailable in the latest snapshot.</div>`;
-  }
+  const placeholder = tableState({
+    loading: !current.snapshotLoaded && 'Loading slug registry…',
+    error: !current.slugs && 'The permission slug registry is unavailable in the latest snapshot.',
+  });
+  if (placeholder) return placeholder;
   return html`<${Fragment}>
     <div class="filter-bar">
       <${Input} domRef=${filterRef} id="filter-slugs" aria-label="Filter permission slugs by name"
@@ -110,13 +112,11 @@ function SudoView({ state, actions, current }) {
     </div>
     ${current.mutation.error && html`<div role="alert" class="island-error access-mutation-error">${current.mutation.error}</div>`}
     <div id="sudo-list">
-      ${!current.snapshotLoaded
-        ? html`<div class="empty">Loading sudo grants…</div>`
-        : !current.sudoAvailable
-        ? html`<div role="alert" class="island-error">Sudo grant data is unavailable in the latest snapshot.</div>`
-        : current.sudo.length === 0
-        ? html`<div class="empty">No active sudo grants.</div>`
-        : html`<table><${SudoHeader} state=${state} current=${current} /><tbody>
+      ${tableState({
+        loading: !current.snapshotLoaded && 'Loading sudo grants…',
+        error: !current.sudoAvailable && 'Sudo grant data is unavailable in the latest snapshot.',
+        empty: current.sudo.length === 0 && 'No active sudo grants.',
+      }) || html`<table><${SudoHeader} state=${state} current=${current} /><tbody>
           ${current.sudo.map((grant) => {
             const key = `revoke:${grant.id}`;
             return html`<tr key=${grant.id} data-key=${`sudo-${grant.id}`}>

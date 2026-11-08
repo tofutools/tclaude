@@ -7,6 +7,7 @@ import { GroupCombobox } from './group-picker.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
 import { groupScopeLabel, localStamp } from './cell-format.js';
+import { tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 const TRIGGER_SOURCES = Object.freeze([
@@ -287,9 +288,10 @@ export function TriggerWorkspace({ state, actions }) {
       <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
     ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${() => void load()}>retry<//></div>`}
-    ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
-      ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'}</div>`
-      : html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
+    ${tableState({
+      loading: loading && 'Loading triggers…',
+      empty: shown.length === 0 && (rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'),
+    }) || html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
           <tbody>${shown.map((rule) => html`<${TriggerRow} key=${rule.id} rule=${rule} selected=${selected === rule.id}
             actions=${actions} onSelect=${(id) => setSelected(selected === id ? null : id)}
             onEdit=${() => state.openTriggerEdit(rule)} onChanged=${() => void load()} />`)}</tbody></table>`}

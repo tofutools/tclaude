@@ -8,7 +8,7 @@ import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { Input, Select } from './ui-components.js';
-import { TableHead } from './table-kit.js';
+import { TableHead, tableState } from './table-kit.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -65,9 +65,12 @@ function Header({ current, state, actions }) {
     onSort=${(key) => { state.cycleSort(key); actions.load(); }} />`;
 }
 function Rows({ current, state, actions }) {
-  if (current.request.phase === 'loading') return html`<div class="empty">Loading audit log…</div>`;
-  if (current.request.phase === 'error') return html`<div role="alert" class="island-error">Failed to load audit log: ${current.request.error}</div>`;
-  if (!current.rows.length) return html`<div class="empty">${current.totalUnfiltered ? 'No events match the filter.' : 'No audit events recorded yet. Rows are written for coordination commands and managed pane exits.'}</div>`;
+  const placeholder = tableState({
+    loading: current.request.phase === 'loading' && 'Loading audit log…',
+    error: current.request.phase === 'error' && html`Failed to load audit log: ${current.request.error}`,
+    empty: !current.rows.length && (current.totalUnfiltered ? 'No events match the filter.' : 'No audit events recorded yet. Rows are written for coordination commands and managed pane exits.'),
+  });
+  if (placeholder) return placeholder;
   return html`<table class="audit-table"><${Header} current=${current} state=${state} actions=${actions} /><tbody>${current.rows.map((entry) => { const id = shortAgentId(entry.actor_agent, entry.actor_conv); const status = statusView(entry.status); const key = entry.node ? `${entry.node.id}-${entry.id}` : entry.id; return html`<tr key=${key} data-key=${`audit-${key}`}>
     <td class="audit-nowrap">${entry.node && html`<span class="scope-pill audit-node" style=${`--nc:${entry.node.color}`}>${entry.node.local ? '⌂ ' : ''}${entry.node.name}</span> `}<span class="last-hook" title=${entry.at}>${fmtAuditTime(entry.at)}</span>${relTime(entry.at) && html` <span class="muted">(${relTime(entry.at)})</span>`}</td>
     <td class="audit-trunc" title=${actorTitle(entry, id)}><${Actor} entry=${entry} /></td>

@@ -7,6 +7,7 @@ import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 import { nodeDownloadPath } from './node-api.js';
 import { Pager } from './pager.js';
 import { Button, Input, Select } from './ui-components.js';
+import { tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 const STREAM_MS = 2000;
@@ -39,9 +40,12 @@ function LogsPager({ current, state, actions }) {
 }
 
 function LogRows({ current }) {
-  if (current.request.phase === 'loading') return html`<div class="empty">Loading logs…</div>`;
-  if (current.request.phase === 'error') return html`<div role="alert" class="island-error">Failed to load logs: ${current.request.error}</div>`;
-  if (!current.rows.length) return html`<div class="empty">${current.totalUnfiltered ? 'No log lines match the filter.' : html`No log lines yet. tclaude writes its daemon + CLI log to <code>~/.tclaude/data/output.log</code>.`}</div>`;
+  const placeholder = tableState({
+    loading: current.request.phase === 'loading' && 'Loading logs…',
+    error: current.request.phase === 'error' && html`Failed to load logs: ${current.request.error}`,
+    empty: !current.rows.length && (current.totalUnfiltered ? 'No log lines match the filter.' : html`No log lines yet. tclaude writes its daemon + CLI log to <code>~/.tclaude/data/output.log</code>.`),
+  });
+  if (placeholder) return placeholder;
   return html`<table class="logs-table ui-compact"><thead><tr><th>When</th><th>Level</th><th>Message</th></tr></thead><tbody>
     ${current.rows.map(({ row, key }) => { const level = levelKey(row.level); const fields = fieldsText(row.fields); return html`<tr key=${key} data-key=${key} class=${`log-row log-row-${level}`}>
       <td class="logs-nowrap"><span class="last-hook" title=${row.time || ''}>${fmtAbsTime(row.time)}</span>${relTime(row.time) && html` <span class="muted">(${relTime(row.time)})</span>`}</td>
