@@ -111,7 +111,7 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.state = memberState(lane.member);
     lane.holds = holds.get(lane.id) || 0;
   }
-  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: holds.get(OPERATOR) || 0 };
+  return { cells, groups: laneGroups(lanes, group, by, snapshot), operatorHolds: (cells.get(`${OPERATOR}|progress`) || []).length };
 }
 
 function laneGroups(lanes, group, by, snapshot) {
@@ -558,7 +558,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   </div>`;
   // The operator's lane shows while it holds a task, or for a viewer who
   // may give the operator one (by a drag or its "+").
-  const operatorLane = (model.operatorHolds > 0 || cells.has(`${OPERATOR}|done`) || canAssign(actions))
+  const operatorLane = ([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions))
     && { id: OPERATOR, name: operatorName(group), holds: model.operatorHolds };
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };

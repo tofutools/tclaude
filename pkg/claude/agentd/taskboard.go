@@ -1098,12 +1098,22 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	// (taskboard.own) or an assigner's (taskboard.assign); everything else is
 	// a write, or the assignee's own change of its task.
 	closing := body.Status == db.GroupTaskDone || body.Status == db.GroupTaskDropped
-	if closing && t.AssigneeID != "" && t.Live() {
+	if closing && body.Status == db.GroupTaskDone && t.AssigneeID == db.OperatorAssignee && t.Live() {
+		// Only the operator, or an assigner, closes an operator task as done:
+		// the agent that asked may withdraw it (drop), not answer it.
+		if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g, ActionContext{Group: g.Name}); !ok {
+			return
+		}
+	} else if closing && t.AssigneeID != "" && t.Live() {
 		if !requireTaskboardHolderAction(w, r, g, t, false) {
 			return
 		}
 	} else if !requireTaskboardTaskChange(w, r, g, t) {
 		return
+	}
+	var waiters []string
+	if closing {
+		waiters = taskboardWaitersBefore(t)
 	}
 	out, err := db.SetGroupTaskStatusFor(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID)
 	if err != nil {
@@ -1111,8 +1121,8 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		return
 	}
 	setAuditDetail(r, t.ID+" "+body.Status)
-	if body.Status == db.GroupTaskDone && t.Status != db.GroupTaskDone {
-		mailTaskboardWaiters(r, g, out, reason)
+	if closing && t.Live() {
+		mailTaskboardWaiters(r, g, out, body.Status, reason, waiters, t.AssigneeID == db.OperatorAssignee)
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }

@@ -175,7 +175,10 @@ func ReportGroupTask(id, agentID, outcome, note, actor string) (*GroupTaskReport
 				dbTime(now), outcome, note, id); err != nil {
 				return err
 			}
-			return addGroupTaskChangeTx(tx, id, actor, GroupTaskEventDone, "reported by assignee", statusChange(t.Status, GroupTaskDone), now)
+			if err := addGroupTaskChangeTx(tx, id, actor, GroupTaskEventDone, "reported by assignee", statusChange(t.Status, GroupTaskDone), now); err != nil {
+				return err
+			}
+			return releaseGroupTaskWaitersTx(tx, t, actor, now)
 		}
 		failures := t.Failures + 1
 		if _, err := tx.Exec(`UPDATE group_tasks SET outcome = ?, outcome_note = ?, failures = ?,

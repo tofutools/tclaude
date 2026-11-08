@@ -128,6 +128,28 @@ func releaseGroupTaskWaitersTx(tx taskTx, t *GroupTask, actor string, now time.T
 	return nil
 }
 
+// GroupTaskWaiters lists the ids of the blocked tasks waiting on id.
+func GroupTaskWaiters(id string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT id FROM group_tasks WHERE blocked_on = ? AND status = 'blocked' ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // GroupTaskDependents lists the tasks that depend on id.
 func GroupTaskDependents(id string) ([]*GroupTask, error) {
 	d, err := Open()

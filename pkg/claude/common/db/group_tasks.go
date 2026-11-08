@@ -708,6 +708,10 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 			}
 			for _, dep := range e.RmDeps {
 				changed = append(changed, "-after "+dep)
+				// A task no longer waits on a dependency it dropped.
+				if _, err := tx.Exec(`UPDATE group_tasks SET blocked_on = '' WHERE id = ? AND blocked_on = ?`, id, dep); err != nil {
+					return err
+				}
 			}
 		}
 		if len(changed) == 0 {

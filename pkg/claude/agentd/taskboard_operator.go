@@ -80,17 +80,49 @@ func requireTaskboardWaitOn(w http.ResponseWriter, g *db.AgentGroup, on string) 
 	return t, true
 }
 
-// mailTaskboardWaiters tells the assignees of the tasks that depend on t,
-// just closed as done, that it is done: a task that was blocked waiting on it
-// is open again; any other keeps its status. note is the closing comment.
-func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, note string) {
+// taskboardWaitersBefore lists, before t is closed, the tasks blocked
+// waiting on it; nil when there are none or the read fails.
+func taskboardWaitersBefore(t *db.GroupTask) []string {
+	if !t.Live() {
+		return nil
+	}
+	waiters, _ := db.GroupTaskWaiters(t.ID)
+	return waiters
+}
+
+// mailTaskboardWaiters tells the agents whose tasks wait on t that t was
+// closed (status done or dropped). waiters are the tasks that were blocked
+// waiting on t before the close. On done they were reopened ("unblocked");
+// an operator task's other blocked dependents stay blocked and are told
+// too. On a drop the waiters stay blocked. note is the closing reason.
+func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, status, note string, waiters []string, wasOperator bool) {
+	if len(waiters) == 0 && !(wasOperator && status == db.GroupTaskDone) {
+		return
+	}
+	released := map[string]bool{}
+	for _, id := range waiters {
+		released[id] = true
+	}
 	dependents, err := db.GroupTaskDependents(t.ID)
 	if err != nil {
 		return
 	}
 	by := taskboardCallerName(r)
+	how := "closed as done"
+	if status == db.GroupTaskDropped {
+		how = "dropped"
+	}
 	for _, d := range dependents {
 		if !d.Live() || d.AssigneeID == "" || d.AssigneeID == db.OperatorAssignee {
+			continue
+		}
+		var what string
+		switch {
+		case status == db.GroupTaskDone && released[d.ID] && d.Status == db.GroupTaskOpen:
+			what = "unblocked"
+		case d.Status == db.GroupTaskBlocked && (released[d.ID] || wasOperator):
+			what = "still blocked"
+		default:
 			continue
 		}
 		conv := activeGroupMember(g, d.AssigneeID)
@@ -98,19 +130,17 @@ func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, no
 			continue
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Task %s %q, which your task %s %q waits on, was closed as done by %s.\n", t.ID, t.Title, d.ID, d.Title, by)
+		fmt.Fprintf(&b, "Task %s %q, which your task %s %q waits on, was %s by %s.\n", t.ID, t.Title, d.ID, d.Title, how, by)
 		if note != "" {
 			fmt.Fprintf(&b, "\n%s\n", note)
 		}
-		what := "unblocked"
-		if d.Status == db.GroupTaskBlocked {
-			what = "still blocked"
-			fmt.Fprintf(&b, "\nYour task stays blocked: %s\nUnblock it: tclaude agent taskboard unblock %s\n", d.BlockReason, d.ID)
+		if what == "unblocked" {
+			b.WriteString("\nYour task is open again.\n")
 		} else {
-			fmt.Fprintf(&b, "\nYour task is open again.\n")
+			fmt.Fprintf(&b, "\nYour task stays blocked: %s\nUnblock it: tclaude agent taskboard unblock %s\n", d.BlockReason, d.ID)
 		}
 		fmt.Fprintf(&b, "Read the activity: tclaude agent taskboard activity %s\n", t.ID)
-		mailTaskboard(r, g, conv, taskboardSubject(g, d, what+": "+t.ID+" is done"), b.String())
+		mailTaskboard(r, g, conv, taskboardSubject(g, d, what+": "+t.ID+" is "+map[bool]string{true: "done", false: "dropped"}[status == db.GroupTaskDone]), b.String())
 	}
 }
 

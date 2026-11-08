@@ -320,12 +320,15 @@ there changes.
   and blocks `tk_mine` with the reason `waiting on operator: <title>`. The
   change to `tk_mine` is gated as any change of it is. `block tk_mine --on
   tk_…` does the same for an operator task that already exists.
-- **Auto-unblock.** When the operator closes the task as done, every task
-  blocked waiting on it (`--blocks` or `block --on`) is reopened, and history
-  records `unblocked: tk_… is done`. A task that depends on it but is blocked
-  for another reason stays blocked. The assignee of each task that depends on
-  it gets inbox mail, `[taskboard] unblocked: tk_… is done` or `[taskboard]
-  still blocked: tk_… is done`, with the operator's closing reason. Close it
+- **Auto-unblock.** When the task is closed as done, every task blocked
+  waiting on it (`--blocks` or `block --on`) is reopened, and history records
+  `unblocked: tk_… is done`. A task that depends on it but is blocked for
+  another reason stays blocked. Their assignees get inbox mail, `[taskboard]
+  unblocked: tk_… is done` or `[taskboard] still blocked: tk_… is done`, with
+  the closing reason. When the task is dropped instead, the tasks waiting on
+  it stay blocked and their assignees get `[taskboard] still blocked: tk_… is
+  dropped`. Removing the task from a waiting task's dependencies ends the
+  wait. Close it
   with a reason (`done --reason`, or the edit form) or a comment to answer;
   the operator's comments on it reach the agent that asked.
 - Nobody is mailed when the operator is given a task; it shows in the

@@ -91,6 +91,8 @@ func TestTaskboardOperatorAskBlocksAndUnblocks(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code, body)
 	code, body = h.post(h.worker, op.ID, "report", map[string]any{"outcome": "done"})
 	assert.Equal(t, http.StatusConflict, code, body)
+	code, body = h.post(h.worker, op.ID, "status", map[string]any{"status": "done"})
+	assert.Equal(t, http.StatusForbidden, code, "the agent that asked does not answer its own question: %s", body)
 
 	// The operator closes it as done, with a note.
 	code, body = h.post("", op.ID, "status", map[string]any{"status": "done", "reason": "use amber"})
@@ -128,9 +130,23 @@ func TestTaskboardOperatorTwoStepAndPermissions(t *testing.T) {
 	assert.Equal(t, op.ID, got.BlockedOn)
 	assert.Contains(t, got.DependsOn, op.ID)
 
-	// The worker that asked may withdraw (drop) its question.
+	// The worker that asked may withdraw (drop) its question; its task
+	// stays blocked, and it is told.
 	code, body = h.post(h.worker, op.ID, "status", map[string]any{"status": "dropped", "reason": "figured it out"})
 	require.Equal(t, http.StatusOK, code, body)
+	rec = h.call("", http.MethodGet, "/v1/taskboard/tasks/"+mine.ID, nil)
+	assert.Equal(t, "blocked", tbDecodeOperatorTask(t, rec.Code, rec.Body.String(), http.StatusOK).Status)
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "[taskboard] still blocked: "+op.ID+" is dropped")
+
+	// An ordinary task closed as done mails nobody about the tasks queued
+	// after it.
+	first := h.add("first", "next")
+	rec = h.call(h.peer, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "after first", "after": []string{first.ID}})
+	tbDecodeOperatorTask(t, rec.Code, rec.Body.String(), http.StatusCreated)
+	before := len(tbInboxSubjects(t, h.peer))
+	code, body = h.post("", first.ID, "status", map[string]any{"status": "done"})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Len(t, tbInboxSubjects(t, h.peer), before)
 
 	// Handing the operator a task someone else holds needs taskboard.assign.
 	idea := h.add("someone else's", "")

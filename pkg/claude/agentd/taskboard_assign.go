@@ -342,6 +342,10 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	var waiters []string
+	if outcome == db.GroupTaskOutcomeSucceeded {
+		waiters = taskboardWaitersBefore(t)
+	}
 	rep, err := db.ReportGroupTask(t.ID, self, outcome, note, taskboardActor(r))
 	if errors.Is(err, db.ErrGroupTaskNotAssignee) {
 		setAuditDetail(r, "refused: not the assignee of "+t.ID)
@@ -360,6 +364,9 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	if !rep.Repeated {
 		taskboardNotifyAssigner(r, g, t, rep, outcome, note)
+		if outcome == db.GroupTaskOutcomeSucceeded {
+			mailTaskboardWaiters(r, g, rep.Task, db.GroupTaskDone, note, waiters, false)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": views[0], "repeated": rep.Repeated, "blocked": rep.Blocked})
 }
