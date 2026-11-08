@@ -419,7 +419,7 @@ editor has the node inspector, live validation, undo/redo, snippets and
 versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three
 things there are specific to processes:
 
-- **Co-design with a scribe.** The editor toolbar's *Get help ▾* brings an
+- **Co-design with a scribe.** The editor header's *Get help ▾* brings an
   agent in: *New helper* starts the template's scribe (or reopens the one
   already scoped to it) after you confirm its grant, and *Ask an existing
   agent…* briefs one already running, granting only the process-template
@@ -434,8 +434,13 @@ things there are specific to processes:
   save an unfinished template too: graph and semantic validation errors are
   advisory on save (the draft just cannot run yet), so each step it makes
   reaches your canvas as it goes.
-- **In an overlay window or a window of its own.** *Open in overlay*
-  and *Open in separate window*, beside *← templates*, move
+- **The editor's menus.** The header carries the drawing board's menu bar:
+  **File** has Save, *Export › Workflow file (.pwf)…*, *Template settings…*
+  and *Params…*; **Edit** has Undo, Redo and *Auto layout* (tidy the graph,
+  and the flow's direction); **View** has the node palette, *Commands…* and
+  the moves below. *Get help ▾* and Save stay beside the menus.
+- **In an overlay window or a window of its own.** **View** › *Open in
+  overlay* and *Open in separate window* move
   the editor over the dashboard or into a browser window of its own, so you
   can edit beside a chat or a drawing board. It moves as it is: unsaved edits, undo
   and redo, and the version a save is checked against go with it, and
@@ -458,8 +463,8 @@ things there are specific to processes:
   type a new name and *＋ New process* stores a blank template and opens it.
   `/collab/processes/<id>` opens that template's tab, and
   `/collab/processes` opens the list. A process tab reorders, joins tab
-  groups and drags off the strip like a drawing board tab, and its bar and right-click
-  menu have *Open in overlay*, *Open in the Processes tab* and *Open in
+  groups and drags off the strip like a drawing board tab, and its **View**
+  menu and right-click menu have *Open in overlay*, *Open in the Processes tab* and *Open in
   separate window*; an overlay tab has *Open in the Collab tab*. The editor
   moves as it does between the other places, draft and all, and an editor open
   in the Processes tab moves to the strip when you pick it from **Process…**.
