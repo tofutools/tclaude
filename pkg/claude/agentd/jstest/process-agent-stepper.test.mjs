@@ -119,7 +119,7 @@ test('an agent-scoped run opens as the stepper, toggles to the graph, and promot
   const root = mounted.container;
   assert.ok(root.querySelector('[data-process-stepper]'), 'the stepper replaces the graph');
   assert.ok(!root.querySelector('.pk-mini-graph'));
-  assert.match(root.querySelector('[data-process-bounds]').textContent, /webshop-search-index-v2.*dev-net.*2 grants.*\$ 1\.23 spent.*survives reincarnate/s);
+  assert.match(root.querySelector('[data-process-bounds]').textContent, /webshop-search-index-v2.*dev-net.*2 grants.*\$1\.23 spent.*survives reincarnate/s);
   assert.match(root.querySelector('[data-process-step="backfill"]').textContent, /← this conversation/);
   assert.ok(root.querySelector('[data-process-step="swap"] .pk-stepper-step-warning'));
   assert.equal(root.querySelector('[data-process-step="verify"] .pk-stepper-step-warning'), null);

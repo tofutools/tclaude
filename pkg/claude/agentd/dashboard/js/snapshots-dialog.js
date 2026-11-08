@@ -12,16 +12,14 @@ import { downloadBlob } from './download.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { GroupCombobox } from './group-picker.js';
 import { BoardCombobox, ModelCombobox, namedItems } from './registry-picker.js';
+import { binarySize } from './cell-format.js';
 
 const html = htm.bind(h);
 
 function message(error) { return error?.message || String(error); }
 
 function bytesText(n) {
-  if (!n) return '—';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return n ? binarySize(n) : '—';
 }
 
 function everyText(seconds) {

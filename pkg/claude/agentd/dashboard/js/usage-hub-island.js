@@ -190,7 +190,7 @@ function Overview({ quota, costs, wizard, open }) {
     <h3 class="usage-ov-heading">${w('Quota', 'Reserves')}
       <a href="/usage/quota" onClick=${goQuota}>${w('full forecasts', 'full prophecies')} ›</a></h3>
     ${quota.request.phase === 'error' && !quotaLoaded
-      ? html`<div class="empty">${w('Quota history failed to load', 'The reserves could not be read')}: ${quota.request.error}</div>`
+      ? html`<div role="alert" class="island-error">${w('Quota history failed to load', 'The reserves could not be read')}: ${quota.request.error}</div>`
       : !quotaLoaded ? html`<div class="empty">Loading…</div>`
         : summaries.length
           ? html`<div class="usage-ov-quota-grid">${summaries.map((item) =>
@@ -199,7 +199,7 @@ function Overview({ quota, costs, wizard, open }) {
     <h3 class="usage-ov-heading">${w('Spend', 'Coffers')} · ${spanLabel(costs)}
       <a href="/usage/costs" onClick=${goCosts}>${w('all costs', 'the full ledger')} ›</a></h3>
     ${costs.request.phase === 'error' && !costsLoaded
-      ? html`<div class="empty">${w('Costs failed to load', 'The ledger could not be read')}: ${costs.request.error}</div>`
+      ? html`<div role="alert" class="island-error">${w('Costs failed to load', 'The ledger could not be read')}: ${costs.request.error}</div>`
       : !costsLoaded ? html`<div class="empty">Loading…</div>`
         : html`<div class="usage-ov-spend">
           <${SpendChart} costs=${costs} label=${spanLabel(costs)} />

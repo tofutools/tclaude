@@ -3,17 +3,13 @@
 // size as people read it, and a check against a dialog's limits. No Preact,
 // so model code (agent-spawn-model.js) can use them too.
 
+import { attachmentSize } from './human-attachments.js';
 export function attachKey(file) {
   return `${file?.name || ''}|${file?.size || 0}|${file?.type || ''}`;
 }
 
 export function formatAttachmentSize(size) {
-  const value = Number(size) || 0;
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
-  }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return attachmentSize(size);
 }
 
 // pastedName names a pasted file that has none (a screenshot): pasted-<n>

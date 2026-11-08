@@ -1,3 +1,4 @@
+import { binarySize } from './cell-format.js';
 export const LOG_PAGE_SIZES = [50, 100, 250, 500];
 
 export function levelKey(level) {
@@ -20,12 +21,7 @@ export function fieldsText(fields) {
 }
 
 export function fmtInt(value) { return (Number(value) || 0).toLocaleString(); }
-export function fmtBytes(value) {
-  const bytes = Number(value) || 0;
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
-}
+export function fmtBytes(value) { return binarySize(Number(value) || 0); }
 
 export function pageCount(total, pageSize) {
   return Math.max(1, Math.ceil((Number(total) || 0) / (Number(pageSize) || 100)));
