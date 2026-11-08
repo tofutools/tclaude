@@ -20,7 +20,7 @@
 // taskboard.write (or unrestricted trust).
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
@@ -45,7 +45,8 @@ import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { FilesCount } from './groups-taskboard-files.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
-import { agentLink } from './cross-links.js';
+import { agentLink, jumpToTask } from './cross-links.js';
+import { closeTaskRoute, copyLinkItem, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
 import {
   COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -294,6 +295,7 @@ export function canClose(task, actions) {
 // ✓ Next on an idea, ↺ Reopen in history), ✎ Edit, and ⋯ for the rest
 // (rowMenu). Each names its CLI verb in its title.
 function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
+  const board = useContext(TaskLink);
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const go = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -308,7 +310,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns })}
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board })}
     glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
@@ -316,7 +318,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const run = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -405,6 +407,7 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
     items.push(item('drop', 'Drop…', 'taskboard drop: take it off the board (park it in the tracker first)', { danger: true, run: () => onForm('drop') }));
   }
   items.push(...archiveItems(task, actions));
+  if (board) items.push(copyLinkItem(task.id, board));
   return items;
 }
 
@@ -799,12 +802,46 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [editing, setEditing] = useState('');
   const [reasoning, setReasoning] = useState(null);
   const [answering, setAnswering] = useState('');
+  // The edit form is the task's link (task-route.js): opening it records a
+  // history step, closing it steps back, and a link or Back/Forward opens
+  // or closes it here.
+  const node = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
+  const routeOf = (id) => ({ taskId: id, node, group: group.name });
+  const board = useMemo(() => ({ group: group.name, node }), [group.name, node]);
+  const openEdit = (id) => { setEditing(id); openTaskRoute(routeOf(id)); };
+  const closeEdit = () => { if (editing) closeTaskRoute(routeOf(editing)); setEditing(''); };
   const onForm = (id, mode) => {
-    if (mode === 'edit') setEditing(id);
+    if (mode === 'edit') openEdit(id);
     else if (mode === 'answer') setAnswering(id);
     else setReasoning(mode ? { id, kind: mode } : null);
   };
-  const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
+  const listed = (id) => [...tasks, ...(entry.closed || [])].find((task) => task.id === id) || null;
+  // A linked task the lists do not hold (past the board's cap, or
+  // archived) is read on its own.
+  const [fetched, setFetched] = useState(null);
+  const want = taskRoute.value;
+  const wanted = want && want.group === group.name && (want.node || '') === node ? want : null;
+  const wantedListed = !!(wanted && listed(wanted.taskId));
+  const jumped = useRef('');
+  useEffect(() => {
+    if (!wanted) {
+      jumped.current = '';
+      // Back (or a link to another task) closed the form the link opened.
+      if (editing && !sameTask(want, routeOf(editing))) setEditing('');
+      return undefined;
+    }
+    if (editing !== wanted.taskId) setEditing(wanted.taskId);
+    let live = true;
+    if (!wantedListed && fetched?.id !== wanted.taskId && readApi?.task) {
+      readApi.task(wanted.taskId).then((task) => { if (live && task?.id === wanted.taskId) setFetched(task); }).catch(() => {});
+    }
+    if (jumped.current !== wanted.taskId) {
+      jumped.current = wanted.taskId;
+      jumpToTask({ shown: group.shownName || group.name, group: group.name, node, taskId: wanted.taskId });
+    }
+    return () => { live = false; };
+  }, [want, wantedListed]);
+  const edited = editing && (listed(editing) || (fetched?.id === editing ? fetched : null));
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
   // The band heads every idea-stage row the filter leaves (a blocked or
   // assigned idea is not in the "ideas" state), so no idea passes for a queue
@@ -831,14 +868,14 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
     me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
-    nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${() => setEditing('')} onSaved=${() => { void actions.refresh(); }} />`;
+    nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${closeEdit} onSaved=${() => { void actions.refresh(); }} />`;
   const reasonTask = reasoning && actions && tasks.find((task) => task.id === reasoning.id);
   const reasonDialog = reasonTask && html`<${TaskReasonDialog} key=${`${reasonTask.id}-${reasoning.kind}`} kind=${reasoning.kind} task=${reasonTask}
     busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}
     onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
       (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
   const answerTask = answering && tasks.find((task) => task.id === answering);
-  return html`<div class="tb-board" data-taskboard=${name}>
+  return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name}>
     ${editDialog}
     ${reasonDialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
@@ -846,8 +883,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
-      onEdit=${(id) => setEditing(id)} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
-      onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
+      onEdit=${openEdit} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
+      onEdit=${openEdit} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
       <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(hidden.filter((state) => state === 'done' || state === 'dropped'))}>show all<//></div>`}
@@ -856,7 +893,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
     </tbody></table>`}
-  </div>`;
+  </div><//>`;
 }
 
 const VIEW_PREF = (group) => `tclaude.dash.groups.taskboard.view.${group}`;

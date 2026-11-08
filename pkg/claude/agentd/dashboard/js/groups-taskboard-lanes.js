@@ -29,7 +29,7 @@
 // are this viewer's own (groups-taskboard-lanes-layout.js).
 
 import { h } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
@@ -44,6 +44,7 @@ import { RowMenu } from './row-menu.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
+import { copyLinkItem, TaskLink } from './task-route.js';
 import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { AnswerFor, QuestionTag, askerOf, questionOpen } from './groups-taskboard-answer.js';
@@ -396,8 +397,11 @@ function cardHint(task) {
 // menu, when given, is the card's ⋯ items (Archive): its ⋯ shows on hover,
 // and a right-click opens it. onAnswer, when given, puts Answer… on a
 // question still to answer.
-export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu = null, onAnswer = null }) {
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null }) {
   const done = task.status === 'done';
+  // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
+  const board = useContext(TaskLink);
+  const menu = board && onEdit ? [...(given || []), copyLinkItem(task.id, board)] : given;
   return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}

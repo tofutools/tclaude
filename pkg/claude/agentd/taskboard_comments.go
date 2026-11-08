@@ -353,7 +353,7 @@ func mailTaskboardComment(r *http.Request, g *db.AgentGroup, t *db.GroupTask, c 
 	fmt.Fprintf(&b, "Reply: tclaude agent taskboard comment add %s \"…\"\nThe whole stream: tclaude agent taskboard activity %s\n", t.ID, t.ID)
 	for _, id := range to {
 		if conv, _ := db.CurrentConvForAgent(id); conv != "" {
-			mailTaskboard(r, g, conv, taskboardSubject(g, t, "comment by "+by), b.String())
+			mailTaskboard(r, g, conv, taskboardSubject(g, t, "comment by "+by), taskboardLinked(g, t, b.String()))
 		}
 	}
 }

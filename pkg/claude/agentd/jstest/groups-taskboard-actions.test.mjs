@@ -79,10 +79,10 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000003'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…', 'Copy link']);
 
   await click(button('tk_00000004', 'Next'));
   await click(button('tk_00000001', 'Done'));
@@ -388,13 +388,13 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   api.can = { assign: false };
   const { cluster, menu } = await mountBoard(t, 'tba-noassign', { api });
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…', 'Copy link']);
   // Closing someone's task is the assignee's or an assigner's (the status
   // route refuses it otherwise): no Done or Drop on an assigned row.
   assert.deepEqual(cluster('tk_00000002'), ['Edit']);
-  assert.deepEqual(await menu('tk_00000002'), ['Block…']);
+  assert.deepEqual(await menu('tk_00000002'), ['Block…', 'Copy link']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…', 'Copy link']);
 });
 
 test('a task archives from its ⋯ or a right-click, and the history line archives the done tasks', async (t) => {
