@@ -524,3 +524,16 @@ test('a clone left pending is finished on dragend; a real drop, a plain move or 
   assert.equal(calls.length, 2, 'released or Escaped: nothing runs');
   assert.equal(confirms.length, 2);
 });
+
+test('a ref linked on this node\'s awb server goes to another node as its id', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { transferRef } = await harness.importDashboardModule('js/groups-taskboard-transfer.js');
+  assert.deepEqual(transferRef({ kind: 'awb', url: 'http://localhost:7777/#/issues/tcl-a1b2c3', label: 'tcl-a1b2c3', local: true, id: 'tcl-a1b2c3' }),
+    { ref: 'awb:tcl-a1b2c3', refLabel: '' });
+  assert.deepEqual(transferRef({ kind: 'awb', url: 'http://localhost:7777/#/issues/tcl-a1b2c3', label: 'the plan', local: true, id: 'tcl-a1b2c3' }),
+    { ref: 'awb:tcl-a1b2c3', refLabel: 'the plan' }, 'a custom label goes with it');
+  assert.deepEqual(transferRef({ kind: 'github', url: 'https://github.com/o/r/issues/3', label: 'o/r#3' }),
+    { ref: 'https://github.com/o/r/issues/3', refLabel: 'o/r#3' });
+  assert.deepEqual(transferRef({ kind: 'linear', label: 'LIN-3' }), { ref: 'LIN-3', refLabel: '' });
+  assert.deepEqual(transferRef(null), { ref: '', refLabel: '' });
+});

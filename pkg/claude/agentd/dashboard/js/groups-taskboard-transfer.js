@@ -371,6 +371,16 @@ export async function runTransfer({ task, group, tasks = [], actions, to, stage,
   return out;
 }
 
+
+// transferRef is the ref a task takes to another node. A ref linked on this
+// node's awb server (ref.local) goes as its id, for that node to link on its
+// own; any other goes as its URL (or bare id) and label.
+export function transferRef(ref) {
+  if (!ref) return { ref: '', refLabel: '' };
+  if (ref.local && ref.id) return { ref: `awb:${ref.id}`, refLabel: ref.label && ref.label !== ref.id ? ref.label : '' };
+  return { ref: ref.url || ref.label || '', refLabel: ref.url ? (ref.label || '') : '' };
+}
+
 // runCrossTransfer asks, then moves or clones the task to group `to` on
 // node `node`: create there first, then drop the original here.
 export async function runCrossTransfer({ task, group, actions, to, node, nodeName, fromNodeName = '', stage, clone }) {
@@ -391,8 +401,7 @@ export async function runCrossTransfer({ task, group, actions, to, node, nodeNam
     // leaves the task on both nodes.
     if (!clone) await api.movedAway(task.id, null, { check: true });
     const created = await target.transferIn(to, {
-      title: task.title, body: task.body || '', ref: task.ref?.url || task.ref?.label || '',
-      refLabel: task.ref?.url ? (task.ref?.label || '') : '', stage, clone,
+      title: task.title, body: task.body || '', ...transferRef(task.ref), stage, clone,
       origin: { node: fromNodeName, group: group.name, task: task.id },
     });
     if (clone) return { created };

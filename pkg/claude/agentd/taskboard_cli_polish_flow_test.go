@@ -91,6 +91,12 @@ func TestTaskboardCLIReadsLikeTheDashboard(t *testing.T) {
 	rc, out, errOut = run("show", q1.ID)
 	require.Equal(t, 0, rc, errOut)
 	assert.Contains(t, out, "  ref:     awb tcl-abcdef\n")
+	// --resolve-ref with no awb server or Linear proxy configured leaves it
+	// as it is, and is refused beside --clear-ref.
+	rc, _, errOut = run("edit", q1.ID, "--resolve-ref")
+	require.Equal(t, 0, rc, errOut)
+	rc, _, _ = run("edit", q1.ID, "--resolve-ref", "--clear-ref")
+	assert.NotEqual(t, 0, rc)
 	assert.Contains(t, out, "  last report: failed — CI image lacks bwrap\n")
 
 	// The summary breaks needs-you down.

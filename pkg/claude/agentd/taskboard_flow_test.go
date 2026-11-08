@@ -29,6 +29,8 @@ type tbTask struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url"`
 		Label string `json:"label"`
+		Local bool   `json:"local"`
+		ID    string `json:"id"`
 	} `json:"ref"`
 }
 

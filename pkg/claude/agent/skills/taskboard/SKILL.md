@@ -52,7 +52,7 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   them; `tclaude agent taskboard attachments tk_… --save <dir>` writes them out
   for you to read.
 - Talk about a task on the task itself: `tclaude agent taskboard comment add tk_… "markdown"`
-  (`--attach f`, `--file note.md`). `activity tk_…` shows the comments and every change,
+  (`--body "…"`, `--file note.md`, `--stdin`, `--attach f`). `activity tk_…` shows the comments and every change,
   oldest first. A `[taskboard] … comment by …` mail means someone commented on a task you hold
   or created; answer with `comment add`. You can edit or remove only your own comments
   (`comment edit|rm tk_… #id`).
@@ -118,6 +118,7 @@ comments on it come to you as mail too.
 
 ```bash
 tclaude agent taskboard add <group> "title" [--ref tcl-a1b2c3|LIN-12|URL] [--next] [--body-file brief.md] [--attach shot.png]…
+tclaude agent taskboard edit tk_… --resolve-ref   # link a Linear (or awb) ref that has no link yet
 tclaude agent taskboard add <group> "title" --assignee <agent>      # starts in progress (assigned); --blocked "why" starts blocked; --done logs finished work
 tclaude agent taskboard attach tk_… <file>…   ;   detach tk_… <name>   # at most 10 files, 4 MiB each
 tclaude agent taskboard move tk_… --top | --before tk_… | --after tk_…

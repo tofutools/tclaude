@@ -183,10 +183,25 @@ func taskboardCommentCmd() *cobra.Command {
 
 // readCommentBody is the comment's text: the argument, or --file (- for
 // stdin), not both.
-func readCommentBody(arg, file string) (string, error) {
+// --body and --stdin are the spellings agent message and reply take: --body
+// is the argument as a flag, --stdin is --file -.
+func readCommentBody(arg, flag, file string, stdin bool) (string, error) {
+	given := 0
+	for _, set := range []bool{arg != "", flag != "", file != "", stdin} {
+		if set {
+			given++
+		}
+	}
+	if given > 1 {
+		return "", errors.New("give the comment one way: an argument, --body, --file or --stdin")
+	}
+	if flag != "" {
+		arg = flag
+	}
+	if stdin {
+		file = "-"
+	}
 	switch {
-	case arg != "" && file != "":
-		return "", errors.New("give the comment as an argument or with --file, not both")
 	case file == "-":
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 16<<10+1))
 		return string(b), err
@@ -194,7 +209,7 @@ func readCommentBody(arg, file string) (string, error) {
 		b, err := os.ReadFile(file)
 		return string(b), err
 	case arg == "":
-		return "", errors.New("give the comment as an argument or with --file")
+		return "", errors.New("give the comment as an argument, or with --body, --file or --stdin")
 	}
 	return arg, nil
 }
@@ -210,6 +225,8 @@ type taskboardCommentAddParams struct {
 	Task     string   `pos:"true" help:"Task id (tk_…)"`
 	Body     string   `pos:"true" optional:"true" help:"The comment (Markdown); or use --file"`
 	File     string   `long:"file" optional:"true" help:"Read the comment from this file (- for stdin)"`
+	BodyFlag string   `long:"body" optional:"true" help:"The comment, as a flag (as agent message takes it)"`
+	Stdin    bool     `long:"stdin" help:"Read the comment from stdin (same as --file -)"`
 	Key      string   `long:"key" optional:"true" help:"An idempotency key: the same key and body again returns the first comment, not a second (default: a fresh one)"`
 	Attach   []string `long:"attach" optional:"true" help:"Files to add to the comment (at most 10, 4 MiB each)"`
 	Peer     string   `long:"peer" optional:"true" help:"A task on a linked node's board, under the grants it gave this node (taskboard.write)"`
@@ -235,7 +252,7 @@ type taskboardCommentAnswer struct {
 }
 
 func runTaskboardCommentAdd(p *taskboardCommentAddParams, stdout, stderr io.Writer) int {
-	body, err := readCommentBody(p.Body, p.File)
+	body, err := readCommentBody(p.Body, p.BodyFlag, p.File, p.Stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
@@ -280,6 +297,8 @@ type taskboardCommentEditParams struct {
 	Comment  string `pos:"true" help:"The comment's id (#N, as taskboard comment ls lists it)"`
 	Body     string `pos:"true" optional:"true" help:"The new body (Markdown); or use --file"`
 	File     string `long:"file" optional:"true" help:"Read the new body from this file (- for stdin)"`
+	BodyFlag string `long:"body" optional:"true" help:"The new body, as a flag"`
+	Stdin    bool   `long:"stdin" help:"Read the new body from stdin (same as --file -)"`
 	Peer     string `long:"peer" optional:"true" help:"A task on a linked node's board, under the grants it gave this node (taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -309,7 +328,7 @@ func runTaskboardCommentEdit(p *taskboardCommentEditParams, stdout, stderr io.Wr
 	path, err := commentPath(p.Task, p.Comment)
 	var body string
 	if err == nil {
-		body, err = readCommentBody(p.Body, p.File)
+		body, err = readCommentBody(p.Body, p.BodyFlag, p.File, p.Stdin)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

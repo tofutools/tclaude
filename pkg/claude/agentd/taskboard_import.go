@@ -297,11 +297,7 @@ func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, res
 			return fallback, "", "no awb proxy is configured"
 		}
 		path, body = "/v1/awb/issue/show", map[string]any{"id": label}
-		if cfg.Agent != nil && cfg.Agent.AWBProxy != nil {
-			if base, fault := validateAWBBaseURL(cfg.Agent.AWBProxy.URL); fault == nil {
-				resolvedURL = base + "/#/issues/" + strings.ToLower(label)
-			}
-		}
+		resolvedURL = awbIssueURL(label)
 	case "linear":
 		if !cfg.LinearProxyConfigured() && strings.TrimSpace(os.Getenv("LINEAR_API_KEY")) == "" {
 			return fallback, "", "no Linear proxy is configured"
