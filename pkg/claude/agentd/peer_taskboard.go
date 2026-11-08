@@ -110,13 +110,15 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	rules["POST /v1/taskboard/tasks/{id}/move-to-group"] = moveTo
 	group("GET /v1/groups/{name}/taskboard/writers", read)
 	group("POST /v1/groups/{name}/taskboard/writers", peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true})
-	// Custom stage columns (taskboard_columns.go): read with the board,
-	// changed under taskboard.manage.
+	// Columns (taskboard_columns.go): read with the board, changed under
+	// taskboard.columns, which taskboard.manage covers.
 	group("GET /v1/groups/{name}/taskboard/columns", read)
-	manage := peerViewRule{feature: "groups.taskboard.manage", requires: PermTaskboardManage, group: true}
-	group("POST /v1/groups/{name}/taskboard/columns", manage)
-	group("PATCH /v1/groups/{name}/taskboard/columns/{slug}", manage)
-	group("DELETE /v1/groups/{name}/taskboard/columns/{slug}", manage)
+	columns := peerViewRule{feature: "groups.taskboard.columns", requires: PermTaskboardColumns,
+		orGrants: []string{PermTaskboardManage}, group: true}
+	group("POST /v1/groups/{name}/taskboard/columns", columns)
+	group("PATCH /v1/groups/{name}/taskboard/columns/{slug}", columns)
+	group("DELETE /v1/groups/{name}/taskboard/columns/{slug}", columns)
+	group("POST /v1/groups/{name}/taskboard/columns/{slug}/state", columns)
 }
 
 // taskboardPeerAuthorKey carries, on an unrestricted peer's request (which
@@ -219,7 +221,7 @@ func servePeerTaskboardGroup(w http.ResponseWriter, r *http.Request, v *peerView
 // peerTaskboardSlugs are the board's peer grants that let the peer read the
 // group's board. taskboard.transfer is not one: moving tasks into a group
 // does not show its board.
-var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage}
+var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardColumns}
 
 // peerTaskboardImpliedGates: a peer that writes, assigns on or manages a
 // group's board also reads it, so the board's read gate opens to those

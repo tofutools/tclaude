@@ -156,6 +156,10 @@ func taskboardRefKey(kind, refURL, label string) string {
 // handleTaskboardImport creates one task per ref or line. The answer is 200
 // with a result per item in input order; created counts the tasks added.
 func handleTaskboardImport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, refs, lines []string, stage string) {
+	if stage == "" && taskboardIdeasHidden(g) {
+		// A board that hides its Ideas imports into next (tk_bf5d2b02).
+		stage = db.GroupTaskStageNext
+	}
 	items, results := prepareTaskboardImport(refs, lines)
 	if len(items) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to import: give refs or non-empty lines")

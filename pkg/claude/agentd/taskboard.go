@@ -36,6 +36,10 @@ const (
 	PermTaskboardRead   = "taskboard.read"
 	PermTaskboardWrite  = "taskboard.write"
 	PermTaskboardManage = "taskboard.manage"
+	// PermTaskboardColumns manages a board's columns: add, rename, reorder,
+	// remove, hide, show, cordon and uncordon (taskboard_columns.go).
+	// taskboard.manage implies it (permissionUmbrellaFor).
+	PermTaskboardColumns = "taskboard.columns"
 	// PermTaskboardTransfer moves or clones a task into a group's board from
 	// another group (tclaude agent taskboard move-to-group).
 	PermTaskboardTransfer = "taskboard.transfer"
@@ -810,6 +814,9 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		return
 	}
 	out := map[string]any{"group": g.Name, "tasks": views, "locked": lock.Locked, "columns": columns}
+	if builtins := taskboardBuiltinColumnStates(g); len(builtins) > 0 {
+		out["builtin_columns"] = builtins
+	}
 	if lock.Locked {
 		out["writers"] = lock.Writers
 		// writer_names reads the same list as a person would say it.
@@ -965,6 +972,11 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			return
 		}
 		err = bad
+	}
+	// A board that hides its Ideas starts a new task in next unless the
+	// caller names the stage (tk_bf5d2b02).
+	if err == nil && body.Stage == "" && taskboardIdeasHidden(g) {
+		body.Stage = db.GroupTaskStageNext
 	}
 	status := strings.TrimSpace(body.Status)
 	reason := strings.TrimSpace(body.BlockReason)

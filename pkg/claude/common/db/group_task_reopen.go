@@ -61,6 +61,9 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 				return taskConflict("invalid_arg", "the board has no column %s", in.Column)
 			}
 			columnLabel = cols[i].Label
+			if err := refuseCordonedColumnTx(tx, t.GroupID, in.Column, columnLabel); err != nil {
+				return err
+			}
 			in.Stage = GroupTaskStageNext
 		}
 		// intoColumn puts the reopened task in its column, last.
