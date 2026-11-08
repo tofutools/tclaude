@@ -194,6 +194,73 @@ func TestRenderPNGStopsWhenTheContextEnds(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+// A translucent element composes once, as the editor's opacity does: where
+// its strokes, its fill and its arrowhead overlap it is no darker than
+// elsewhere (tk_403ecc01).
+func TestRenderPNGAppliesOpacityPerElement(t *testing.T) {
+	half := 50.0
+	els := []Element{
+		// A zigzag that crosses itself, thick, so its segments overlap.
+		{ID: "z", Type: "line", Points: [][]float64{{0, 0}, {100, 100}, {100, 0}, {0, 100}}, StrokeWidth: 20, StrokeColor: "#000000", Opacity: &half},
+		// A box whose stroke lies over its fill.
+		{ID: "b", Type: "rectangle", X: 200, Y: 0, Width: 100, Height: 100, StrokeWidth: 10, StrokeColor: "#000000", BackgroundColor: "#000000", Opacity: &half},
+		// An arrow, whose head is drawn over its shaft's end.
+		{ID: "a", Type: "arrow", X: 400, Y: 50, Points: [][]float64{{0, 0}, {100, 0}}, StrokeWidth: 6, StrokeColor: "#000000", Opacity: &half},
+	}
+	img, err := Render(context.Background(), els, Options{Scale: 1})
+	require.NoError(t, err)
+	keep(t, "opacity.png", img.Data)
+	decoded, err := png.Decode(bytes.NewReader(img.Data))
+	require.NoError(t, err)
+	grey := func(x, y float64) uint32 {
+		r, _, _, _ := decoded.At(int(x-img.Crop.X), int(y-img.Crop.Y)).RGBA()
+		return r >> 8
+	}
+	assert.InDelta(t, 0x80, grey(50, 50), 2, "where the zigzag crosses itself")
+	assert.InDelta(t, 0x80, grey(25, 25), 2, "along one stroke")
+	assert.InDelta(t, 0x80, grey(200, 50), 2, "where the box's stroke lies over its fill")
+	assert.InDelta(t, 0x80, grey(250, 50), 2, "the fill alone")
+	assert.InDelta(t, 0x80, grey(450, 50), 2, "the arrow's shaft")
+	assert.InDelta(t, 0x80, grey(500, 50), 2, "the arrow's tip, under its head")
+	assert.Equal(t, uint32(0xff), grey(150, 50), "the paper between them")
+}
+
+// A translucent element's layer covers all it draws: text at half opacity
+// is its opaque self, half way to the paper, everywhere, even where the
+// image cuts it off.
+func TestRenderPNGTranslucentLayerCoversTheElement(t *testing.T) {
+	half := 50.0
+	text := Element{ID: "t", Type: "text", X: 0, Y: 0, Text: "Wide WAVY glyphs, gjpqy\nsecond line", FontSize: 40, FontStyle: "italic", StrokeColor: "#000000"}
+	for name, region := range map[string]*Box{"whole": nil, "cut": {X: 30, Y: 10, Width: 120, Height: 40}} {
+		t.Run(name, func(t *testing.T) {
+			opaque, err := Render(context.Background(), []Element{text}, Options{Scale: 1, Region: region})
+			require.NoError(t, err)
+			faded := text
+			faded.Opacity = &half
+			translucent, err := Render(context.Background(), []Element{faded}, Options{Scale: 1, Region: region})
+			require.NoError(t, err)
+			a, err := png.Decode(bytes.NewReader(opaque.Data))
+			require.NoError(t, err)
+			b, err := png.Decode(bytes.NewReader(translucent.Data))
+			require.NoError(t, err)
+			require.Equal(t, a.Bounds(), b.Bounds())
+			inked := 0
+			for y := a.Bounds().Min.Y; y < a.Bounds().Max.Y; y++ {
+				for x := a.Bounds().Min.X; x < a.Bounds().Max.X; x++ {
+					full, _, _, _ := a.At(x, y).RGBA()
+					got, _, _, _ := b.At(x, y).RGBA()
+					want := 255 - (255-float64(full>>8))/2
+					if full>>8 < 200 {
+						inked++
+					}
+					require.InDelta(t, want, float64(got>>8), 2, "pixel %d,%d", x, y)
+				}
+			}
+			assert.Positive(t, inked, "the text is drawn")
+		})
+	}
+}
+
 // A dashed line keeps its pattern where it leaves the image and comes back.
 func TestDashesKeepTheirPhaseOffCanvas(t *testing.T) {
 	els := []Element{{ID: "d", Type: "line", X: 0, Y: 0, Points: [][]float64{{0, 0}, {2000, 0}}, StrokeStyle: "dashed", StrokeWidth: 2}}
