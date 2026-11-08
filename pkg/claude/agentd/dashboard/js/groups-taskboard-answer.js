@@ -87,7 +87,7 @@ export function QuestionCard({ task, question, askedBy = '', onAnswer = null, on
   const q = question;
   return html`<div class="ui-card tb-card tb-question-card" data-question=${`${task.id}#${q.n}`}>
     <div class="tb-question-on">❓ ${askedBy || 'an agent'} asks on${' '}
-      ${onOpen ? html`<button type="button" class="tb-question-task" title="Open the task" onClick=${(event) => { event.stopPropagation(); onOpen(task.id); }}>${task.title}</button>`
+      ${onOpen ? html`<${Button} size="sm" variant="link" class="tb-question-task" title="Open the task" onClick=${(event) => { event.stopPropagation(); onOpen(task.id); }}>${task.title}<//>`
         : html`<span class="tb-question-task">${task.title}</span>`}</div>
     <div class="tb-question-title">${q.title || task.title}</div>
     <div class="tb-card-meta"><span class="ui-tag ui-tag-accent tb-question-tag">❓ Q${q.n} · ${questionKind(q)}</span>${

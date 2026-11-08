@@ -244,7 +244,7 @@ func TestTaskboardQuestionTaskReopenWithdrawText(t *testing.T) {
 
 	rec = h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Work"})
 	work := h.task(rec, http.StatusCreated)
-	for _, bad := range []map[string]any{{"title": "flip ‮ it"}, {"title": "ok", "body": "esc \x1b[31m red"}} {
+	for _, bad := range []map[string]any{{"title": "flip \u202e it"}, {"title": "ok", "body": "esc \x1b[31m red"}} {
 		code, body = h.askOn(h.worker, work.ID, bad)
 		assert.Equal(t, http.StatusBadRequest, code, body)
 	}

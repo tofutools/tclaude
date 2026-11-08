@@ -480,7 +480,8 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   one, by number, key or label. Without options the operator answers in
   words. Free text is always allowed: a pick, words, or both.
 - **On a task.** The task keeps its assignee and stays in its lane. The
-  question shows as a card of its own in the operator's lane (In progress)
+  question shows as a card of its own in the operator's lane, or Triage's
+  *You* row (In progress),
   until it is answered, and the task's card says `❓ n asked you`.
   `--block` blocks the task (`waiting on operator: Q2 …`) until the
   question is answered or withdrawn; the history then records `unblocked:

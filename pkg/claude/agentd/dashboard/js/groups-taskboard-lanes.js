@@ -150,17 +150,22 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.state = memberState(lane.member);
     lane.holds = holds.get(lane.id) || 0;
   }
-  // questions are the open questions on tasks the operator does not hold
-  // (tk_8b2c86f7): each is a card in the operator's lane, In progress,
-  // while its task stays in its own lane. A task the operator holds shows
-  // Answer… on its own card.
-  const questions = [];
-  for (const task of entry?.tasks || []) {
-    if (task.assignee?.operator) continue;
-    for (const question of openQuestions(task)) questions.push({ task, question });
-  }
+  const questions = operatorQuestions(entry);
   const operatorHolds = ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) + questions.length;
   return { cells, questions, groups: laneGroups(lanes, group, by, snapshot), operatorHolds };
+}
+
+// operatorQuestions are the open questions on tasks the operator does not
+// hold (tk_8b2c86f7): each is a card in the operator's lane (or Triage's
+// You), In progress, while its task stays in its own lane. A task the
+// operator holds shows Answer… on its own card.
+export function operatorQuestions(entry) {
+  const out = [];
+  for (const task of entry?.tasks || []) {
+    if (task.assignee?.operator) continue;
+    for (const question of openQuestions(task)) out.push({ task, question });
+  }
+  return out;
 }
 
 function laneGroups(lanes, group, by, snapshot) {
