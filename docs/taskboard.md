@@ -56,8 +56,8 @@ tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--mine] [--json]
 tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard activity <task>    # comments and changes, oldest first; history is an alias
-tclaude agent taskboard comment add <task> "markdown" [--file f|-] [--key k] [--attach f]…
-tclaude agent taskboard comment edit <task> <#id> "markdown" [--file f|-]
+tclaude agent taskboard comment add <task> "markdown" [--body …|--file f|-|--stdin] [--key k] [--attach f]…
+tclaude agent taskboard comment edit <task> <#id> "markdown" [--body …|--file f|-|--stdin]
 tclaude agent taskboard comment rm <task> <#id>
 tclaude agent taskboard comment ls <task> [--save <dir>]
 
@@ -69,7 +69,7 @@ tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…
 tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
 tclaude agent taskboard attachments <task> [--save <dir>]
-tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref]
+tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref] [--resolve-ref]
                                     [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
 tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage idea|next]
@@ -106,11 +106,18 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   moved task is promoted or demoted in the same write.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
   id. `LIN-123` is read as a Linear id, and a lower-case `tcl-a1b2c3` as an awb
-  id. Prefix the id with `awb:` or `linear:` to say which one you mean. On a
-  single `add`, a bare id is stored with no link, unless you pass
-  `--resolve-ref`: then a bare awb or Linear id is looked up through its proxy,
-  as an import does, and gets its link. The title stays yours. An import
-  (below) always resolves it.
+  id. Prefix the id with `awb:` or `linear:` to say which one you mean. A
+  ref's URL is what it is: the board shows it under a short label (the awb
+  or Linear id, `owner/repo#12`) as a link.
+  - An awb id is linked on the configured awb server
+    (`agent.awb_proxy.url`, as `<url>/#/issues/<id>`) wherever it is given:
+    `add`, `edit`, an import, a move to another group. An awb ref stored with no
+    link before that is linked as the board reads it.
+  - A Linear id has no link until it is looked up: pass `--resolve-ref` to
+    `add` or `edit`, and it is looked up through the Linear proxy, as an
+    import does. The title stays yours. An import (below) always looks it up.
+    `edit <task> --resolve-ref` with no `--ref` links the task's own ref.
+  - A ref with no link shows as a plain chip ("not linked" in its tooltip).
 - `ask` mails a member of the group a request in your own words. The member
   is told to turn it into tasks with `taskboard add`, to reply when it is
   done, and not to start the work. The request is inbox mail, never keys sent
@@ -768,7 +775,9 @@ a CLI verb:
   lanes card; Enter on a focused title does the same), opens the edit form.
   Renaming happens there. A press on the title never starts a drag. The
   form's header shows the task's id, and ⧉ copies it. It has the title, the
-  brief, the ref, *Where it is* (*Idea*, *Next*,
+  brief, the ref (its URL, with the ref as a link beside it while unchanged;
+  a new bare awb or Linear id is linked on *Save*, as `edit --resolve-ref`
+  does), *Where it is* (*Idea*, *Next*,
   *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
   assignee (if you may assign), the dependencies (✕ takes one off, and
   *＋ dependency* adds one of the board's other live tasks) and the files.
@@ -968,7 +977,7 @@ those drags aren't accepted in the lanes.
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
-| `edit` | `PATCH /v1/taskboard/tasks/{id}` |
+| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`) |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |

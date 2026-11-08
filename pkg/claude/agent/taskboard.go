@@ -975,11 +975,13 @@ type taskboardEditParams struct {
 	Ref       string `long:"ref" optional:"true" help:"New external ref (URL, owner/repo#n, or tracker id)"`
 	RefLabel  string `long:"ref-label" optional:"true" help:"New display label for the ref"`
 	ClearRef  bool   `long:"clear-ref" help:"Remove the ref"`
-	AddDep    string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
-	RmDep     string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
-	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
-	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON      bool   `long:"json" help:"Output JSON"`
+	// ResolveRef is add's --resolve-ref, for a new ref or the task's own.
+	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear ref up through its tracker proxy to fill in its link: the new --ref, or without --ref the task's own link-less one"`
+	AddDep     string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
+	RmDep      string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
+	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
+	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON       bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardEditCmd() *cobra.Command {
@@ -1026,6 +1028,13 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 	}
 	if p.ClearRef {
 		req["clear_ref"] = true
+	}
+	if p.ResolveRef {
+		if p.ClearRef {
+			fmt.Fprintln(stderr, "Error: give --clear-ref or --resolve-ref, not both")
+			return rcInvalidArg
+		}
+		req["resolve_ref"] = true
 	}
 	if deps := splitTaskIDs(p.AddDep); len(deps) > 0 {
 		req["add_deps"] = deps

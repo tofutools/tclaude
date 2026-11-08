@@ -28,6 +28,7 @@ import { TaskFiles } from './groups-taskboard-files.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
 import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
+import { RefChip } from './groups-taskboard-card.js';
 
 const html = htm.bind(h);
 
@@ -103,8 +104,7 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   if (bodyKnown && draft.body.trim() !== (task.body || '').trim()) { change.body = draft.body.trim(); names.push('brief'); }
   const ref = draft.ref.trim();
   if (ref !== (task.ref?.url || task.ref?.label || '')) {
-    if (ref) change.ref = ref;
-    else change.clearRef = true;
+    if (ref) { change.ref = ref; change.resolveRef = true; } else change.clearRef = true;
     names.push('ref');
   }
   const before = task.depends_on || [];
@@ -302,8 +302,9 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('Brief', html`<${Textarea} class="tb-edit-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy || brief.state !== 'ready'}
       placeholder=${brief.state === 'loading' ? 'reading the brief…' : 'what the assignee needs to know'} onInput=${(event) => set('body')(event.currentTarget.value)} />`,
       brief.state === 'failed' ? 'the brief could not be read, so Save leaves it as it is' : null)}
-    ${row('Ref', html`<${Input} class="tb-edit-ref" aria-label="Ref" value=${draft.ref} disabled=${busy}
-      placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
+    ${row('Ref', html`<span class="tb-edit-ref-line"><${Input} class="tb-edit-ref" aria-label="Ref" value=${draft.ref} disabled=${busy}
+      placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />
+      ${task.ref && draft.ref.trim() === start.ref && html`<${RefChip} task=${task} />`}</span>`,
       draft.ref.trim() && draft.ref.trim() !== start.ref ? 'a bare awb or Linear id is linked through its tracker' : null)}
     ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />

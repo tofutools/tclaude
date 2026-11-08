@@ -425,6 +425,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	}
 	out := make([]taskboardTaskView, 0, len(tasks))
 	staller := newTaskboardStaller(time.Now())
+	var awbBase *string // read once, and only when a url-less awb ref needs it
 	for _, t := range tasks {
 		v := taskboardTaskView{
 			ID: t.ID, Group: group, Title: t.Title, Body: t.Body, Stage: t.Stage, Status: t.Status, Rank: t.Rank,
@@ -436,6 +437,19 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		}
 		if t.RefKind != "" {
 			v.Ref = &taskboardRef{Kind: t.RefKind, URL: t.RefURL, Label: t.RefLabel}
+			// An awb ref stored before refs were linked on write (its label
+			// the id) is linked as it is read, so every awb chip can be followed.
+			if v.Ref.URL == "" && v.Ref.Kind == "awb" {
+				if awbBase == nil {
+					b := awbBaseURL()
+					awbBase = &b
+				}
+				if *awbBase != "" {
+					if id, fault := validateAWBIssueRef(t.RefLabel); fault == nil {
+						v.Ref.URL = *awbBase + "/#/issues/" + id
+					}
+				}
+			}
 		}
 		for _, dep := range t.DependsOn {
 			if s, ok := statuses[dep]; ok && s != db.GroupTaskDone {
@@ -549,8 +563,9 @@ var (
 // parseTaskRef reads a task's external reference: an http(s) URL (its kind
 // derived from the host), owner/repo#n for GitHub, or a bare tracker id —
 // UPPER-123 is Linear, lower-case <workspace>-<hash> is awb — optionally
-// prefixed awb: or linear:. A bare id has no URL until a later slice resolves
-// it through the tracker proxies.
+// prefixed awb: or linear:. The URL is the ref's main datum: an awb id takes
+// its link from the configured awb server (awbIssueURL); a Linear id has
+// none until a lookup gives it one (resolve_ref, an import).
 func parseTaskRef(raw, label string) (kind, refURL, refLabel string, err error) {
 	raw, label = strings.TrimSpace(raw), strings.TrimSpace(label)
 	if err := validateTaskRefLabel(label); err != nil {
@@ -602,7 +617,33 @@ func parseTaskRef(raw, label string) (kind, refURL, refLabel string, err error) 
 	if fault != nil {
 		return "", "", "", errors.New(fault.Msg)
 	}
-	return "awb", "", firstNonEmpty(label, norm), nil
+	return "awb", awbIssueURL(norm), firstNonEmpty(label, norm), nil
+}
+
+// awbBaseURL is the configured awb server's web base, or "" when none is
+// configured; a variable so a test can point it somewhere.
+var awbBaseURL = func() string {
+	cfg, _ := config.Load()
+	base, fault := validateAWBBaseURL(cfg.ResolvedAWBProxy().URL)
+	if fault != nil {
+		return ""
+	}
+	return base
+}
+
+// awbIssueURL is an awb issue's link on the configured awb server, as
+// deriveTaskLabel reads it back: <base>/#/issues/<id>. It is "" without a
+// configured server or for something that is not an awb id.
+func awbIssueURL(id string) string {
+	norm, fault := validateAWBIssueRef(id)
+	if fault != nil {
+		return ""
+	}
+	base := awbBaseURL()
+	if base == "" {
+		return ""
+	}
+	return base + "/#/issues/" + norm
 }
 
 func decodeTaskboardBody(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -946,16 +987,19 @@ func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 }
 
 // PATCH /v1/taskboard/tasks/{id} {title?, body?, ref?, ref_label?,
-// clear_ref?, add_deps?, rm_deps?}
+// clear_ref?, resolve_ref?, add_deps?, rm_deps?} — resolve_ref looks a bare
+// awb or Linear id up through its tracker proxy to fill its link, as an add
+// does: the new ref's, or with no ref given the task's own link-less one.
 func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
-		Title    *string  `json:"title"`
-		Body     *string  `json:"body"`
-		Ref      *string  `json:"ref"`
-		RefLabel *string  `json:"ref_label"`
-		ClearRef bool     `json:"clear_ref"`
-		AddDeps  []string `json:"add_deps"`
-		RmDeps   []string `json:"rm_deps"`
+		Title      *string  `json:"title"`
+		Body       *string  `json:"body"`
+		Ref        *string  `json:"ref"`
+		RefLabel   *string  `json:"ref_label"`
+		ClearRef   bool     `json:"clear_ref"`
+		ResolveRef bool     `json:"resolve_ref"`
+		AddDeps    []string `json:"add_deps"`
+		RmDeps     []string `json:"rm_deps"`
 	}
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
@@ -986,7 +1030,25 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 			}
 			var kind, refURL, refLabel string
 			if kind, refURL, refLabel, err = parseTaskRef(*body.Ref, label); err == nil {
+				if body.ResolveRef {
+					refURL = resolveTaskboardRefLink(r, kind, refURL, refLabel)
+				}
 				edit.RefKind, edit.RefURL, edit.RefLabel = &kind, &refURL, &refLabel
+			}
+		case body.ResolveRef && body.RefLabel == nil:
+			// The task's own ref, linked now if it has no link yet: the id
+			// is its label (an awb or Linear ref stored without a link).
+			if t.RefKind == "" {
+				err = errors.New("the task has no ref to resolve")
+			} else if t.RefURL == "" {
+				if kind, refURL, _, perr := parseTaskRef(t.RefKind+":"+t.RefLabel, ""); perr == nil && kind == t.RefKind {
+					if refURL == "" {
+						refURL = resolveTaskboardRefLink(r, kind, refURL, t.RefLabel)
+					}
+					if refURL != "" {
+						edit.RefURL = &refURL
+					}
+				}
 			}
 		case body.RefLabel != nil:
 			if t.RefKind == "" {

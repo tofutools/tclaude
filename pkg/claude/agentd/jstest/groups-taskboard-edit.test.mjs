@@ -93,6 +93,21 @@ async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose =
     save: () => click(dialog.querySelector('#taskboard-edit-save')) };
 }
 
+test('the ref shows as a link while unchanged; a new one is linked through its tracker on Save', async (t) => {
+  const the = task({ ref: { kind: 'awb', url: 'https://awb.example/#/issues/tcl-a1b2c3', label: 'tcl-a1b2c3' } });
+  const { harness, dialog, api, save } = await mountEdit(t, the);
+  const link = dialog.querySelector('.tb-edit-ref-line a.tb-ref');
+  assert.equal(link.getAttribute('href'), 'https://awb.example/#/issues/tcl-a1b2c3');
+  assert.match(link.textContent, /tcl-a1b2c3/);
+  const input = dialog.querySelector('.tb-edit-ref');
+  assert.equal(input.value, 'https://awb.example/#/issues/tcl-a1b2c3', 'the URL is the ref');
+  input.value = 'LIN-12';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  assert.equal(dialog.querySelector('.tb-edit-ref-line .tb-ref'), null, 'a changed ref is not the old link');
+  await save();
+  assert.deepEqual(api.calls.find(([verb]) => verb === 'edit'), ['edit', 'tk_00000001', { ref: 'LIN-12', resolveRef: true }]);
+});
+
 test('Where it is, the assignee and a file change land as their own writes', async (t) => {
   const the = task({ attachments: [{ id: 7, name: 'old.log', size: 10, content_type: 'text/plain' }] });
   const { harness, dialog, api, pick, select, click, save, closed, saved } = await mountEdit(t, the);

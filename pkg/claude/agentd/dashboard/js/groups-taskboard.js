@@ -41,7 +41,9 @@ import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-n
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
-import { TaskTitle } from './groups-taskboard-card.js';
+import { RefChip, TaskTitle } from './groups-taskboard-card.js';
+
+export { RefChip };
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
@@ -158,17 +160,6 @@ const STATE_LABELS = {
   blocked: 'blocked', stalled: 'stalled', waiting: 'waiting', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
 };
 
-export function RefChip({ task }) {
-  const ref = task.ref;
-  if (!ref) return html`<span class="tb-ref-none">—</span>`;
-  const label = ref.label || ref.url || ref.kind;
-  const title = `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`;
-  // The store only keeps http(s) URLs; check again before making a link.
-  if (ref.url && /^https?:\/\//i.test(ref.url)) {
-    return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
-  }
-  return html`<span class="ui-tag ui-tag-accent tb-ref" title=${title}>🔗 ${label}</span>`;
-}
 
 // boardTasks maps a board's tasks, live and closed, by id: what a
 // dependency names.

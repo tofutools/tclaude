@@ -16,7 +16,8 @@ import (
 // resolve_ref; Ask an agent is POST …/taskboard/ask.
 
 // resolve_ref links a bare awb or Linear id through its tracker, as an import
-// does, and keeps the title given; without it a bare id stays unlinked.
+// does, and keeps the title given. Without it an awb id still takes its link
+// from the configured awb server; a Linear id stays unlinked.
 func TestTaskboardCreateResolvesRef(t *testing.T) {
 	const member = "tb-new-member-1111"
 	h := newTaskboardImportFlow(t, member)
@@ -26,7 +27,11 @@ func TestTaskboardCreateResolvesRef(t *testing.T) {
 
 	plain := add(map[string]any{"title": "my own title", "ref": "tcl-a1b2c3"})
 	require.NotNil(t, plain.Ref)
-	assert.Empty(t, plain.Ref.URL, "a single add without resolve_ref stores the id unlinked")
+	assert.Equal(t, "https://awb.example/#/issues/tcl-a1b2c3", plain.Ref.URL, "an awb id is linked on the configured awb server")
+	assert.Equal(t, "tcl-a1b2c3", plain.Ref.Label)
+	plainLin := add(map[string]any{"title": "a linear one", "ref": "LIN-3"})
+	require.NotNil(t, plainLin.Ref)
+	assert.Empty(t, plainLin.Ref.URL, "a Linear id without resolve_ref is not looked up")
 
 	resolved := add(map[string]any{"title": "my own title", "ref": "tcl-d4e5f6", "resolve_ref": true, "stage": "next",
 		"body": "the brief", "after": []string{plain.ID}})
@@ -47,6 +52,43 @@ func TestTaskboardCreateResolvesRef(t *testing.T) {
 
 	// resolve_ref is for one task, not an import.
 	rec := h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"refs": []string{"tcl-a1b2c3"}, "resolve_ref": true})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// An edit's resolve_ref links a new bare ref, or the task's own link-less
+// one; an awb ref stored without a link is linked as it is read.
+func TestTaskboardEditResolvesRef(t *testing.T) {
+	const member = "tb-edit-member-1111"
+	h := newTaskboardImportFlow(t, member)
+	edit := func(id string, body map[string]any) tbTask {
+		return h.task(h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+id, body), http.StatusOK)
+	}
+
+	lin := h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "linear", "ref": "LIN-7"}), http.StatusCreated)
+	require.Empty(t, lin.Ref.URL)
+	linked := edit(lin.ID, map[string]any{"resolve_ref": true})
+	assert.NotEmpty(t, linked.Ref.URL, "the task's own Linear id is linked")
+	assert.Equal(t, "LIN-7", linked.Ref.Label)
+
+	other := edit(lin.ID, map[string]any{"ref": "LIN-8", "resolve_ref": true})
+	assert.Equal(t, "LIN-8", other.Ref.Label)
+	assert.Contains(t, other.Ref.URL, "LIN-8", "a new Linear id is linked too")
+
+	// An awb ref stored before refs were linked on write.
+	g, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	old, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: "old", RefKind: "awb", RefLabel: "tcl-0d0d0d", Actor: "test"})
+	require.NoError(t, err)
+	shown := h.task(h.call("", http.MethodGet, "/v1/taskboard/tasks/"+old.ID, nil), http.StatusOK)
+	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", shown.Ref.URL, "linked as it is read")
+	stored := edit(old.ID, map[string]any{"resolve_ref": true})
+	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", stored.Ref.URL)
+	after, err := db.GetGroupTask(old.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "https://awb.example/#/issues/tcl-0d0d0d", after.RefURL, "and stored by resolve_ref")
+
+	none := h.task(h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "no ref"}), http.StatusCreated)
+	rec := h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+none.ID, map[string]any{"resolve_ref": true})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 }
 

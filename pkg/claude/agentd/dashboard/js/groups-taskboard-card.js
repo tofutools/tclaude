@@ -30,6 +30,23 @@ import { useThumb } from './groups-taskboard-files.js';
 
 const html = htm.bind(h);
 
+// RefChip is a task's external ref: a link to its URL (the ref's main datum)
+// under its short label, as in Lanes, the List, the hover card and the edit
+// form.
+export function RefChip({ task }) {
+  const ref = task.ref;
+  if (!ref) return html`<span class="tb-ref-none">—</span>`;
+  const label = ref.label || ref.url || ref.kind;
+  const title = `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`;
+  // The store only keeps http(s) URLs; check again before making a link.
+  if (ref.url && /^https?:\/\//i.test(ref.url)) {
+    return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
+  }
+  // A bare tracker id with no link yet (no awb server configured, or a
+  // Linear id not looked up): `edit --resolve-ref` links it.
+  return html`<span class="ui-tag ui-tag-accent tb-ref" title=${`${title} · not linked`}>🔗 ${label}</span>`;
+}
+
 // TASK_CARD_HOVER_MS is the hover intent before the card reads the brief and
 // the latest comment: the PR card's (pr-link-hover.js), so sweeping down a
 // column of titles reads nothing.

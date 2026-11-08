@@ -84,6 +84,16 @@ func TestTaskboardCommentsCLI(t *testing.T) {
 	rc, out, errOut = run("show", id)
 	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
 	assert.Contains(t, out, "comments: 1")
+
+	// --body is the argument as a flag, as agent message takes it; one way only.
+	rc, out, errOut = run("comment", "add", id, "--body", "by flag")
+	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
+	rc, _, errOut = run("comment", "add", id, "an arg", "--body", "and a flag")
+	assert.NotEqual(t, 0, rc)
+	assert.Contains(t, errOut, "one way")
+	rc, out, errOut = run("comment", "ls", id)
+	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
+	assert.Contains(t, out, "by flag")
 }
 
 // Comments through --peer: the receiver's rules gate them on

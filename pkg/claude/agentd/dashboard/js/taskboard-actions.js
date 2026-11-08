@@ -234,7 +234,9 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     fileData(id, attachmentId) {
       return call('GET', taskPath(id, `/attachments/${encodeURIComponent(attachmentId)}?format=json`));
     },
-    edit(id, { title, body, ref, clearRef = false, addDeps, rmDeps }) {
+    // resolveRef links a bare awb or Linear id through its tracker, as
+    // create's does (`edit --resolve-ref`).
+    edit(id, { title, body, ref, clearRef = false, resolveRef = false, addDeps, rmDeps }) {
       const payload = {};
       if (title !== undefined) payload.title = title;
       if (body !== undefined) payload.body = body;
@@ -242,6 +244,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (rmDeps !== undefined) payload.rm_deps = rmDeps;
       if (clearRef) payload.clear_ref = true;
       else if (ref !== undefined) payload.ref = ref;
+      if (resolveRef && !clearRef) payload.resolve_ref = true;
       return call('PATCH', taskPath(id), payload);
     },
     // move places a task before or after another (crossing the Ideas band

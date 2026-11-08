@@ -221,6 +221,7 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
   await api.capture('crew', 'tcl-fb0bfz', { next: true });
   await api.capture('crew', 'a\nb');
   await api.edit('tk_00000001', { clearRef: true });
+  await api.edit('tk_00000001', { ref: 'LIN-12', resolveRef: true });
   await api.move('tk_00000001', { before: 'tk_00000002' });
   await api.status('tk_00000001', 'blocked', 'why');
   assert.deepEqual(sent.map(({ path, method, body }) => [method, path, body]), [
@@ -228,6 +229,7 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
     ['POST', '/v1/groups/crew/taskboard/tasks', { lines: ['tcl-fb0bfz'], stage: 'next' }],
     ['POST', '/v1/groups/crew/taskboard/tasks', { lines: ['a', 'b'] }],
     ['PATCH', '/v1/taskboard/tasks/tk_00000001', { clear_ref: true }],
+    ['PATCH', '/v1/taskboard/tasks/tk_00000001', { ref: 'LIN-12', resolve_ref: true }],
     ['POST', '/v1/taskboard/tasks/tk_00000001/move', { before: 'tk_00000002' }],
     ['POST', '/v1/taskboard/tasks/tk_00000001/status', { status: 'blocked', reason: 'why' }],
   ]);
