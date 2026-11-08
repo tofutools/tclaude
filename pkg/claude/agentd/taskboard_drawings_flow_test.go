@@ -108,6 +108,25 @@ func TestTaskboardDrawingsAttachAnExportWithItsBoard(t *testing.T) {
 	require.NotNil(t, commented.Attachment.Drawing)
 	assert.Equal(t, []string{"db"}, commented.Attachment.Drawing.Elements)
 
+	// With a key, a retried comment is the first one, not a second
+	// (tk_2d31bef9); the same key with another comment is refused.
+	keyed := map[string]any{"board": "arch", "comment": "the api side", "elements": []string{"api"}, "key": "web-1"}
+	keyedFirst := attach(member, keyed, http.StatusCreated)
+	keyedAgain := attach(member, keyed, http.StatusOK)
+	assert.Equal(t, keyedFirst.Comment, keyedAgain.Comment, "the retry answers the first comment")
+	assert.Equal(t, keyedFirst.Attachment.ID, keyedAgain.Attachment.ID, "with its file")
+	comments, err := db.ListGroupTaskCommentAttachments(task.ID)
+	require.NoError(t, err)
+	assert.Len(t, comments, 2, "two comments carry drawings: the unkeyed one and the keyed one, once")
+	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "comment": "something else", "key": "web-1"})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	rec = h.call(member, http.MethodPost, "/v1/taskboard/tasks/"+task.ID+"/comments", map[string]any{"body": "plain", "key": "web-3"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "comment": "plain", "key": "web-3"})
+	assert.Equal(t, http.StatusConflict, rec.Code, "a plain comment's key is not a drawing's: %s", rec.Body.String())
+	rec = h.call(member, http.MethodPost, drawings, map[string]any{"board": "arch", "key": "web-2"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a key goes with a comment: %s", rec.Body.String())
+
 	// replace names a drawing on the task; a plain file is not one.
 	plain := h.fileTask(h.upload(member, "/v1/taskboard/tasks/"+task.ID+"/attachments", nil, [2]string{"notes.txt", "x"}), http.StatusCreated)
 	var notes int64

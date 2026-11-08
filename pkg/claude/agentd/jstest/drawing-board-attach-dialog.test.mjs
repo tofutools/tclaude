@@ -82,3 +82,17 @@ test('the dialog previews the part, says an attach updates the drawing there, an
   assert.deepEqual(notes, ['Updated arch.png on tk_now.']);
   assert.equal(closed, 1);
 });
+
+test('a comment post keeps its key for a retry and takes a fresh one when it changes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { commentKey } = await harness.importDashboardModule('js/drawing-board-attach-dialog.js');
+  let n = 0;
+  const uuid = () => `u${++n}`;
+  const body = { board: 'arch', comment: 'the api side' };
+  const first = commentKey(null, 'tk_now', body, uuid);
+  assert.equal(first.key, 'dash-u1');
+  assert.equal(commentKey(first, 'tk_now', { ...body }, uuid).key, 'dash-u1', 'a retry of the same post is the same comment');
+  assert.equal(commentKey(first, 'tk_now', { ...body, comment: 'other' }, uuid).key, 'dash-u2', 'other text is another comment');
+  assert.equal(commentKey(first, 'tk_idea', body, uuid).key, 'dash-u3', 'another task is another comment');
+  assert.equal(commentKey(first, 'tk_now', { ...body, elements: ['db'] }, uuid).key, 'dash-u4', 'another part is another comment');
+});

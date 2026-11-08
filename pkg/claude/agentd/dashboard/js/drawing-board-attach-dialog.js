@@ -18,6 +18,7 @@ import htm from 'htm';
 import { signal } from '@preact/signals';
 import { Dialog } from './ui-dialog.js';
 import { Button, Check, Input, Textarea } from './ui-components.js';
+import { randomUUID } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -40,6 +41,14 @@ async function json(response) {
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(body?.message || body?.error || `${response.status} ${response.statusText || ''}`.trim());
   return body;
+}
+
+// commentKey is the idempotency key a comment post carries: the same one
+// for the same post, so a retry after a lost answer is not a second comment,
+// and a fresh one once the task, the part or the text changes.
+export function commentKey(last, taskId, body, uuid = randomUUID) {
+  const post = JSON.stringify([taskId, body]);
+  return last?.post === post ? last : { post, key: `dash-${uuid()}` };
 }
 
 // selectionDigest is the daemon's digest of a pick of element ids, in any
@@ -101,6 +110,7 @@ export function DrawingBoardAttachDialog({ request, close }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const searchRef = useRef(null);
+  const lastKey = useRef(null);
   const elements = part === 'selection' ? selection : [];
 
   useEffect(() => {
@@ -135,6 +145,10 @@ export function DrawingBoardAttachDialog({ request, close }) {
     setError('');
     try {
       const body = { board: drawingBoardId, ...(elements.length ? { elements } : {}), ...(asComment ? { comment: comment.trim() || `${title || drawingBoardId}` } : {}) };
+      if (body.comment) {
+        lastKey.current = commentKey(lastKey.current, task.id, body);
+        body.key = lastKey.current.key;
+      }
       const out = await json(await fetchImpl(`/v1/taskboard/tasks/${encodeURIComponent(task.id)}/drawings`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }));

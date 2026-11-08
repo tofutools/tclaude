@@ -68,7 +68,7 @@ func peerUploadPath(p string) bool {
 const (
 	// peerUploadChunk is the most one chunk carries. Only the chunk route's
 	// request may be this large (peerViewBodyLimit); every other peer view
-	// request keeps fedPeerViewBodyLimit.
+	// request but a drawing board export keeps fedPeerViewBodyLimit.
 	peerUploadChunk       = 512 << 10
 	peerUploadKeep        = 10 * time.Minute
 	peerUploadsKept       = 8
@@ -81,10 +81,27 @@ const (
 // peerViewBodyLimit is the request body a peer view exchange to path may
 // carry.
 func peerViewBodyLimit(path string) int {
-	if path == peerUploadChunkPath {
+	switch {
+	case path == peerUploadChunkPath:
 		return peerUploadChunk
+	case peerDrawingBoardExportPath(path):
+		// An export names its elements: a big pick is more ids than
+		// fedPeerViewBodyLimit holds, and the route takes as many as the
+		// export route here does.
+		return drawingBoardExportBodyLimit
 	}
 	return fedPeerViewBodyLimit
+}
+
+// peerDrawingBoardExportPath reports whether path is a drawing board's export
+// route, /api/drawing-boards/{id}/export.
+func peerDrawingBoardExportPath(path string) bool {
+	id, ok := strings.CutPrefix(path, "/api/drawing-boards/")
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, "/export")
+	return ok && drawingBoardIDPattern.MatchString(id)
 }
 
 type peerUpload struct {

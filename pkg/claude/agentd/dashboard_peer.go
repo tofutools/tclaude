@@ -88,12 +88,13 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		fail(errPeerViewOffline)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, fedPeerViewBodyLimit+1))
+	limit := peerProxyBodyLimit(r.PathValue("tail"))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {
 		writeError(w, 400, "invalid_arg", "could not read request body")
 		return
 	}
-	if len(body) > fedPeerViewBodyLimit {
+	if len(body) > limit {
 		writeError(w, 413, "request_too_large", "peer request body exceeds limit")
 		return
 	}
@@ -241,6 +242,16 @@ func exchangePeerView(parent context.Context, rt *fedRuntime, peer *db.Federatio
 func validPeerViewReply(reply fedPeerViewReply) bool {
 	return reply.Status >= 200 && reply.Status <= 599 && len(reply.Body) <= fedPeerViewResponseBodyLimit &&
 		(len(reply.Body) == 0 || (json.Valid(reply.Body) && reply.Status != http.StatusNoContent && reply.Status != http.StatusNotModified))
+}
+
+// peerProxyBodyLimit is the request body a peer view proxy to tail takes.
+// An upload chunk goes through peer_uploads, not the proxy: only an export's
+// pick may outgrow fedPeerViewBodyLimit (peerViewBodyLimit).
+func peerProxyBodyLimit(tail string) int {
+	if peerDrawingBoardExportPath(peerProxyPath(tail)) {
+		return drawingBoardExportBodyLimit
+	}
+	return fedPeerViewBodyLimit
 }
 
 // peerProxyPath is the peer path a /api/peer/{node}/{tail...} or

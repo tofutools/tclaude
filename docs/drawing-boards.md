@@ -350,6 +350,8 @@ reading it does. An agent also needs its own node's grant (see
 [below](#a-linked-nodes-drawing-boards-for-agents)). A linked node's export comes
 back as JSON with the image in it, so it is capped at about 6 MiB and must render
 within 10 seconds; export a part, or at a smaller `--scale`, if it is refused.
+Its `--elements` pick may be as large as a local export's (256 KiB of ids), more
+than other peer view requests carry.
 With `--attach-to`, the linked node draws the PNG and the task here keeps it (see
 the next section).
 
@@ -384,7 +386,11 @@ linked node's drawing board has no **Attach to a task…** yet.
   board to the task again updates that file in place, so a task keeps one
   current picture rather than a pile of versions. `--replace <id>` names the
   file to update explicitly.
-- `--comment "…"` posts a new comment carrying the drawing instead.
+- `--comment "…"` posts a new comment carrying the drawing instead. It carries
+  an idempotency key, as `taskboard comment add` does: a retry with the same
+  key and comment returns the first comment rather than posting a second. The
+  CLI makes a fresh key per call unless `--key` names one; the editor's dialog
+  keeps one while the task, the part and the text stay the same.
 - A drawing is always a PNG: a task takes no SVG. `--name` sets the file's
   name (default `<board>.png`).
 - It needs read access to the drawing board and the task's attach rules
