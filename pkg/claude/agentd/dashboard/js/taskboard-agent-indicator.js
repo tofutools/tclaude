@@ -7,6 +7,7 @@ import { h } from 'preact';
 import htm from 'htm';
 import { taskboardContext, useTaskboardEntry } from './taskboard-context.js';
 import { nodeTaskboard, ownBoardGroup } from './groups-taskboard.js';
+import { taskLink } from './cross-links.js';
 
 const html = htm.bind(h);
 
@@ -24,7 +25,9 @@ export function AgentTaskIndicator({ group, member, source = taskboardContext, b
   if (!tasks.length) return null;
   const blocked = tasks.some((task) => task.status === 'blocked');
   const title = tasks.map((task) => `${task.id} · ${task.title}${task.status === 'blocked' ? ' (blocked)' : ''}`).join('\n');
+  // The first task's title links to it on the board (cross-links.js).
+  const link = taskLink({ shown: group.name, group: ownBoardGroup(group)?.name || group.name, node: group.fleet_node?.id || '', taskId: tasks[0].id, title: tasks[0].title });
   return html`<div class=${`tb-agent-tasks${blocked ? ' blocked' : ''}`} data-agent-tasks=${member.agent_id} title=${title}>
-    ☰ ${tasks.length} task${tasks.length === 1 ? '' : 's'} · <span class="tb-agent-task-title">${tasks[0].title}</span>
+    ☰ ${tasks.length} task${tasks.length === 1 ? '' : 's'} · <span class="tb-agent-task-title tb-xlink" ...${link}>${tasks[0].title}</span>
   </div>`;
 }

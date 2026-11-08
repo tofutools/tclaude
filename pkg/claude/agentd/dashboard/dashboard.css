@@ -17257,6 +17257,24 @@ body.wizard .drop-landing { --dl: 188, 140, 255; }
   .drop-landing-transit { animation: none; }
 }
 @keyframes drop-landed-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
+/* Cross-links (cross-links.js): an agent's name or avatar on the task board
+   and a task's title on the agent's row. Hovering one outlines its target
+   in the drop landing's layer: a solid ring on the target, a dashed one on
+   the folded header that hides it, and off-screen, a short bar on the
+   viewport's top or bottom edge pointing the way. */
+.tb-xlink { cursor: pointer; border-radius: 3px; }
+.tb-xlink:hover, .tb-xlink:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.tb-xlink:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.tb-avatar.tb-xlink:hover, .tb-avatar.tb-xlink:focus-visible { text-decoration: none; box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.6); }
+.xlink-hover { position: absolute; left: 0; top: 0; border-radius: 6px; pointer-events: none; --dl: 88, 166, 255;
+  box-shadow: 0 0 0 2px rgba(var(--dl), 0.95), 0 0 12px 2px rgba(var(--dl), 0.45); background: rgba(var(--dl), 0.08); }
+body.wizard .xlink-hover { --dl: 188, 140, 255; }
+.xlink-hover.xlink-folded { box-shadow: none; outline: 2px dashed rgba(var(--dl), 0.95); outline-offset: -1px; }
+.xlink-hover.xlink-above, .xlink-hover.xlink-below { height: 18px; border-radius: 9px; background: rgba(var(--dl), 0.9); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5); outline: none; }
+.xlink-hover.xlink-above::after, .xlink-hover.xlink-below::after { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #0d1117; font-size: 11px; font-weight: 700; line-height: 1; }
+.xlink-hover.xlink-above::after { content: '▲'; }
+.xlink-hover.xlink-below::after { content: '▼'; }
 tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 /* ⚙ menu section label ("send elsewhere", tcl-o9d5d9). */
 /* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields

@@ -27,6 +27,7 @@ import {
   LAYOUT_COLUMNS, applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
+import { REVEAL_FRESH_MS, agentLink, taskRevealRequest } from './cross-links.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
 import { DepChips, RefChip, actorLabel, boardTasks, assignableMembers, binDroppable, canAssign, operatorName } from './groups-taskboard.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
@@ -329,8 +330,21 @@ export function CellCards({ list, limit, open, onToggle, card, reveal = '' }) {
     ${capped && (open
     ? html`<${Button} size="sm" variant="ghost" class="tb-cell-more tb-cell-less" aria-expanded="true" domRef=${lessRef}
         title="Show only the first cards again" onClick=${collapse}>▴ Show less<//>`
-    : html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded="false"
+    : html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded="false" data-hidden-tasks=${list.slice(limit).map((task) => task.id).join(' ')}
         onClick=${() => onToggle(true)}>+ ${list.length - visible.length} more<//>`)}`;
+}
+
+// useCellReveal opens the cell holding a task a cross-link asked to see
+// (cross-links.js) past its cap, also when the cell is drawn only because
+// that click unfolded the section. setOpen takes an updater.
+export function useCellReveal(cells, limit, setOpen) {
+  const want = taskRevealRequest.value;
+  useEffect(() => {
+    if (!want || Date.now() - want.at > REVEAL_FRESH_MS) return;
+    for (const [key, list] of cells) {
+      if (list.slice(limit).some((task) => task.id === want.taskId)) setOpen((now) => (now[key] ? now : { ...now, [key]: true }));
+    }
+  }, [want?.seq]);
 }
 
 // useLaneDrag drives the card drags. A drop target `to` names its lane, or
@@ -412,7 +426,8 @@ export function BlockDialog({ task, drop, actions, group, onClose }) {
     busy=${actions.busy === `${task.id}:lane`} onSubmit=${submit} onClose=${onClose} />`;
 }
 
-export function LaneHead({ lane, order }) {
+// `link` (cross-links.js) makes an agent's name a link to its row.
+export function LaneHead({ lane, order, link = null }) {
   if (lane.id === OPERATOR) {
     const you = lane.name === 'you';
     return html`<div class="tb-lane-head tb-lane-head-operator" data-lane-operator="true" title=${you ? 'Tasks assigned to you, the operator: agents wait on them' : `Tasks assigned to the ${lane.name}`}>
@@ -425,7 +440,7 @@ export function LaneHead({ lane, order }) {
   }
   const marker = order?.over?.kind === 'lane' && order.over.key === lane.id ? (order.over.after ? ' tb-order-after' : ' tb-order-before') : '';
   return html`<div class=${`tb-lane-head${marker}`} data-lane-agent=${lane.id} ...${order ? order.laneProps(lane) : {}}>
-    <span class="tb-lane-name" title=${lane.name}><span class="tb-avatar" aria-hidden="true">${lane.name.slice(0, 1).toUpperCase()}</span><span class="tb-lane-label">${lane.name}</span></span>
+    <span class=${`tb-lane-name${link ? ' tb-xlink' : ''}`} ...${link || {}} title=${lane.name}><span class="tb-avatar" aria-hidden="true">${lane.name.slice(0, 1).toUpperCase()}</span><span class="tb-lane-label">${lane.name}</span></span>
     <span class=${`tb-lane-sub tb-lane-state-${lane.state.replace(/\s+/g, '-')}`}>${lane.state}${lane.member?.owner ? ' · owner' : ''}</span>
     <span class="tb-lane-sub">holds ${lane.holds}</span>
   </div>`;
@@ -601,6 +616,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const resize = useColumnResize(group, relayout);
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useState({});
+  useCellReveal(cells, CELL_SHOWN, setOpen);
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
@@ -630,7 +646,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class=${`tb-lane${lane.id === OPERATOR ? ' tb-lane-operator' : ''}`} data-lane-row=${lane.id || 'unassigned'}>
-    <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED || lane.id === OPERATOR ? null : order} />${LANE_COLUMNS.map((column) => cell(lane, column))}
+    <${LaneHead} lane=${lane} order=${lane.id === UNASSIGNED || lane.id === OPERATOR ? null : order}
+      link=${lane.member ? agentLink({ group: group.name, node: group.fleet_node?.id || '', id: lane.id, name: lane.name }) : null} />${LANE_COLUMNS.map((column) => cell(lane, column))}
   </div>`;
   // The operator's lane shows while it holds a task, or for a viewer who
   // may give the operator one (by a drag or its "+").
