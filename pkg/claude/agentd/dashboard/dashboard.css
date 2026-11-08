@@ -18943,6 +18943,19 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-card-why { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-cell-more { align-self: flex-start; font-size: 11px; }
 .tb-lanes-by-label { margin: 0 4px 0 2px; }
+/* Lanes triage and one row (groups-taskboard-lanes-flat.js): each card's
+   corner marker says who holds it. A yellow "!" is unassigned, a red "!" is the operator's (both
+   with an edge of their colour, to read from a distance); else the agent's
+   avatar. */
+.tb-card.tb-card-marked { position: relative; padding-right: 30px; }
+.tb-card-marker { position: absolute; top: 6px; right: 6px; box-sizing: border-box; width: 18px; height: 18px; }
+.tb-marker-unassigned, .tb-marker-operator { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 11px; font-weight: 700; }
+.tb-marker-unassigned { color: #e3b341; background: rgba(210, 153, 34, 0.15); border: 1px solid #d29922; }
+.tb-marker-operator { color: #fff; background: #da3633; border: 1px solid #f85149; }
+.tb-card.tb-card-unassigned { border-left: 3px solid #d29922; }
+.tb-card.tb-card-operator { border-left: 3px solid #f85149; }
+/* One row with every task: no lane column, so the first stage has no edge. */
+.tb-lanes-row .tb-lane > .tb-cell:first-child { border-left: none; }
 
 /* A task's files (groups-taskboard-files.js): the edit form's tiles, and the
    picker the New task form and Ask an agent share with it. */
