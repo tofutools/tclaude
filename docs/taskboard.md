@@ -1022,11 +1022,11 @@ fades.
 
 ### Swim lanes
 
-The *☰ List | ⇶ Lanes* switch in the section head picks the view. In *Lanes*,
-*lanes agent | role | subgroup | triage | one row* picks the lanes: one per
-agent, grouped by agent, role or subgroup (by agent unless you pick another),
-or the two modes without a lane per agent, described below. The dashboard
-remembers both per group, for you only.
+The *☰ List | ⇶ Lanes* switch in the section head picks the view (*Lanes*
+unless you pick *List*). In *Lanes*, *lanes agent | role | subgroup | triage |
+one row* picks the lanes: one per agent, grouped by agent, role or subgroup, or
+the two modes without a lane per agent, described below (*triage* unless you
+pick another). The dashboard remembers both per group, for you only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·

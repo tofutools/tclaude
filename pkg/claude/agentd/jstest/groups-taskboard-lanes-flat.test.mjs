@@ -98,7 +98,7 @@ test('lanes: triage draws You, Unassigned and Agents, each card marked with who 
 });
 
 test('the lanes switch offers triage and one row, remembered per group; one row holds every task', async (t) => {
-  const { c, ids, rows, click, dashPrefs } = await mountFlat(t, 'tlf-mode', { mode: null });
+  const { c, ids, rows, click, dashPrefs } = await mountFlat(t, 'tlf-mode', { mode: 'agent' });
   const modes = [...c.querySelectorAll('[aria-label="Lanes"] button')];
   assert.deepEqual(modes.map((b) => b.textContent), ['agent', 'role', 'subgroup', 'triage', 'one row']);
   assert.equal(c.querySelector('.tb-card-marker'), null, 'lanes by agent: the lane says who holds it, no markers');

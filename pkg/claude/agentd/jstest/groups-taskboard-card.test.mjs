@@ -47,7 +47,8 @@ async function mountBoard(t, { lanes = false, api = fakeApi() } = {}) {
     harness.importDashboardModule('js/prefs.js'),
   ]);
   dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.crew', '1');
-  if (lanes) dashPrefs.setItem('tclaude.dash.groups.taskboard.view.crew', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.crew', lanes ? 'lanes' : 'list');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.lanes-by.crew', 'agent');
   const source = { context: harness.signals.signal({ groups: [board('crew')] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => {} };
   const group = { name: 'crew', members: [{ agent_id: 'agt_dev', title: 'dev', online: true }] };

@@ -42,6 +42,7 @@ async function mount(t, name, { view = 'lanes', api = fakeApi() } = {}) {
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, 'agent');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   const source = {
     context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),

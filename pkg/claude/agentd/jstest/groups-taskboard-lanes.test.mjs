@@ -42,13 +42,14 @@ const members = () => [
   { conv_id: 'conv-no-agent', title: 'plain' },
 ];
 
-async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}, extraTasks = [], prefs = {} } = {}) {
+async function mountLanes(t, name, { api = fakeApi(), by = null, view = 'lanes', groupExtra = {}, extraTasks = [], prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
-  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  if (view !== 'default') dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
-  if (by) dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by);
+  // No by: lanes by agent, set explicitly, since triage is the default.
+  if (by !== 'default') dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by || 'agent');
   for (const [key, value] of Object.entries(prefs)) dashPrefs.setItem(key, value);
   const source = {
     context: harness.signals.signal({ groups: [{ ...board(name), tasks: [...board(name).tasks, ...extraTasks] }] }), status: harness.signals.signal('ready'),
@@ -170,14 +171,19 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.ok(c.querySelector('[data-lane-row="agt_old"]'), 'unfolded on click');
 });
 
-test('List | Lanes and the lanes-by switch are remembered per group; lanes default to by agent', async (t) => {
-  const { c, harness, dashPrefs } = await mountLanes(t, 'tbl-prefs');
+test('List | Lanes and the lanes-by switch are remembered per group; the default is Lanes in triage', async (t) => {
+  const { c, harness, dashPrefs } = await mountLanes(t, 'tbl-prefs', { by: 'default', view: 'default' });
   const button = (text) => [...c.querySelectorAll('.tb-view button')].find((b) => b.textContent.trim() === text);
-  // By agent, the default: no role heads ("no role" never shows), the
-  // offline agents fold under one.
+  // Lanes in triage is the default.
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.view.tbl-prefs'), null);
+  assert.equal(button('⇶ Lanes').getAttribute('aria-pressed'), 'true');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), null);
+  assert.ok(c.querySelector('[data-lanes-by="triage"]'));
+  assert.equal(button('triage').getAttribute('aria-pressed'), 'true');
+  // By agent: no role heads ("no role" never shows), the offline agents
+  // fold under one.
+  await harness.act(async () => { harness.fireEvent(button('agent'), 'click'); });
   assert.ok(c.querySelector('[data-lanes-by="agent"]'));
-  assert.equal(button('agent').getAttribute('aria-pressed'), 'true');
   assert.deepEqual([...c.querySelectorAll('[data-lane-group]')].map((el) => el.dataset.laneGroup), ['offline']);
   await harness.act(async () => { harness.fireEvent(button('role'), 'click'); });
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.lanes-by.tbl-prefs'), 'role', 'a choice is remembered and wins');
@@ -458,6 +464,7 @@ test("a linked node's group shows that node's board in lanes", async (t) => {
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbl-peer', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.lanes-by.tbl-peer', 'agent');
   dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbl-peer', '1');
   const peer = board('tbl-peer');
   peer.tasks = [row('tk_000000p1', 'on the peer')];
@@ -508,6 +515,7 @@ test('on a linked node\'s group in the fused view, a cell + and lane drags write
   ]);
   setNodeSnapshotSource((node) => (node === 'nd_forge' ? { peer_view: { level: 'unrestricted' } } : null));
   dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbl-fused@forge', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.lanes-by.tbl-fused@forge', 'agent');
   dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbl-fused@forge', '1');
   const api = fakeApi();
   const source = { context: harness.signals.signal({ groups: [board('tbl-fused')] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
@@ -554,6 +562,7 @@ test('the operator lane: pinned above Unassigned, "You" with what waits on you, 
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   const name = 'tbl-operator';
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, 'agent');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   const b = board(name);
   b.tasks.push(row('tk_000000a1', 'which colour?', { assignee: { agent_id: 'operator', name: 'operator', operator: true }, assigned_by: 'agent:agt_builder' }));

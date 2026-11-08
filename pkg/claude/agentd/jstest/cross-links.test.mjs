@@ -186,6 +186,7 @@ test('a click on an offline agent\'s task unfolds the offline lanes; hovering ou
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   const name = 'xl-offline';
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, 'agent');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   const entry = { group: name, group_id: 1, counts: { live: 1 }, tasks, closed: [] };
   const source = { context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
