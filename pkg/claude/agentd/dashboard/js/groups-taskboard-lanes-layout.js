@@ -49,6 +49,14 @@ export function gridColumns(widths) {
   return `${widths.lane}px ${widths.stages.map((w) => `minmax(${MIN_PX.stage}px, ${w}fr)`).join(' ')}`;
 }
 
+// gridMinWidth is the narrowest the grid gets, in pixels: the lane column
+// plus each stage at its minimum. Each row is at least this wide, so a row
+// spans every column it draws even when the grid scrolls sideways, and the
+// pinned lane column stays in view across the whole scroll.
+export function gridMinWidth(widths) {
+  return (widths ? widths.lane : DEFAULT_LANE_PX) + 5 * MIN_PX.stage;
+}
+
 // resizeColumns moves the edge on the right of column `index` (0 is the
 // lane column) by dx pixels, from the columns' measured pixel widths
 // `measured` (six numbers). The lane column grows or shrinks against the

@@ -41,7 +41,7 @@ const members = () => [
   { conv_id: 'conv-no-agent', title: 'plain' },
 ];
 
-async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {} } = {}) {
+async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}, extraTasks = [] } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
@@ -49,7 +49,7 @@ async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   if (by) dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by);
   const source = {
-    context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),
+    context: harness.signals.signal({ groups: [{ ...board(name), tasks: [...board(name).tasks, ...extraTasks] }] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => {},
   };
   const group = { name, members: members(), ...groupExtra };
@@ -365,6 +365,25 @@ test('a long agent name ends in an ellipsis with the full name as its title; the
   assert.equal(name.getAttribute('title'), long);
   assert.equal(name.querySelector('.tb-lane-label').textContent, long, 'the label is its own span, so it can end in …');
   assert.equal(name.querySelector('.tb-avatar').textContent, 'B');
+});
+
+test('a cell holding many tasks draws the first three and "+ n more", which opens and closes it in place', async (t) => {
+  const ideas = ['tk_000000a1', 'tk_000000a2', 'tk_000000a3', 'tk_000000a4', 'tk_000000a5'].map((id) => row(id, `idea ${id}`, { stage: 'idea' }));
+  const { c, cell, ids, harness } = await mountLanes(t, 'tbl-cap', { extraTasks: ideas });
+  const more = () => cell('unassigned', 'ideas').querySelector('.tb-cell-more');
+  assert.equal(ids('unassigned', 'ideas').length, 3, 'six ideas, three drawn');
+  assert.equal(more().textContent, '+ 3 more');
+  assert.equal(more().getAttribute('aria-expanded'), 'false');
+  assert.match(c.querySelector('.tb-col-ideas').textContent, /6$/, 'the column head still counts every idea');
+  assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more'), null, 'a cell within the cap has no toggle');
+  await harness.act(async () => { harness.fireEvent(more(), 'click'); });
+  assert.equal(ids('unassigned', 'ideas').length, 6, 'opened, every card is drawn');
+  assert.equal(more().textContent, 'Show fewer');
+  assert.equal(more().getAttribute('aria-expanded'), 'true');
+  await harness.act(async () => { harness.fireEvent(more(), 'click'); });
+  assert.equal(ids('unassigned', 'ideas').length, 3, 'and closes again');
+  const grid = c.querySelector('.tb-lanes');
+  assert.match(grid.getAttribute('style'), /--tb-lane-min: 620px/, 'rows are at least the grid\'s minimum width, so the sideways scroll keeps the lane column pinned');
 });
 
 test("a linked node's group shows that node's board in lanes", async (t) => {

@@ -18786,7 +18786,11 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-row .tb-reason { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 /* The state pill's focus tooltip keeps a multiline block reason's breaks. */
 .tb-state-wrap:focus::after { white-space: pre-line; }
-.tb-row.tb-closed > td { opacity: 0.85; }
+/* A closed row is dimmed, but not through its title's hover card: opacity
+   on an ancestor would make the card see-through and trap it in that
+   ancestor's stacking context, so the title cell dims around the card. */
+.tb-row.tb-closed > td:not(.tb-title-cell), .tb-row.tb-closed .tb-title-box > :not(.tb-task-hover),
+.tb-row.tb-closed .tb-task-hover > .tb-title { opacity: 0.85; }
 .tb-closed-table { margin-top: 4px; }
 .tb-history, .tb-more { margin: 6px 8px 0; font-size: 11.5px; color: #7d8590; }
 .tb-history-note { color: #6e7681; }
@@ -18838,8 +18842,11 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-lanes-wrap { margin: 0 8px; }
 /* Stored column widths can need more room than a narrow card has: the grid
    scrolls sideways rather than clipping its last columns. */
-.tb-lanes { border: 1px solid #30363d; border-radius: 6px; overflow-x: auto; overflow-y: hidden; font-size: 12.5px; }
-.tb-lane { display: grid; grid-template-columns: var(--tb-lane-cols, 170px repeat(5, minmax(0, 1fr))); border-top: 1px solid #21262d; }
+.tb-lanes { border: 1px solid #30363d; border-radius: 6px; overflow-x: auto; overflow-y: hidden; font-size: 12.5px; background: var(--ui-card-inset-bg); }
+/* Each stage keeps a readable minimum (MIN_PX.stage); below that the grid
+   scrolls sideways rather than squeezing titles to a word per line. A row is
+   at least the grid's minimum width (gridMinWidth) so it spans every column. */
+.tb-lane { display: grid; grid-template-columns: var(--tb-lane-cols, 170px repeat(5, minmax(90px, 1fr))); min-width: var(--tb-lane-min, 620px); border-top: 1px solid #21262d; }
 /* Column widths and lane order (groups-taskboard-lanes-layout.js): a
    column head's right edge is a resize handle; a lane head or heading drags
    to reorder, with a line where it lands. */
@@ -18859,6 +18866,12 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-lane-columns .tb-col-blocked { color: #e3b341; }
 .tb-col-count { color: #6e7681; font-weight: 400; }
 .tb-lane-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-width: 0; }
+/* When the grid scrolls sideways, the lane column stays pinned on the left
+   so each row still says whose it is; the cards slide under it. Its right
+   edge is a ::after line, leaving box-shadow to the reorder marker. */
+.tb-lane > .tb-lane-head, .tb-lane-columns > .tb-col-lane { position: sticky; left: 0; z-index: 2; background: var(--ui-card-inset-bg); }
+.tb-lane-columns > .tb-col-lane { background: #161b22; }
+.tb-lane > .tb-lane-head::after, .tb-lane-columns > .tb-col-lane::before { content: ''; position: absolute; top: 0; bottom: 0; right: -1px; width: 1px; background: #21262d; pointer-events: none; }
 .tb-lane-name { display: flex; align-items: center; gap: 6px; min-width: 0; color: #e6edf3; font-weight: 600; white-space: nowrap; }
 /* A long agent name ends in "…" (the full name is the title); the avatar
    keeps its size whatever the name. */
@@ -18882,6 +18895,9 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 /* The operator's lane (tasks assigned to the operator, tcl-p4t78f): pinned
    above Unassigned and tinted, so what waits on you stands out. */
 .tb-lane.tb-lane-operator { background: rgba(163, 113, 247, 0.07); box-shadow: inset 3px 0 0 #a371f7; }
+/* The pinned lane head is opaque, so it repaints the operator lane's tint
+   and edge itself. */
+.tb-lane.tb-lane-operator > .tb-lane-head { background: linear-gradient(rgba(163, 113, 247, 0.07), rgba(163, 113, 247, 0.07)) var(--ui-card-inset-bg); box-shadow: inset 3px 0 0 #a371f7; }
 .tb-lane-head-operator .tb-lane-label { color: #d2a8ff; }
 .tb-lane-head-operator .tb-lane-waiting { color: #d2a8ff; }
 .tb-avatar.tb-avatar-operator, .tb-who-operator .tb-avatar { border-color: #a371f7; color: #d2a8ff; }
@@ -18890,7 +18906,7 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .ui-tag.tb-waiting-tag { margin-left: 6px; border-color: #8957e5; color: #d2a8ff; font-size: 11px; }
 .tb-count-waiting-on-you { color: #d2a8ff; }
 .tb-lane-state-working, .tb-lane-state-awaiting { color: #3fb950; }
-.tb-lane-group { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; border-top: 1px solid #21262d; background: #0d1117; }
+.tb-lane-group { display: flex; align-items: baseline; gap: 8px; min-width: var(--tb-lane-min, 620px); box-sizing: border-box; padding: 4px 10px; border-top: 1px solid #21262d; background: #0d1117; }
 .tb-lane-group .tb-lane-fold { margin-left: auto; font-size: 11px; }
 .tb-cell { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 40px; padding: 6px; border-left: 1px solid #21262d; }
 .tb-cell-striped { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(110, 118, 129, 0.08) 6px 12px); }
@@ -18912,7 +18928,9 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-card { padding: 6px 8px; cursor: grab; }
 .tb-card[draggable] { user-select: none; }
 .tb-card.tb-card-idea { border-style: dashed; }
-.tb-card-done { cursor: default; opacity: 0.8; }
+/* A done card is dimmed by colour, not opacity: opacity would also apply to
+   its title's hover card, letting the cards behind show through it. */
+.tb-card-done { cursor: default; border-color: #21262d; }
 .tb-card-done .tb-card-title, .tb-card-done .tb-title { color: #7d8590; text-decoration: line-through; }
 .tb-card-title { color: #e6edf3; overflow-wrap: anywhere; }
 .tb-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }

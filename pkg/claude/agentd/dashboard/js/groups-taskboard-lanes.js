@@ -24,7 +24,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import {
-  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
+  LAYOUT_COLUMNS, applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
@@ -44,8 +44,10 @@ export const LANE_COLUMNS = [
 ];
 
 const WEEK_MS = 7 * 24 * 3600 * 1000;
-// DONE_SHOWN is how many done cards a cell draws before "+ n more".
-const DONE_SHOWN = 3;
+// CELL_SHOWN is how many cards a cell draws before "+ n more": a cell
+// holding many tasks would otherwise stretch its whole row (and push the
+// grid's sideways scrollbar off-screen). "+ n more" opens the cell in place.
+export const CELL_SHOWN = 3;
 export const UNASSIGNED = '';
 // OPERATOR is the operator's lane: the tasks assigned to the operator of the
 // board's node ("You" here, a linked node's operator on its boards), pinned
@@ -522,7 +524,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const order = useLaneOrder(group, groups, by, relayout);
   const resize = useColumnResize(group, relayout);
   const [unfolded, setUnfolded] = useState({});
-  const [doneOpen, setDoneOpen] = useState({});
+  const [open, setOpen] = useState({});
   const cell = (lane, column) => {
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
@@ -530,7 +532,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
     const target = { lane: lane.id, column: column.key, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
-    const shown = column.key === 'done' && !doneOpen[lane.id] ? list.slice(0, DONE_SHOWN) : list;
+    const capped = list.length > CELL_SHOWN;
+    const shown = capped && !open[key] ? list.slice(0, CELL_SHOWN) : list;
     const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
@@ -539,8 +542,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
         onEdit=${actions ? onEdit : null} />`)}
-      ${shown.length < list.length && html`<${Button} size="sm" variant="link" class="tb-cell-more"
-        onClick=${() => setDoneOpen({ ...doneOpen, [lane.id]: true })}>+ ${list.length - shown.length} more<//>`}
+      ${capped && html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded=${open[key] ? 'true' : 'false'}
+        onClick=${() => setOpen({ ...open, [key]: !open[key] })}>${open[key] ? 'Show fewer' : `+ ${list.length - shown.length} more`}<//>`}
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} group=${group} entry=${entry} />`}
     </div>`;
   };
@@ -558,7 +561,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
-        style=${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}` : undefined}
+        style=${`${resize.widths ? `--tb-lane-cols: ${gridColumns(resize.widths)}; ` : ''}--tb-lane-min: ${gridMinWidth(resize.widths)}px`}
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>

@@ -808,6 +808,12 @@ The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
 needs you* also holds stalled tasks.
 
+A cell shows its first three cards. When it holds more, *+ n more* opens it in
+place and *Show fewer* closes it again, so one busy cell does not stretch its
+whole row. The column heads still count every task. When the card is too
+narrow for every column, the grid scrolls sideways and the lane names stay
+pinned on the left.
+
 The operator's lane comes first: *You*, tinted, with how many tasks wait on
 you (on a linked node's board, *operator of <node>*). It shows while the
 operator holds a task, or when you may assign. Its tasks stand in *In

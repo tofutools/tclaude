@@ -121,6 +121,20 @@ test('the card follows the title only: it hides after the pointer leaves the tit
   assert.match(css, /\.tb-task-panel \{[^}]*pointer-events: none/, 'the card never takes the pointer from the tasks under it');
 });
 
+// Opacity on an ancestor of the card applies to the card too: the tasks
+// behind it would show through. Done cards and closed rows dim without it.
+test('no ancestor of the hover card is dimmed with opacity, so the card stays opaque', async () => {
+  const css = await readFile(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)].map(([, sel, body]) => [sel.trim(), body]);
+  // A rule whose subject is one of the boxes around the card.
+  const ancestors = [/\.tb-card(-done)?$/, /\.tb-closed\s*>\s*td$/, /\.tb-title-cell$/, /\.tb-title-box$/, /\.tb-task-hover$/];
+  for (const [sel, body] of rules) {
+    for (const part of sel.split(',').map((x) => x.trim())) {
+      if (ancestors.some((re) => re.test(part))) assert.doesNotMatch(body, /opacity\s*:/, `${part} holds the hover card and sets no opacity`);
+    }
+  }
+});
+
 test('a click on the title opens the task and never pins the card', async (t) => {
   const { harness, c, settle } = await mountBoard(t);
   const title = titleOf(c, 'tk_00000001');
