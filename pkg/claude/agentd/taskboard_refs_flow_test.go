@@ -224,3 +224,30 @@ func TestTaskboardTaskWithoutRefsSaysRefs(t *testing.T) {
 	assert.False(t, hasRef, "no first ref")
 }
 
+
+// first_ref moves a ref to the front, named as rm_refs names one, after the
+// edit's other ref changes: the first ref is what --ref and the List show.
+func TestTaskboardFirstRefReorders(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	created := h.refsTask(http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "reorder", "ref": "LIN-1", "add_refs": []string{"tcl-a1b2c3", "https://example.com/spec"}}, http.StatusCreated)
+	path := "/v1/taskboard/tasks/" + created.ID
+
+	edited := h.refsTask(http.MethodPatch, path, map[string]any{"first_ref": "#3"}, http.StatusOK)
+	assert.Equal(t, []string{"example.com", "LIN-1", "tcl-a1b2c3"}, refLabels(edited.Refs), "the others keep their order")
+	require.NotNil(t, edited.Ref)
+	assert.Equal(t, "https://example.com/spec", edited.Ref.URL, "ref is the new first")
+
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"first_ref": "tcl-a1b2c3"}, http.StatusOK)
+	assert.Equal(t, []string{"tcl-a1b2c3", "example.com", "LIN-1"}, refLabels(edited.Refs), "by label")
+
+	// A ref added in the same edit can be made first.
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"add_refs": []string{"owner/repo#7"}, "rm_refs": []string{"LIN-1"}, "first_ref": "owner/repo#7"}, http.StatusOK)
+	assert.Equal(t, []string{"owner/repo#7", "tcl-a1b2c3", "example.com"}, refLabels(edited.Refs))
+
+	rec := h.call("", http.MethodPatch, path, map[string]any{"first_ref": "LIN-404"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a ref the task does not have: %s", rec.Body.String())
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"first_ref": "#1"}, http.StatusOK)
+	assert.Equal(t, []string{"owner/repo#7", "tcl-a1b2c3", "example.com"}, refLabels(edited.Refs), "already first: no change")
+}

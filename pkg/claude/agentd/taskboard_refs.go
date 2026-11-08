@@ -17,7 +17,8 @@ import (
 // A task's refs (tk_01ad0884): a task may link to several things at once,
 // such as its tracker issue and the pull request that does it. The first
 // ref is "the" ref every reader of one ref knows (ref, ref_label,
-// --ref); add_refs and rm_refs change the list.
+// --ref); add_refs and rm_refs change the list, and first_ref moves one to
+// the front.
 
 // taskRefOf is a stored ref as a parsed one.
 func taskRefOf(kind, refURL, label string) db.GroupTaskRef {
@@ -79,9 +80,33 @@ func addTaskRefs(list, add []db.GroupTaskRef) ([]db.GroupTaskRef, error) {
 	return out, nil
 }
 
-// removeTaskRefs takes refs off the list, each named by its position (#2,
-// counting from 1), its link, its label, or as --ref would read it. A name
-// that matches none is refused: the caller meant something that is not there.
+// findTaskRef is the position in list of the ref name names: its position
+// (#2, counting from 1), its link, its label, or as --ref would read it. A
+// name that matches none is refused: the caller meant something that is not
+// there.
+func findTaskRef(list []db.GroupTaskRef, name string) (int, error) {
+	if n, err := strconv.Atoi(strings.TrimPrefix(name, "#")); err == nil && strings.HasPrefix(name, "#") {
+		if n >= 1 && n <= len(list) {
+			return n - 1, nil
+		}
+	} else {
+		parsed, perr := db.GroupTaskRef{}, error(nil)
+		if kind, refURL, label, err := parseTaskRef(name, ""); err == nil {
+			parsed = taskRefOf(kind, refURL, label)
+		} else {
+			perr = err
+		}
+		for i, ref := range list {
+			if ref.URL == name || strings.EqualFold(ref.Label, name) || (perr == nil && sameTaskRef(ref, parsed)) {
+				return i, nil
+			}
+		}
+	}
+	return -1, fmt.Errorf("the task has no ref %q (name one by #position, link or label)", name)
+}
+
+// removeTaskRefs takes refs off the list, each named as findTaskRef reads
+// a name.
 func removeTaskRefs(list []db.GroupTaskRef, names []string) ([]db.GroupTaskRef, error) {
 	drop := make([]bool, len(list))
 	for _, raw := range names {
@@ -89,27 +114,9 @@ func removeTaskRefs(list []db.GroupTaskRef, names []string) ([]db.GroupTaskRef, 
 		if name == "" {
 			continue
 		}
-		hit := -1
-		if n, err := strconv.Atoi(strings.TrimPrefix(name, "#")); err == nil && strings.HasPrefix(name, "#") {
-			if n >= 1 && n <= len(list) {
-				hit = n - 1
-			}
-		} else {
-			parsed, perr := db.GroupTaskRef{}, error(nil)
-			if kind, refURL, label, err := parseTaskRef(name, ""); err == nil {
-				parsed = taskRefOf(kind, refURL, label)
-			} else {
-				perr = err
-			}
-			for i, ref := range list {
-				if ref.URL == name || strings.EqualFold(ref.Label, name) || (perr == nil && sameTaskRef(ref, parsed)) {
-					hit = i
-					break
-				}
-			}
-		}
-		if hit < 0 {
-			return nil, fmt.Errorf("the task has no ref %q (name one by #position, link or label)", name)
+		hit, err := findTaskRef(list, name)
+		if err != nil {
+			return nil, err
 		}
 		drop[hit] = true
 	}
@@ -120,6 +127,19 @@ func removeTaskRefs(list []db.GroupTaskRef, names []string) ([]db.GroupTaskRef, 
 		}
 	}
 	return out, nil
+}
+
+// firstTaskRef moves the ref name names (as findTaskRef reads it) to the
+// front: the task's ref for --ref and the List. The others keep their order.
+func firstTaskRef(list []db.GroupTaskRef, name string) ([]db.GroupTaskRef, error) {
+	hit, err := findTaskRef(list, strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]db.GroupTaskRef, 0, len(list))
+	out = append(out, list[hit])
+	out = append(out, list[:hit]...)
+	return append(out, list[hit+1:]...), nil
 }
 
 // setTaskRefs makes edit write list as the task's refs: the first in the

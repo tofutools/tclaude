@@ -275,9 +275,10 @@ func refsKept(body any, t taskboardTask, stderr io.Writer) int {
 	add, _ := req["add_refs"].([]string)
 	rm, _ := req["rm_refs"].([]string)
 	clearAll, _ := req["clear_refs"].(bool)
+	first, _ := req["first_ref"].(string)
 	// A node that knows several refs sends refs whenever the task has one;
 	// one that sends only ref ignored the change.
-	if (len(add) > 0 || ((len(rm) > 0 || clearAll) && t.Ref != nil)) && len(t.Refs) == 0 {
+	if (len(add) > 0 || ((len(rm) > 0 || clearAll || first != "") && t.Ref != nil)) && len(t.Refs) == 0 {
 		fmt.Fprintf(stderr, "Error: the board's node did not take the ref change: it predates tasks with several refs (task %s is written otherwise; its ref is the first only)\n", t.ID)
 		return rcInvalidArg
 	}
@@ -1227,6 +1228,8 @@ type taskboardEditParams struct {
 	// AddRef and RmRef change the task's other refs (tk_01ad0884).
 	AddRef []string `long:"add-ref" collection:"array" optional:"true" help:"Add a ref after the task's others (repeatable; a task has at most 10)"`
 	RmRef  []string `long:"rm-ref" collection:"array" optional:"true" help:"Remove a ref, named by #position (#2), link or label (repeatable); removing the first makes the next one first"`
+	// FirstRef reorders (tk_39630a0f): the first ref is the task's ref.
+	FirstRef string `long:"first-ref" optional:"true" help:"Make this ref the first, named by #position (#2), link or label (after --add-ref/--rm-ref apply): the first is what --ref and the List show"`
 	// ResolveRef is add's --resolve-ref, for a new ref or the task's own.
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear ref up through its tracker proxy to fill in its link: the new --ref, or without --ref the task's own link-less one"`
 	AddDep     string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
@@ -1239,7 +1242,7 @@ type taskboardEditParams struct {
 func taskboardEditCmd() *cobra.Command {
 	return boa.CmdT[taskboardEditParams]{
 		Use:         "edit",
-		Short:       "Edit a task's title, brief, ref or dependencies",
+		Short:       "Edit a task's title, brief, refs or dependencies",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardEditParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -1296,6 +1299,13 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 	}
 	if len(p.RmRef) > 0 {
 		req["rm_refs"] = p.RmRef
+	}
+	if first := strings.TrimSpace(p.FirstRef); first != "" {
+		if p.ClearRef {
+			fmt.Fprintln(stderr, "Error: give --clear-ref or --first-ref, not both")
+			return rcInvalidArg
+		}
+		req["first_ref"] = first
 	}
 	if deps := splitTaskIDs(p.AddDep); len(deps) > 0 {
 		req["add_deps"] = deps

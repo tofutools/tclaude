@@ -158,7 +158,7 @@ tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
 tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref] [--resolve-ref]
-                                    [--add-ref …]… [--rm-ref #n|link|label]… [--add-dep tk_…] [--rm-dep tk_…]
+                                    [--add-ref …]… [--rm-ref #n|link|label]… [--first-ref #n|link|label] [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
 tclaude agent taskboard move <task> --stage idea|next|<custom column>
 tclaude agent taskboard columns ls|add|rename|move|rm <group> …   # custom columns
@@ -217,6 +217,10 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     (the same link, issue or pull request however it is written).
     `edit --rm-ref` removes refs, each named by `#position` (`#2`), link or
     label. Removing the first ref makes the next one first.
+  - `edit --first-ref` makes a ref the first, named the same way, after any
+    `--add-ref` and `--rm-ref` in the same edit (so a ref just added can be
+    made first). The others keep their order. The first ref is the one `ls`,
+    the List and every reader of one ref show.
   - `edit --ref` replaces the first ref and keeps the rest; one the task
     already has is not kept twice. `--clear-ref` removes them all.
     `--resolve-ref` links the added refs too.
@@ -238,14 +242,16 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     rows' chain: #N, CI and review, with their hover cards. An issue is its
     id, its status and (in the tooltip) its title. Anything else is a link. A
     lanes card shows every ref; the List's *Ref* column shows the first and
-    `+n`. The edit form's *Refs* row has one line per ref, with its title,
-    and ✕ takes it off on Save. Its add box adds one (Enter or *+ Add*), and
-    Save links a bare awb or Linear id. Opening the form looks each awb or
+    `+n`. The edit form's *Refs* row has one line per ref, with its title;
+    ↑ makes it the first and ✕ takes it off, on Save. Its add box adds one
+    (Enter or *+ Add*), and Save links a bare awb or Linear id. The New task
+    form's *Refs* row works the same way: the first becomes the task's ref,
+    the rest follow it. Opening the form looks each awb or
     Linear issue up once, so its status is current there and on the board
     after. A linked node from before several refs takes only one ref in the
     form.
   - A linked node from before several refs keeps only the first: `add` and
-    `edit` with `--add-ref` or `--rm-ref` on it fail, saying so. A move to
+    `edit` with `--add-ref`, `--rm-ref` or `--first-ref` on it fail, saying so. A move to
     such a node leaves the original where it is, with all its refs, and says so.
     The dashboard's move does the same.
 - `ask` mails a member of the group a request in your own words. The member
@@ -1422,7 +1428,7 @@ those drags aren't accepted in the lanes.
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`; `--stage <column>` sends `"stage":"<column slug or label>"`; `--add-ref` sends `"add_refs":[…]`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
-| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
+| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--first-ref` sends `"first_ref"`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","add_refs","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |

@@ -28,6 +28,7 @@ import { useAttachmentIntake } from './attachment-intake.js';
 import { FilesField, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
 import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
+import { RefsField, draftRefs } from './groups-taskboard-refs-field.js';
 
 import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
 const html = htm.bind(h);
@@ -113,7 +114,10 @@ export function newTaskPlan(draft) {
   }
   const title = String(draft.title || '').trim();
   const body = String(draft.body || '').trim();
-  const ref = String(draft.ref || '').trim();
+  // The refs: the first is the task's ref, the rest add_refs (tk_c447158c).
+  const refs = draftRefs({ refs: draft.refs || [], newRef: draft.newRef || '' });
+  const ref = refs[0] || '';
+  const addRefs = refs.slice(1);
   const after = draft.after || [];
   const fields = startFields(start, { to: draft.to || '', reason: draft.reason || '' });
   // A title that is only a tracker id is an import, titled from the tracker,
@@ -126,7 +130,7 @@ export function newTaskPlan(draft) {
   if (!ref && isTrackerLine(title)) {
     return { kind: 'add', task: { title, body, ref: title, after, resolveRef: true, ...fields } };
   }
-  return { kind: 'add', task: { title, body, ref, after, resolveRef: !!ref, ...fields } };
+  return { kind: 'add', task: { title, body, ref, ...(addRefs.length ? { addRefs } : {}), after, resolveRef: !!ref, ...fields } };
 }
 
 // submitNewTask runs the plan. It resolves to { created, task, warning }:
@@ -243,7 +247,7 @@ function StartPick({ value, onChange, wizard, disabled, canAssign, listMode, col
     columns=${listMode ? [] : columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Starts in" />`;
 }
 
-const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', start: 'idea', reason: '', after: [], to: '' };
+const EMPTY_DRAFT = { title: '', list: '', body: '', refs: [], newRef: '', start: 'idea', reason: '', after: [], to: '' };
 
 // NewTaskDialog is "Write it myself". `canAssign` shows the assignee
 // picker; `members` are the ones a task can go to.
@@ -273,7 +277,8 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const listMode = !!draft.list;
   const lines = captureLines(draft.list);
   const tasks = entry?.tasks || [];
-  const tracker = !listMode && !draft.ref.trim() && isTrackerLine(draft.title);
+  const hasRefs = draftRefs(draft).length > 0;
+  const tracker = !listMode && !hasRefs && isTrackerLine(draft.title);
   // In progress needs its assignee, blocked its reason.
   const missing = listMode ? '' : draft.start === 'progress' && !draft.to ? 'pick who it is in progress with'
     : draft.start === 'blocked' && !draft.reason.trim() ? 'say why it is blocked' : '';
@@ -321,7 +326,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     footer=${html`<${Button} variant="primary" id="taskboard-new-submit" busy=${busy} disabled=${!ready || busy} onClick=${() => void submit()}>${submitLabel}<//>`}>
     <div class="modal-meta">${listMode
       ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.${
-        draft.body.trim() || draft.ref.trim() || draft.after.length || draft.to || files.length ? ' A list takes no brief, ref, dependencies, assignee or files: they are not used.' : ''}`
+        draft.body.trim() || hasRefs || draft.after.length || draft.to || files.length ? ' A list takes no brief, ref, dependencies, assignee or files: they are not used.' : ''}`
       : wizard ? 'The quest lands among the visions unless you start it elsewhere.' : 'The task lands in the ideas unless you start it in another column.'}</div>
     ${listMode
       ? row('Tasks', html`<${Textarea} class="tb-new-list" rows="6" aria-label="Tasks, one per line" value=${draft.list} disabled=${busy}
@@ -339,9 +344,9 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           placeholder="what the assignee needs to know (optional; Markdown)" onInput=${set('body')}
           editorRef=${briefEditor} attachments=${briefFiles} onPickFiles=${(picked) => intake.add(picked).map((a) => a.name)}
           modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} adds`} />`)}
-        ${row('Ref', html`<${Input} class="tb-new-ref" aria-label="Ref" value=${draft.ref} disabled=${busy || tracker}
-          placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123 (optional)" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
-          draft.ref.trim() ? 'a bare awb or Linear id is linked through its tracker' : null)}`}
+        ${row('Refs', html`<${RefsField} draft=${draft} busy=${busy || tracker} pending="linked when added"
+          onChange=${set('refs')} onNewRef=${set('newRef')} />`,
+          hasRefs ? 'the first is the task\'s ref for --ref and the List (↑ makes another first); a bare awb or Linear id is linked through its tracker' : null)}`}
     ${row('Starts in', html`<${StartPick} value=${listMode && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
       canAssign=${canAssign} listMode=${listMode} columns=${entry?.columns || []} onChange=${set('start')} />`, missing || null)}
     ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Textarea} class="tb-new-reason" rows=${2} aria-label="Block reason" required maxLength=${400}

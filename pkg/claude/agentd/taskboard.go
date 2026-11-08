@@ -1188,13 +1188,15 @@ func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 }
 
 // PATCH /v1/taskboard/tasks/{id} {title?, body?, ref?, ref_label?,
-// clear_ref?, resolve_ref?, add_refs?, rm_refs?, add_deps?, rm_deps?} —
+// clear_ref?, resolve_ref?, add_refs?, rm_refs?, first_ref?, add_deps?, rm_deps?} —
 // resolve_ref looks a bare awb or Linear id up through its tracker proxy to
 // fill its link, as an add does: the new ref's (and add_refs'), or with no
 // ref given the task's own link-less one. ref and ref_label are the task's
 // first ref, and clear_ref takes it off (the next one becomes first);
 // clear_refs takes them all off; rm_refs takes refs off by #position, link
-// or label, and add_refs appends refs (tk_01ad0884).
+// or label, and add_refs appends refs (tk_01ad0884). first_ref, named as
+// rm_refs names one, moves that ref to the front after the others apply:
+// the first ref is what --ref and the List show (tk_39630a0f).
 func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Title      *string  `json:"title"`
@@ -1206,6 +1208,7 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		ResolveRef bool     `json:"resolve_ref"`
 		AddRefs    []string `json:"add_refs"`
 		RmRefs     []string `json:"rm_refs"`
+		FirstRef   string   `json:"first_ref"`
 		AddDeps    []string `json:"add_deps"`
 		RmDeps     []string `json:"rm_deps"`
 	}
@@ -1287,7 +1290,7 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	// (clear_ref, ref "") makes the next one first, and one set to a ref the
 	// task already has is not there twice.
 	if err == nil && (body.ClearRef || body.ClearRefs || body.Ref != nil || body.RefLabel != nil || body.ResolveRef ||
-		len(body.AddRefs) > 0 || len(body.RmRefs) > 0) {
+		len(body.AddRefs) > 0 || len(body.RmRefs) > 0 || strings.TrimSpace(body.FirstRef) != "") {
 		list := editRefsOf(t, edit)
 		if body.ClearRefs {
 			list = nil
@@ -1298,6 +1301,11 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		}
 		if err == nil {
 			list, err = addTaskRefs(nil, append(list, add...))
+		}
+		// first_ref names a ref of the list as it now is, one just added
+		// included.
+		if err == nil && strings.TrimSpace(body.FirstRef) != "" {
+			list, err = firstTaskRef(list, body.FirstRef)
 		}
 		if err == nil {
 			setTaskRefs(&edit, list)
