@@ -78,6 +78,22 @@ func (e *pageEnv) async(t *testing.T, a pageAgent, method, path string, body any
 	return done
 }
 
+// waitViews polls the page's patch listing until the server counts n open
+// views of it.
+func (e *pageEnv) waitViews(t *testing.T, a pageAgent, page string, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		rec := e.call(t, a, http.MethodGet, "/v1/pages/"+page+"/patches", nil)
+		var out struct {
+			Views int `json:"views"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			return false
+		}
+		return out.Views == n
+	}, 10*time.Second, 10*time.Millisecond, "page %s: the server never counted %d open views", page, n)
+}
+
 func TestPageLivePatchIsJournaledReplayedAndReset(t *testing.T) {
 	e := newPageEnv(t)
 	a := e.agent(t, "patch", true)
@@ -115,6 +131,10 @@ func TestPageLivePatchIsJournaledReplayedAndReset(t *testing.T) {
 	_, ns, _ = again.journal()
 	assert.Equal(t, []int{1, 2}, ns)
 	require.NoError(t, again.conn.Close())
+	// The server drops the closed view only once its read loop sees the
+	// close; until then the eval below could go to it, and the open view
+	// would wait for an ask that never comes.
+	e.waitViews(t, a, "app", 1)
 
 	// An eval runs once in one view, is listed, and is not replayed.
 	done = e.async(t, a, http.MethodPost, "/v1/pages/app/eval", map[string]any{"js": "document.title"})

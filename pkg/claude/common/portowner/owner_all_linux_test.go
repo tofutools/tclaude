@@ -4,9 +4,11 @@ package portowner_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -66,4 +68,63 @@ func TestProcessOwnsAllLoopbackListeners_Basics(t *testing.T) {
 	assert.True(t, portowner.ProcessOwnsAllLoopbackListeners(os.Getpid(), port))
 	assert.False(t, portowner.ProcessOwnsAllLoopbackListeners(os.Getpid(), 0))
 	assert.False(t, portowner.ProcessOwnsAllLoopbackListeners(1, port))
+}
+
+// A child forked from a thread other than the main one is listed under that
+// thread (/proc/<pid>/task/<tid>/children), not the main thread's: the
+// subtree must read every thread's, or a Go process's children go missing
+// depending on which OS thread ran exec (the SharedPort test's old flake).
+func TestProcessSubtree_ChildOfAnotherThread(t *testing.T) {
+	started := make(chan *exec.Cmd, 1)
+	errs := make(chan error, 1)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	go func() {
+		// Lock this goroutine to its own OS thread, and make sure that is
+		// not the main thread: keep the main thread taken by a second
+		// locked goroutine if it landed there.
+		runtime.LockOSThread()
+		if unix.Gettid() == os.Getpid() {
+			done := make(chan struct{})
+			go func() {
+				runtime.LockOSThread()
+				defer runtime.UnlockOSThread()
+				if unix.Gettid() == os.Getpid() {
+					errs <- errors.New("both goroutines landed on the main thread")
+					close(done)
+					return
+				}
+				cmd := exec.Command("sleep", "60")
+				if err := cmd.Start(); err != nil {
+					errs <- err
+				} else {
+					started <- cmd
+				}
+				close(done)
+				<-release
+			}()
+			<-done
+			<-release
+			runtime.UnlockOSThread()
+			return
+		}
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			errs <- err
+		} else {
+			started <- cmd
+		}
+		// Hold the thread: a thread that exits reparents its children.
+		<-release
+		runtime.UnlockOSThread()
+	}()
+	var cmd *exec.Cmd
+	select {
+	case cmd = <-started:
+	case err := <-errs:
+		t.Fatalf("starting the child: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	assert.True(t, portowner.ProcessInSubtree(os.Getpid(), cmd.Process.Pid),
+		"a child forked from another thread is in the subtree")
 }
