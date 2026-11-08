@@ -28,7 +28,7 @@ import {
   detachSpot, dragHit, dropTargets, edgeMeets, edgeTargets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, normalized, parseSplit, rectZone, roomTree, splitEdges, splitLayout, targetAt, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
-import { overlayWindowLeaving, overlayWindowWaiting, reducedMotion } from './overlay-window-motion.js';
+import { LiveCover, overlayLiveCovers, overlayWindowLeaving, overlayWindowWaiting, reducedMotion } from './overlay-window-motion.js';
 
 const html = htm.bind(h);
 
@@ -839,6 +839,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
         ${look !== 'macos' && windowControls}
       </header>
       ${children}
+      <${LiveCover} cover=${overlayLiveCovers.value.get(id)} />
       ${overlay.edges.map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
         onPointerDown=${(event) => overlay.onResizePointerDown(event, edge)}></div>`)}
     </section>`}

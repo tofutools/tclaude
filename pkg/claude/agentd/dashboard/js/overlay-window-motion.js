@@ -26,7 +26,11 @@
 // up, mid-flight or after.
 
 import { effect, signal, untracked } from '@preact/signals';
+import { h } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
+import htm from 'htm';
+
+const html = htm.bind(h);
 
 export const MOTION_MS = 220;
 export const MOTION_STAGGER_MS = 25;
@@ -103,6 +107,7 @@ export function resetOverlayMotionForTest() {
   liveContent.clear();
   lastFrames.clear();
   motionTargets.clear();
+  overlayLiveCovers.value = new Map();
   overlayWindowMotion.value = new Map();
 }
 
@@ -111,34 +116,54 @@ const sleep = (win, ms) => new Promise((resolve) => {
   timer(resolve, ms);
 });
 
-// coverContent lays frame (or, with none, a placeholder) over host until the
-// returned function takes it off.
-function coverContent(host, frame) {
+// What covers each window's content while it comes up, by window id:
+// { frame, rect, token }. frame is the kept copy of its last screen, or null
+// for the placeholder; rect is where the content sits in the window. The window
+// draws it (LiveCover); the copy is handed to that host, never built here.
+export const overlayLiveCovers = signal(new Map());
+let coverTokens = 0;
+
+function setCover(id, cover) {
+  const next = new Map(overlayLiveCovers.peek());
+  if (cover) next.set(id, cover);
+  else next.delete(id);
+  overlayLiveCovers.value = next;
+}
+
+// coverContent covers the content of window id at host with frame (or, with
+// none, a placeholder) until the returned function takes it off. One cover at
+// a time: a flight turned round replaces the one before.
+function coverContent(id, host, frame) {
   const section = host?.closest?.('[data-overlay-window]');
-  const doc = host?.ownerDocument;
-  if (!section || !doc?.createElement) return () => {};
-  const at = host.getBoundingClientRect?.();
-  const outer = section.getBoundingClientRect?.();
-  // One cover at a time: a flight turned round replaces the one before.
-  for (const old of section.querySelectorAll?.('[data-overlay-live-frame]') || []) old.remove();
-  const cover = doc.createElement('div');
-  cover.className = `overlay-live-frame${frame ? '' : ' placeholder'}`;
-  cover.setAttribute('aria-hidden', 'true');
-  cover.setAttribute('data-overlay-live-frame', frame ? 'last' : 'placeholder');
-  if (at && outer) {
-    cover.style.left = `${at.left - outer.left - (section.clientLeft || 0)}px`;
-    cover.style.top = `${at.top - outer.top - (section.clientTop || 0)}px`;
-    cover.style.width = `${at.width}px`;
-    cover.style.height = `${at.height}px`;
-  }
-  if (frame) {
-    frame.setAttribute?.('inert', '');
-    cover.appendChild(frame);
-  } else {
-    cover.textContent = 'Connecting…';
-  }
-  section.appendChild(cover);
-  return () => cover.remove();
+  const at = host?.getBoundingClientRect?.();
+  const outer = section?.getBoundingClientRect?.();
+  if (!at || !outer) return () => {};
+  const token = ++coverTokens;
+  setCover(id, {
+    frame,
+    token,
+    rect: { left: at.left - outer.left - (section.clientLeft || 0), top: at.top - outer.top - (section.clientTop || 0), width: at.width, height: at.height },
+  });
+  return () => {
+    if (overlayLiveCovers.peek().get(id)?.token === token) setCover(id, null);
+  };
+}
+
+// LiveCover draws a window's cover: its last screen, or "Connecting…".
+export function LiveCover({ cover }) {
+  const holder = useRef(null);
+  useLayoutEffect(() => {
+    const node = holder.current;
+    if (!node || !cover?.frame) return undefined;
+    node.replaceChildren(cover.frame);
+    return () => node.replaceChildren();
+  }, [cover?.frame]);
+  if (!cover) return null;
+  const { left, top, width, height } = cover.rect;
+  return html`<div class=${`overlay-live-frame${cover.frame ? '' : ' placeholder'}`} aria-hidden="true" inert
+    data-overlay-live-frame=${cover.frame ? 'last' : 'placeholder'} style=${`left:${left}px;top:${top}px;width:${width}px;height:${height}px`}>
+    ${cover.frame ? html`<div ref=${holder} class="overlay-live-frame-holder"></div>` : 'Connecting…'}
+  </div>`;
 }
 
 // ensureLiveContent is what every flight asks as it starts. Content that is
@@ -158,7 +183,7 @@ export function ensureLiveContent(window) {
   const frame = kept && kept.tabId === provider.tabId ? kept.node.cloneNode(true) : null;
   let host = null;
   try { host = provider.host?.() || null; } catch { host = null; }
-  const uncover = coverContent(host, frame);
+  const uncover = coverContent(window.id, host, frame);
   return Promise.resolve().then(() => provider.ready()).then((ok) => !!ok, () => false).then((ok) => {
     if (ok && liveContent.get(window.id) === provider) keepFrame(window.id, provider);
     uncover();
@@ -384,6 +409,7 @@ export function installOverlayWindowMotion(win, { windows, stack = () => [] }) {
       // A window gone mid-flight just stops, and its last frame goes with it.
       for (const [id, flight] of flights) if (!known.has(id)) land(id, flight);
       for (const id of lastFrames.keys()) if (!known.has(id)) lastFrames.delete(id);
+      for (const id of overlayLiveCovers.peek().keys()) if (!known.has(id)) setCover(id, null);
       if (!moves.length) return;
       if (reducedMotion(win)) {
         // Instant, as before; a flight under way stops where it would end.

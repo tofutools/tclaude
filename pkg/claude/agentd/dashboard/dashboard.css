@@ -1816,7 +1816,7 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 /* What a window shows while its content comes up: its last frame, or a placeholder. */
 .overlay-live-frame { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; background: var(--cmp-bg, #0d1117); }
 .overlay-live-frame.placeholder { display: flex; align-items: center; justify-content: center; color: var(--cmp-muted, #8b949e); font-size: 12px; }
-.overlay-live-frame-copy { height: 100%; }
+.overlay-live-frame-holder, .overlay-live-frame-copy { height: 100%; }
 .overlay-window-edge { position: absolute; z-index: 2; touch-action: none; }
 .overlay-window-edge:is(.e, .w) { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 .overlay-window-edge:is(.n, .s) { left: 0; right: 0; height: 6px; cursor: ns-resize; }

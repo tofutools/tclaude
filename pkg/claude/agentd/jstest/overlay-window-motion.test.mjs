@@ -10,6 +10,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 async function setup(t, { reduced = false } = {}) {
   const harness = await createPreactHarness(t);
   const motion = await harness.importDashboardModule('js/overlay-window-motion.js');
+  motionModule = motion;
   motion.resetOverlayMotionForTest();
   const doc = harness.document;
   const frames = [];
@@ -212,7 +213,12 @@ function terminalWindow(s, id) {
   return { node, host, draw, unregister, attach: (text) => { draw(text); live = true; attach(true); }, drop: () => { live = false; host.innerHTML = ''; } };
 }
 
-const cover = (node) => node.querySelector('[data-overlay-live-frame]');
+// The cover a window draws over its content: { kind, text }, or null.
+let motionModule = null;
+const cover = (node) => {
+  const entry = motionModule.overlayLiveCovers.peek().get(node.getAttribute('data-overlay-window'));
+  return entry ? { kind: entry.frame ? 'last' : 'placeholder', text: entry.frame?.textContent || '' } : null;
+};
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 test('a terminal not attached flies at once, behind a placeholder, then shows live when it attaches', async (t) => {
@@ -223,7 +229,7 @@ test('a terminal not attached flies at once, behind a placeholder, then shows li
   s.set([{ id: 'a', tabs: [], minimized: false }]);
   s.flush();
   assert.equal(s.animations.length, 1, 'the flight starts at once, attached or not');
-  assert.equal(cover(term.node)?.getAttribute('data-overlay-live-frame'), 'placeholder', 'nothing kept yet: the placeholder, never black');
+  assert.equal(cover(term.node)?.kind, 'placeholder', 'nothing kept yet: the placeholder, never black');
   term.attach('$ live');
   await settle();
   assert.equal(cover(term.node), null, 'live content swaps in, mid-flight');
@@ -245,8 +251,8 @@ test('a terminal not attached yet flies behind its last good frame', async (t) =
   s.set([{ id: 'a', tabs: [], minimized: false }]);
   s.flush();
   const shown = cover(term.node);
-  assert.equal(shown?.getAttribute('data-overlay-live-frame'), 'last');
-  assert.match(shown.textContent, /\$ before/, 'what it showed last');
+  assert.equal(shown?.kind, 'last');
+  assert.match(shown.text, /\$ before/, 'what it showed last');
   assert.equal(s.animations.length, 2, 'and it does not wait');
 });
 
@@ -259,7 +265,7 @@ test('the last frame survives the terminal going away, for its tab only', async 
   s.motion.registerLiveContent('a', { tabId: 'a-tab', host: () => term.host, live: () => false, ready: () => new Promise((resolve) => { attach = resolve; }), capture: () => null });
   term.host.innerHTML = '';
   const done = s.motion.ensureLiveContent({ id: 'a' });
-  assert.match(cover(term.node)?.textContent || '', /\$ kept/);
+  assert.match(cover(term.node)?.text || '', /\$ kept/);
   await settle();
   attach(true);
   assert.equal(await done, true);
@@ -267,7 +273,7 @@ test('the last frame survives the terminal going away, for its tab only', async 
 
   s.motion.registerLiveContent('a', { tabId: 'another-tab', host: () => term.host, live: () => false, ready: () => Promise.resolve(false), capture: () => null });
   const other = s.motion.ensureLiveContent({ id: 'a' });
-  assert.equal(cover(term.node)?.getAttribute('data-overlay-live-frame'), 'placeholder', 'another tab never shows this one\'s frame');
+  assert.equal(cover(term.node)?.kind, 'placeholder', 'another tab never shows this one\'s frame');
   assert.equal(await other, false, 'content that gives up');
   assert.equal(cover(term.node), null, 'leaves no cover behind');
 });
@@ -287,4 +293,23 @@ test('terminalReady waits for the attach and its first output', async (t) => {
   timers.shift()();
   await settle();
   assert.equal(resolved, true);
+});
+
+test('the window draws its cover: the kept screen handed to its host, or the placeholder', async (t) => {
+  const s = await setup(t);
+  const { html } = s.harness;
+  const frame = s.doc.createElement('div');
+  frame.textContent = '$ kept screen';
+  const rect = { left: 6, top: 30, width: 300, height: 200 };
+  const view = await s.harness.mount(html`<${s.motion.LiveCover} cover=${{ frame, rect, token: 1 }} />`);
+  const drawn = view.container.querySelector('[data-overlay-live-frame]');
+  assert.equal(drawn.getAttribute('data-overlay-live-frame'), 'last');
+  assert.equal(drawn.querySelector('.overlay-live-frame-holder').firstChild, frame, 'the copy itself, under a Preact-owned host');
+  assert.match(drawn.getAttribute('style'), /left:6px;top:30px;width:300px;height:200px/);
+  await view.rerender(html`<${s.motion.LiveCover} cover=${{ frame: null, rect, token: 2 }} />`);
+  const placeholder = view.container.querySelector('[data-overlay-live-frame]');
+  assert.equal(placeholder.getAttribute('data-overlay-live-frame'), 'placeholder');
+  assert.equal(placeholder.textContent.trim(), 'Connecting…');
+  await view.rerender(html`<${s.motion.LiveCover} cover=${undefined} />`);
+  assert.equal(view.container.querySelector('[data-overlay-live-frame]'), null, 'gone when live');
 });
