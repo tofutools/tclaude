@@ -5,6 +5,9 @@
 # ship a dashboard change.
 #
 #   scripts/sandbox/ui.sh up [--fixture NAME] [--port N]   start it, print the URL
+#   scripts/sandbox/ui.sh up --foreground [...]            the same, serving until stopped
+#                                                         (run it as a background job of
+#                                                         your shell to `tclaude agent show` it)
 #   scripts/sandbox/ui.sh url | status                     the running sandbox
 #   scripts/sandbox/ui.sh down                             stop it, delete its data
 #   scripts/sandbox/ui.sh smoke [NAME]                     Playwright tests on a fresh sandbox
@@ -54,22 +57,29 @@ start() {
   echo "built in $((SECONDS - t0))s; seeding fixture '$fixture' ..." >&2
 
   # The server sees only the throwaway directory: HOME, TMPDIR and every XDG
-  # dir point inside it. It runs from the package directory, as go test does,
-  # detached from the terminal (setsid where there is one; stock macOS has none).
-  local detach=nohup
-  command -v setsid >/dev/null && detach=setsid
+  # dir point inside it. It runs from the package directory, as go test does.
+  # Detached (the default) it outlives this script: setsid where there is one
+  # (stock macOS has none), else nohup. In the foreground it stays this
+  # script's child, so it is in the caller's process tree (agent show checks
+  # that) and stops with the script.
+  local detach=()
+  if [[ -z "$foreground" ]]; then
+    detach=(nohup)
+    command -v setsid >/dev/null && detach=(setsid)
+  fi
+  # The subshell execs into the server, so $! is the server's pid and, in the
+  # foreground, its parent is this script.
   (
-    cd "$root/pkg/claude/agentd"
-    env HOME="$work/home" TMPDIR="$work/tmp" \
+    cd "$root/pkg/claude/agentd" &&
+    exec env HOME="$work/home" TMPDIR="$work/tmp" \
       XDG_CONFIG_HOME="$work/xdg/config" XDG_CACHE_HOME="$work/xdg/cache" \
       XDG_DATA_HOME="$work/xdg/data" XDG_STATE_HOME="$work/xdg/state" \
       XDG_RUNTIME_DIR="$work/xdg/runtime" \
       TCLAUDE_SANDBOX_SERVE="$work/serve" TCLAUDE_SANDBOX_FIXTURE="$fixture" \
       TCLAUDE_SANDBOX_PORT="$port" \
-      "$detach" "$work/agentd.test" -test.run '^TestSandboxServe$' -test.timeout 0 -test.v \
-      > "$state/server.log" 2>&1 < /dev/null &
-    echo $! > "$state/pid"
-  )
+      ${detach[@]+"${detach[@]}"} "$work/agentd.test" -test.run '^TestSandboxServe$' -test.timeout 0 -test.v
+  ) > "$state/server.log" 2>&1 < /dev/null &
+  echo $! > "$state/pid"
   local pid
   pid="$(cat "$state/pid")"
   local deadline=$((SECONDS + 120))
@@ -106,6 +116,8 @@ stop() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   fi
+  # Keep the server's log: it says why a sandbox failed or what it refused.
+  [[ -f "$state/server.log" ]] && cp "$state/server.log" "$state_root/$1-last.log"
   # Only ever delete the directory this script made.
   if [[ -n "$work" && "$work" == */tclaude-sandbox.* && -d "$work" ]]; then
     rm -rf "$work"
@@ -140,11 +152,12 @@ cmd="${1:-}"
 shift
 case "$cmd" in
   up)
-    fixture=full port=""
+    fixture=full port="" foreground=""
     while (( $# )); do
       case "$1" in
         --fixture) fixture="${2:?--fixture needs a name}"; shift ;;
         --port) port="${2:?--port needs a number}"; shift ;;
+        --foreground) foreground=1 ;;
         *) usage ;;
       esac
       shift
@@ -152,6 +165,16 @@ case "$cmd" in
     [[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
     start ui "$fixture" "$port"
     cat "$state_root/ui/url"; echo
+    if [[ -n "$foreground" ]]; then
+      # Only now: a start that failed (one already up, say) must not stop it.
+      trap 'stop ui' EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      # Serve until the server ends: ui.sh down, or this script is stopped.
+      status=0
+      wait "$(cat "$state_root/ui/pid")" || status=$?
+      exit "$status"
+    fi
     ;;
   url)
     [[ -f "$state_root/ui/url" ]] || die "no sandbox is up (ui.sh up)"
@@ -169,7 +192,7 @@ case "$cmd" in
     ;;
   smoke|tour)
     [[ "$cmd" == tour ]] && set -- tour
-    name="smoke-$$"
+    name="smoke-$$" foreground=""
     trap 'stop "$name"' EXIT
     start "$name" full ""
     run_smoke "$name" "$@"

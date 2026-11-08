@@ -7,6 +7,7 @@ dashboard change in a real browser before you open the PR.
 ```bash
 scripts/sandbox/ui.sh up               # build, seed the full fixture, print the URL
 scripts/sandbox/ui.sh up --port 7790   # a fixed port, on 127.0.0.1 only
+scripts/sandbox/ui.sh up --foreground  # the same, serving until stopped (for agent show)
 scripts/sandbox/ui.sh down             # stop it and delete its data
 scripts/sandbox/ui.sh tour             # the route tour on a fresh sandbox
 scripts/sandbox/ui.sh smoke [NAME]     # every Playwright test, or one file
@@ -18,6 +19,23 @@ the XDG dirs point into a `mktemp -d` directory, so nothing reaches
 `~/.tclaude`, the real daemon or the real tmux server. The clock is live and the
 API is writable: you are the logged-in operator, so creating and moving tasks,
 drawing and sending messages all work and persist until `down`.
+
+## Showing it to the operator
+
+`tclaude agent show :PORT` (needs `self.page`) puts the sandbox in the
+operator's dashboard, live. On a host-network agent the stage accepts only a
+server in your own process tree, and a plain `up` detaches its server. Run
+`ui.sh up --foreground --port N` through your harness's background run
+instead, with its output redirected to a file. A bare `&` in a tool call's
+short-lived shell leaves your process tree. The foreground run serves until
+`ui.sh down`, or until the run is stopped. It works for every fixture but
+`page`.
+
+The stage sends no Referer and rewrites Origin. The sandbox, and only the
+sandbox, reads a missing Referer as its own, so the dashboard loads there.
+Requests answered 400 or above are logged to `sandbox-out/ui/server.log`.
+When a sandbox stops, its log is kept as `sandbox-out/<name>-last.log`
+(`ui-last.log` for `up`).
 
 ## What the `full` fixture shows
 

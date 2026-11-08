@@ -314,6 +314,66 @@ conversions should keep total suite time flat or make it faster.
 
 ## Dashboard frontend
 
+### See your change in the sandbox
+
+Before you open a PR that changes the dashboard, look at the change in a real
+browser. `scripts/sandbox/ui.sh` serves the real dashboard and daemon API from
+your working tree, over seeded data that fills every page and tab. It runs
+under a throwaway HOME with tmux simulated, so it never touches `~/.tclaude`,
+your daemon or your tmux. See `scripts/sandbox/README.md` for what the data
+covers and what it cannot show (live terminals, a live federation peer).
+
+```bash
+scripts/sandbox/ui.sh up            # build, seed, print the URL (about 5s warm)
+scripts/sandbox/ui.sh tour          # every route: no errors, no empty pages
+scripts/sandbox/ui.sh smoke [NAME]  # the Playwright smoke tests
+scripts/sandbox/ui.sh down          # stop it and delete its data
+```
+
+**Drive it with Playwright.** `scripts/sandbox/smoke` pins `@playwright/test`
+and uses the system Chrome, so nothing is downloaded. To look at a page,
+`playwright-cli` or a short Playwright script against the printed URL is
+enough. A check worth keeping goes into `smoke/tests/`. If Playwright is not
+available, fall back to headless Chrome:
+
+- `google-chrome --headless=new --virtual-time-budget=10000 --window-size=1440,900
+  --screenshot=out.png URL`. The budget lets the dashboard finish booting;
+  without it the shot shows the loading curtain.
+- The step-wise driver `scripts/e2e/drive`.
+
+**Under an agent sandbox**, point `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and
+`XDG_DATA_HOME` at a writable temp dir before you start Chrome yourself.
+Chrome's crashpad aborts when `~/.config` is unwritable. `ui.sh smoke` and
+`ui.sh tour` already do this.
+
+**Show it to the operator** with `tclaude agent show :PORT`, which needs
+`self.page`. On a host-network agent, the stage shows only a server inside
+your own process tree. A plain `ui.sh up` detaches its server, so serve it in
+the foreground instead, kept alive by your harness's own background run
+(Claude Code's `run_in_background`, for example):
+
+```bash
+scripts/sandbox/ui.sh up --foreground --port 7790 > sandbox-out/fg.log 2>&1   # as a background run
+tclaude agent show :7790 --name sandbox
+```
+
+A bare `&` works only in a shell that stays alive. A tool call's shell exits
+when the command returns, and its orphaned jobs leave your process tree.
+
+The operator then sees the seeded dashboard, live, in their own. This works
+for the `full` fixture and the other docshots fixtures, but not `page`. `tclaude
+agent page snapshot` renders the page only 300ms after it loads, before the
+dashboard has painted. To see it yourself, use Playwright on the URL.
+
+**Say so in the PR.** Say what you looked at and how: for example, "checked
+the Task board edit form in the sandbox with Playwright; `ui.sh tour`
+passes".
+
+**A new page or tab** is toured automatically, since the tour reads the
+router's route list. The tour fails until the `full` fixture
+(`pkg/claude/agentd/sandbox_serve_test.go`) seeds it, or until the tour's
+`ALLOW` list says why it stays empty.
+
 ### Docs drift
 
 `.claude/skills/docs-drift` compares what `docs/` says with what the dashboard

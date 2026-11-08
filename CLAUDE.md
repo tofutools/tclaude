@@ -142,6 +142,11 @@ Dashboard images in the README and `docs/` come from
 
 ## UI design proposals: mock, render, notify
 
+Before opening a dashboard PR, look at the change in the sandbox
+(`scripts/sandbox/ui.sh up`) with Playwright and say so in the PR; see "See your
+change in the sandbox" in `CONTRIBUTING.md`, which also covers showing it to the
+operator.
+
 For UI direction questions — which control type fits, competing layout ideas, a
 contested visual change — do not iterate in the production frontend. The full
 dev loop (edit real JS/CSS, rebuild, re-render, review) is far slower than the

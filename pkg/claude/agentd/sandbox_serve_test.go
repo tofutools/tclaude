@@ -10,6 +10,7 @@ package agentd_test
 // Gated so `go test ./...` never serves anything.
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +59,59 @@ func TestSandboxServe(t *testing.T) {
 		}
 	}
 	mux, page := seedDocFixture(t, fixture)
-	serveDocFixture(t, dir, mux, page, ln)
+	serveDocFixture(t, dir, sandboxLogFailures(t, sandboxStageReferer(mux)), page, ln)
+}
+
+// sandboxLogFailures writes each request answered 400 or above to the test
+// log (ui.sh keeps it in sandbox-out/ui/server.log), so a page that fails to
+// load in the sandbox says why.
+func sandboxLogFailures(t *testing.T, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &sandboxStatus{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		if rec.code >= 400 {
+			t.Logf("sandbox: %d %s %s (host %s, origin %q, referer %q)", rec.code, r.Method, r.URL.RequestURI(), r.Host, r.Header.Get("Origin"), r.Referer())
+		}
+	})
+}
+
+type sandboxStatus struct {
+	http.ResponseWriter
+	code int
+}
+
+func (s *sandboxStatus) WriteHeader(code int) { s.code = code; s.ResponseWriter.WriteHeader(code) }
+
+// Unwrap lets http.ResponseController reach the real writer; Flush and Hijack
+// serve the handlers that assert those interfaces directly (event streams, the
+// drawing boards' live websocket).
+func (s *sandboxStatus) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+func (s *sandboxStatus) Flush() { _ = http.NewResponseController(s.ResponseWriter).Flush() }
+
+func (s *sandboxStatus) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	s.code = http.StatusSwitchingProtocols
+	return http.NewResponseController(s.ResponseWriter).Hijack()
+}
+
+// sandboxStageReferer lets the dashboard load inside `tclaude agent show`. The
+// stage presents each request as the browser's own to http://localhost:PORT:
+// it rewrites Origin, and its pages send no Referer (Referrer-Policy:
+// no-referrer). The dashboard pins a request to itself by Origin or Referer,
+// so every asset GET would be refused. Here, and only here (a loopback test
+// server over invented data whose handler already supplies the operator's
+// cookie), a missing or foreign Referer is read as the server's own.
+func sandboxStageReferer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") == "" {
+			ref, err := url.Parse(r.Referer())
+			if err != nil || ref.Host != r.Host {
+				r = r.Clone(r.Context())
+				r.Header.Set("Referer", "http://"+r.Host+"/")
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sandboxSeeder sends the seeding requests through the production routes: the
