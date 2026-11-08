@@ -43,6 +43,7 @@ import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
+import { agentLink } from './cross-links.js';
 import {
   actorAgentId, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -205,9 +206,13 @@ function Who({ task, group, snapshot }) {
   // The name ellipsizes in its cell; who assigned it, and when, is the
   // tooltip.
   const detail = [task.assigned_at && `assigned ${relTime(task.assigned_at)}`, by && `by ${by}`].filter(Boolean).join(' ');
+  // An agent that is a member links to its row (cross-links.js); the
+  // tooltip stays who assigned it.
+  const member = !operator && (group?.members || []).some((m) => m.agent_id === agent);
+  const link = member ? { ...agentLink({ group: group.name, node: group.fleet_node?.id || '', id: agent, name }), title: undefined } : {};
   return html`<span class=${`tb-who${operator ? ' tb-who-operator' : ''}`} title=${detail ? `${name} · ${detail}` : `${name} · ${agent}`}>
     <span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>
-    <span class="tb-who-name">${name}</span>
+    <span class=${`tb-who-name${member ? ' tb-xlink' : ''}`} ...${link}>${name}</span>
   </span>`;
 }
 

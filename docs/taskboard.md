@@ -860,6 +860,25 @@ a CLI verb:
 - Each agent's row in the Agents section shows the tasks assigned to it
   (`☰ 2 tasks · first title`), in amber when one of them is blocked.
 
+#### Links between agents and tasks
+
+The board and the Agents section link to each other. On the board, an agent's
+name in its lane head, its avatar on a card (in *triage* and *one row*) and
+its name under *Who* in the List are links to the agent's row. On an agent's
+row, the first task's title in `☰ n tasks` is a link to that task on the
+board.
+
+- **Click** (or Enter) unfolds whatever hides the target, such as the group,
+  the section or a lanes cell past its *+ n more*, then scrolls there with a
+  short smooth scroll and a brief flash.
+- **Hover** (or focus) never unfolds. It outlines the target. When something
+  folded hides it, the folded header or the cell's *+ n more* is outlined
+  instead, with a dashed line. When the target is off-screen, a small bar on
+  the top or bottom edge of the window points the way.
+
+With *reduce motion* set in your system, the scroll jumps and the flash only
+fades.
+
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view. In *Lanes*,

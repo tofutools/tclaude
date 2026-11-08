@@ -29,10 +29,10 @@ const FIND_MS = 4000;
 const TRANSIT_MS = 120000;
 const BLIP_MS = 1500;
 
-const visible = (el) => !!el && el.isConnected && el.getClientRects().length > 0;
+export const visible = (el) => !!el && el.isConnected && el.getClientRects().length > 0;
 const esc = (s) => (globalThis.CSS?.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'));
 
-function reducedMotion() {
+export function reducedMotion() {
   try { return !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; }
 }
 
@@ -101,7 +101,7 @@ function ownRows(box, ids) {
 
 // findLanded resolves what to mark: the dropped thing in the box, else (when
 // `fallback`) the box's header.
-function findLanded(target, fallback) {
+export function findLanded(target, fallback) {
   const ids = (target.ids || []).filter(Boolean);
   for (const box of groupBoxes(target)) {
     if (ids.length) {
@@ -119,7 +119,7 @@ function findLanded(target, fallback) {
   return null;
 }
 
-function overlayLayer() {
+export function overlayLayer() {
   let layer = document.getElementById('drop-landing-layer');
   if (!layer) {
     layer = document.createElement('div');
@@ -132,12 +132,12 @@ function overlayLayer() {
 
 // live: a page that can draw the effect. Outside one (the node test DOM, a
 // torn-down page) the landing does nothing rather than throw.
-const live = () => typeof document !== 'undefined' && !!document.body && typeof requestAnimationFrame === 'function';
+export const live = () => typeof document !== 'undefined' && !!document.body && typeof requestAnimationFrame === 'function';
 
 // track keeps an overlay over `resolve()`'s element each frame until stop().
 // A lost element is looked for again at most every RESOLVE_MS, not per frame.
 const RESOLVE_MS = 250;
-function track(overlay, resolve) {
+export function track(overlay, resolve) {
   let el = null;
   let raf = 0;
   let looked = -Infinity;
@@ -163,7 +163,7 @@ function scrollTo(el) {
 }
 
 // blip plays the landing over an element, following it while it plays.
-function blip(el, { failed = false } = {}) {
+export function blip(el, { failed = false } = {}) {
   const overlay = document.createElement('div');
   overlay.className = `drop-landing drop-landing-blip${failed ? ' failed' : ''}`;
   overlayLayer().appendChild(overlay);

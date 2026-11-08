@@ -19,9 +19,10 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  BlockDialog, Card, CellAdd, CellCards, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useLaneDrag,
+  BlockDialog, Card, CellAdd, CellCards, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useCellReveal, useLaneDrag,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
+import { agentLink } from './cross-links.js';
 
 const html = htm.bind(h);
 
@@ -83,7 +84,9 @@ export function cardMarker(task, group, snapshot) {
   // the name the task recorded.
   const member = (group?.members || []).find((m) => m.agent_id === lane);
   const name = member?.title || task.assignee?.name || agentLabel(lane, group, snapshot) || lane;
-  return { class: '', badge: html`<span class="tb-card-marker tb-avatar" title=${name} aria-label=${`Assigned to ${name}`}>${String(name).slice(0, 1).toUpperCase()}</span>` };
+  // A member's avatar links to its row (cross-links.js).
+  const link = member ? agentLink({ group: group.name, node: group.fleet_node?.id || '', id: lane, name }) : {};
+  return { class: '', badge: html`<span class=${`tb-card-marker tb-avatar${member ? ' tb-xlink' : ''}`} ...${link} title=${name} aria-label=${`Assigned to ${name}`}>${String(name).slice(0, 1).toUpperCase()}</span>` };
 }
 
 // rowTarget is what a drop on a row's cell means: resolve(fromLane) is the
@@ -109,6 +112,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const cells = flatModel(entry, mode, now);
   const drag = useLaneDrag(actions, group, tasks);
   const [open, setOpen] = useState({});
+  useCellReveal(cells, FLAT_SHOWN, setOpen);
   const nameOf = (actor) => actorLabel(actor, group, snapshot);
   const [landed, setLanded] = useState(null);
   const landIn = (key, list, id = '') => {
