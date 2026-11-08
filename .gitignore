@@ -93,3 +93,6 @@ excalidraw.log
 /dist/
 
 docshots-out/
+
+# scripts/sandbox/ui.sh state and Playwright results
+sandbox-out/
