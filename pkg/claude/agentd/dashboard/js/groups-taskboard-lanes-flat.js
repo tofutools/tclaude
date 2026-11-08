@@ -23,6 +23,7 @@ import {
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
+import { AnswerFor } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -113,6 +114,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const drag = useLaneDrag(actions, group, tasks);
   const [open, setOpen] = useState({});
   useCellReveal(cells, FLAT_SHOWN, setOpen);
+  const [answering, setAnswering] = useState('');
   const nameOf = (actor) => actorLabel(actor, group, snapshot);
   const [landed, setLanded] = useState(null);
   const landIn = (key, list, id = '') => {
@@ -138,7 +140,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
           marker=${cardMarker(task, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
-          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${canAssign(actions) && typeof actions.api?.answer === 'function' ? setAnswering : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
@@ -159,7 +161,9 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const count = (column) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${column}`) ? list.length : 0), 0);
   const cols = `${triage ? `${HEAD_PX}px ` : ''}repeat(5, minmax(${MIN_STAGE_PX}px, 1fr))`;
   const min = (triage ? HEAD_PX : 0) + 5 * MIN_STAGE_PX;
+  const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-lanes-wrap">
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(answerTask.assigned_by, group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class=${`tb-lanes tb-lanes-flat${triage ? '' : ' tb-lanes-row'}`} data-taskboard-lanes=${group.name} data-lanes-by=${mode}

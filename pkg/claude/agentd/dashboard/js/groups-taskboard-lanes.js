@@ -38,6 +38,7 @@ import { RowMenu } from './row-menu.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
+import { AnswerFor, QuestionTag, questionOpen } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -312,8 +313,9 @@ function cardHint(task) {
 // `marker` (lanes triage and one row, groups-taskboard-lanes-flat.js) is a corner badge
 // saying who holds the task, with a class for the card's edge.
 // menu, when given, is the card's ⋯ items (Archive): its ⋯ shows on hover,
-// and a right-click opens it.
-export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu = null }) {
+// and a right-click opens it. onAnswer, when given, puts Answer… on a
+// question still to answer.
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu = null, onAnswer = null }) {
   const done = task.status === 'done';
   return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
@@ -324,7 +326,10 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     ${menu?.length > 0 && html`<span class="tb-card-menu"><${RowMenu} label=${task.title} items=${menu} buttonClass="tb-card-more" /></span>`}
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
-    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
+    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
+      <${QuestionTag} task=${task} askedBy=${nameOf && task.assigned_by ? nameOf(task.assigned_by) : ''} /></div>`}
+    ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
+      onClick=${(event) => { event.stopPropagation(); onAnswer(task.id); }}>Answer…<//></div>`}
   </div>`;
 }
 
@@ -657,6 +662,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const lg = groups.find((g) => g.offline && g.lanes.some((lane) => laneTasks(lane).includes(want.taskId)));
     if (lg) setUnfolded((now) => (now[lg.key] ? now : { ...now, [lg.key]: true }));
   }, [want?.seq]);
+  const [answering, setAnswering] = useState('');
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
@@ -680,7 +686,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${canAssign(actions) && typeof actions.api?.answer === 'function' ? setAnswering : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
@@ -696,7 +702,9 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const unassigned = { id: UNASSIGNED, name: 'Unassigned',
     count: LANE_COLUMNS.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`|${column.key}`) || []).length), 0) };
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
+  const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-lanes-wrap">
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(answerTask.assigned_by, group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}

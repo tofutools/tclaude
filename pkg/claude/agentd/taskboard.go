@@ -80,6 +80,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
 	registerTaskboardAssignRoutes(mux)
+	registerTaskboardQuestionRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)
 	registerTaskboardCommentRoutes(mux)
 }
@@ -336,10 +337,15 @@ type taskboardTaskView struct {
 	// Column is the custom column (its slug) a live task of stage next
 	// stands in, such as in-review; absent for none (tcl-plby5h). A task in
 	// a custom column never stalls.
-	Column      string `json:"column,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
-	OutcomeNote string `json:"outcome_note,omitempty"`
-	Failures    int    `json:"failures,omitempty"`
+	Column string `json:"column,omitempty"`
+	// Question is a question task's question and, once answered, its
+	// answer (tk_aa049a67); Waiting marks one whose asker is polling for
+	// the answer (ask-operator --wait) right now.
+	Question    *db.GroupTaskQuestion `json:"question,omitempty"`
+	Waiting     bool                  `json:"waiting,omitempty"`
+	Outcome     string                `json:"outcome,omitempty"`
+	OutcomeNote string                `json:"outcome_note,omitempty"`
+	Failures    int                   `json:"failures,omitempty"`
 	// Stalled marks an open task whose assignee has sat idle past
 	// taskboard.idle_grace without reporting; IdleSince is since when.
 	// Derived on read: a new turn or a report clears it.
@@ -487,6 +493,10 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		if t.AssigneeID != "" {
 			v.AssignedBy, v.AssignedAt = t.AssignedBy, rfc3339(t.AssignedAt)
 			v.Held, v.StartedAt = t.Live() && !t.Started(), rfc3339(t.StartedAt)
+		}
+		if q := t.Question(); q != nil {
+			v.Question = q
+			v.Waiting = t.Live() && taskboardQuestionWaiting(t.ID, time.Now())
 		}
 		v.BlockedOn, v.Column = t.BlockedOn, t.Column
 		v.Outcome, v.OutcomeNote, v.Failures = t.Outcome, t.OutcomeNote, t.Failures
@@ -869,6 +879,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// same write it gains the new task as a dependency and is blocked on
 		// it. It is gated as a change of that task.
 		Blocks string `json:"blocks"`
+		// Question makes the task a question for the operator (`taskboard
+		// ask-operator`): to is the operator, implied when left out.
+		Question *db.GroupTaskQuestion `json:"question"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -895,7 +908,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || len(files) > 0 {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || body.Question != nil || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
@@ -949,6 +962,23 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	// on its own taskboard.own, anyone else on taskboard.assign; it must be
 	// an active member.
 	to := strings.TrimSpace(body.To)
+	if body.Question != nil {
+		switch {
+		case body.Mine || (to != "" && to != db.OperatorAssignee):
+			err = errors.New("a question is for the operator (to: operator)")
+		case status != "" && status != db.GroupTaskOpen:
+			err = errors.New("a question starts open")
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		if err := db.NormalizeGroupTaskQuestion(body.Question); err != nil {
+			writeTaskboardError(w, err)
+			return
+		}
+		to = db.OperatorAssignee
+	}
 	if body.Mine {
 		self, _ := callerAgentID(r)
 		switch {
@@ -1023,7 +1053,8 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
-		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts}
+		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts,
+		Question: body.Question}
 	if blocks != nil {
 		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
 	}
