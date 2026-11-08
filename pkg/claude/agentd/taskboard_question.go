@@ -114,7 +114,7 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 	}
 	// Who asked is the daemon's to say, never the body's.
 	q.AskedBy, q.AskedVia, q.Blocks = actor, taskboardPeerAskerPrincipal(r), body.Block
-	q.Answer, q.State = nil, ""
+	q.Answer, q.State, q.Source = nil, "", ""
 	out, asked, err := db.AskGroupTaskQuestion(t.ID, &q)
 	if err != nil {
 		writeTaskboardError(w, err)
@@ -151,6 +151,10 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	pending, err := taskboardPendingQuestion(t.ID, n)
 	if err != nil {
 		writeTaskboardError(w, err)
+		return
+	}
+	if pending.Source != "" {
+		answerMirroredQuestion(w, r, g, t, pending, body.Picked, body.Text)
 		return
 	}
 	if taskboardActor(r) == pending.AskedBy {

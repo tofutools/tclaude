@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], created_at: ago(5), ...extra });
@@ -315,7 +316,7 @@ test('a cell + opens the add menu; its choice starts from the cell: the column, 
     await harness.act(async () => { harness.fireEvent(cell(lane, column).querySelector('[data-taskboard-new-form]'), 'click'); });
     const modal = c.querySelector('#taskboard-new-modal');
     assert.ok(modal, `the form opens from ${lane} · ${column}`);
-    assert.equal(modal.querySelector('input[name="tb-new-stage"]:checked')?.getAttribute('value'),
+    assert.equal(modal.querySelector('[data-stage-pick="taskboard-new-stage"]')?.getAttribute('data-value'),
       { ideas: 'idea', next: 'next', progress: 'progress', blocked: 'blocked', done: 'done' }[column], 'the cell\'s column is picked');
     await harness.input(modal.querySelector('.tb-new-title'), title);
     await extra(modal);
@@ -369,9 +370,10 @@ test('a cell + carries its start state into Ask an agent and the import', async 
 
   await harness.act(async () => { harness.fireEvent(plus('unassigned', 'next'), 'click'); });
   await harness.act(async () => { harness.fireEvent(cell('unassigned', 'next').querySelector('[data-taskboard-new-import]'), 'click'); });
-  const panel = c.querySelector('[data-taskboard-import]');
-  assert.ok(panel, 'the import opens');
-  assert.ok(panel.querySelector('input[type="checkbox"]').checked || panel.querySelector('input[type="checkbox"]').hasAttribute('checked'), 'a Next cell imports into the queue');
+  const form = harness.document.querySelector('#taskboard-tracker-modal');
+  assert.ok(form, 'the tracker form opens');
+  assert.equal(form.querySelector('[data-stage-pick="taskboard-tracker-stage"]').getAttribute('data-value'), 'next',
+    'a Next cell starts the ticket in the queue');
 });
 
 test('without the assign grant, agent lanes have no +', async (t) => {

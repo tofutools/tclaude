@@ -305,7 +305,7 @@ jobs:
           fi
           go test ./pkg/claude/harness/copilotfixture/... \
             -run "^($(echo "$scenarios" | paste -sd'|' -))$" \
-            -v -count=1 -parallel 8 -timeout 600s 2>&1 \
+            -v -count=1 -parallel 8 -timeout 1200s 2>&1 \
             | tee "$RUNNER_TEMP/copilot-smoke.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a

@@ -58,6 +58,23 @@ export function askerOf(task, n = 0) {
   return questionOf(task, n)?.asked_by || task?.assigned_by || '';
 }
 
+// questionSource says where a mirrored question was asked (tk_8b2c86f7):
+// 'approval' for an --ask-human prompt, 'notify' for a notify-human
+// message, '' for a question asked on the board.
+export function questionSource(question) {
+  const s = String(question?.source || '');
+  if (s.startsWith('approval:')) return 'approval';
+  if (s.startsWith('notify:')) return 'notify';
+  return '';
+}
+
+// SOURCE_MARK is a question's mark, and the words for where it is answered too.
+export const SOURCE_MARK = {
+  '': { icon: '❓', also: '' },
+  approval: { icon: '🔐', also: 'An access request: also in Messages → Access requests, and decided in either place' },
+  notify: { icon: '📨', also: 'A notify-human message: also in Messages, and answered in either place' },
+};
+
 // questionKind is the tag's words: how the question is answered.
 export function questionKind(question) {
   const n = question?.options?.length || 0;
@@ -85,12 +102,15 @@ export function QuestionTag({ task, askedBy = '' }) {
 // how it is answered, and Answer…. onOpen opens the task's form.
 export function QuestionCard({ task, question, askedBy = '', onAnswer = null, onOpen = null }) {
   const q = question;
-  return html`<div class="ui-card tb-card tb-question-card" data-question=${`${task.id}#${q.n}`}>
-    <div class="tb-question-on">❓ ${askedBy || 'an agent'} asks on${' '}
+  const source = questionSource(q);
+  const mark = SOURCE_MARK[source];
+  return html`<div class="ui-card tb-card tb-question-card" data-question=${`${task.id}#${q.n}`} data-question-source=${source || null}>
+    <div class="tb-question-on" title=${mark.also || null}>${mark.icon} ${askedBy || 'an agent'} asks on${' '}
       ${onOpen ? html`<${Button} size="sm" variant="link" class="tb-question-task" title="Open the task" onClick=${(event) => { event.stopPropagation(); onOpen(task.id); }}>${task.title}<//>`
         : html`<span class="tb-question-task">${task.title}</span>`}</div>
     <div class="tb-question-title">${q.title || task.title}</div>
-    <div class="tb-card-meta"><span class="ui-tag ui-tag-accent tb-question-tag">❓ Q${q.n} · ${questionKind(q)}</span>${
+    <div class="tb-card-meta"><span class="ui-tag ui-tag-accent tb-question-tag">${mark.icon} Q${q.n} · ${questionKind(q)}</span>${
+      source ? html`<span class="ui-tag tb-question-also" title=${mark.also}>also in Messages</span>` : null}${
       q.waiting ? html`<span class="ui-tag ui-tag-warn tb-question-waiting" title="Its agent is waiting for the answer (ask-operator --wait)">⏳ waiting</span>` : null}${
       q.blocks && task.status === 'blocked' ? html`<span class="ui-tag ui-tag-warn" title="Asking blocked the task until the answer">blocks the task</span>` : null}</div>
     ${onAnswer && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
@@ -107,6 +127,9 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
   const own = !!task.question && (q.n || 1) === (task.question.n || 1);
   const context = own ? task.body : q.body;
   const options = q.options || [];
+  const source = questionSource(q);
+  // An access request takes a pick only.
+  const words = source !== 'approval';
   const [picked, setPicked] = useState([]);
   const [text, setText] = useState('');
   const [focus, setFocus] = useState(q.recommend || options[0]?.key || '');
@@ -131,7 +154,7 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
   const previews = options.some((o) => o.preview);
   return html`<${Dialog} id="taskboard-answer-modal" dialogClass="cron-create-modal taskboard-answer-modal"
     title=${q.title || task.title || task.id} onClose=${onClose} onSubmitHotkey=${() => void submit()}
-    busy=${busy} initialFocusRef=${options.length ? null : textRef} cancel="Cancel"
+    busy=${busy} initialFocusRef=${options.length || !words ? null : textRef} cancel="Cancel"
     footer=${html`<${Button} variant="primary" id="taskboard-answer-submit" busy=${busy}
       disabled=${busy || empty} onClick=${() => { void submit(); }}>${busy ? 'Sending…' : 'Send answer'}<//>`}>
     <div class="modal-meta tb-answer-meta">${task.id}${q.n ? ` · Q${q.n}` : ''}${!own ? ` on “${task.title}”` : ''}${askedBy ? ` · asked by ${askedBy}` : ''}${(q.waiting ?? task.waiting) ? ' · waiting for the answer' : ''}</div>
@@ -148,14 +171,22 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
       </div>
       ${previews && html`<div class="tb-answer-preview" aria-label="Preview">${shown?.preview || ''}</div>`}
     </div>`}
-    <div class="cron-create-row tb-new-row"><span class="cron-create-label">${options.length ? 'Your words' : 'Answer'}</span>
+    ${words ? html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${options.length ? 'Your words' : 'Answer'}</span>
       <span class="tb-new-field">
         <${Textarea} domRef=${textRef} class="tb-answer-text" rows=${3} aria-label="Answer in your own words" value=${text} maxLength=${4000} disabled=${busy}
-          placeholder=${options.length ? 'optional: with your pick, or instead of one' : 'your answer'} onInput=${(event) => setText(event.currentTarget.value)} />
-        <span class="ui-hint tb-new-hint">The answer goes to ${askedBy || 'the agent that asked'}${own ? ' and closes this task as done' : `, and is kept under Q${q.n} in the task's activity`} · Ctrl/Cmd+Enter sends</span>
+          placeholder=${source === 'notify' && options.length ? 'optional: a note with your pick' : options.length ? 'optional: with your pick, or instead of one' : 'your answer'} onInput=${(event) => setText(event.currentTarget.value)} />
+        <span class="ui-hint tb-new-hint">${answerHint(source, askedBy, own, q.n)} · Ctrl/Cmd+Enter sends</span>
       </span>
-    </div>
+    </div>` : html`<span class="ui-hint tb-new-hint">${answerHint(source, askedBy, own, q.n)}</span>`}
   <//>`;
+}
+
+// answerHint says where the answer goes.
+function answerHint(source, askedBy, own, n) {
+  const who = askedBy || 'the agent that asked';
+  if (source === 'approval') return `Decides ${who}'s access request, as Messages → Access requests does`;
+  if (source === 'notify') return `The answer goes to ${who} as your reply in Messages, and is kept under Q${n}`;
+  return `The answer goes to ${who}${own ? ' and closes this task as done' : `, and is kept under Q${n} in the task's activity`}`;
 }
 
 // AnswerFor is the AnswerDialog wired to the board's actions: the write

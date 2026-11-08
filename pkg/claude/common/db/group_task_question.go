@@ -99,6 +99,11 @@ type GroupTaskQuestion struct {
 	EventID       int64            `json:"event_id,omitempty"`
 	AnswerEventID int64            `json:"answer_event_id,omitempty"`
 	ClosedAt      time.Time        `json:"closed_at,omitzero"`
+	// Source names where a mirrored question is answered too
+	// ("notify:<message id>", "approval:<request id>"); empty for one asked
+	// on the board. A mirrored question is answered through its source and
+	// closes with it.
+	Source string `json:"source,omitempty"`
 }
 
 // GroupTaskQuestionOption is one choice.
@@ -310,9 +315,9 @@ func askGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, q *GroupTaskQuestion, now 
 		return err
 	}
 	q.State, q.AskedAt = GroupTaskQuestionOpen, now.UTC().Truncate(time.Second)
-	_, err = tx.Exec(`INSERT INTO group_task_questions (task_id, n, event_id, title, spec, asked_by, asked_via, asked_at, state, blocks)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, q.N, q.EventID, q.Title, string(spec), q.AskedBy, q.AskedVia,
-		dbTime(now), q.State, q.Blocks)
+	_, err = tx.Exec(`INSERT INTO group_task_questions (task_id, n, event_id, title, spec, asked_by, asked_via, asked_at, state, blocks, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, q.N, q.EventID, q.Title, string(spec), q.AskedBy, q.AskedVia,
+		dbTime(now), q.State, q.Blocks, q.Source)
 	return err
 }
 
@@ -342,7 +347,7 @@ func AskGroupTaskQuestion(id string, q *GroupTaskQuestion) (*GroupTask, *GroupTa
 }
 
 const groupTaskQuestionCols = `q.task_id, q.n, q.event_id, q.title, COALESCE(e.body, ''), q.spec, q.asked_by, q.asked_via,
-	q.asked_at, q.state, q.blocks, q.answer, COALESCE(q.answer_event_id, 0), q.closed_at`
+	q.asked_at, q.state, q.blocks, q.answer, COALESCE(q.answer_event_id, 0), q.closed_at, q.source`
 
 const groupTaskQuestionFrom = ` FROM group_task_questions q LEFT JOIN group_task_events e ON e.id = q.event_id`
 
@@ -351,7 +356,7 @@ func scanGroupTaskQuestion(s rowScanner) (string, *GroupTaskQuestion, error) {
 	var taskID, spec, answer string
 	var asked, closed dbTimestamp
 	if err := s.Scan(&taskID, &q.N, &q.EventID, &q.Title, &q.Body, &spec, &q.AskedBy, &q.AskedVia, &asked, &q.State,
-		&q.Blocks, &answer, &q.AnswerEventID, &closed); err != nil {
+		&q.Blocks, &answer, &q.AnswerEventID, &closed, &q.Source); err != nil {
 		return "", nil, err
 	}
 	var sp groupTaskQuestionSpec
@@ -506,6 +511,11 @@ func AnswerGroupTaskQuestion(id string, n int, picked []string, text, actor stri
 			return err
 		}
 		reason := truncateUTF8(q.AnswerText(), 400)
+		if q.Source != "" {
+			// A mirrored answer is its original's to show (a linked node
+			// reads the board's history, not the human inbox).
+			reason = fmt.Sprintf("Q%d answered", q.N)
+		}
 		res, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, body, comment_kind, comment_id)
 			VALUES (?, ?, ?, ?, '', ?, ?, ?)`, id, dbTime(now), actor, GroupTaskEventComment,
 			truncateUTF8(q.AnswerText(), GroupTaskCommentMaxBytes), GroupTaskCommentAnswer, q.EventID)
@@ -597,6 +607,9 @@ func withdrawGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, eventID int64, actor 
 	if err != nil {
 		return err
 	}
+	if q.Source != "" {
+		return taskConflict("mirrored", "Q%d is answered where it was asked (%s); it closes with it", q.N, q.Source)
+	}
 	switch q.State {
 	case GroupTaskQuestionOpen:
 	case GroupTaskQuestionAnswered:
@@ -635,7 +648,9 @@ func withdrawGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, eventID int64, actor 
 // reopenGroupTaskQuestionsTx opens again the questions of a reopened task
 // that closed with it (the group_task_questions_close trigger).
 func reopenGroupTaskQuestionsTx(tx *sql.Tx, taskID string) error {
-	_, err := tx.Exec(`UPDATE group_task_questions SET state = ?, closed_at = NULL WHERE task_id = ? AND state = ?`,
+	// A mirrored question closed with its source, or with the task while its
+	// source went on alone: it stays closed.
+	_, err := tx.Exec(`UPDATE group_task_questions SET state = ?, closed_at = NULL WHERE task_id = ? AND state = ? AND source = ''`,
 		GroupTaskQuestionOpen, taskID, GroupTaskQuestionClosed)
 	return err
 }

@@ -707,6 +707,9 @@ func runServe(p *serveParams) error {
 	// Shares the same stop channel — both sweeps shut down together
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
+	// The last run's --ask-human prompts died with it: their board questions
+	// close (taskboard_mirror.go).
+	sweepMirroredApprovals()
 	migrateStewardDefaultPermissions(cfg)
 	reconcileStewardAccess(cfg)
 	startOneShotDirectoryCleanup(cronStop)

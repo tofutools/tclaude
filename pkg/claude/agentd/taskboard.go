@@ -80,6 +80,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/ref-lookup", v1GroupRoute(handleTaskboardRefLookup))
 	registerTaskboardAssignRoutes(mux)
 	registerTaskboardQuestionRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)
@@ -973,8 +974,16 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if err == nil {
 		pos, err = body.Position.position()
 	}
-	if err == nil && body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
-		err = errors.New("stage is idea or next")
+	// A custom column of the board stands in next (tcl-plby5h): the task
+	// starts there in the same write.
+	var column string
+	if err == nil {
+		var bad error
+		if body.Stage, column, bad, err = taskboardStageColumn(g, strings.TrimSpace(body.Stage)); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		err = bad
 	}
 	status := strings.TrimSpace(body.Status)
 	reason := strings.TrimSpace(body.BlockReason)
@@ -1015,7 +1024,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			return
 		}
 		// Who asked is the daemon's to say, never the body's.
-		body.Question.AskedBy, body.Question.AskedVia = "", taskboardPeerAskerPrincipal(r)
+		body.Question.AskedBy, body.Question.AskedVia, body.Question.Source = "", taskboardPeerAskerPrincipal(r), ""
 		to = db.OperatorAssignee
 	}
 	if body.Mine {
@@ -1093,7 +1102,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
 		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts,
-		Question: body.Question}
+		Question: body.Question, Column: column}
 	if blocks != nil {
 		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
 	}
@@ -1150,6 +1159,18 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	}
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
+	}
+	if body.Title != nil || body.Body != nil {
+		// A question task made for a mirrored question shows its original
+		// (the access request the operator decides on it, say): only the
+		// original says what it asks (taskboard_mirror.go).
+		if mirrored, err := db.IsMirroredQuestionTask(t); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		} else if mirrored {
+			writeError(w, http.StatusConflict, "mirrored", "this task mirrors a question asked in Messages or an access request; its title and text are not edited")
+			return
+		}
 	}
 	edit := db.GroupTaskEdit{Actor: taskboardActor(r)}
 	var err error

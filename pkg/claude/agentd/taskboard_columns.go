@@ -294,3 +294,23 @@ func handleTaskboardColumnRemove(w http.ResponseWriter, r *http.Request, g *db.A
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "columns": cols, "cap": db.GroupTaskColumnsCap, "moved": moved})
 }
+
+// taskboardStageColumn splits a requested stage into a stage and a custom
+// column: idea and next are stages; anything else names one of the board's
+// columns (by slug or label, as move --stage takes it), which stands in
+// next. A column the board lacks is a bad request (bad); a lookup failure is
+// err.
+func taskboardStageColumn(g *db.AgentGroup, stage string) (outStage, column string, bad, err error) {
+	switch stage {
+	case "", db.GroupTaskStageIdea, db.GroupTaskStageNext:
+		return stage, "", nil, nil
+	}
+	col, ok, err := findTaskboardColumn(g, stage)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if !ok {
+		return "", "", fmt.Errorf("stage is idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)), nil
+	}
+	return db.GroupTaskStageNext, col.Slug, nil, nil
+}

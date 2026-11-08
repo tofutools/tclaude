@@ -31,15 +31,21 @@ import (
 // result here evidence about tclaude's own pane injection rather than about
 // this test's typing.
 
-// softExitDeadline bounds one scenario. The mock streams for well over this,
-// so a run that reaches the deadline is a run whose exit never landed — the
-// blocked arm's whole claim — while an arm that exits ends the moment the
-// process does.
+// softExitWindow is the verdict window, counted from the last injected
+// keystroke: a run still alive when it closes is a run whose exit never
+// landed (the blocked arm's whole claim), while an arm that exits ends the
+// moment the process does. The turn stays in flight for ~28s after its
+// request, and the keystrokes start on that request and take ~1.5s, so the
+// window closes with the turn still streaming.
 //
-// The turn remains in flight for ~28s after it begins, beyond this whole-run
-// deadline. Keystrokes wait for the provider to receive the turn request, so slow
-// startup cannot turn a mid-turn cancel into a startup interrupt.
-const softExitDeadline = 18 * time.Second
+// It used to be an 18s deadline from launch, which a starved runner spent on
+// startup before the turn began (tk_ca70bf44). Counting from the keys makes
+// the window the same on any runner.
+const softExitWindow = 12 * time.Second
+
+// softExitDeadline is only the liveness guard: startup on a loaded runner may
+// take as long as it takes, since the window above starts after it.
+const softExitDeadline = 2 * time.Minute
 
 // softExitBusyTurn holds the TUI mid-turn for the whole scenario: ~40 deltas
 // at 700ms is far longer than the deadline, so the turn is still in flight
@@ -72,8 +78,9 @@ func softExitRun(t *testing.T, keys []copilotfixture.Keystroke) copilotfixture.P
 			BaseURL: mock.BaseURL(),
 			Prompt:  "Count slowly to forty.",
 		},
-		Deadline:   softExitDeadline,
-		Keystrokes: keys,
+		Deadline:         softExitDeadline,
+		Keystrokes:       keys,
+		KeystrokesWindow: softExitWindow,
 		KeystrokesWhen: func(text string) bool {
 			// Provider traffic proves the TUI has initialized and started its
 			// turn. Streamed text is not a reliable transcript marker: the
@@ -105,7 +112,7 @@ func softExitKeys(prefix string) []copilotfixture.Keystroke {
 
 // TestCopilotSoftExitBareExitIsDiscardedMidTurn is the bug, reproduced: the
 // exact injection tclaude used to perform, typed into a busy TUI, does
-// nothing. The CLI is still running at the deadline.
+// nothing. The CLI is still running when the window after the keys closes.
 //
 // The negative claim is only worth as much as its control, which is the next
 // scenario: the same rig, the same bytes, one cancel keystroke in front.

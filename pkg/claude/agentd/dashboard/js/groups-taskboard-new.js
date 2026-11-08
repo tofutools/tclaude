@@ -12,7 +12,9 @@
 //   Ask an agent        a prose request mailed to a member who may change the
 //                       board, files with it (`taskboard ask <group> --to
 //                       <agent> "…" --attach …`).
-//   From awb/Linear/…   the import panel (`add --from-awb` and kin).
+//   From a tracker…     a form for one ticket's URL, or several ids
+//                       (groups-taskboard-tracker.js: `add --ref`, and
+//                       `add --from-awb` and kin).
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -23,9 +25,11 @@ import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { captureLines, isTrackerLine, taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
-import { FilesField } from './groups-taskboard-files.js';
+import { FilesField, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
+import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
 
+import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
 const html = htm.bind(h);
 
 // Members as groups-taskboard.js reads them: active agents with a stable id,
@@ -83,6 +87,9 @@ export const START_STATES = [
 // Idea or Next holds the task there, not started (add --assignee X --idea /
 // --next); In progress starts it.
 export function startFields(start, { to = '', reason = '' } = {}) {
+  // A custom column of the board: add --stage <column>, in the same write.
+  const slug = columnSlug(start);
+  if (slug) return { stage: slug, status: '', to };
   switch (start) {
     case 'next': return to ? { stage: 'next', status: '', to, hold: true } : { stage: 'next', status: '', to };
     case 'progress': return { stage: 'next', status: '', to };
@@ -113,7 +120,7 @@ export function newTaskPlan(draft) {
   // when it starts in Ideas or Next unassigned. With any other start state
   // it is one add with the id as its ref (linked through its tracker), so
   // the state lands in the same call: an import cannot carry it.
-  if (!ref && isTrackerLine(title) && !fields.to && !fields.status) {
+  if (!ref && isTrackerLine(title) && !fields.to && !fields.status && (start === 'idea' || start === 'next')) {
     return { kind: 'tracker', text: title, next, body, after };
   }
   if (!ref && isTrackerLine(title)) {
@@ -219,21 +226,21 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
       ${item('data-taskboard-new-ask', choose('ask'), wizard ? 'Ask a hero' : 'Ask an agent',
         off || (wizard ? 'Tell it in your words; a hero scribes the quests' : 'Describe it; an agent writes the tasks'), !!off, off || undefined)}
       <${MenuSep} />
-      ${item('data-taskboard-new-import', choose('import'), 'From awb/Linear/GitHub…', wizard ? 'One quest per tracker id, named from the tracker' : 'One task per tracker id, titled from the tracker')}
+      ${item('data-taskboard-new-import', choose('import'), 'From a tracker…',
+        wizard ? 'Paste a ticket URL (awb, Linear, GitHub…); the quest is named from it' : 'Paste a ticket URL (awb, Linear, GitHub…); the task is titled from it')}
     <//>`}
   </span>`;
 }
 
-// StartPick is where the task starts: a board column. In progress needs
-// an assignee, so only a viewer who may assign gets it; a list starts in
-// Ideas or Next.
-function StartPick({ value, onChange, wizard, disabled, canAssign, listMode }) {
-  const states = START_STATES.filter((s) => (!s.assign || canAssign) && (!listMode || s.key === 'idea' || s.key === 'next'));
-  return html`<span class="tb-new-stage" role="radiogroup" aria-label="Starts in">
-    ${states.map((s) => html`<label key=${s.key} class="tb-new-stage-opt">
-      <input type="radio" name="tb-new-stage" value=${s.key} checked=${value === s.key} disabled=${disabled} onChange=${() => onChange(s.key)} />
-      <span>${wizard ? s.wizard : s.label}</span></label>`)}
-  </span>`;
+// StartPick is where the task starts: a board column, picked in the shared
+// stage picker (groups-taskboard-stage.js), the board's custom columns after
+// the built-in ones. In progress needs an assignee, so only a viewer who may
+// assign gets it; a list starts in Ideas or Next.
+function StartPick({ value, onChange, wizard, disabled, canAssign, listMode, columns = [] }) {
+  const places = START_STATES.filter((s) => !listMode || s.key === 'idea' || s.key === 'next');
+  const off = (key) => (key === 'progress' && !canAssign ? 'needs taskboard.assign: it starts with an assignee' : '');
+  return html`<${StagePicker} id="taskboard-new-stage" value=${value} onChange=${(key) => onChange(key || 'idea')} places=${places}
+    columns=${listMode ? [] : columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Starts in" />`;
 }
 
 const EMPTY_DRAFT = { title: '', list: '', body: '', ref: '', start: 'idea', reason: '', after: [], to: '' };
@@ -254,8 +261,12 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   const sending = useRef(false);
   const titleRef = useRef(null);
   const [files, setFiles] = useState([]);
+  const briefEditor = useRef(null);
+  // A file pasted or dropped on the brief is linked there too.
   const intake = useAttachmentIntake({ setAttachments: setFiles, attachments: files, busy: () => sending.current,
-    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true) });
+    limits: taskFileLimits(0), onReject: (text) => shellToast(text, true), nameFile: taskPastedName,
+    onAdded: (added, event) => { if (event?.target?.closest?.('.tb-new-body')) briefEditor.current?.insertFiles(added.map((a) => a.name), event); } });
+  const briefFiles = useMarkdownFiles(api, null, files);
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const listMode = !!draft.list;
   const lines = captureLines(draft.list);
@@ -322,13 +333,15 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
           tracker ? (draft.to || !['idea', 'next'].includes(draft.start)
             ? 'only a tracker id: it becomes the ref, and stays the title (an import cannot start it here or assign it)'
             : 'only a tracker id: it becomes the ref, titled from the tracker') : null)}
-        ${row('Brief', html`<${Textarea} class="tb-new-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
-          placeholder="what the assignee needs to know (optional)" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}
+        ${row('Brief', html`<${MarkdownEditor} class="tb-new-body" label="Brief" value=${draft.body} disabled=${busy}
+          placeholder="what the assignee needs to know (optional; Markdown)" onInput=${set('body')}
+          editorRef=${briefEditor} attachments=${briefFiles} onPickFiles=${(picked) => intake.add(picked).map((a) => a.name)}
+          modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} adds`} />`)}
         ${row('Ref', html`<${Input} class="tb-new-ref" aria-label="Ref" value=${draft.ref} disabled=${busy || tracker}
           placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123 (optional)" onInput=${(event) => set('ref')(event.currentTarget.value)} />`,
           draft.ref.trim() ? 'a bare awb or Linear id is linked through its tracker' : null)}`}
     ${row('Starts in', html`<${StartPick} value=${listMode && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
-      canAssign=${canAssign} listMode=${listMode} onChange=${set('start')} />`, missing || null)}
+      canAssign=${canAssign} listMode=${listMode} columns=${entry?.columns || []} onChange=${set('start')} />`, missing || null)}
     ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Textarea} class="tb-new-reason" rows=${2} aria-label="Block reason" required maxLength=${400}
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
     ${!listMode && row('After', html`<${DepsPicker} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}

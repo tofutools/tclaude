@@ -144,7 +144,13 @@ func handleTaskboardActivity(w http.ResponseWriter, _ *http.Request, t *db.Group
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": t.ID, "group": g.Name, "title": t.Title, "entries": entries, "events": entries})
+	out := map[string]any{"id": t.ID, "group": g.Name, "title": t.Title, "entries": entries, "events": entries}
+	// A question task made for a mirrored question: its title is the
+	// original's (taskboard_mirror_peer.go redacts it for a linked node).
+	if mirrored, _ := db.IsMirroredQuestionTask(t); mirrored {
+		out["mirrored"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func registerTaskboardCommentRoutes(mux *http.ServeMux) {
