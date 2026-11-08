@@ -170,6 +170,9 @@ func EditGroupTaskComment(taskID string, id int64, actor, body string) (*GroupTa
 		if !c.DeletedAt.IsZero() {
 			return taskConflict("deleted", "comment %d was deleted", id)
 		}
+		if c.CommentKind == GroupTaskCommentQuestion || c.CommentKind == GroupTaskCommentAnswer {
+			return taskConflict("not_editable", "a question or an answer is not edited; withdraw the question and ask again")
+		}
 		if c.Body != body {
 			if _, err := tx.Exec(`INSERT INTO group_task_events (task_id, at, actor, kind, detail, body, comment_id)
 				VALUES (?, ?, ?, ?, '', ?, ?)`, taskID, dbTime(now), actor, GroupTaskEventCommentEdited, c.Body, id); err != nil {
@@ -189,13 +192,24 @@ func EditGroupTaskComment(taskID string, id int64, actor, body string) (*GroupTa
 // only: its body, its earlier bodies and its files go.
 func DeleteGroupTaskComment(taskID string, id int64, actor string) (*GroupTaskEvent, error) {
 	var out *GroupTaskEvent
-	_, err := withGroupTask(taskID, func(tx *sql.Tx, _ *GroupTask, now time.Time) error {
+	_, err := withGroupTask(taskID, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		c, err := getGroupTaskCommentTx(tx, taskID, id)
 		if err != nil {
 			return err
 		}
 		if c.Actor != actor {
 			return ErrGroupTaskNotCommentAuthor
+		}
+		switch c.CommentKind {
+		case GroupTaskCommentAnswer:
+			return taskConflict("not_editable", "an answer stays in the activity")
+		case GroupTaskCommentQuestion:
+			// Deleting a question withdraws it, while it is open.
+			if c.DeletedAt.IsZero() {
+				if err := withdrawGroupTaskQuestionTx(tx, t, id, actor, now); err != nil {
+					return err
+				}
+			}
 		}
 		if c.DeletedAt.IsZero() {
 			for _, stmt := range []struct {
@@ -234,7 +248,7 @@ func ListGroupTaskComments(taskID string) ([]*GroupTaskEvent, error) {
 		return nil, err
 	}
 	return queryRows(d, scanGroupTaskEvent, `SELECT `+groupTaskEventCols+` FROM group_task_events
-		WHERE task_id = ? AND kind = ? ORDER BY id`, taskID, GroupTaskEventComment)
+		WHERE task_id = ? AND kind = ? ORDER BY at, id`, taskID, GroupTaskEventComment)
 }
 
 // GroupTaskActivitySummary is what a task view shows of its stream.

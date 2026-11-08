@@ -49,8 +49,8 @@ type taskboardCounts struct {
 	Ideas      int `json:"ideas"`
 	Blocked    int `json:"blocked"`
 	Stalled    int `json:"stalled"`
-	// WaitingOnYou counts the open tasks assigned to the operator; they
-	// count in NeedsYou too.
+	// WaitingOnYou counts the open tasks assigned to the operator, and the
+	// open questions on the other live tasks; they count in NeedsYou too.
 	WaitingOnYou int `json:"waiting_on_you"`
 	// IdeasForYou counts the ideas the operator holds to triage
 	// (tk_3826822a); they are not waiting on it.
@@ -230,6 +230,13 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		default:
 			entry.Counts.Next++
 		}
+		// An open question on a task the operator does not already wait
+		// on as a whole waits on it too (tk_8b2c86f7).
+		waitsWhole := v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && (!v.Held || v.Stage != db.GroupTaskStageIdea)
+		if !waitsWhole {
+			entry.Counts.WaitingOnYou += v.OpenQuestions
+			entry.Counts.NeedsYou += v.OpenQuestions
+		}
 		if v.Queued {
 			entry.Counts.Queued++
 		}
@@ -287,6 +294,8 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/start", handleTaskboardTask(taskboardOwnGate, handleTaskboardStart)},
 	{"POST /v1/taskboard/tasks/{id}/answer", handleTaskboardTask(taskboardOwnGate, handleTaskboardAnswer)},
 	{"GET /v1/taskboard/tasks/{id}/answer", handleTaskboardTask(taskboardReadAccess, handleTaskboardAnswerGet)},
+	{"POST /v1/taskboard/tasks/{id}/questions/{n}/answer", handleTaskboardTask(taskboardOwnGate, handleTaskboardAnswer)},
+	{"GET /v1/taskboard/tasks/{id}/questions/{n}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAnswerGet)},
 	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},
 	{"POST /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersSet)},
 	{"POST /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardOwnGate, handleTaskboardAttach)},

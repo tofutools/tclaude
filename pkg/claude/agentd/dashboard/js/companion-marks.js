@@ -216,7 +216,10 @@ export function MarksLayer({ marks, win, onEnd, onDismissAll, onReply, onReport 
     const scroll = () => ({ x: win.scrollX || 0, y: win.scrollY || 0 });
     let frame = 0;
     let lastKey = '';
-    let lastResolve = 0;
+    // The first frame always resolves: performance.now() counts from the
+    // page's start, so a layer drawn in its first MARK_RESOLVE_MS would
+    // otherwise wait that long to report.
+    let lastResolve = -Infinity;
     const resolve = () => {
       const report = [];
       for (const mark of marks) {

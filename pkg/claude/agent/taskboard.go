@@ -137,16 +137,19 @@ type taskboardTask struct {
 		AgentID string `json:"agent_id"`
 		Name    string `json:"name,omitempty"`
 	} `json:"assignee,omitempty"`
-	AssignedBy  string             `json:"assigned_by,omitempty"`
-	Held        bool               `json:"held,omitempty"`
-	Question    *taskboardQuestion `json:"question,omitempty"`
-	Waiting     bool               `json:"waiting,omitempty"`
-	Outcome     string             `json:"outcome,omitempty"`
-	OutcomeNote string             `json:"outcome_note,omitempty"`
-	Failures    int                `json:"failures,omitempty"`
-	Stalled     bool               `json:"stalled,omitempty"`
-	IdleSince   string             `json:"idle_since,omitempty"`
-	Ref         *struct {
+	AssignedBy string             `json:"assigned_by,omitempty"`
+	Held       bool               `json:"held,omitempty"`
+	Question   *taskboardQuestion `json:"question,omitempty"`
+	// Questions are every question asked on the task (tk_8b2c86f7).
+	Questions     []*taskboardQuestion `json:"questions,omitempty"`
+	OpenQuestions int                  `json:"open_questions,omitempty"`
+	Waiting       bool                 `json:"waiting,omitempty"`
+	Outcome       string               `json:"outcome,omitempty"`
+	OutcomeNote   string               `json:"outcome_note,omitempty"`
+	Failures      int                  `json:"failures,omitempty"`
+	Stalled       bool                 `json:"stalled,omitempty"`
+	IdleSince     string               `json:"idle_since,omitempty"`
+	Ref           *struct {
 		Kind  string `json:"kind"`
 		URL   string `json:"url,omitempty"`
 		Label string `json:"label,omitempty"`

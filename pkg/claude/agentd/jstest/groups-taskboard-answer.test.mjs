@@ -65,7 +65,7 @@ test('a question card answers through the answer dialog: a pick and words, in on
   await harness.act(async () => { harness.fireEvent(dialog.querySelector('[data-answer-option="teal"] input'), 'change'); });
   await harness.input(dialog.querySelector('.tb-answer-text'), 'but dimmer');
   await click(send());
-  assert.deepEqual(api.calls, [['answer', 'tk_0000000a', ['teal'], 'but dimmer']]);
+  assert.deepEqual(api.calls, [['answer', 'tk_0000000a', ['teal'], 'but dimmer', 0]]);
 });
 
 test('a multi-select question takes several picks; the List answers from ⋯ Answer…', async (t) => {
@@ -81,7 +81,7 @@ test('a multi-select question takes several picks; the List answers from ⋯ Ans
     await harness.act(async () => { harness.fireEvent(dialog.querySelector(`[data-answer-option="${key}"] input`), 'change'); });
   }
   await click(dialog.querySelector('#taskboard-answer-submit'));
-  assert.deepEqual(api.calls, [['answer', 'tk_0000000b', ['orders', 'refunds'], '']]);
+  assert.deepEqual(api.calls, [['answer', 'tk_0000000b', ['orders', 'refunds'], '', 0]]);
 });
 
 test('without the assign grant no Answer is offered', async (t) => {
@@ -90,4 +90,40 @@ test('without the assign grant no Answer is offered', async (t) => {
   const { c } = await mount(t, 'tbq-noassign', 'lanes', api);
   assert.equal(c.querySelector('.tb-answer-open'), null);
   assert.match(c.querySelector('.tb-card[data-task-id="tk_0000000a"]').textContent, /❓ pick one/, 'the tag still shows');
+});
+
+// A question on an agent's task (tk_8b2c86f7) is a card of its own in the
+// operator's lane, and the task stays in its agent's lane.
+for (const [by, youRow, agentRow] of [
+  ['agent', '[data-lane-row="operator"]', '[data-lane-row="agt_builder"]'],
+  ['triage', '[data-board-row-head="operator"]', '[data-board-row-head="agents"]'],
+]) test(`a question on an agent's task is a card in the operator's row (lanes by ${by}); Answer… answers that question`, async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbq-on-task', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.fused.taskboard.tbq-on-task', '1');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.lanes-by.tbq-on-task', by);
+  const work = row('tk_0000000c', 'Lane tint', { assignee: { agent_id: 'agt_builder', name: 'builder' }, assigned_by: 'human:operator',
+    questions: [
+      { kind: 'question', n: 1, title: 'Old one', asked_by: 'agent:agt_builder', state: 'answered', answer: { picked: [], text: 'ok', answered_by: 'human:operator' } },
+      { ...question(), n: 2, title: 'Lane colour?', asked_by: 'agent:agt_builder', state: 'open', waiting: true },
+    ], open_questions: 1 });
+  const source = { context: harness.signals.signal({ groups: [{ group: 'tbq-on-task', group_id: 1, counts: { live: 1, waiting_on_you: 1 }, tasks: [work], closed: [] }] }),
+    status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const group = { name: 'tbq-on-task', members: [{ agent_id: 'agt_builder', title: 'builder', online: true }] };
+  const api = fakeApi();
+  const { container: c } = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
+  const card = c.querySelector(`${youRow} .tb-question-card[data-question="tk_0000000c#2"]`);
+  assert.ok(card, 'the open question is a card in the operator lane');
+  assert.match(card.textContent, /builder asks on[\s\S]*Lane tint[\s\S]*Lane colour\?[\s\S]*Q2 · pick one · 3[\s\S]*waiting/);
+  assert.equal(c.querySelectorAll('.tb-question-card').length, 1, 'an answered question has no card');
+  assert.ok(c.querySelector(`${agentRow} .tb-card[data-task-id="tk_0000000c"]`), 'the task stays in its agent\'s lane');
+  assert.match(c.querySelector(`${agentRow} .tb-card[data-task-id="tk_0000000c"]`).textContent, /❓ 1 asked you/);
+  await harness.act(async () => { harness.fireEvent(card.querySelector('.tb-answer-open'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const dialog = harness.document.querySelector('#taskboard-answer-modal');
+  assert.match(dialog.textContent, /tk_0000000c · Q2 on “Lane tint”/);
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('[data-answer-option="teal"] input'), 'change'); });
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-answer-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['answer', 'tk_0000000c', ['teal'], '', 2]]);
 });

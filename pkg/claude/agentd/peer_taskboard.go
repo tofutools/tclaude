@@ -57,7 +57,8 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 
 	for _, pattern := range []string{"GET /v1/taskboard/tasks/{id}", "GET /v1/taskboard/tasks/{id}/events",
 		"GET /v1/taskboard/tasks/{id}/attachments", "GET /v1/taskboard/tasks/{id}/activity",
-		"GET /v1/taskboard/tasks/{id}/comments", "GET /v1/taskboard/tasks/{id}/answer"} {
+		"GET /v1/taskboard/tasks/{id}/comments", "GET /v1/taskboard/tasks/{id}/answer",
+		"GET /v1/taskboard/tasks/{id}/questions/{n}"} {
 		r := read
 		r.serve = servePeerTaskboardTask
 		rules[pattern] = r
@@ -78,7 +79,9 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 		// a member's, on its own group's board), and edits or deletes only
 		// what its own author wrote.
 		"POST /v1/taskboard/tasks/{id}/comments", "PATCH /v1/taskboard/tasks/{id}/comments/{cid}",
-		"DELETE /v1/taskboard/tasks/{id}/comments/{cid}"} {
+		"DELETE /v1/taskboard/tasks/{id}/comments/{cid}",
+		// Asking this node's operator on a task, as commenting is.
+		"POST /v1/taskboard/tasks/{id}/questions"} {
 		w := write
 		w.write = servePeerTaskboardTask
 		rules[pattern] = w
@@ -90,9 +93,10 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	rules["POST /v1/taskboard/tasks/{id}/assign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/unassign"] = assign
 	rules["POST /v1/taskboard/tasks/{id}/start"] = assign
-	// Answering a question is closing an operator task as done: an
+	// Answering a question (and closing a question task with it) is an
 	// assigner's.
 	rules["POST /v1/taskboard/tasks/{id}/answer"] = assign
+	rules["POST /v1/taskboard/tasks/{id}/questions/{n}/answer"] = assign
 	// The source side of a move to another node: the holder's write, or
 	// manage on the task's group; the handler tells them apart.
 	rules["POST /v1/taskboard/tasks/{id}/moved-away"] = peerViewRule{feature: "groups.taskboard.write", requires: PermTaskboardWrite,

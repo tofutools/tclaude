@@ -33,6 +33,10 @@ type taskboardComment struct {
 	EditedAt    string                `json:"edited_at,omitempty"`
 	DeletedAt   string                `json:"deleted_at,omitempty"`
 	Attachments []taskboardAttachment `json:"attachments,omitempty"`
+	// Question is a question entry's question; Answers the number of the
+	// question an answer entry answers (tk_8b2c86f7).
+	Question *taskboardQuestion `json:"question,omitempty"`
+	Answers  int                `json:"answers,omitempty"`
 }
 
 // taskboardActivityEntry is one entry of a task's stream.
@@ -79,6 +83,13 @@ func printTaskboardComment(stdout io.Writer, c *taskboardComment) {
 	if label := commentKindLabels[c.Kind]; label != "" {
 		head += "  (" + label + ")"
 	}
+	q := c.Question
+	switch {
+	case q != nil:
+		head += fmt.Sprintf("  (asked the operator Q%d, %s, %s)", q.N, q.State, q.questionHow())
+	case c.Answers > 0:
+		head += fmt.Sprintf("  (answered Q%d)", c.Answers)
+	}
 	switch {
 	case c.DeletedAt != "":
 		head += "  [deleted " + c.DeletedAt + "]"
@@ -86,8 +97,14 @@ func printTaskboardComment(stdout io.Writer, c *taskboardComment) {
 		head += "  [edited " + c.EditedAt + "]"
 	}
 	fmt.Fprintln(stdout, head)
+	if q != nil && q.Title != "" {
+		fmt.Fprintln(stdout, indentText(q.Title, "      "))
+	}
 	if c.Body != "" {
 		fmt.Fprintln(stdout, indentText(c.Body, "      "))
+	}
+	if q != nil {
+		printQuestionOptions(stdout, q, "        ")
 	}
 	printTaskboardAttachments(stdout, "      ", c.Attachments)
 }

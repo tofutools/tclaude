@@ -332,10 +332,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-closed`,
         olderThan ? { statuses, older_than: olderThan } : { statuses });
     },
-    // answer answers a question task (`taskboard answer`): picked option
-    // keys and/or text; the task closes as done.
-    answer(id, picked = [], text = '') {
-      return call('POST', taskPath(id, '/answer'), { picked, text });
+    // answer answers question n of a task (`taskboard answer`; n 0: its
+    // only open question, as a question task's own route): picked option
+    // keys and/or text.
+    answer(id, picked = [], text = '', n = 0) {
+      return call('POST', taskPath(id, n ? `/questions/${n}/answer` : '/answer'), { picked, text });
     },
     // moveToGroup moves the task to another group of its node, or with
     // clone copies it there (groups-taskboard-transfer.js).

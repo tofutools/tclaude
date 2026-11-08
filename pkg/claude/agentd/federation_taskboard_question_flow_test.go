@@ -176,3 +176,71 @@ func TestFederation_TaskboardPeerQuestionRecorded(t *testing.T) {
 		assert.Equal(t, want, fedAckFor(t, p, env.ID).Status, task)
 	}
 }
+
+// A question on a task (tk_8b2c86f7) across nodes: an agent here asks Q2
+// on a linked node's task through its peer view, and the answer mail,
+// tagged "<task>#2", is let in; the task's own tag is not.
+func TestFederation_TaskboardPeerQuestionOnTaskRecorded(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	agentd.ResetAgentPeerViewLimitsForTest()
+	t.Cleanup(agentd.ResetAgentPeerViewLimitsForTest)
+	inst := p.id.ID()
+	const caller = "019fe740-43a4-7023-b8ae-0000000a7e02"
+	f.HaveEnrolledAgent(caller)
+	callerAgent, err := db.AgentIDForConv(caller)
+	require.NoError(t, err)
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{PeerViewAgents: true, Groups: []proto.CatalogGroup{{Name: "lab"}}}))
+	fedEventually(t, "catalog stored", func() bool { c, _, _ := db.GetFederationCatalog(inst); return c != "" })
+	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermTaskboardWrite, `{"peer":["`+inst+`"]}`, "test"))
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/federation/peer/bob/v1/taskboard/tasks/tk_0000abcd/questions", map[string]any{"title": "Which day?"}), caller))
+	}()
+	conn := acceptOutboundPeerView(t, p, 0)
+	readPeerViewWire(t, conn)
+	writePeerViewWire(t, conn, peerViewWire{Status: http.StatusCreated, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: []byte(`{"task":{"id":"tk_0000abcd","title":"Release"},"question":{"n":2,"title":"Which day?"}}`)})
+	rec := <-done
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	_ = conn.Close()
+
+	for task, want := range map[string]string{"tk_0000abcd": proto.AckRefused, "tk_0000abcd#2": proto.AckAccepted} {
+		env := p.envelope(proto.KindMail, proto.Endpoint{Agent: callerAgent}, proto.MailPayload{Body: "answer", TaskboardAnswer: task})
+		p.send(env)
+		assert.Equal(t, want, fedAckFor(t, p, env.ID).Status, task)
+	}
+}
+
+// Q2 on a task here, asked by a linked node's agent, is answered: the
+// answer goes back tagged "<task>#2".
+func TestFederation_TaskboardAnswerOnTaskMailedToPeerAsker(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	g := f.HaveGroup("crew")
+	const bob = "agt_bobremote0000000000000001"
+	task, err := db.CreateGroupTask(db.NewGroupTask{GroupID: g.ID, Title: "Release", Stage: db.GroupTaskStageNext, Actor: "human:operator"})
+	require.NoError(t, err)
+	for _, title := range []string{"Which day?", "Who announces?"} {
+		_, _, err := db.AskGroupTaskQuestion(task.ID, &db.GroupTaskQuestion{Title: title,
+			AskedBy: "peer: agent bob-agent (" + bob + ") of bob", AskedVia: "peer:" + p.id.ID() + "/agent:" + bob})
+		require.NoError(t, err)
+	}
+	rec := fedHuman(t, f, http.MethodPost, "/v1/taskboard/tasks/"+task.ID+"/questions/2/answer", map[string]any{"text": "the lead"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var mail proto.MailPayload
+	fedEventually(t, "the answer mailed to the peer's asker", func() bool {
+		for _, env := range p.envelopes(proto.KindMail) {
+			var mp proto.MailPayload
+			if env.DecodePayload(&mp) == nil && mp.TaskboardAnswer == task.ID+"#2" {
+				mail = mp
+				return true
+			}
+		}
+		return false
+	})
+	assert.Contains(t, mail.Subject, "answered Q2: crew · "+task.ID)
+	assert.Contains(t, mail.Body, "Said: the lead")
+}
