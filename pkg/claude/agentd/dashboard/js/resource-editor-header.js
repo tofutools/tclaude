@@ -5,6 +5,8 @@
 //   menu bar   File · Edit · View · Share, each filled by the editor; a menu
 //              with no items is left out (Edit only where it adds more than
 //              its shortcuts)
+//   actions    optional, the one or two actions kept at hand beside the
+//              menus (the process editor's Get help and Save)
 //   people     optional, at the right: who is on the resource, which opens
 //              Share
 //
@@ -32,10 +34,13 @@ export const TO_WINDOW_LABEL = 'Open in separate window';
 export { TO_COLLAB_LABEL };
 
 // editorMoveItems are View's moves for a host: toCollab, toOverlay and
-// toWindow are the host's ways there (null where it cannot go), each
-// answering the editor's kind for the tooltip ("this drawing board").
-export function editorMoveItems({ what = 'this editor', toCollab = null, toOverlay = null, toWindow = null } = {}) {
+// toWindow are the host's ways there (null where it cannot go); `what` names
+// the editor for the tooltips ("this drawing board"). toDock is a place of
+// the editor's own instead of the Collab tab, { label, title, run } (the
+// process editor's Processes tab).
+export function editorMoveItems({ what = 'this editor', toDock = null, toCollab = null, toOverlay = null, toWindow = null } = {}) {
   const items = [];
+  if (toDock) items.push({ key: 'to-dock', label: toDock.label, title: toDock.title || '', run: toDock.run });
   if (toCollab) items.push({ key: 'to-collab', label: TO_COLLAB_LABEL, title: `Move ${what} back to a tab of the dashboard`, run: toCollab });
   if (toOverlay) items.push({ key: 'to-overlay', label: TO_OVERLAY_LABEL, title: `Float ${what} in a window over the dashboard`, run: toOverlay });
   if (toWindow) items.push({ key: 'to-window', label: TO_WINDOW_LABEL, title: `Move ${what} to a browser window of its own`, run: toWindow });
@@ -162,12 +167,13 @@ export function EditorMenuBar({ menus, label = 'Editor menu', open: openKey, onO
 // ResourceEditorHeader lays the header out: identity, the menu bar, then
 // people at the right. people is drawn as given; openMenu/onOpenMenu let the
 // people stack open Share.
-export function ResourceEditorHeader({ title, identity = null, menus = [], people = null, label = 'Editor menu', openMenu, onOpenMenu, class: extra = '' }) {
+export function ResourceEditorHeader({ title, identity = null, menus = [], actions = null, people = null, label = 'Editor menu', openMenu, onOpenMenu, class: extra = '' }) {
   const peopleRef = useRef(null);
   return html`<header class=${`reh ${extra}`.trim()}>
     <div class="reh-identity">${title}${identity}</div>
     <${EditorMenuBar} menus=${menus} label=${label} open=${openMenu} onOpen=${onOpenMenu} roots=${[peopleRef]} />
     <span class="reh-spacer"></span>
+    ${actions && html`<div class="reh-actions">${actions}</div>`}
     ${people && html`<div class="reh-people" ref=${peopleRef}>${people}</div>`}
   </header>`;
 }
