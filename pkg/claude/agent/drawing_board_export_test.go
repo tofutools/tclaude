@@ -102,7 +102,33 @@ func TestDrawingBoardExportAttachesToATask(t *testing.T) {
 		{AttachTo: "tk_1", Format: "svg"},
 		{Output: "x.png", Comment: "see"},
 		{Output: "x.png", Replace: 3},
+		{AttachTo: "tk_1", Node: "bob"},
 	} {
 		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
 	}
+}
+
+// --node exports a linked node's drawing board through its peer view, which
+// carries the image base64-encoded in JSON.
+func TestDrawingBoardExportFromALinkedNode(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
+		gotPath = method + " " + path
+		raw, _ := json.Marshal(in)
+		require.NoError(t, json.Unmarshal(raw, &gotBody))
+		return json.Unmarshal([]byte(`{"content_type":"image/png","data":"aW1n","version":5,"elements":2}`), out)
+	}
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	rc := runDrawingBoardExport(&drawingBoardExportParams{Node: "bob", Elements: []string{"a,b"}}, "plan", &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, "POST /v1/federation/peer/bob/drawing-boards/plan/export?format=json", gotPath)
+	assert.Equal(t, map[string]any{"format": "png", "elements": []any{"a", "b"}}, gotBody)
+	data, err := os.ReadFile("plan.png")
+	require.NoError(t, err)
+	assert.Equal(t, "img", string(data))
+	assert.Contains(t, stdout.String(), "2 element(s) at version 5")
 }

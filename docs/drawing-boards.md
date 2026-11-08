@@ -87,8 +87,9 @@ The editor's header has the title, the lock, and a chip that shows `synced`,
 `saving…`, `not saved` or `offline`. Then comes a menu bar, which every resource editor
 shares:
 
-- **File:** **Export** (**Download .excalidraw**; the image export joins it there), and
-  **Delete drawing board…**.
+- **File:** **Export** (**Export PNG** and **Export SVG**, which download the
+  selection, or the whole board when nothing is selected, as the daemon draws it
+  (see [Export](#export)); **Download .excalidraw**), and **Delete drawing board…**.
 - **View:** **Zoom to fit** (Shift+1), **Zoom 100%** (Shift+0), **Zoom in**, **Zoom out**,
   and the moves: **Open in overlay**, **Open in separate window**, **Open in the Collab tab**.
 - **Share:** the agents on the drawing board. Click one to open that agent in the
@@ -340,6 +341,17 @@ is close to the editor's, not identical, and lines are clean rather than rough.
 
 Exporting needs read access to the drawing board, as `show` does.
 
+`--node <peer>` exports a linked node's drawing board, under the grants that node
+gave this one: `groups.resources.read` (or write) in the board's group there, as
+reading it does. It is the operator's: an agent's peer view has no drawing-board
+routes yet. A linked node's export comes back as JSON with the image in it, so it
+is capped at about 6 MiB and must render within 10 seconds; export a part, or at
+a smaller `--scale`, if it is refused. `--node` does not combine with
+`--attach-to` yet.
+
+The editor's **File › Export PNG** and **Export SVG** draw through the same
+route, so they work on a peer's page too.
+
 ### Putting a drawing on a task
 
 `--attach-to <task>` attaches the export to a task as a PNG instead of writing
@@ -475,7 +487,8 @@ Both open the same editor, under a **Remote drawing board** banner that names th
 and the group and says whether you can edit. The editor reads the drawing board every
 second instead of keeping a live socket open. Your edits are authored
 `operator@INSTANCE` on the peer. Undo, invites, presence, deleting the drawing board
-and its rendered snapshot stay with the peer's own dashboard.
+and its rendered snapshot stay with the peer's own dashboard. **File › Export
+PNG** and **Export SVG** work here, drawn by the peer.
 
 The drawing board is read-only here when the group grants only read, when the peer's
 operator locked it, or when the peer refused an edit (the change is rolled

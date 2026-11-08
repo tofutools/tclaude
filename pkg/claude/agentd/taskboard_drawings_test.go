@@ -1,11 +1,17 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/drawingboard"
 )
 
@@ -34,4 +40,28 @@ func TestTaskboardDrawingRefCapsTheIDsItLists(t *testing.T) {
 	assert.False(t, small.sameSelection(newTaskboardDrawingRef("arch", 5, nil, nil, crop)), "a part is not the whole board")
 	region := &drawingboard.Box{X: 1, Width: 5, Height: 5}
 	assert.False(t, newTaskboardDrawingRef("arch", 1, nil, region, crop).sameSelection(newTaskboardDrawingRef("arch", 1, nil, nil, crop)))
+}
+
+// An export whose context ends while every render slot is taken (a peer's,
+// on its 10-second deadline) says so, rather than answering nothing.
+func TestDrawingBoardExportAnswersWhenNoSlotFrees(t *testing.T) {
+	setupTestDB(t)
+	for range cap(drawingBoardExportSlots) {
+		drawingBoardExportSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for range cap(drawingBoardExportSlots) {
+			<-drawingBoardExportSlots
+		}
+	})
+	_, err := db.CreateCollabDrawingBoard("busy", "busy", "operator", 500)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/api/drawing-boards/busy/export?format=json", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	_, _, ok := renderDrawingBoardExport(rec, r, "busy", drawingBoardExportRequest{})
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "export_timeout")
 }

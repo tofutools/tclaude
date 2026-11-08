@@ -2,12 +2,14 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -43,12 +45,47 @@ func addPeerDrawingBoardRules(rules map[string]peerViewRule) {
 	list.serve, one.serve = servePeerDrawingBoardList, servePeerDrawingBoard
 	rules["GET /api/drawing-boards"] = list
 	rules["GET /api/drawing-boards/{id}"] = one
+	// Export reads the drawing board, though it is a POST: its body says what
+	// to draw.
+	export := read
+	export.write = servePeerDrawingBoardExport
+	rules["POST /api/drawing-boards/{id}/export"] = export
 	create, edit := write, write
 	create.write, edit.write = servePeerDrawingBoardCreate, servePeerDrawingBoard
 	rules["POST /api/drawing-boards"] = create
 	for _, pattern := range []string{"PATCH /api/drawing-boards/{id}", "POST /api/drawing-boards/{id}/title", "POST /api/drawing-boards/{id}/group"} {
 		rules[pattern] = edit
 	}
+}
+
+// peerDrawingBoardExportDeadline keeps a peer's export within the peer
+// view's exchange (fedPeerViewTimeout), with time to carry it.
+const peerDrawingBoardExportDeadline = 10 * time.Second
+
+// peerDrawingBoardExportMaxBytes is the biggest image a peer's export
+// carries: base64 in its JSON reply, under fedPeerViewResponseBodyLimit.
+const peerDrawingBoardExportMaxBytes = (fedPeerViewResponseBodyLimit - 64<<10) / 4 * 3
+
+// servePeerDrawingBoardExport renders a drawing board the peer reads
+// (drawing-board export --node, the editor's File › Export on a peer's
+// page). A peer view carries JSON only, so it always answers ?format=json.
+func servePeerDrawingBoardExport(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	id, ok := drawingBoardPathID(w, r)
+	if !ok {
+		return
+	}
+	if !v.unrestricted() {
+		b, err := db.GetCollabDrawingBoard(id)
+		if err != nil || !peerDrawingBoardReads(v.peer.InstanceID, b) {
+			writeError(w, http.StatusNotFound, "not_found", "drawing board not found")
+			return
+		}
+		v.groupName = b.GroupName
+	}
+	v.auditDetail = "drawing board=" + id
+	ctx, cancel := context.WithTimeout(r.Context(), peerDrawingBoardExportDeadline)
+	defer cancel()
+	serveDrawingBoardExportWith(w, r.WithContext(ctx), id, drawingBoardExportServe{asJSON: true, maxBytes: peerDrawingBoardExportMaxBytes})
 }
 
 // peerDrawingBoardAuthor is how a peer's edits are recorded on this node's drawing boards.
