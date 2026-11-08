@@ -26,7 +26,7 @@ import { relTime, shortAgentId } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
-import { shellToast } from './shell-state.js';
+import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { createTaskboardApi, importRefs, taskboardApi } from './taskboard-actions.js';
 import { nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
@@ -855,7 +855,27 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const want = taskRoute.value;
   const wanted = want && want.group === group.name && (want.node || '') === node ? want : null;
   const wantedListed = !!(wanted && listed(wanted.taskId));
+  // dirtyRef is the open form's unsaved input (EditTaskDialog). Back,
+  // Forward or a link that leaves a form with unsaved input asks first, as
+  // Cancel does; keeping it puts the form's entry back.
+  const dirtyRef = useRef(false);
+  const asking = useRef(false);
+  const agreed = useRef('');
+  const [askedTick, setAskedTick] = useState(0);
   useEffect(() => {
+    const leaving = editing && !sameTask(want, routeOf(editing));
+    if (leaving && dirtyRef.current && agreed.current !== editing) {
+      if (asking.current) return undefined;
+      asking.current = true;
+      const kept = editing;
+      Promise.resolve(shellConfirmDiscard()).then((ok) => {
+        asking.current = false;
+        if (ok) { agreed.current = kept; setAskedTick((n) => n + 1); return; }
+        openTaskRoute(routeOf(kept));
+      });
+      return undefined;
+    }
+    agreed.current = '';
     if (!wanted) {
       jumped.current = '';
       // Back (or a link to another task) closed the form the link opened.
@@ -882,7 +902,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       jumpToTask({ shown: group.shownName || group.name, group: group.name, node, taskId: wanted.taskId });
     }
     return () => { live = false; };
-  }, [want, wantedListed]);
+  }, [want, wantedListed, askedTick]);
   const edited = editing && (listed(editing) || (fetched?.id === editing ? fetched : null));
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
   // The band heads every idea-stage row the filter leaves (a blocked or
@@ -910,7 +930,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
     me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
-    nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${closeEdit} onSaved=${() => { void actions.refresh(); }} />`;
+    nameOf=${(actor) => actorLabel(actor, group, snapshot)} dirtyRef=${dirtyRef} onClose=${closeEdit} onSaved=${() => { void actions.refresh(); }} />`;
   const reasonTask = reasoning && actions && tasks.find((task) => task.id === reasoning.id);
   const reasonDialog = reasonTask && html`<${TaskReasonDialog} key=${`${reasonTask.id}-${reasoning.kind}`} kind=${reasoning.kind} task=${reasonTask}
     busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}

@@ -1083,7 +1083,9 @@ nothing and leaves the address bar.
   the row) and from a lanes card's ⋯.
 - Opening the edit form adds a browser history step, and closing it steps
   back. **Back** closes an open form, **Forward** opens it again, and a
-  reload keeps it open.
+  reload keeps it open. If the form has unsaved input, Back first asks
+  *Discard input?*, as *Cancel* does. Choose *Cancel* there to keep editing
+  with the form's entry back in the history.
 - `tclaude agent taskboard show <task>` and `add` print the link as
   `link:`, and every `[taskboard]` mail ends with it (*Open it in the
   dashboard: …*). The CLI prints none for a linked node's task (`--peer`):

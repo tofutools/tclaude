@@ -209,7 +209,7 @@ function whereHint(draft, task) {
 // canAssign shows the assignee picker, canClose offers Done and Dropped.
 // onSaved runs after a Save (also a partial one), to read the board again.
 export function EditTaskDialog({ group, entry, task, api, canAssign = false, canClose = true, members = [], wizard = false,
-  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {} }) {
+  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {}, dirtyRef = null }) {
   // The board's context carries no brief: the form reads the task in full,
   // and the brief field waits for it.
   const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
@@ -253,6 +253,8 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   // A comment being written counts too: closing the form would lose it.
   const [commenting, setCommenting] = useState(false);
   const dirty = steps.length > 0 || commenting;
+  // The board reads it when Back leaves the form (groups-taskboard.js).
+  if (dirtyRef) dirtyRef.current = dirty;
   const save = async () => {
     if (missing || sending.current) return;
     // An unsent comment (or an open comment edit) keeps the form open, and

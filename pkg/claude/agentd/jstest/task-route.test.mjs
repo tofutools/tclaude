@@ -153,3 +153,40 @@ test('⋯ Copy link copies the task\'s whole link', async (t) => {
   assert.equal(copied.length, 1);
   assert.match(copied[0], /\/groups\?task=tk_00000002%3Acrew$/);
 });
+
+test('Back on a form with unsaved input asks first; keeping it puts the entry back', async (t) => {
+  const { harness, settle, routes, route, modal, title, announced } = await mountBoard(t);
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  await harness.act(() => harness.fireEvent(title('tk_00000001'), 'click'));
+  await settle();
+  await harness.input(modal().querySelector('input'), 'Release notes, rewritten');
+  await settle();
+  announced.length = 0;
+
+  routes.restoreOverlays({ task: '' });
+  await settle();
+  assert.equal(shellState.confirmation.value?.title, 'Discard input?', 'Back asks, as Cancel does');
+  assert.ok(modal(), 'the form stays open meanwhile');
+  await harness.act(async () => { shellState.resolveConfirmation(false); await new Promise((r) => setTimeout(r, 0)); });
+  await settle();
+  assert.ok(modal(), 'keep editing');
+  assert.equal(modal().querySelector('input').value, 'Release notes, rewritten', 'with the input');
+  assert.deepEqual(route.taskRoute.value, { taskId: 'tk_00000001', node: '', group: 'crew' });
+  assert.deepEqual(announced, [{ closed: false, replace: false }], 'the form\'s entry is pushed back');
+
+  routes.restoreOverlays({ task: '' });
+  await settle();
+  assert.equal(shellState.confirmation.value?.title, 'Discard input?');
+  await harness.act(async () => { shellState.resolveConfirmation(true); await new Promise((r) => setTimeout(r, 0)); });
+  await settle();
+  assert.equal(modal(), null, 'Discard closes it');
+  assert.equal(route.taskRoute.value, null);
+
+  // A clean form closes on Back without asking.
+  await harness.act(() => harness.fireEvent(title('tk_00000002'), 'click'));
+  await settle();
+  routes.restoreOverlays({ task: '' });
+  await settle();
+  assert.equal(shellState.confirmation.value, null, 'nothing to discard, nothing asked');
+  assert.equal(modal(), null);
+});
