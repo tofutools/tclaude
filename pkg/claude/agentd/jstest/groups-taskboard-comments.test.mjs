@@ -270,6 +270,9 @@ test('activity lines read as the board does: a ref change shows the new ref, a n
     assert.equal(changeText({ kind: 'edited', detail: 'url, label', changes: [{ field: 'ref_url', before: 'u' }, { field: 'ref_label', before: 'l' }] }), 'cleared ref');
     assert.equal(changeText({ kind: 'edited', detail: 'title, label', changes: [{ field: 'title', before: 'a', after: 'b' }, { field: 'ref_label', after: 'L' }] }),
       'title: a → b · ref → L');
+    assert.equal(changeText({ kind: 'edited', detail: 'label', changes: [{ field: 'ref_label', before: 'L', after: '' }] }), 'cleared the ref label');
+    assert.equal(changeText({ kind: 'edited', detail: '+after tk_b', changes: [{ field: 'depends_on', before: 'tk_a', after: 'tk_a tk_b' }] }),
+      '+after tk_b', 'a dependency edit keeps its own line');
     assert.equal(changeText({ kind: 'created', detail: 'in idea' }), 'created in Ideas');
     assert.equal(changeText({ kind: 'created', detail: 'in next, ref tk#1, cloned' }), 'created in Next, ref tk#1, cloned');
     assert.equal(changeText({ kind: 'created', detail: 'in Review' }), 'created in Review');

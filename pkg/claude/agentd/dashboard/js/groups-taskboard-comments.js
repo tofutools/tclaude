@@ -78,17 +78,22 @@ function createdText(detail) {
 }
 
 // refText is a ref change's line: what the ref now reads, or that it went.
+// An entry carries only the ref fields that changed.
 function refText(changes) {
-  const after = (field) => changes.find((c) => c.field === field)?.after;
-  const now = after('ref_label') || after('ref_url');
+  const of = (field) => changes.find((c) => c.field === field);
+  const url = of('ref_url');
+  const label = of('ref_label');
+  if (url && !url.after) return 'cleared ref';
+  const now = label?.after || url?.after;
   if (now) return `ref → ${clip(now)}`;
-  return changes.some((c) => c.before) ? 'cleared ref' : '';
+  return label?.before ? 'cleared the ref label' : '';
 }
 
 export function changeText(entry) {
   const changes = entry.changes || [];
-  // An edit's detail is only the changed fields' names; its changes say more.
-  const fromChanges = entry.kind === 'edited' && changes.length;
+  // A ref edit's detail is only the changed fields' names ("kind, url,
+  // label"); its changes say more. Other details read well as they are.
+  const fromChanges = entry.kind === 'edited' && changes.some((c) => c.field.startsWith('ref_'));
   if (!fromChanges && (entry.detail_text || entry.detail)) {
     const detail = entry.detail_text || entry.detail;
     return entry.kind === 'created' ? createdText(detail) : detail;
@@ -106,7 +111,7 @@ export function changeText(entry) {
     if (ref) parts.push(ref);
   }
   if (entry.action && !parts.length) return entry.action;
-  return parts.join(' · ') || entry.kind;
+  return parts.join(' · ') || entry.detail_text || entry.detail || entry.kind;
 }
 
 function authorOf(comment, nameOf) {
