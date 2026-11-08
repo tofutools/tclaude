@@ -72,6 +72,11 @@ func AssignGroupTaskHeld(id, agentID, assignedBy string, take bool, hold, actor,
 				return taskConflict("assigned", "task %s is assigned to %s; ask whoever assigned it", id, t.AssigneeID)
 			}
 		}
+		if hold != "" {
+			if err := checkOperatorIdeaTx(tx, t, agentID, hold); err != nil {
+				return err
+			}
+		}
 		// A started task is promoted from the ideas to the end of the queue
 		// on the way, whether it is assigned or taken; a held one goes to
 		// the stage it is held in.
@@ -164,6 +169,23 @@ func StartGroupTask(id string, start bool, stage, actor, expectAssignee string) 
 	})
 }
 
+// checkOperatorIdeaTx refuses to make t an operator idea (assignee, held in
+// stage) while a task waits on it: nothing waits on an idea, which counts
+// as nobody's wait.
+func checkOperatorIdeaTx(tx taskTx, t *GroupTask, assignee, stage string) error {
+	if assignee != OperatorAssignee || stage != GroupTaskStageIdea {
+		return nil
+	}
+	var waiting int
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE blocked_on = ? AND status = 'blocked')`, t.ID).Scan(&waiting); err != nil {
+		return err
+	}
+	if waiting != 0 {
+		return taskConflict("invalid_arg", "a task waits on %s; the operator holds it in next, not as an idea", t.ID)
+	}
+	return nil
+}
+
 // startGroupTaskTx starts t (start) or holds it in hold.
 func startGroupTaskTx(tx *sql.Tx, t *GroupTask, start bool, hold, actor string, now time.Time) error {
 	if start {
@@ -180,6 +202,9 @@ func startGroupTaskTx(tx *sql.Tx, t *GroupTask, start bool, hold, actor string, 
 	}
 	if !t.Started() && t.Stage == hold {
 		return nil
+	}
+	if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, hold); err != nil {
+		return err
 	}
 	if err := setGroupTaskStageTx(tx, t, hold, "on hold", actor, now); err != nil {
 		return err

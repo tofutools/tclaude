@@ -251,6 +251,13 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	} else {
 		setAuditDetail(r, "assigned "+t.ID+" to "+target)
 	}
+	// Re-assigning a task its assignee held starts it: brief them, as start does.
+	if !take && before == target && hold == "" && !t.Started() && target != db.OperatorAssignee && out.Started() {
+		if self != target {
+			by := taskboardCallerName(r)
+			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "started for you by "+by), taskboardBrief(g, out, by))
+		}
+	}
 	if !take && before != target {
 		by := taskboardCallerName(r)
 		switch {

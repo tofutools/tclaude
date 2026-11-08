@@ -799,6 +799,11 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
 		}
+		if !t.Started() {
+			if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, stage); err != nil {
+				return err
+			}
+		}
 		pos := GroupTaskPosition{Bottom: true}
 		if stage == GroupTaskStageIdea {
 			pos = GroupTaskPosition{Top: true}

@@ -114,6 +114,16 @@ func TestTaskboardAssignHoldThenAssignStarts(t *testing.T) {
 	started := tbDecodeHeld(t, code, body, http.StatusOK)
 	assert.False(t, started.Held)
 	assert.True(t, h.heldView(task.ID).Assignee != nil)
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "started for you by", "the brief goes out as it starts")
+
+	// Closed while held and reopened with its assignee: it comes back started.
+	code, body = h.post(h.lead, task.ID, "start", map[string]any{"start": false})
+	require.True(t, tbDecodeHeld(t, code, body, http.StatusOK).Held)
+	code, body = h.post("", task.ID, "status", map[string]any{"status": "done"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", task.ID, "reopen", map[string]any{})
+	reopened := tbDecodeHeld(t, code, body, http.StatusOK)
+	assert.False(t, reopened.Held, "a reopened assigned task is started")
 }
 
 // The operator's ideas are not waiting on it: counted apart, and nothing
@@ -144,6 +154,12 @@ func TestTaskboardOperatorIdeaIsNotWaiting(t *testing.T) {
 	counts = h.contextCounts()
 	assert.Equal(t, 1, counts["waiting_on_you"])
 	assert.Equal(t, 1, counts["ideas_for_you"])
+
+	// A task waited on does not become an idea: not by hold, not by demote.
+	code, body = h.post("", asked.ID, "start", map[string]any{"start": false, "stage": "idea"})
+	assert.Equal(t, http.StatusBadRequest, code, body)
+	code, body = h.post("", asked.ID, "stage", map[string]any{"stage": "idea"})
+	assert.Equal(t, http.StatusBadRequest, code, body)
 }
 
 func (h *tbAssignHarness) contextCounts() map[string]int {

@@ -62,6 +62,13 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		}
 		switch assignee {
 		case cur.AssigneeID:
+			// An assigned task comes back started, even one its assignee
+			// held when it was closed.
+			if assignee != "" && cur.StartedAt.IsZero() {
+				if _, err := tx.Exec(`UPDATE group_tasks SET started_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
+					return err
+				}
+			}
 		case "":
 			if _, err := tx.Exec(`UPDATE group_tasks SET assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`, id); err != nil {
 				return err

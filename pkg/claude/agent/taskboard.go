@@ -418,6 +418,7 @@ type TaskboardCounts struct {
 	Blocked      int `json:"blocked"`
 	Stalled      int `json:"stalled"`
 	WaitingOnYou int `json:"waiting_on_you"`
+	IdeasForYou  int `json:"ideas_for_you,omitempty"`
 	Queued       int `json:"queued"`
 	DoneThisWeek int `json:"done_this_week"`
 	Dropped      int `json:"dropped"`
@@ -497,6 +498,11 @@ func taskboardCountsLine(c TaskboardCounts) string {
 		add(c.Ideas, "idea")
 	} else {
 		add(c.Ideas, "ideas")
+	}
+	if c.IdeasForYou == 1 {
+		add(c.IdeasForYou, "idea for you")
+	} else {
+		add(c.IdeasForYou, "ideas for you")
 	}
 	add(c.DoneThisWeek, "done this week")
 	add(c.Dropped, "dropped")
