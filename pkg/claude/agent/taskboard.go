@@ -112,7 +112,10 @@ func RunTaskboardCLI(args []string, stdout, stderr io.Writer) (rc int) {
 
 // taskboardTask is the daemon's wire shape for one task.
 type taskboardTask struct {
-	ID               string   `json:"id"`
+	ID string `json:"id"`
+	// URL is the task's dashboard link, on show and add (the daemon's
+	// dashboard listener; absent from a linked node).
+	URL              string   `json:"url,omitempty"`
 	Group            string   `json:"group"`
 	Title            string   `json:"title"`
 	Body             string   `json:"body,omitempty"`
@@ -200,6 +203,10 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.where(), t.Status)
+	// Only add's reply carries the link (the daemon's show and add).
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
+	}
 	return rcOK
 }
 
@@ -306,6 +313,8 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		Writers     []string          `json:"writers,omitempty"`
 		WriterNames []string          `json:"writer_names,omitempty"`
 		Columns     []taskboardColumn `json:"columns,omitempty"`
+		// BuiltinColumns names the hidden built-in columns (tk_bf5d2b02).
+		BuiltinColumns map[string]string `json:"builtin_columns,omitempty"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		// No group: an agent in one group lists that board; anyone else (the
@@ -344,6 +353,15 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	}
 	if len(resp.Columns) > 0 {
 		fmt.Fprintf(stdout, "(custom columns: %s)\n", taskboardColumnsText(resp.Columns))
+	}
+	var hiddenBuiltins []string
+	for _, slug := range []string{"ideas", "done"} {
+		if resp.BuiltinColumns[slug] != "" {
+			hiddenBuiltins = append(hiddenBuiltins, slug)
+		}
+	}
+	if len(hiddenBuiltins) > 0 {
+		fmt.Fprintf(stdout, "(hidden on the board: %s; their tasks are listed here)\n", strings.Join(hiddenBuiltins, ", "))
 	}
 	printTaskboardRows(stdout, resp.Tasks)
 	return rcOK
@@ -471,6 +489,8 @@ type TaskboardColumnCount struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
 	Count int    `json:"count"`
+	// State is hidden or cordoned; empty for a shown column.
+	State string `json:"state,omitempty"`
 }
 
 // TaskboardSummaryGroup is one readable group in `ls --summary`.
@@ -545,7 +565,11 @@ func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) str
 	}
 	add(c.InProgress, "in progress")
 	for _, col := range columns {
-		add(col.Count, col.Label)
+		label := col.Label
+		if col.State != "" {
+			label += " (" + col.State + ")"
+		}
+		add(col.Count, label)
 	}
 	add(c.Next, "next")
 	if c.Ideas == 1 {
@@ -645,6 +669,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	}
 	if t.ClosedAt != "" {
 		fmt.Fprintf(stdout, "  closed:  %s\n", t.ClosedAt)
+	}
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link:    %s\n", t.URL)
 	}
 	printTaskboardQuestion(stdout, t)
 	if t.Body != "" {
@@ -834,6 +861,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "added %s: %s  [%s, %s]\n", t.ID, t.Title, t.Stage, t.Status)
+	if t.URL != "" {
+		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
+	}
 	printTaskboardAttachments(stdout, "  ", t.Attachments)
 	return rcOK
 }

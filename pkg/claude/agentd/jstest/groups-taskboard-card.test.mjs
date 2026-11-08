@@ -72,7 +72,7 @@ test('the List\'s Name cell shows the title only; a click or Enter on it opens t
 test('Enter on a focused title opens the task too', async (t) => {
   const { harness, c, settle } = await mountBoard(t);
   const title = c.querySelector('tr[data-task-id="tk_00000002"] .tb-title');
-  assert.equal(title.getAttribute('role'), 'button');
+  assert.equal(title.tagName, 'A', 'the title is the task\'s link');
   assert.equal(title.getAttribute('tabindex'), '0', 'keyboard-focusable');
   await harness.act(() => harness.fireEvent(title, 'keydown', { key: 'Enter' }));
   await settle();

@@ -255,7 +255,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if !take && before == target && hold == "" && !t.Started() && target != db.OperatorAssignee && out.Started() {
 		if self != target {
 			by := taskboardCallerName(r)
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "started for you by "+by), taskboardBrief(g, out, by))
+			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
 	}
 	if !take && before != target {
@@ -266,12 +266,12 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			subject, text := taskboardHeldNote(g, out, by)
 			mailTaskboard(r, g, targetConv, subject, text)
 		default:
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardBrief(g, out, by))
+			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
 		if before != "" && before != self {
 			if conv := activeGroupMember(g, before); conv != "" {
 				mailTaskboard(r, g, conv, taskboardSubject(g, out, "reassigned by "+by),
-					fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by))
+					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
 			}
 		}
 	}
@@ -321,7 +321,7 @@ func handleTaskboardUnassign(w http.ResponseWriter, r *http.Request, t *db.Group
 		if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
 			by := taskboardCallerName(r)
 			mailTaskboard(r, g, conv, taskboardSubject(g, out, "unassigned by "+by),
-				fmt.Sprintf("Task %s %q in %s was taken back by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by))
+				taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was taken back by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
 		}
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)
@@ -418,7 +418,7 @@ func taskboardNotifyAssigner(r *http.Request, g *db.AgentGroup, before *db.Group
 	if rep.Blocked {
 		text += "\nThe task is now blocked after " + fmt.Sprint(rep.Task.Failures) + " failed attempts.\n"
 	}
-	mailTaskboard(r, g, conv, taskboardSubject(g, before, tail), text)
+	mailTaskboard(r, g, conv, taskboardSubject(g, before, tail), taskboardLinked(g, before, text))
 }
 
 // GET /v1/taskboard/mine — the live tasks assigned to the calling agent, in

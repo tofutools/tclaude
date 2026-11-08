@@ -117,8 +117,8 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	if res.Unassigned != "" && res.Task.Status != db.GroupTaskDone {
 		if conv, _ := db.CurrentConvForAgent(res.Unassigned); conv != "" {
 			mailTaskboard(r, g, conv, taskboardSubject(target, res.Task, "moved away from you"),
-				fmt.Sprintf("%s moved task %s %q from %s to %s. You are not a member of %s, so it is no longer assigned to you; stop work on it.\n",
-					taskboardCallerName(r), res.Task.ID, res.Task.Title, g.Name, target.Name, target.Name))
+				taskboardLinked(target, res.Task, fmt.Sprintf("%s moved task %s %q from %s to %s. You are not a member of %s, so it is no longer assigned to you; stop work on it.\n",
+					taskboardCallerName(r), res.Task.ID, res.Task.Title, g.Name, target.Name, target.Name)))
 		}
 	}
 	setAuditDetail(r, fmt.Sprintf("moved %s from %s to %s", t.ID, g.Name, target.Name))
@@ -319,8 +319,8 @@ func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.Grou
 	if t.AssigneeID != "" {
 		if conv, _ := db.CurrentConvForAgent(t.AssigneeID); conv != "" {
 			mailTaskboard(r, g, conv, taskboardSubject(g, t, "moved away from you"),
-				fmt.Sprintf("%s moved task %s %q from %s to %s. It is closed here and no longer assigned to you; stop work on it.\n",
-					taskboardCallerName(r), t.ID, t.Title, g.Name, body.To.String()))
+				taskboardLinked(g, t, fmt.Sprintf("%s moved task %s %q from %s to %s. It is closed here and no longer assigned to you; stop work on it.\n",
+					taskboardCallerName(r), t.ID, t.Title, g.Name, body.To.String())))
 		}
 	}
 	setAuditDetail(r, fmt.Sprintf("%s %s", t.ID, note))

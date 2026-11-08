@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/drawingboard"
 )
 
 const drawingBoardFixture = `{"id":"plan","title":"Plan","version":4,"updated_by":"operator","participants":["agt_1"],"elements":[
@@ -477,7 +478,7 @@ func TestDrawingBoardConnectChangesRoutingAndEnds(t *testing.T) {
 	require.Equal(t, rcOK, rc, errb.String())
 	line := patchedByID(*patched)["e"]
 	assert.Equal(t, "curved", line["routing"])
-	assert.Len(t, line["points"], drawingBoardCurveSteps+1)
+	assert.Len(t, line["points"], drawingboard.CurveSteps+1)
 	assert.EqualValues(t, 4, line["version"])
 
 	require.Equal(t, rcOK, runDrawingBoardConnect(&drawingBoardConnectParams{FreeTo: true, FromSide: "top"}, "plan", "e", &out, &errb), errb.String())

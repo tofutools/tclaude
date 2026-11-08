@@ -185,11 +185,11 @@ func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string) {
 		// A task the agent took for itself has no one else to tell.
 	case byAgent:
 		if conv := activeTaskboardAgentConv(assigner); conv != "" {
-			systemMailTaskboard(g, conv, taskboardSubject(g, t, tail), text)
+			systemMailTaskboard(g, conv, taskboardSubject(g, t, tail), taskboardLinked(g, t, text))
 		}
 	default:
 		if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: "Task board", GroupName: g.Name,
-			Subject: taskboardSubject(g, t, tail), Body: text}); err != nil {
+			Subject: taskboardSubject(g, t, tail), Body: taskboardLinked(g, t, text)}); err != nil {
 			slog.Warn("taskboard: operator message failed", "task", t.ID, "error", err)
 		}
 	}
@@ -201,7 +201,7 @@ func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string) {
 		fmt.Fprintf(&b, "If you cannot:     tclaude agent taskboard report failed --task %s --note \"why\"\n", t.ID)
 		fmt.Fprintf(&b, "Give it back:      tclaude agent taskboard release %s\n", t.ID)
 		b.WriteString("\nReporting does not end your session.\n")
-		systemMailTaskboard(g, conv, taskboardSubject(g, t, "you went idle without reporting"), b.String())
+		systemMailTaskboard(g, conv, taskboardSubject(g, t, "you went idle without reporting"), taskboardLinked(g, t, b.String()))
 	}
 }
 

@@ -166,7 +166,9 @@ export const TAB_PARAMS = {
 // and a link opens it. Written after the tab's own params.
 //   - manage: the library manager open (MANAGE_KINDS).
 //   - notification: the human-notification reader, as <sender>:<message-id>.
-export const OVERLAY_PARAMS = ['manage', 'notification'];
+//   - task: a task's edit form, as <task-id>[@<node>]:<group> (task-route.js).
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task'];
+const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
 export const MANAGE_KINDS = new Set(['profiles', 'roles', 'sandbox', 'templates']);
 
 // normalizeParams keeps the tab's known params (and the overlay params) with
@@ -181,6 +183,7 @@ function normalizeParams(tab, params) {
     const str = String(value);
     if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
     if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
+    if (key === 'task' && !TASK_ROUTE.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
   }
   return Object.keys(out).length ? out : undefined;
@@ -443,7 +446,10 @@ export function fromPath(pathname, search) {
   const params = {};
   for (const [key, value] of query) params[key] = value;
   const parts = pathPart.split('/').filter(Boolean);
-  if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
+  // The bare / is the default tab, whose canonical path it is (toPath), so it
+  // keeps its params: a Groups location's query (an overlay such as
+  // ?task=) must survive Back/Forward and a reload.
+  if (parts.length === 0 || parts[0] === 'dashboard') return normalizeLocation({ ...defaultLocation(), params });
   let [tab, second, third, fourth] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.

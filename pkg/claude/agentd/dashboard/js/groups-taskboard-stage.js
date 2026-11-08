@@ -7,8 +7,8 @@
 // many columns still picks in a few keys.
 //
 // A custom column's key is `col:<slug>` (COLUMN_STATE), as the List filter
-// and the Lanes view name it. A column the board hides or has disabled is
-// not offered (once columns carry the flags).
+// and the Lanes view name it. A column the board hides or has cordoned
+// (column.state, tk_bf5d2b02) is not offered.
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
@@ -28,7 +28,8 @@ export function columnSlug(key) {
 // offeredColumns are the custom columns a picker offers: not the ones the
 // board hides or has disabled.
 export function offeredColumns(columns = []) {
-  return (columns || []).filter((column) => column && column.slug && !column.hidden && !column.disabled);
+  return (columns || []).filter((column) => column && column.slug && !column.hidden && !column.disabled
+    && column.state !== 'hidden' && column.state !== 'cordoned');
 }
 
 // stageItems are the picker's rows: `places` ({ key, label, wizard?, hint? })

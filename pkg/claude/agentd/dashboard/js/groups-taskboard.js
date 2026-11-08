@@ -20,13 +20,13 @@
 // taskboard.write (or unrestricted trust).
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { Button, Seg } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
-import { shellToast } from './shell-state.js';
+import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { createTaskboardApi, taskboardApi } from './taskboard-actions.js';
 import { isPageNode, nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
@@ -34,7 +34,8 @@ import { markLanded } from './drop-landing.js';
 import { dndMember } from './dnd-ops.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
-import { TaskboardLanes } from './groups-taskboard-lanes.js';
+import { TaskboardLanes, laneColumn } from './groups-taskboard-lanes.js';
+import { ColumnsMenu, HiddenColumnsTag, boardHidden, hiddenTally, mineHidden, setMineHidden, withColumnView } from './groups-taskboard-colvis.js';
 import { FLAT_MODES, TaskboardFlat } from './groups-taskboard-lanes-flat.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
@@ -48,7 +49,8 @@ import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { FilesCount } from './groups-taskboard-files.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
-import { agentLink } from './cross-links.js';
+import { agentLink, jumpToTask } from './cross-links.js';
+import { closeTaskRoute, copyLinkItem, dropTaskRoute, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
 import {
   COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -304,6 +306,7 @@ export function canClose(task, actions) {
 // ✓ Next on an idea, ↺ Reopen in history), ✎ Edit, and ⋯ for the rest
 // (rowMenu). Each names its CLI verb in its title.
 function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
+  const board = useContext(TaskLink);
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const go = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -318,7 +321,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns })}
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board })}
     glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
@@ -326,7 +329,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const run = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -401,6 +404,7 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
     items.push(item('drop', 'Drop…', 'taskboard drop: take it off the board (park it in the tracker first)', { danger: true, run: () => onForm('drop') }));
   }
   items.push(...archiveItems(task, actions));
+  if (board) items.push(copyLinkItem(task.id, board));
   return items;
 }
 
@@ -849,14 +853,80 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const [editing, setEditing] = useState('');
   const [reasoning, setReasoning] = useState(null);
   const [answering, setAnswering] = useState('');
+  // The edit form is the task's link (task-route.js): opening it records a
+  // history step, closing it steps back, and a link or Back/Forward opens
+  // or closes it here.
+  const node = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
+  const routeOf = (id) => ({ taskId: id, node, group: group.name });
+  const jumped = useRef('');
+  const board = useMemo(() => ({ group: group.name, node }), [group.name, node]);
+  // A click (✎, the title) opens the form where the task already is: no
+  // jump to it, which is for a link (jumped below).
+  const openEdit = (id) => { jumped.current = id; setEditing(id); openTaskRoute(routeOf(id)); };
+  const closeEdit = () => { if (editing) closeTaskRoute(routeOf(editing)); setEditing(''); };
   const [moving, setMoving] = useState(null);
   const onForm = (id, mode) => {
-    if (mode === 'edit') setEditing(id);
+    if (mode === 'edit') openEdit(id);
     else if (mode === 'answer') setAnswering(id);
     else if (mode === 'move' || mode === 'reopen') setMoving({ id, reopen: mode === 'reopen' });
     else setReasoning(mode ? { id, kind: mode } : null);
   };
-  const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
+  const listed = (id) => [...tasks, ...(entry.closed || [])].find((task) => task.id === id) || null;
+  // A linked task the lists do not hold (past the board's cap, or
+  // archived) is read on its own.
+  const [fetched, setFetched] = useState(null);
+  const want = taskRoute.value;
+  const wanted = want && want.group === group.name && (want.node || '') === node ? want : null;
+  const wantedListed = !!(wanted && listed(wanted.taskId));
+  // dirtyRef is the open form's unsaved input (EditTaskDialog). Back,
+  // Forward or a link that leaves a form with unsaved input asks first, as
+  // Cancel does; keeping it puts the form's entry back.
+  const dirtyRef = useRef(false);
+  const asking = useRef(false);
+  const agreed = useRef('');
+  const [askedTick, setAskedTick] = useState(0);
+  useEffect(() => {
+    const leaving = editing && !sameTask(want, routeOf(editing));
+    if (leaving && dirtyRef.current && agreed.current !== editing) {
+      if (asking.current) return undefined;
+      asking.current = true;
+      const kept = editing;
+      Promise.resolve(shellConfirmDiscard()).then((ok) => {
+        asking.current = false;
+        if (ok) { agreed.current = kept; setAskedTick((n) => n + 1); return; }
+        openTaskRoute(routeOf(kept));
+      });
+      return undefined;
+    }
+    agreed.current = '';
+    if (!wanted) {
+      jumped.current = '';
+      // Back (or a link to another task) closed the form the link opened.
+      if (editing && !sameTask(want, routeOf(editing))) setEditing('');
+      return undefined;
+    }
+    // A read-only board has no edit form to open.
+    if (!actions) { dropTaskRoute(wanted); return undefined; }
+    if (editing !== wanted.taskId) setEditing(wanted.taskId);
+    let live = true;
+    if (!wantedListed && fetched?.id !== wanted.taskId) {
+      // A task off the list (history, archived) is read by id, which names
+      // no group: one moved to another group since the link was made is
+      // that board's, not this one's, and a gone one has no form.
+      const read = readApi?.task ? readApi.task(wanted.taskId) : Promise.reject(new Error('no read'));
+      read.then((task) => {
+        if (!live) return;
+        if (task?.id === wanted.taskId && (task.group || group.name) === group.name) setFetched(task);
+        else dropTaskRoute(wanted);
+      }).catch(() => { if (live) dropTaskRoute(wanted); });
+    }
+    if (jumped.current !== wanted.taskId) {
+      jumped.current = wanted.taskId;
+      jumpToTask({ shown: group.shownName || group.name, group: group.name, node, taskId: wanted.taskId });
+    }
+    return () => { live = false; };
+  }, [want, wantedListed, askedTick]);
+  const edited = editing && (listed(editing) || (fetched?.id === editing ? fetched : null));
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
   // The band heads every idea-stage row the filter leaves (a blocked or
   // assigned idea is not in the "ideas" state), so no idea passes for a queue
@@ -883,7 +953,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${entry} task=${edited}
     me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
-    nameOf=${(actor) => actorLabel(actor, group, snapshot)} onClose=${() => setEditing('')} onSaved=${() => { void actions.refresh(); }} />`;
+    nameOf=${(actor) => actorLabel(actor, group, snapshot)} dirtyRef=${dirtyRef} onClose=${closeEdit} onSaved=${() => { void actions.refresh(); }} />`;
   const reasonTask = reasoning && actions && tasks.find((task) => task.id === reasoning.id);
   const reasonDialog = reasonTask && html`<${TaskReasonDialog} key=${`${reasonTask.id}-${reasoning.kind}`} kind=${reasoning.kind} task=${reasonTask}
     busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}
@@ -894,7 +964,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const moveDialog = moveTask && html`<${TaskMoveDialog} key=${`${moveTask.id}-${moving.reopen}`} task=${moveTask} reopen=${moving.reopen}
     columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
     onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
-  return html`<div class="tb-board" data-taskboard=${name} ref=${boardRef}>
+  return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
     ${editDialog}
     ${reasonDialog}
     ${moveDialog}
@@ -902,8 +972,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
-      onEdit=${(id) => setEditing(id)} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
-      onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
+      onEdit=${openEdit} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
+      onEdit=${openEdit} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
       <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(hidden.filter((state) => state === 'done' || state === 'dropped'))}>show all<//></div>`}
@@ -912,7 +982,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
     </tbody></table>`}
-  </div>`;
+  </div><//>`;
 }
 
 const VIEW_PREF = (group) => `tclaude.dash.groups.taskboard.view.${group}`;
@@ -936,16 +1006,24 @@ export function listStates(columns = []) {
 export const LIST_HIDDEN_DEFAULT = ['done', 'dropped'];
 const LIST_HIDDEN_PREF = (group) => `tclaude.dash.groups.taskboard.list-hidden.${group}`;
 
+// listHiddenDefault is what the List hides before a choice: the closed
+// tasks, and the columns the board hides (tk_bf5d2b02), Ideas as the idea
+// state.
+export function listHiddenDefault(entry) {
+  const board = boardHidden(entry).map((key) => (key === 'ideas' ? 'idea' : key));
+  return [...new Set([...LIST_HIDDEN_DEFAULT, ...board])];
+}
+
 // listHidden reads the states the List hides, per group and viewer: the
 // default until a choice is made. It stores what is hidden, so a state added
 // later shows until hidden.
-export function listHidden(group) {
+export function listHidden(group, defaults = LIST_HIDDEN_DEFAULT) {
   try {
     const raw = dashPrefs.getItem(LIST_HIDDEN_PREF(group));
     const list = raw ? JSON.parse(raw) : null;
     if (Array.isArray(list)) return list.filter((state) => LIST_STATES.some(([key]) => key === state) || String(state).startsWith(COLUMN_STATE));
   } catch (_) { /* a malformed value reads as the default */ }
-  return [...LIST_HIDDEN_DEFAULT];
+  return [...defaults];
 }
 
 const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
@@ -972,13 +1050,17 @@ export function taskboardLanesBy(group) {
 
 // useViewPrefs reads the section's List | Lanes choice and the lanes' "by",
 // remembered per group and per viewer in dashPrefs like the section folds.
-function useViewPrefs(group) {
+function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
   const [, bump] = useState(0);
   const set = (key, value) => { dashPrefs.setItem(key, value); bump((n) => n + 1); };
   return {
     view: taskboardView(group),
     by: taskboardLanesBy(group),
-    listHidden: listHidden(group),
+    listHidden: listHidden(group, listDefaults),
+    listDefaults,
+    // The columns this viewer hides on the board (groups-taskboard-colvis.js).
+    mineColumns: mineHidden(group),
+    setMineColumns: (keys) => { setMineHidden(group, keys); bump((n) => n + 1); },
     // null puts the default back.
     setListHidden: (value) => {
       if (value) dashPrefs.setItem(LIST_HIDDEN_PREF(group), JSON.stringify(value));
@@ -1015,7 +1097,8 @@ function ListFilter({ group, prefs, columns = [] }) {
   const [open, setOpen] = useState(false);
   const hidden = prefs.listHidden;
   const states = listStates(columns);
-  const changes = states.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
+  const defaults = prefs.listDefaults || LIST_HIDDEN_DEFAULT;
+  const changes = states.filter(([key]) => hidden.includes(key) !== defaults.includes(key)).length;
   // Element ids from the group's name, every other character spelled out,
   // so name@node and a local name-node never share one.
   const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9-]/g, (c) => `_${c.codePointAt(0).toString(16)}_`)}`;
@@ -1045,7 +1128,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);
-  const prefs = useViewPrefs(shown.name);
+  const prefs = useViewPrefs(shown.name, listHiddenDefault(entry));
   // Once the section has opened on its own (something needed the
   // operator), it stays open for this page, so clearing the last blocked
   // task never folds it under a form or the capture box in use. The
@@ -1055,6 +1138,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const wizard = isWizardActive();
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
+  // The lanes draw the columns neither the board nor this viewer hides.
+  const view = withColumnView(entry, { group: group.name, mine: prefs.mineColumns, onMine: prefs.setMineColumns, actions: api ? actions : null });
+  const lanes = prefs.view === 'lanes';
   // choose opens what the add menu picked; a lanes cell's "+" passes its
   // start state (and the lane's agent) along.
   const choose = (what, initial = {}) => {
@@ -1065,7 +1151,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section line.
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
   const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
-    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}</div>`;
+    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}${
+    lanes && html`<${ColumnsMenu} entry=${view} group=${shown.name} />`}${
+    lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}</div>`;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
@@ -1077,7 +1165,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
       closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
-    <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
+    <${TaskboardRows} entry=${lanes ? view : entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       view=${prefs.view} lanesBy=${prefs.by}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;

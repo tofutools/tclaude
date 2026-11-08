@@ -189,7 +189,7 @@ fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|
-| `drawing-boards.read` | `drawing-board ls`, `drawing-board show`, `drawing-board snapshot`, `drawing-board fleet-changes` (with `fleet.read`) |
+| `drawing-boards.read` | `drawing-board ls`, `drawing-board show`, `drawing-board snapshot`, `drawing-board export`, `drawing-board fleet-changes` (with `fleet.read`) |
 | `drawing-boards.write` | `drawing-board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `connect`, `layout`, `from-fleet`, `from-process`), and `drawing-board open` and `drawing-board close` on the agent's own session |
 
 Neither is default-granted, although a Steward gets both when summoned:
@@ -207,7 +207,7 @@ group:
 
 | Slug | Allows, on the group's drawing boards |
 |---|---|
-| `groups.resources.read` | `drawing-board show`, `drawing-board snapshot`; `drawing-board ls` lists them |
+| `groups.resources.read` | `drawing-board show`, `drawing-board snapshot`, `drawing-board export`; `drawing-board ls` lists them |
 | `groups.resources.write` | every change and `drawing-board open`/`close`, and `drawing-board create --group <group>`; implies read |
 
 Membership is checked at every request, so an agent that joins a group can use
@@ -248,6 +248,9 @@ tclaude agent drawing-board show plan --json          # the elements as Excalidr
 tclaude agent drawing-board show plan --view          # only what the operator has on screen
 tclaude agent drawing-board snapshot plan -o plan.png # the dashboard's latest rendering
 tclaude agent drawing-board snapshot plan --region 3 -o change.png  # the image a drawing board event named
+tclaude agent drawing-board export plan -o plan.png   # the drawing board as it is now, no dashboard needed
+tclaude agent drawing-board export plan --elements api,db -o part.svg  # those elements, their text and the lines between
+tclaude agent drawing-board export plan --region 0,0,400,300 -o area.png  # what meets the box, cropped to it
 tclaude agent drawing-board open plan                 # start your drawing board session again, coming back later
 tclaude agent drawing-board close plan                # end your drawing board session
 
@@ -304,7 +307,27 @@ up as a tab. **End** removes every session on that drawing board, never the draw
 peers do not list them, and a peer's per-node view leaves them out.
 
 `drawing-board snapshot` still needs a dashboard: it returns what an open editor last
-rendered, however old, so an agent working alone should read with `drawing-board show`.
+rendered, however old, so an agent working alone should read with `drawing-board show`,
+or look at it with `drawing-board export`.
+
+## Export
+
+`drawing-board export` renders the drawing board as it is now, from its stored
+elements, to a PNG or an SVG. The daemon draws it, so it needs no open dashboard
+and is never stale. It draws the elements as the editor does: bound lines on
+their shapes, routed the same way, and attached text on its container. Text is
+drawn in the Go fonts (sans for the hand and sans faces, mono for mono), so it
+is close to the editor's, not identical, and lines are clean rather than rough.
+
+- The whole board, padded by 24 units, is the default.
+- `--elements a,b` draws those elements, the text attached to them and the lines
+  bound at both ends between them, padded.
+- `--region x,y,width,height` draws what meets the box, cropped to it.
+- The format follows `-o`'s extension (`.png` or `.svg`), or `--format`; `-o -`
+  writes to stdout. A PNG is 2 pixels per unit by default (`--scale`, at most 4),
+  its longest side capped at 4096 pixels.
+
+Exporting needs read access to the drawing board, as `show` does.
 
 ## Elements and merging
 
@@ -493,13 +516,15 @@ snapshot is `~/.tclaude/data/drawing-boards/<id>.png` and the event images are u
 ## HTTP routes
 
 The dashboard uses `/api/drawing-boards` (list, create, read, patch, delete, snapshot
-upload and download, participants, events, view, group and undo), and
+upload and download, export, participants, events, view, group and undo), and
 `DELETE /api/drawing-boards/{id}/sessions` to end a drawing board's sessions. A federation
 peer's dashboard view reaches only the list, create, read, patch, title and
 group routes, for the drawing boards of the groups it was granted (see
 [A peer's drawing boards](#a-peers-drawing-boards)). Agents use `/v1/drawing-boards`: `GET /v1/drawing-boards`, `POST /v1/drawing-boards`,
 `GET /v1/drawing-boards/{id}` (`?since=N`), `PATCH /v1/drawing-boards/{id}`,
-`GET /v1/drawing-boards/{id}/snapshot`, and `POST` and `DELETE /v1/drawing-boards/{id}/session`
-for the caller's own session. The snapshot response carries `X-Drawing-board-Snapshot-Version` and `X-Drawing-board-Version`
+`GET /v1/drawing-boards/{id}/snapshot`, `POST /v1/drawing-boards/{id}/export`, and `POST` and `DELETE /v1/drawing-boards/{id}/session`
+for the caller's own session. An export takes `{format: png|svg, elements?, region?: {x, y, width, height}, scale?}`
+and replies with the image, `X-Drawing-board-Version` (the version it shows) and `X-Drawing-board-Export-Elements`
+(how many elements it drew); unknown element ids are a 404 that names them, and an empty board or region a 422. The snapshot response carries `X-Drawing-board-Snapshot-Version` and `X-Drawing-board-Version`
 headers. A snapshot upload for a version older than the stored snapshot is
 refused with 409.

@@ -30,7 +30,8 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return {}; };
   return { calls, capture: record('capture'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
     assign: record('assign'), unassign: record('unassign'), start: record('start'), hold: record('hold'), archive: record('archive'),
-    addColumn: record('addColumn'), changeColumn: record('changeColumn'), removeColumn: record('removeColumn') };
+    addColumn: record('addColumn'), changeColumn: record('changeColumn'), removeColumn: record('removeColumn'),
+    setColumnState: record('setColumnState') };
 }
 
 const members = () => [
@@ -38,15 +39,16 @@ const members = () => [
   { agent_id: 'agt_tester', title: 'tester', role: 'dev', online: true },
 ];
 
-async function mount(t, name, { view = 'lanes', api = fakeApi() } = {}) {
+async function mount(t, name, { view = 'lanes', api = fakeApi(), entry = board(name), prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, 'agent');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
+  for (const [k, v] of Object.entries(prefs)) dashPrefs.setItem(k, v);
   const source = {
-    context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),
+    context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => {},
   };
   const group = { name, members: members() };
@@ -216,4 +218,64 @@ test('the counts name each custom column; the layout keeps widths per number of 
   assert.equal(gridMinWidth(null, 7), 170 + 7 * 90);
   const out = resizeColumns([170, 100, 100, 100, 100, 100, 100, 100], 6, 20); // the right one stops at its 90px minimum
   assert.deepEqual(out.stages, [100, 100, 100, 100, 100, 110, 90], 'the sixth stage edge trades with the seventh');
+});
+
+// Column states (tk_bf5d2b02): the board hides a column or cordons a custom
+// one; a viewer hides columns for themselves.
+test('a board-hidden column is not drawn and its tasks are counted in the hidden tag; a cordoned one takes no drop', async (t) => {
+  const entry = board('tb-colvis');
+  entry.columns = [{ ...COLUMNS[0], state: 'hidden' }, { ...COLUMNS[1], state: 'cordoned' }];
+  entry.builtin_columns = { ideas: 'hidden' };
+  entry.tasks.push(row('tk_00000004', 'in CI', { assignee: builder, assigned_at: ago(3), column: 'in-ci' }));
+  const { harness, c, cell, drag, api } = await mount(t, 'tb-colvis', { entry });
+  const heads = [...c.querySelectorAll('.tb-lane-columns > [data-col]')].map((h) => h.dataset.col);
+  assert.deepEqual(heads, ['next', 'progress', 'col:in-ci', 'blocked', 'done']);
+  const tag = c.querySelector('.tb-hidden-tag');
+  assert.ok(tag, 'the hidden tag shows');
+  assert.equal(tag.dataset.tbHidden, '1');
+  assert.match(tag.getAttribute('title'), /1 in In review/);
+
+  const ci = c.querySelector('.tb-lane-columns > [data-col="col:in-ci"]');
+  assert.ok(ci.classList.contains('tb-col-cordoned'));
+  assert.ok(cell('agt_builder', 'col:in-ci').classList.contains('tb-cell-cordoned'));
+  assert.ok(!cell('', 'col:in-ci')?.classList.contains('tb-cell-addable'), 'a cordoned cell has no +');
+  const before = api.calls.length;
+  const { taken } = await drag('tk_00000002', 'agt_builder', 'col:in-ci');
+  assert.equal(taken, false, 'a cordoned column takes no drop');
+  assert.equal(api.calls.length, before);
+
+  // A card already in it may still move within it: to another lane's hands.
+  const inside = await drag('tk_00000004', 'unassigned', 'col:in-ci');
+  assert.equal(inside.taken, true, 'a card in the cordoned column may move within it');
+
+  // Its ⋯ lifts the cordon, the board's route.
+  await harness.act(() => harness.fireEvent(ci.querySelector('.tb-col-more'), 'click'));
+  await harness.act(async () => { harness.fireEvent(ci.querySelector('[data-column-menu="uncordon"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls.at(-1), ['setColumnState', 'tb-colvis', 'in-ci', 'shown']);
+});
+
+test('Hide for me on a column head hides it on this dashboard only; Columns ▾ shows it again', async (t) => {
+  const { harness, c, api, dashPrefs } = await mount(t, 'tb-mine');
+  const head = (key) => c.querySelector(`.tb-lane-columns > [data-col="${key}"]`);
+  await harness.act(() => harness.fireEvent(head('done').querySelector('.tb-col-more'), 'click'));
+  assert.ok(head('done').querySelector('[data-column-menu="hide-board"]'), 'a viewer who manages the columns may hide it for everyone');
+  await harness.act(async () => { harness.fireEvent(head('done').querySelector('[data-column-menu="hide-mine"]'), 'click'); });
+  assert.equal(head('done'), null, 'Done is hidden here');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.columns-hidden.tb-mine')), ['done']);
+  assert.ok(!api.calls.some(([verb]) => verb === 'setColumnState'), 'the board is not written');
+
+  await harness.act(() => harness.fireEvent(c.querySelector('.tb-columns-menu'), 'click'));
+  const toggle = c.querySelector('[id$="-mine-done"]');
+  assert.ok(toggle, 'Columns ▾ lists Done');
+  await harness.act(async () => { toggle.checked = true; harness.fireEvent(toggle, 'change'); harness.fireEvent(toggle, 'input'); });
+  assert.ok(head('done'), 'Done is back');
+});
+
+test('the pickers skip cordoned and hidden columns; the List hides what the board hides by default', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { offeredColumns } = await harness.importDashboardModule('js/groups-taskboard-stage.js');
+  assert.deepEqual(offeredColumns([{ slug: 'a', label: 'A' }, { slug: 'b', label: 'B', state: 'cordoned' }, { slug: 'c', label: 'C', state: 'hidden' }]).map((c) => c.slug), ['a']);
+  const { listHiddenDefault } = await harness.importDashboardModule('js/groups-taskboard.js');
+  assert.deepEqual(listHiddenDefault({ builtin_columns: { ideas: 'hidden' }, columns: [{ slug: 'x', label: 'X', state: 'hidden' }] }),
+    ['done', 'dropped', 'idea', 'col:x'], 'the List hides what the board hides, until the viewer picks');
 });

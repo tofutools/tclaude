@@ -2434,6 +2434,12 @@ CREATE TRIGGER group_task_questions_close
 					WHERE task_id = NEW.id AND state = 'open';
 			END;
 
+CREATE TRIGGER group_tasks_column_cordoned_on_move
+			AFTER UPDATE OF group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND OLD.group_id <> NEW.group_id AND EXISTS (SELECT 1 FROM group_task_column_states s
+				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
+
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
 			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2498,6 +2504,10 @@ CREATE TRIGGER group_task_columns_removed
 			AFTER DELETE ON group_task_columns
 			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
 
+CREATE TRIGGER group_task_columns_removed_state
+			AFTER DELETE ON group_task_columns
+			BEGIN DELETE FROM group_task_column_states WHERE group_id = OLD.group_id AND slug = OLD.slug; END;
+
 CREATE TABLE federation_peer_questions (
 			peer       TEXT NOT NULL,
 			task       TEXT NOT NULL,
@@ -2528,3 +2538,10 @@ CREATE TABLE group_task_questions (
 CREATE INDEX idx_group_task_questions_open ON group_task_questions(task_id) WHERE state = 'open';
 
 CREATE UNIQUE INDEX idx_group_task_questions_source ON group_task_questions(source) WHERE source <> '';
+
+CREATE TABLE group_task_column_states (
+			group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			slug     TEXT NOT NULL,
+			state    TEXT NOT NULL CHECK (state IN ('hidden', 'cordoned')),
+			PRIMARY KEY (group_id, slug)
+		) STRICT;

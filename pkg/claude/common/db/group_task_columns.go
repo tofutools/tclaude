@@ -239,6 +239,9 @@ func SetGroupTaskColumn(id, slug, actor, expectAssignee string) (*GroupTask, err
 				return taskConflict("invalid_arg", "the board has no column %s", slug)
 			}
 			label = cols[i].Label
+			if err := refuseCordonedColumnTx(tx, t.GroupID, slug, label); err != nil {
+				return err
+			}
 		}
 		if t.Stage != GroupTaskStageNext {
 			_, rank, err := placeTask(tx, t.GroupID, GroupTaskStageNext, id, GroupTaskPosition{Bottom: true})
@@ -262,4 +265,104 @@ func SetGroupTaskColumn(id, slug, actor, expectAssignee string) (*GroupTask, err
 		return addGroupTaskChangeTx(tx, id, actor, GroupTaskEventColumn, detail,
 			[]GroupTaskChange{{Field: "column", Before: t.Column, After: slug}}, now)
 	})
+}
+
+// Column states (tk_bf5d2b02): a board shows each column (no row), hides it
+// (kept, its tasks keep it, not drawn) or cordons it (drawn, takes no new
+// task; its tasks may leave). A custom column may be hidden or cordoned; of
+// the built-in columns, Ideas and Done this week may be hidden. Next, In
+// progress and Blocked are always shown.
+const (
+	GroupTaskColumnShown    = "shown"
+	GroupTaskColumnHidden   = "hidden"
+	GroupTaskColumnCordoned = "cordoned"
+
+	// GroupTaskColumnIdeas and GroupTaskColumnDone are the built-in columns a
+	// board may hide, by the slugs their state is kept under.
+	GroupTaskColumnIdeas = "ideas"
+	GroupTaskColumnDone  = "done"
+)
+
+// ListGroupTaskColumnStates is a group's column states other than shown, by
+// slug (a custom column's, or ideas / done).
+func ListGroupTaskColumnStates(groupID int64) (map[string]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return listGroupTaskColumnStatesTx(d, groupID)
+}
+
+func listGroupTaskColumnStatesTx(q taskTx, groupID int64) (map[string]string, error) {
+	type row struct{ slug, state string }
+	rows, err := queryRows(q, func(s rowScanner) (row, error) {
+		var r row
+		return r, s.Scan(&r.slug, &r.state)
+	}, `SELECT slug, state FROM group_task_column_states WHERE group_id = ?`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.slug] = r.state
+	}
+	return out, nil
+}
+
+// SetGroupTaskColumnState sets a column's state: a custom column's (by its
+// slug) to shown, hidden or cordoned; ideas or done to shown or hidden.
+func SetGroupTaskColumnState(groupID int64, slug, state string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	switch state {
+	case GroupTaskColumnShown, GroupTaskColumnHidden, GroupTaskColumnCordoned:
+	default:
+		return taskConflict("invalid_arg", "a column's state is shown, hidden or cordoned")
+	}
+	switch slug {
+	case GroupTaskColumnIdeas, GroupTaskColumnDone:
+		if state == GroupTaskColumnCordoned {
+			return taskConflict("invalid_arg", "only a custom column can be cordoned; %s can be hidden", slug)
+		}
+	default:
+		cols, err := listGroupTaskColumnsTx(d, groupID)
+		if err != nil {
+			return err
+		}
+		if columnIndex(cols, slug) < 0 {
+			return ErrGroupTaskColumnNotFound
+		}
+	}
+	if state == GroupTaskColumnShown {
+		_, err = d.Exec(`DELETE FROM group_task_column_states WHERE group_id = ? AND slug = ?`, groupID, slug)
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO group_task_column_states (group_id, slug, state) VALUES (?, ?, ?)
+		ON CONFLICT (group_id, slug) DO UPDATE SET state = excluded.state`, groupID, slug, state)
+	return err
+}
+
+// refuseCordonedColumnTx refuses a task moving into a cordoned column: it
+// takes no new task, whoever moves it.
+func refuseCordonedColumnTx(q taskTx, groupID int64, slug, label string) error {
+	if slug == "" {
+		return nil
+	}
+	var state string
+	err := q.QueryRow(`SELECT state FROM group_task_column_states WHERE group_id = ? AND slug = ?`, groupID, slug).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if state == GroupTaskColumnCordoned {
+		if label == "" {
+			label = slug
+		}
+		return taskConflict("cordoned", "column %s is cordoned: it takes no new tasks", label)
+	}
+	return nil
 }

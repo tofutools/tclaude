@@ -362,11 +362,11 @@ var peerViewOwnNodeRoutes = []string{
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
 	// A collab drawing board's live socket and presence, the operator's activity mail
-	// and undo, its rendered snapshot, inviting agents, ending their sessions
+	// and undo, its rendered snapshot and export, inviting agents, ending their sessions
 	// and deleting or copying it stay this node's own dashboard's; reading and
 	// editing one have peer routes (peer_drawing_boards.go).
 	"DELETE /api/drawing-boards/{id}", "POST /api/drawing-boards/{id}/copy",
-	"PUT /api/drawing-boards/{id}/snapshot", "GET /api/drawing-boards/{id}/snapshot",
+	"PUT /api/drawing-boards/{id}/snapshot", "GET /api/drawing-boards/{id}/snapshot", "POST /api/drawing-boards/{id}/export",
 	"GET /api/drawing-boards/{id}/live", "POST /api/drawing-boards/{id}/undo", "POST /api/drawing-boards/{id}/participants", "POST /api/drawing-boards/{id}/events", "POST /api/drawing-boards/{id}/view",
 	"DELETE /api/drawing-boards/{id}/sessions",
 	// Live pages are this node's own agents' stage origins.

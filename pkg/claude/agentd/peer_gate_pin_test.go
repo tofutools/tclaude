@@ -57,6 +57,7 @@ var pinnedPeerGroupGates = map[string][]string{
 	PermTaskboardWrite:    {"taskboard.write"},
 	PermTaskboardAssign:   {"taskboard.assign"},
 	PermTaskboardManage:   {"taskboard.manage"},
+	PermTaskboardColumns:  {"taskboard.columns"},
 	PermTaskboardTransfer: {"taskboard.transfer"},
 	// A deployed group's re-brief (peer_group_launch.go).
 	PermTemplatesUse: {"templates.instantiate"},

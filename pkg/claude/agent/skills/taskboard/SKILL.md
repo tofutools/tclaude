@@ -26,7 +26,7 @@ The group's Task board is the short-term view of what is happening now and next 
 ```bash
 tclaude agent taskboard ls                 # your group's board: the queue (next), then ideas
 tclaude agent taskboard ls --mine          # the tasks assigned to you, in every group
-tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it
+tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it, and its dashboard link
 tclaude agent taskboard take tk_1a2b3c4d   # take an open, unassigned task yourself (an idea is promoted)
 # … do the work …
 tclaude agent taskboard report done --note "merged #4126"
@@ -42,7 +42,8 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   you open its PR and are waiting on review, CI or merge:
   `tclaude agent taskboard move tk_… --stage in-review`. A task in a custom
   column never raises "went idle without reporting". Report done when it
-  merges.
+  merges. A cordoned column (`columns ls` marks it) takes no new task; a
+  hidden one still takes moves but the board does not draw it.
 - `report` names the task with `--task`. You can leave it out when exactly one
   live task is assigned to you.
 - `done` closes the task. `failed` gives it back and counts a failure; after
@@ -151,6 +152,30 @@ tclaude agent taskboard reopen tk_… [--next|--idea] [--assignee <agent>|--unas
 tclaude agent taskboard archive tk_… [--reason "…"]   ;   unarchive tk_…   ;   ls <group> --archived   # out of the history, kept
 tclaude agent taskboard archive <group> --done [--dropped] [--older-than 7d]   # tidy the done / dropped tasks (taskboard.write)
 tclaude agent taskboard move-to-group tk_… <other-group>[@<peer>] [--clone] [--stage next]   # @peer: created there, then dropped here
+```
+
+### Briefs and comments are Markdown
+
+A brief (`--body` / `--body-file`), a comment, and an `ask-operator --body`
+render as Markdown wherever the board shows them: headings, bold and italic,
+lists, task lists (`- [ ]`, `- [x]`), quotes, code spans and blocks, tables
+and links. A file you `--attach` to the task (or to the comment) shows
+inline where you write `![name](file.png)`, by its name. Write a brief so it
+scans on the card:
+
+```markdown
+## Goal
+The lane tint reads as *yours* at a glance.
+
+## Done when
+- [ ] amber tint on the operator's lane
+- [ ] screenshot in the PR
+
+![mock](mock.png)
+```
+
+```bash
+tclaude agent taskboard add <group> "Tint the operator's lane" --body-file brief.md --attach mock.png
 ```
 
 With `taskboard.write`, new tasks land unassigned in the ideas unless you pass

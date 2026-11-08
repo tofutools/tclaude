@@ -274,7 +274,7 @@ export function MarkdownEditor({
           onSelect=${() => setRevision((n) => n + 1)} />
         <div ref=${mount} class="md-ed-cm-mount" hidden=${!host}></div>
       </div>
-      ${showPreview && html`<div class="md-ed-preview" aria-label="Preview">
+      ${showPreview && html`<div class="md-ed-view" aria-label="Preview">
         ${value.trim()
           ? html`<${MarkdownDocument} source=${value} attachments=${attachments} className="markdown-document tb-comment-md md-ed-preview-doc" />`
           : html`<div class="ui-empty md-ed-preview-empty">Nothing to preview yet.</div>`}

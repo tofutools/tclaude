@@ -52,7 +52,7 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		if self, _ := callerAgentID(r); self != t.AssigneeID {
 			if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
 				by := taskboardCallerName(r)
-				mailTaskboard(r, g, conv, taskboardSubject(g, out, "started for you by "+by), taskboardBrief(g, out, by))
+				mailTaskboard(r, g, conv, taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 			}
 		}
 	}
@@ -72,5 +72,5 @@ func taskboardHeldNote(g *db.AgentGroup, t *db.GroupTask, by string) (subject, t
 	fmt.Fprintf(&b, "Show it:     tclaude agent taskboard show %s\n", t.ID)
 	fmt.Fprintf(&b, "Start it:    tclaude agent taskboard start %s\n", t.ID)
 	fmt.Fprintf(&b, "Give back:   tclaude agent taskboard release %s\n", t.ID)
-	return taskboardSubject(g, t, what+", from "+by), b.String()
+	return taskboardSubject(g, t, what+", from "+by), taskboardLinked(g, t, b.String())
 }

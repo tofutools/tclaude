@@ -3,18 +3,23 @@
 // ask-operator`, on a task (an entry of its activity) or on a task made for
 // the question, and the operator answers here. QuestionCard is an open
 // question on another task, in the operator's lane. QuestionTag marks a question
-// on a card or row ("❓ pick one · 3"); AnswerDialog answers it: the options
-// as radios (or checkboxes for a multi-select question) with their
-// descriptions, the recommended one marked, a preview pane that follows the
-// focused option, and free text, always available, with a pick or instead
-// of one. Send answer is `taskboard answer`: the task closes as done and the
+// on a card or row ("❓ pick one · 3"); AnswerDialog answers it: the
+// question's context rendered as Markdown, its files in the attachment
+// viewer, the options as radios (or checkboxes for a multi-select question)
+// each with its description and preview, the recommended one marked, and
+// free text, always available, with a pick or instead of one. TaskQuestions
+// lists a task's questions in its edit form, where Answer… opens the same
+// dialog. Send answer is `taskboard answer`: the task closes as done and the
 // agent that asked gets the answer.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Dialog } from './ui-dialog.js';
 import { Button, Textarea } from './ui-components.js';
+import { MarkdownDocument } from './markdown-document.js';
+import { StoredFiles, useMarkdownFiles } from './groups-taskboard-files.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -118,26 +123,72 @@ export function QuestionCard({ task, question, askedBy = '', onAnswer = null, on
   </div>`;
 }
 
-// AnswerDialog answers question (default: task's first open question).
-// onSubmit({ picked, text }) runs the write and resolves true when it
-// landed.
-export function AnswerDialog({ task, question = null, askedBy = '', busy = false, onSubmit, onClose }) {
+// answerWords is an answer as the activity and the edit form show it: the
+// picked labels, then the words.
+export function answerWords(question) {
+  const a = question?.answer;
+  if (!a) return '';
+  const labels = (a.picked || []).map((key) => (question.options || []).find((o) => o.key === key)?.label || key);
+  return [labels.length ? `Picked ${labels.join(', ')}` : '', a.text ? `“${a.text}”` : ''].filter(Boolean).join(' — ');
+}
+
+// ownQuestion reports whether q is task's own question (a question task's):
+// its brief is then the question's context, and its files the question's.
+export function ownQuestion(task, q) {
+  return !!task?.question && (q?.n || 1) === (task.question.n || 1);
+}
+
+// useQuestionTask is task as the dialog shows it: the board's context
+// carries no brief, so a question task without one is read in full through
+// the board's api, for its brief (the question's context) and its files.
+function useQuestionTask(api, task, own) {
+  const needs = own && !(typeof task.body === 'string' && task.body) && typeof api?.task === 'function';
+  const [full, setFull] = useState({ state: needs ? 'loading' : 'ready', task: null });
+  useEffect(() => {
+    if (!needs) return undefined;
+    let live = true;
+    api.task(task.id).then((read) => { if (live) setFull({ state: 'ready', task: read || null }); })
+      .catch(() => { if (live) setFull({ state: 'failed', task: null }); });
+    return () => { live = false; };
+  }, [task.id, needs]);
+  // The files follow the live row (the board's poll); the brief, the read.
+  const shown = full.task ? { ...full.task, attachments: task.attachments || full.task.attachments } : task;
+  return { task: shown, state: full.state };
+}
+
+// AnswerDialog answers question (default: task's first open question), with
+// all the operator needs to decide together: the question's context
+// rendered as Markdown (its images inline), the files that go with it as
+// tiles opening the attachment viewer (the question task's own, or the
+// files of the task it is asked on), and every option with its label,
+// description and preview, the recommended one marked. Free text is always
+// there, with a pick or instead of one. api (the board's) reads a question
+// task's brief and its files; without it the dialog shows what the row
+// carries. onSubmit({ picked, text }) runs the write and resolves true when
+// it landed.
+export function AnswerDialog({ task, question = null, askedBy = '', busy = false, api = null, onSubmit, onClose }) {
   const q = question || questionOf(task) || {};
-  // A question task's question is the task: its brief is the context.
-  const own = !!task.question && (q.n || 1) === (task.question.n || 1);
-  const context = own ? task.body : q.body;
+  const own = ownQuestion(task, q);
+  const read = useQuestionTask(api, task, own);
+  const shownTask = read.task;
+  const context = own ? shownTask.body : q.body;
+  const files = shownTask.attachments || [];
+  const mdFiles = useMarkdownFiles(api, shownTask, [], context || '');
   const options = q.options || [];
+  const recommended = options.find((o) => o.key === q.recommend);
   const source = questionSource(q);
   // An access request takes a pick only.
   const words = source !== 'approval';
   const [picked, setPicked] = useState([]);
   const [text, setText] = useState('');
-  const [focus, setFocus] = useState(q.recommend || options[0]?.key || '');
   const textRef = useRef(null);
+  // With options, focus starts on the recommended one (else the first), not
+  // on a file tile or a link in the context above them.
+  const optionRef = useRef(null);
+  const firstKey = recommended?.key || options[0]?.key;
   const sending = useRef(false);
   const empty = !picked.length && !text.trim();
   const toggle = (key) => {
-    setFocus(key);
     if (!q.multi) return setPicked([key]);
     setPicked(picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key]);
   };
@@ -150,26 +201,33 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
       sending.current = false;
     }
   };
-  const shown = options.find((o) => o.key === focus);
-  const previews = options.some((o) => o.preview);
   return html`<${Dialog} id="taskboard-answer-modal" dialogClass="cron-create-modal taskboard-answer-modal"
     title=${q.title || task.title || task.id} onClose=${onClose} onSubmitHotkey=${() => void submit()}
-    busy=${busy} initialFocusRef=${options.length || !words ? null : textRef} cancel="Cancel"
+    busy=${busy} initialFocusRef=${options.length ? optionRef : words ? textRef : null} cancel="Cancel" resizeKey="tclaude.dash.modalSize.taskboard-answer"
     footer=${html`<${Button} variant="primary" id="taskboard-answer-submit" busy=${busy}
       disabled=${busy || empty} onClick=${() => { void submit(); }}>${busy ? 'Sending…' : 'Send answer'}<//>`}>
     <div class="modal-meta tb-answer-meta">${task.id}${q.n ? ` · Q${q.n}` : ''}${!own ? ` on “${task.title}”` : ''}${askedBy ? ` · asked by ${askedBy}` : ''}${(q.waiting ?? task.waiting) ? ' · waiting for the answer' : ''}</div>
-    ${context && html`<div class="tb-answer-context">${context}</div>`}
-    ${options.length > 0 && html`<div class=${`tb-answer-options${previews ? ' tb-answer-has-preview' : ''}`}>
+    ${context ? html`<div class="tb-answer-context" tabindex="0" aria-label="The question"><${MarkdownDocument} source=${context} attachments=${mdFiles} className="markdown-document tb-answer-md" /></div>`
+      : own && read.state === 'loading' ? html`<div class="ui-hint tb-answer-context-hint">reading the question…</div>`
+      : own && read.state === 'failed' ? html`<div class="ui-hint tb-answer-context-hint">the question's brief could not be read</div>` : null}
+    ${files.length > 0 && html`<div class="tb-answer-files" data-answer-files=${files.length}>
+      <span class="ui-eyebrow">${own ? 'Attached' : 'Files on the task'} · ${files.length}</span>
+      <${StoredFiles} api=${api} taskId=${task.id} attachments=${files} surface="taskboard-answer" />
+    </div>`}
+    ${options.length > 0 && html`<div class="tb-answer-options">
+      <div class="tb-answer-head"><span class="ui-eyebrow">${q.multi ? `Pick any of ${options.length}` : `Pick one of ${options.length}`}</span>
+        ${recommended && html`<span class="tb-answer-rec-line">★ ${askedBy || 'the agent'} recommends <strong>${recommended.label}</strong></span>`}</div>
       <div class="tb-answer-list" role=${q.multi ? 'group' : 'radiogroup'} aria-label="Options">
-        ${options.map((o) => html`<label key=${o.key} class=${`tb-answer-opt${picked.includes(o.key) ? ' tb-answer-on' : ''}`} data-answer-option=${o.key}
-            onMouseEnter=${() => setFocus(o.key)}>
-          <input type=${q.multi ? 'checkbox' : 'radio'} name="tb-answer" value=${o.key} checked=${picked.includes(o.key)} disabled=${busy}
-            onFocus=${() => setFocus(o.key)} onChange=${() => toggle(o.key)} />
-          <span><span class="tb-answer-label">${o.label}${o.key === q.recommend && html`<span class="ui-tag tb-answer-rec">recommended</span>`}</span>
-            ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}</span>
-        </label>`)}
+        ${options.map((o, i) => html`<div key=${o.key} class=${`tb-answer-opt${picked.includes(o.key) ? ' tb-answer-on' : ''}${o.key === q.recommend ? ' tb-answer-recommended' : ''}`} data-answer-option=${o.key}>
+          <label class="tb-answer-pick">
+            <input type=${q.multi ? 'checkbox' : 'radio'} name="tb-answer" value=${o.key} checked=${picked.includes(o.key)} disabled=${busy}
+              ref=${o.key === firstKey ? optionRef : null} onChange=${() => toggle(o.key)} />
+            <span class="tb-answer-body"><span class="tb-answer-label"><span class="tb-answer-n">${i + 1}.</span> ${o.label}${o.key === q.recommend && html`<span class="ui-tag tb-answer-rec">★ recommended</span>`}</span>
+              ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}</span>
+          </label>
+          ${o.preview && html`<pre class="tb-answer-preview" tabindex="0" aria-label=${`Preview of ${o.label}`}>${o.preview}</pre>`}
+        </div>`)}
       </div>
-      ${previews && html`<div class="tb-answer-preview" aria-label="Preview">${shown?.preview || ''}</div>`}
     </div>`}
     ${words ? html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${options.length ? 'Your words' : 'Answer'}</span>
       <span class="tb-new-field">
@@ -200,8 +258,65 @@ export function AnswerFor({ task, n = 0, actions, askedBy = '', onClose }) {
   // By number; a node from before per-task questions sends none, and is
   // answered through the question task's own route.
   const which = q.n || 0;
-  return html`<${AnswerDialog} key=${`${task.id}#${q.n || 0}`} task=${task} question=${q} askedBy=${askedBy} busy=${actions.busy === busyKey} onClose=${onClose}
+  return html`<${AnswerDialog} key=${`${task.id}#${q.n || 0}`} task=${task} question=${q} askedBy=${askedBy} busy=${actions.busy === busyKey} api=${actions.api} onClose=${onClose}
     onSubmit=${({ picked, text }) => actions.run(busyKey, 'Answer', (api) => api.answer(task.id, picked, text, which))} />`;
+}
+
+// AnswerWith is the AnswerDialog on the board's api alone, where the edit
+// form opens it: its own busy state, a refusal as a toast (the dialog stays
+// open), and onAnswered after the write landed.
+export function AnswerWith({ task, n = 0, api, askedBy = '', onClose, onAnswered = () => {} }) {
+  const [busy, setBusy] = useState(false);
+  if (!task || !api) return null;
+  const q = questionOf(task, n);
+  if (!q) return null;
+  const which = q.n || 0;
+  const submit = async ({ picked, text }) => {
+    setBusy(true);
+    try {
+      await api.answer(task.id, picked, text, which);
+      shellToast(`Answered ${task.id}${which ? ` Q${which}` : ''}`);
+      onAnswered();
+      return true;
+    } catch (cause) {
+      shellToast(`Answer failed: ${cause?.message || cause}`, true);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<${AnswerDialog} key=${`${task.id}#${q.n || 0}`} task=${task} question=${q} askedBy=${askedBy} busy=${busy} api=${api}
+    onClose=${onClose} onSubmit=${submit} />`;
+}
+
+// TaskQuestions is the edit form's Questions: every question on the task,
+// the open ones first with Answer… (onAnswer(n)), the rest with what became
+// of them. The full exchange stays in the task's Activity.
+export function TaskQuestions({ task, nameOf = null, onAnswer = null }) {
+  const all = taskQuestions(task);
+  if (!all.length) return null;
+  const live = task.status === 'open' || task.status === 'blocked';
+  const isOpen = (q) => live && isOpenQuestion(q);
+  const ordered = [...all.filter(isOpen), ...all.filter((q) => !isOpen(q))];
+  const who = (actor) => (actor ? (nameOf ? nameOf(actor) : actor) : '');
+  return html`<ul class="tb-edit-questions">
+    ${ordered.map((q) => {
+      const open = isOpen(q);
+      const mark = SOURCE_MARK[questionSource(q)];
+      const asker = who(q.asked_by || task.assigned_by);
+      const said = answerWords(q);
+      return html`<li key=${q.n || 0} class=${`tb-edit-question${open ? ' tb-edit-question-open' : ''}`} data-edit-question=${q.n || 0}>
+        <span class="tb-edit-question-main">
+          <span class="tb-question-title">${mark.icon} ${q.n ? `Q${q.n} · ` : ''}${q.title || task.title}</span>
+          <span class="tb-edit-question-meta">${questionKind(q)}${asker ? ` · asked by ${asker}` : ''}${
+            open && q.waiting ? ' · ⏳ waiting' : ''}${
+            !open ? ` · ${q.answer ? (q.state === 'closed' ? 'closed' : 'answered') : q.state && q.state !== 'open' ? q.state : 'closed with the task'}` : ''}</span>
+          ${!open && said && html`<span class="tb-edit-question-answer">${said}</span>`}
+        </span>
+        ${open && onAnswer && html`<${Button} size="sm" variant="primary" class="tb-answer-open" onClick=${() => onAnswer(q.n || 0)}>Answer…<//>`}
+      </li>`;
+    })}
+  </ul>`;
 }
 
 // answerTarget parses the board's answering state, "tk_…" or "tk_…#n".

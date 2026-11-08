@@ -59,7 +59,7 @@ test('a question card answers through the answer dialog: a pick and words, in on
   assert.ok(dialog, 'Answer… opens the dialog');
   assert.match(dialog.textContent, /asked by builder/);
   assert.match(dialog.querySelector('[data-answer-option="amber"]').textContent, /recommended/);
-  assert.match(dialog.querySelector('.tb-answer-preview').textContent, /★ You {2}amber/, 'the preview follows the recommended option first');
+  assert.match(dialog.querySelector('[data-answer-option="amber"] .tb-answer-preview').textContent, /★ You {2}amber/, 'an option shows its preview');
   const send = () => dialog.querySelector('#taskboard-answer-submit');
   assert.equal(send().disabled, true, 'nothing picked or said yet');
   await harness.act(async () => { harness.fireEvent(dialog.querySelector('[data-answer-option="teal"] input'), 'change'); });
@@ -126,4 +126,36 @@ for (const [by, youRow, agentRow] of [
   await harness.act(async () => { harness.fireEvent(dialog.querySelector('[data-answer-option="teal"] input'), 'change'); });
   await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-answer-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls, [['answer', 'tk_0000000c', ['teal'], '', 2]]);
+});
+
+// A question task's context is its brief, which the board's row leaves out:
+// the dialog reads the task for it, renders it, and shows the files asked
+// with it (ask-operator --attach) as tiles that open the attachment viewer.
+test('a question task\'s dialog reads its brief, renders it, and shows its files', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AnswerDialog } = await harness.importDashboardModule('js/groups-taskboard-answer.js');
+  const files = [{ id: 7, name: 'mock.png', size: 68, content_type: 'image/png', image: true, previewable: true, sha256: 'a'.repeat(64) },
+    { id: 8, name: 'notes.md', size: 40, content_type: 'text/markdown', markdown: true, sha256: 'b'.repeat(64) }];
+  const the = row('tk_0000000a', 'Lane colour?', { assignee: op, question: question(), attachments: files });
+  const reads = [];
+  const api = {
+    task: async (id) => { reads.push(id); return { ...the, body: 'Which **tint**? See ![mock](mock.png)' }; },
+    fileData: async () => ({ name: 'mock.png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', content_type: 'image/png' }),
+  };
+  await harness.mount(harness.html`<${AnswerDialog} task=${the} api=${api} askedBy="builder" onSubmit=${async () => true} onClose=${() => {}} />`);
+  const dialog = harness.document.querySelector('#taskboard-answer-modal');
+  for (let i = 0; i < 100 && !dialog.querySelector('.tb-answer-context strong'); i += 1) {
+    await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  }
+  assert.deepEqual(reads, ['tk_0000000a'], 'the brief is read once');
+  assert.ok(dialog.querySelector('.tb-answer-context strong'), 'the brief is rendered Markdown');
+  assert.match(dialog.querySelector('.tb-answer-files').textContent, /Attached · 2/);
+  assert.ok(dialog.querySelector('.tb-answer-files [data-file="7"]') && dialog.querySelector('.tb-answer-files [data-file="8"]'), 'each file is a tile');
+  assert.match(dialog.querySelector('.tb-answer-rec-line').textContent, /builder recommends Amber/);
+  assert.equal(dialog.querySelectorAll('.tb-answer-preview').length, 1, 'an option with a preview shows it beside its label');
+  assert.equal(harness.document.activeElement, dialog.querySelector('[data-answer-option="amber"] input'), 'focus starts on the recommended option, not a file tile');
+  assert.equal(dialog.querySelector('[data-answer-option="amber"] label .tb-answer-preview'), null, 'a preview is outside the option\'s label: selecting its text does not pick it');
+  await harness.act(() => dialog.querySelector('.tb-answer-files [data-file="7"] .tb-file-open').click());
+  for (let i = 0; i < 5; i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(harness.document.querySelector('.image-preview-overlay h2')?.textContent, 'mock.png', 'a tile opens the attachment viewer');
 });

@@ -13,10 +13,14 @@
 //                             or Next without starting it)
 //   files                     attach · detach
 //
+// A task's questions for the operator head the form (TaskQuestions): an
+// open one's Answer… (there or in the Activity) opens the Answer dialog,
+// which answers at once, not with Save.
+//
 // Each change is its own write, so one can be refused while the rest land:
 // the form then stays open and names what was not saved.
 
-import { h } from 'preact';
+import { Fragment, h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
@@ -32,6 +36,7 @@ import { DepsPicker } from './groups-taskboard-deps.js';
 import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
 import { RefChip } from './groups-taskboard-card.js';
+import { AnswerWith, TaskQuestions, askerOf, taskQuestions } from './groups-taskboard-answer.js';
 
 import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
 import { COLUMN_STATE } from './taskboard-context.js';
@@ -236,7 +241,7 @@ function whereHint(draft, task) {
 // canAssign shows the assignee picker, canClose offers Done and Dropped.
 // onSaved runs after a Save (also a partial one), to read the board again.
 export function EditTaskDialog({ group, entry, task, api, canAssign = false, canClose = true, members = [], wizard = false,
-  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {} }) {
+  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {}, dirtyRef = null }) {
   // The board's context carries no brief: the form reads the task in full,
   // and the brief field waits for it.
   const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
@@ -283,7 +288,16 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const missing = missingOf(draft);
   // A comment being written counts too: closing the form would lose it.
   const [commenting, setCommenting] = useState(false);
+  // The question being answered, by number (0: the task's first open one);
+  // null while none is.
+  const [answering, setAnswering] = useState(null);
+  const answerable = typeof api?.answer === 'function' && api?.can?.assign !== false;
+  const onAnswer = answerable ? (n) => setAnswering(n) : null;
   const dirty = steps.length > 0 || commenting;
+  // The board reads it when Back leaves the form (groups-taskboard.js).
+  if (dirtyRef) dirtyRef.current = dirty;
+  // A closed form has nothing to lose.
+  useEffect(() => () => { if (dirtyRef) dirtyRef.current = false; }, []);
   const save = async () => {
     if (missing || sending.current) return;
     // An unsent comment (or an open comment edit) keeps the form open, and
@@ -330,7 +344,11 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   ].filter(Boolean).join(' · ');
   const reasonRow = draft.where === 'blocked' || draft.where === 'dropped';
   const hint = missing ? `needs ${missing}` : whereHint(draft, task);
-  return html`<${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span><button data-ui-exempt type="button" class="tb-id-copy" title="Copy the id"
+  // The Answer dialog is the form's sibling, not inside it: its keys and
+  // pastes are its own, not the form's Save or Files.
+  const answerDialog = answering !== null && html`<${AnswerWith} task=${task} n=${answering} api=${api}
+    askedBy=${nameOf(askerOf(task, answering))} onClose=${() => setAnswering(null)} onAnswered=${() => onSaved({ saved: ['answer'], refused: [] })} />`;
+  return html`<${Fragment}><${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span><button data-ui-exempt type="button" class="tb-id-copy" title="Copy the id"
       aria-label=${`Copy ${task.id}`} onClick=${async () => {
         if (await writeClipboard(task.id)) shellToast(`Copied ${task.id}`); else shellToast(`Could not copy ${task.id}`, true);
       }}>⧉</button>`}
@@ -342,6 +360,8 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     footer=${html`<${Button} variant="primary" id="taskboard-edit-save" busy=${busy} disabled=${!!missing || busy}
       onClick=${() => void save()}>${busy ? 'Saving…' : 'Save'}<//>`}>
     <div class="modal-meta tb-edit-meta">${meta}</div>
+    ${taskQuestions(task).length > 0 && row('Questions', html`<${TaskQuestions} task=${task} nameOf=${nameOf} onAnswer=${onAnswer} />`,
+      onAnswer ? 'an answer is sent at once, not with Save' : null)}
     ${row('Title', html`<${Input} class="tb-edit-title" aria-label="Title" required maxLength=${200} value=${draft.title} disabled=${busy}
       domRef=${titleRef} onInput=${(event) => set('title')(event.currentTarget.value)}
       onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void save(); } }} />`)}
@@ -373,7 +393,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('After', html`<${DepsPicker} taskId=${task.id} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}
-    ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} />`,
+    ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} onAnswer=${onAnswer} />`,
       'a comment is sent at once, not with Save')}
-  <//>`;
+  <//>${answerDialog}<//>`;
 }

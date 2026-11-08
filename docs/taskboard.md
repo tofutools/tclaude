@@ -70,8 +70,9 @@ tclaude agent taskboard add crew "Ship it" --stage in-review    # start there
 tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
 ```
 
-- **Who.** Adding, renaming, reordering and removing columns needs
-  `taskboard.manage` on the group. Owners hold it. Listing them needs
+- **Who.** Adding, renaming, reordering, removing, hiding and cordoning
+  columns needs `taskboard.columns` on the group. `taskboard.manage` covers
+  it, and owners hold both. Listing them needs
   `taskboard.read`. Moving a task in or out is a change of that task:
   `taskboard.write`, or `taskboard.own` on a task assigned to you. A worker
   that opens its PR moves its own task to *In review*.
@@ -105,6 +106,34 @@ tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
 
 A move to another node does not carry the column; the task lands in the
 stage the move names.
+
+### Hiding and cordoning columns
+
+A board can hide a column, or cordon a custom one:
+
+```bash
+tclaude agent taskboard columns hide crew in-ci          # also: ideas, done
+tclaude agent taskboard columns show crew in-ci
+tclaude agent taskboard columns cordon crew in-review    # alias: disable
+tclaude agent taskboard columns uncordon crew in-review  # alias: enable
+```
+
+- **Hidden.** The board does not draw the column for anyone. Its tasks keep
+  their column, and the lanes count them in a *◌ N in hidden columns* tag.
+  *Ideas*, *Done this week* and the custom columns can be hidden. *Next*, *In
+  progress* and *Blocked* are always shown. In the *List*, a hidden column's
+  tasks are filtered out by default, until you change the *Filter*.
+- **Ideas hidden.** A new or imported task that does not name its stage
+  starts in next, not in the ideas. A named stage (`--idea`) still holds.
+- **Cordoned.** A custom column is still drawn, greyed and hatched, but takes
+  no new task. A move, an `add --stage`, a `reopen --stage` or a drop into it
+  is refused, and a task moved in from another group lands outside it. The
+  tasks already in it stay and may leave. The stage pickers do not offer it.
+- **Hidden for you.** In the dashboard you can also hide a column only for
+  yourself (its ⋯ *Hide for me*, or *Columns ▾*). That choice is kept in your
+  browser, per group, and does not change the board for anyone else.
+- `columns ls` and `ls` mark each column's state, and `ls --summary` counts
+  a hidden or cordoned column with its state (`1 In review (cordoned)`).
 
 ## Commands
 
@@ -285,6 +314,12 @@ last edited by, assigned to, and the comment count.
   `taken`, `released`, `reported`, `regrouped`, `cloned`, `imported`,
   `archived`) also names itself as `action`. A failed or no-op operation
   records nothing, and every entry names its actor.
+- **Markdown.** A brief, a comment and a question's body are Markdown,
+  shown rendered wherever the board shows them (the card, the edit form, the
+  activity): headings, emphasis, lists and task lists,
+  quotes, code, tables and links. `![name](file.png)` shows one of the
+  task's (or the comment's) files inline, by its name, so a file added with
+  `--attach` can illustrate the brief.
 - **Comments** are Markdown, up to 16 KiB, from agents and the operator. A
   comment may carry up to 10 files, as a task's own may. They belong to the
   comment, not the task's own list, and `comment ls --save <dir>` writes them
@@ -506,8 +541,14 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   answered is not reopened: ask again instead. `--idea` puts it in the
   operator's ideas, not waiting on them (no `--blocks` or `--wait` then).
 - The operator answers in the dashboard: *Answer…* on the question's card,
-  on the task's card, in the List's ⋯ menu, or inline in the task's
-  activity. Or with `answer <task> [--question n] --pick
+  on the task's card, in the List's ⋯ menu, or in the task's edit form
+  (its *Questions*, at the top, and each open question in its activity).
+  Every one opens the same Answer dialog, which shows the question with
+  everything needed to decide: its context rendered as Markdown, the files
+  that go with it (a question task's own, asked with `--attach`, or those
+  of the task it is asked on) opening in the attachment viewer, and each
+  option with its description and preview, the recommended one marked.
+  Or with `answer <task> [--question n] --pick
   <key|label|n>[,…] [--text "…"]`; `--question` is needed only when the
   task has several questions open. The agent that asked gets `[taskboard]
   answered Q2: <group> · tk_… "<task>"` (`answered:` for a question task)
@@ -644,7 +685,8 @@ The operator passes every gate. For agents:
 | `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status. Implies read. | Owners of the group. Members only through a grant. |
 | `taskboard.own` | Tracking your own work: adding tasks that are assigned to you, changing and closing your own tasks, taking any unassigned task, releasing yours, reporting, and commenting on any task of the board | Members of the group, on their own group's board only |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
-| `taskboard.manage` | The writer lock, the board's custom columns, and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.manage` | The writer lock, the board's columns (it implies `taskboard.columns`), and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.columns` | Adding, renaming, reordering, removing, hiding and cordoning the board's custom columns, and hiding *Ideas* and *Done*. Grant it to let an agent shape the board's columns without the writer lock. | Owners of the group |
 | `taskboard.transfer` | Moving or cloning a task into the group from another group. Scope it with the target `group`. | Owners of the group |
 | `self.taskboard` | Deprecated alias of `taskboard.own`. An existing grant keeps working and adds nothing. An explicit deny of it still denies `taskboard.own`. | No longer default-granted |
 
@@ -768,7 +810,8 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
-| `taskboard.manage` | Set the writer lock, and add, rename, reorder and remove the board's custom columns |
+| `taskboard.manage` | Set the writer lock, and manage the board's columns |
+| `taskboard.columns` | Add, rename, reorder, remove, hide and cordon the board's columns |
 | `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
 - Any of these grants also lets the node read the board.
@@ -989,6 +1032,7 @@ a CLI verb:
 | ✓ *Done* | `done <task>` |
 | ⋯ *Drop…* (asks an optional reason in a dialog), or drag the task onto the Groups view's bin | `drop <task> [--reason …]` |
 | ✎ *Edit*, or a click on the task's title (in the list or on a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
+| ⋯ *Copy link*, or the title's own link (see [A task's link](#a-tasks-link)) | `show <task>` and `add` print it |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen* or ⋯ *Reopen*, on a task under *history* | `reopen <task>` |
@@ -1129,6 +1173,45 @@ board.
 With *reduce motion* set in your system, the scroll jumps and the flash only
 fades.
 
+### A task's link
+
+Every task has its own dashboard link:
+
+```
+http://127.0.0.1:<port>/groups?task=<task-id>:<group>
+```
+
+A linked node's task shown here adds that node's id after the task's id
+(`?task=<task-id>@<node-id>:<group>`). The group name comes last and as it
+is, so a name holding `:` or `@` still reads back.
+
+Opening the link unfolds the group and its Task board, scrolls to the task
+and opens its edit form. That works for a task in history or archived as
+well. You can share it with an agent or paste it back to ask about the task.
+A link to a task that has moved to another group since, or is gone, opens
+nothing and leaves the address bar.
+
+- A task's title is that link, in the List and on a lanes card. A plain
+  click still opens the edit form in place. A middle click or a Ctrl/⌘-click
+  opens the task in a new browser tab, and the browser's *Copy link address*
+  copies it. The hover card says so; the card itself is not clickable.
+- ⋯ *Copy link* copies the whole link, from a row's ⋯ (or a right-click on
+  the row) and from a lanes card's ⋯.
+- Opening the edit form adds a browser history step, and closing it steps
+  back. **Back** closes an open form, **Forward** opens it again, and a
+  reload keeps it open. If the form has unsaved input, Back first asks
+  *Discard input?*, as *Cancel* does. Choose *Cancel* there to keep editing
+  with the form's entry back in the history.
+- `tclaude agent taskboard show <task>` and `add` print the link as
+  `link:`, and every `[taskboard]` mail ends with it (*Open it in the
+  dashboard: …*). The CLI prints none for a linked node's task (`--peer`):
+  that node's dashboard is not this one.
+
+The port is the dashboard listener's. By default it is random and changes
+when the daemon restarts, so a printed or mailed link works only until then.
+The task id beside it keeps working. To keep links working, fix the port with
+**Dashboard port** in [Config › Daemon & network](dashboard-config.md#daemon-network).
+
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view (*Lanes*
@@ -1146,7 +1229,11 @@ cards say *⏸ no idle alarm* while an agent holds them.
 A custom column's head has a ⋯ with *Rename…*, *Move left*, *Move right* and
 *Remove*, and the last head has *＋ column*, while the board has room for
 another. They are `taskboard columns rename`, `move`, `add` and `rm`, and need
-`taskboard.manage`. In the *List*, the *State* says the column, and a row's ⋯
+`taskboard.columns`. Every hideable column's ⋯ (custom ones, *Ideas*, *Done*)
+also has *Hide for me*, and for a viewer who manages the columns *Hide on the
+board* and, on a custom column, *Cordon* or *Lift the cordon*. The toolbar's
+*Columns ▾* lists the same choices for every column, and brings a hidden one
+back. See [Hiding and cordoning columns](#hiding-and-cordoning-columns). In the *List*, the *State* says the column, and a row's ⋯
 *Move to…* opens the stage picker, where you can move the task into a column,
 or back out to *Next* or *Idea* (`taskboard move --stage`). Every place a
 stage or column is picked by hand (*Starts in*, *Where it is*, *Move to…* and

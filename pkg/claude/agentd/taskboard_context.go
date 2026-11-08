@@ -69,6 +69,8 @@ type taskboardColumnCount struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
 	Count int    `json:"count"`
+	// State is hidden or cordoned; absent for shown (tk_bf5d2b02).
+	State string `json:"state,omitempty"`
 }
 
 type taskboardGroupContext struct {
@@ -80,8 +82,11 @@ type taskboardGroupContext struct {
 	// counts' InProgress or Next. A blocked task in one counts as Blocked.
 	// Kept apart from Counts, whose values are all numbers.
 	Columns []taskboardColumnCount `json:"columns,omitempty"`
-	Tasks   []taskboardContextTask `json:"tasks"`
-	Closed  []taskboardContextTask `json:"closed"`
+	// BuiltinColumns is the state of the built-in columns the board does
+	// not show (ideas, done: hidden), by slug (tk_bf5d2b02).
+	BuiltinColumns map[string]string      `json:"builtin_columns,omitempty"`
+	Tasks          []taskboardContextTask `json:"tasks"`
+	Closed         []taskboardContextTask `json:"closed"`
 	// Truncated says the live rows stop short of Counts.Live.
 	Truncated bool `json:"truncated,omitempty"`
 	// Locked says the writer lock narrows the board; Writers then lists the
@@ -200,11 +205,16 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	if err != nil {
 		return entry, err
 	}
+	states, err := db.ListGroupTaskColumnStates(g.ID)
+	if err != nil {
+		return entry, err
+	}
 	colAt := map[string]int{}
 	for i, c := range cols {
 		colAt[c.Slug] = i
-		entry.Columns = append(entry.Columns, taskboardColumnCount{Slug: c.Slug, Label: c.Label})
+		entry.Columns = append(entry.Columns, taskboardColumnCount{Slug: c.Slug, Label: c.Label, State: states[c.Slug]})
 	}
+	entry.BuiltinColumns = taskboardBuiltinColumnStates(g)
 	for _, v := range liveViews {
 		entry.Counts.Live++
 		i, inColumn := colAt[v.Column]

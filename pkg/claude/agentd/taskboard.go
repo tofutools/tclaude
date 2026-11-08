@@ -36,6 +36,10 @@ const (
 	PermTaskboardRead   = "taskboard.read"
 	PermTaskboardWrite  = "taskboard.write"
 	PermTaskboardManage = "taskboard.manage"
+	// PermTaskboardColumns manages a board's columns: add, rename, reorder,
+	// remove, hide, show, cordon and uncordon (taskboard_columns.go).
+	// taskboard.manage implies it (permissionUmbrellaFor).
+	PermTaskboardColumns = "taskboard.columns"
 	// PermTaskboardTransfer moves or clones a task into a group's board from
 	// another group (tclaude agent taskboard move-to-group).
 	PermTaskboardTransfer = "taskboard.transfer"
@@ -374,6 +378,10 @@ type taskboardTaskView struct {
 	// ArchivedAt is when a closed task was archived (by hand or by the
 	// sweep); an archived task is on no list but ls --archived.
 	ArchivedAt string `json:"archived_at,omitempty"`
+	// URL is the task's dashboard link (taskboard_link.go), on show and
+	// add only, for a caller on this node: a linked node's caller could not
+	// open this node's dashboard listener.
+	URL string `json:"url,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -538,6 +546,21 @@ func writeTaskboardTask(w http.ResponseWriter, status int, g *db.AgentGroup, t *
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
+	}
+	writeJSON(w, status, views[0])
+}
+
+// writeTaskboardTaskLinked is writeTaskboardTask with the task's dashboard
+// link, for show and add: a caller on this node gets it, a linked node's
+// does not (its operator opens the task from its own dashboard).
+func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int, g *db.AgentGroup, t *db.GroupTask) {
+	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	if taskboardPeerAuthor(r) == "" {
+		views[0].URL = taskboardTaskURL(g.Name, t.ID)
 	}
 	writeJSON(w, status, views[0])
 }
@@ -810,6 +833,9 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		return
 	}
 	out := map[string]any{"group": g.Name, "tasks": views, "locked": lock.Locked, "columns": columns}
+	if builtins := taskboardBuiltinColumnStates(g); len(builtins) > 0 {
+		out["builtin_columns"] = builtins
+	}
 	if lock.Locked {
 		out["writers"] = lock.Writers
 		// writer_names reads the same list as a person would say it.
@@ -966,6 +992,11 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		}
 		err = bad
 	}
+	// A board that hides its Ideas starts a new task in next unless the
+	// caller names the stage (tk_bf5d2b02).
+	if err == nil && body.Stage == "" && taskboardIdeasHidden(g) {
+		body.Stage = db.GroupTaskStageNext
+	}
 	status := strings.TrimSpace(body.Status)
 	reason := strings.TrimSpace(body.BlockReason)
 	if err == nil {
@@ -1101,20 +1132,20 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		if !t.Started() {
 			subject, text := taskboardHeldNote(g, t, by)
 			mailTaskboard(r, g, assigneeConv, subject, text)
-			writeTaskboardTask(w, http.StatusCreated, g, t)
+			writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t)
 			return
 		}
 		brief := taskboardBrief(g, t, by)
 		if t.Status == db.GroupTaskBlocked {
 			brief = "It starts blocked: " + t.BlockReason + "\n" + brief
 		}
-		mailTaskboard(r, g, assigneeConv, taskboardSubject(g, t, "assigned to you by "+by), brief)
+		mailTaskboard(r, g, assigneeConv, taskboardSubject(g, t, "assigned to you by "+by), taskboardLinked(g, t, brief))
 	}
-	writeTaskboardTask(w, http.StatusCreated, g, t)
+	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t)
 }
 
-func handleTaskboardShow(w http.ResponseWriter, _ *http.Request, t *db.GroupTask, g *db.AgentGroup) {
-	writeTaskboardTask(w, http.StatusOK, g, t)
+func handleTaskboardShow(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	writeTaskboardTaskLinked(w, r, http.StatusOK, g, t)
 }
 
 // GET /v1/taskboard/tasks/{id}/events: the activity stream, as "events"

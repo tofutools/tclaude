@@ -82,6 +82,10 @@ func permissionUmbrellaFor(slug string) string {
 	if slug == PermResourcesRead {
 		return PermResourcesWrite
 	}
+	// Managing a board covers its columns (tk_bf5d2b02).
+	if slug == PermTaskboardColumns {
+		return PermTaskboardManage
+	}
 	return resourceUmbrellaFor(slug)
 }
 

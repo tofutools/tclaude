@@ -531,6 +531,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		if stage != GroupTaskStageNext {
 			return nil, taskConflict("invalid_arg", "a column stands in next; place the task beside a queued task, not an idea")
 		}
+		if err := refuseCordonedColumnTx(tx, in.GroupID, in.Column, ""); err != nil {
+			return nil, err
+		}
 		if _, err := tx.Exec(`UPDATE group_tasks SET column_slug = ? WHERE id = ?`, in.Column, id); err != nil {
 			return nil, err
 		}
