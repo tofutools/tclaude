@@ -90,7 +90,9 @@ shares:
 
 - **File:** **Export** (**Export PNG** and **Export SVG**, which download the
   selection, or the whole board when nothing is selected, as the daemon draws it
-  (see [Export](#export)); **Download .excalidraw**), and **Delete drawing board…**.
+  (see [Export](#export)); **Attach to a task…** (see
+  [Putting a drawing on a task](#putting-a-drawing-on-a-task)); **Download .excalidraw**),
+  and **Delete drawing board…**.
 - **View:** **Zoom to fit** (Shift+1), **Zoom 100%** (Shift+0), **Zoom in**, **Zoom out**,
   and the moves: **Open in overlay**, **Open in separate window**, **Open in the Collab tab**.
 - **Share:** the agents on the drawing board. Click one to open that agent in the
@@ -366,6 +368,17 @@ tclaude agent drawing-board export plan --attach-to tk_4f0a                 # th
 tclaude agent drawing-board export plan --elements api,db --attach-to tk_4f0a --name api.png
 tclaude agent drawing-board export plan --attach-to tk_4f0a --comment "Reworked the API side"
 ```
+
+In the editor, **File › Export › Attach to a task…** does the same from a dialog:
+
+- find the task by title or id among the open tasks of the boards you read,
+  the drawing board's group first;
+- choose **Selection** or **Whole board**, with a preview of the image;
+- optionally **Post it as a new comment**.
+
+When that part of the board is already on the task, the dialog says so
+(*already on it: attaching updates it*) and the button reads **Update**. A
+linked node's drawing board has no **Attach to a task…** yet.
 
 - Exporting the same part (the same `--elements` or `--region`) of the same
   board to the task again updates that file in place, so a task keeps one

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { ResourceNameHost } from './resource-name-dialog.js';
+import { DrawingBoardAttachHost } from './drawing-board-attach-dialog.js';
 import { Tabs } from './ui-tabs.js';
 import { syncBotAnimations } from './helpers.js';
 import { ActivityModes } from './activity-bots.js';
@@ -1022,7 +1023,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
     [hosts.toastHost, html`<${Toast} feedback=${feedback} />`],
     // The name dialog a new drawing board or page asks first (every way of
     // making one, from any tab, so it lives with the shell's other dialogs).
-    [hosts.confirmHost, html`<${Fragment}><${Confirm} feedback=${feedback} /><${ResourceNameHost} /><//>`],
+    [hosts.confirmHost, html`<${Fragment}><${Confirm} feedback=${feedback} /><${ResourceNameHost} /><${DrawingBoardAttachHost} /><//>`],
   ];
   const mounted = [];
   registerCleanup(() => {

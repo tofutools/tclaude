@@ -325,6 +325,11 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 	for _, route := range taskboardColumnRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
+	// A drawing board's File › Export › Attach to a task… (tk_413bdf5d).
+	// Registered here, not in the table: rendering reaches the peer-view
+	// proxy, whose mux is this one, so a package-level entry would be an
+	// initialization cycle.
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/drawings", dashboardProcessRoute(handleTaskboardTask(taskboardOwnGate, handleTaskboardDrawing)))
 }
 
 // taskboardContextWriters fills Locked and Writers: with the lock set, the
