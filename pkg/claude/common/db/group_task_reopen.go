@@ -36,6 +36,9 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		if t.Live() {
 			return taskConflict("not_closed", "task %s is %s; only a done or dropped task is reopened", id, t.Status)
 		}
+		if q := t.Question(); q != nil && q.Answer != nil {
+			return taskConflict("answered", "task %s is an answered question; ask again with ask-operator", id)
+		}
 		if in.Stage != "" && in.Stage != GroupTaskStageIdea && in.Stage != GroupTaskStageNext {
 			return taskConflict("invalid_arg", "stage is idea or next")
 		}
