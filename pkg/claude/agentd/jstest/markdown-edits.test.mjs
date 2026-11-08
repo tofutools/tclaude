@@ -16,12 +16,12 @@ function run(marked, fn) {
   let to;
   if (doc.includes('|')) {
     from = to = doc.indexOf('|');
-    doc = doc.replace('|', '');
+    doc = doc.slice(0, from) + doc.slice(from + 1);
   } else {
     from = doc.indexOf('[[');
-    doc = doc.replace('[[', '');
+    doc = doc.slice(0, from) + doc.slice(from + 2);
     to = doc.indexOf(']]');
-    doc = doc.replace(']]', '');
+    doc = doc.slice(0, to) + doc.slice(to + 2);
   }
   const edit = fn(doc, from, to);
   const out = applyEdit(doc, edit);

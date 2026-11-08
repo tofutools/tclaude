@@ -19130,12 +19130,6 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
   border-bottom: 1px solid var(--ui-line, #2a3340); background: var(--ui-dialog-bg, #161b22);
 }
 .md-ed-modes { display: inline-flex; margin-right: 6px; }
-.md-ed-mode {
-  padding: 2px 10px; font: inherit; font-size: 12px; color: var(--ui-muted, #7d8590); background: none;
-  border: 1px solid transparent; border-radius: var(--ui-radius, 4px); cursor: pointer;
-}
-.md-ed-mode:hover { color: var(--ui-text, #c9d1d9); }
-.md-ed-mode.on { color: var(--ui-text-strong, #e6edf3); background: var(--ui-bg, #21262d); border-color: var(--ui-line, #2a3340); }
 .md-ed-bar .md-ed-heading {
   font: inherit; font-size: 12px; height: 24px; min-height: 0; width: auto; padding: 0 4px; margin: 0 4px 0 0; color: var(--ui-text, #c9d1d9);
   background: var(--ui-bg, #21262d); border: 1px solid var(--ui-line, #2a3340); border-radius: var(--ui-radius, 4px);
@@ -19150,7 +19144,7 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .md-ed-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--ui-line, #2a3340); }
 .md-ed-spacer { flex: 1; }
 .md-ed-help {
-  padding: 6px 10px; font-size: 12px; border-bottom: 1px solid var(--ui-line, #2a3340);
+  padding: 6px 10px; border-bottom: 1px solid var(--ui-line, #2a3340);
   background: var(--ui-dialog-bg, #161b22); max-height: 45%; overflow: auto;
 }
 .md-ed-help dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; }
@@ -19161,7 +19155,6 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .md-ed-edit, .md-ed-preview { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .md-ed-split .md-ed-edit { border-right: 1px solid var(--ui-line, #2a3340); }
 .md-ed-preview { overflow: auto; padding: 8px 14px; }
-.md-ed-preview-empty { color: var(--ui-placeholder, #6e7681); font-style: italic; }
 .md-ed .md-ed-textarea {
   flex: 1; width: 100%; min-height: 0; box-sizing: border-box; resize: none; border: 0; border-radius: 0; background: transparent;
   font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px 10px;

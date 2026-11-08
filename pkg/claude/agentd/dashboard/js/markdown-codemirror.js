@@ -66,6 +66,7 @@ export async function mountCodeMirror(parent, doc, options = {}) {
     ...toolKeys,
   ];
   const editable = new Compartment();
+  const hint = new Compartment();
   const start = Math.min(selection?.anchor ?? doc.length, doc.length);
   const head = Math.min(selection?.head ?? start, doc.length);
   const view = new EditorView({
@@ -80,7 +81,15 @@ export async function mountCodeMirror(parent, doc, options = {}) {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'true', autocapitalize: 'sentences' }),
-        placeholder(options.placeholder || ''),
+        hint.of(placeholder(options.placeholder || '')),
+        // Files belong to the form's attachment intake, which the event still
+        // bubbles to. CodeMirror's own handlers would also paste a dropped
+        // text file's contents, or a pasted file's text flavour, into the
+        // text; the textarea fallback does neither.
+        EditorView.domEventHandlers({
+          drop: (event) => Boolean(event.dataTransfer?.files?.length),
+          paste: (event) => [...(event.clipboardData?.items || [])].some((item) => item.kind === 'file'),
+        }),
         syntaxHighlighting(classHighlighter),
         // classHighlighter has no class for these Markdown tags.
         syntaxHighlighting(tagHighlighter([
@@ -119,6 +128,7 @@ export async function mountCodeMirror(parent, doc, options = {}) {
     },
     // posAt is the text position under a pointer event, for a drop.
     posAt: (event) => view.posAtCoords({ x: event.clientX, y: event.clientY }),
+    setPlaceholder: (text) => { view.dispatch({ effects: hint.reconfigure(placeholder(text || '')) }); },
     setDisabled: (disabled) => { view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!disabled)) }); },
     focus: () => view.focus(),
     hasFocus: () => view.hasFocus,

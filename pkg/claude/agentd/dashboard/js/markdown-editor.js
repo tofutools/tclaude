@@ -24,6 +24,7 @@ import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { MarkdownDocument } from './markdown-document.js';
+import { Tabs } from './ui-tabs.js';
 import { mountCodeMirror } from './markdown-codemirror.js';
 import { applyEdit, fileLinksEdit, headingEdit, headingLevel, HELP, ICONS, mapPos, TOOLS } from './markdown-edits.js';
 
@@ -197,6 +198,7 @@ export function MarkdownEditor({
     host.setDoc?.(value);
   }, [value, host]);
   useEffect(() => { host?.setDisabled?.(disabled); }, [disabled, host]);
+  useEffect(() => { host?.setPlaceholder?.(placeholder); }, [placeholder, host]);
 
   if (editorRef) {
     editorRef.current = {
@@ -222,12 +224,9 @@ export function MarkdownEditor({
   return html`<div ...${rest} class=${`md-ed md-ed-${mode}${compact ? ' md-ed-compact' : ''}${host ? ' md-ed-cm' : ''}${className ? ` ${className}` : ''}${extraClass ? ` ${extraClass}` : ''}`}
     data-md-editor=${host ? 'code-mirror' : 'textarea'}>
     <div class="md-ed-bar" role="toolbar" aria-label="Formatting">
-      <span class="md-ed-modes" role="tablist" aria-label="Editor view">
-        ${MODES.filter((m) => !compact || !m.full).map((m) => html`<button key=${m.key} type="button" data-ui-exempt role="tab"
-          class=${`md-ed-mode${mode === m.key ? ' on' : ''}`} aria-selected=${mode === m.key ? 'true' : 'false'}
-          data-md-mode=${m.key} onClick=${() => setMode(m.key)}>${m.label}</button>`)}
-      </span>
-      ${!compact && html`<select class="md-ed-heading" aria-label="Heading" title="Heading" value=${String(level)} disabled=${editingOff}
+      <${Tabs} variant="seg" class="md-ed-modes" label="Editor view" value=${mode} onSelect=${setMode}
+        items=${MODES.filter((m) => !compact || !m.full).map((m) => ({ key: m.key, label: m.label, attrs: { 'data-md-mode': m.key } }))} />
+      ${!compact && html`<select class="ui-select ui-sm md-ed-heading" aria-label="Heading" title="Heading" value=${String(level)} disabled=${editingOff}
         onMouseDown=${(event) => event.stopPropagation()}
         onChange=${(event) => {
           const { from, to } = active.selection();
@@ -278,7 +277,7 @@ export function MarkdownEditor({
       ${showPreview && html`<div class="md-ed-preview" aria-label="Preview">
         ${value.trim()
           ? html`<${MarkdownDocument} source=${value} attachments=${attachments} className="markdown-document tb-comment-md md-ed-preview-doc" />`
-          : html`<div class="md-ed-preview-empty">Nothing to preview yet.</div>`}
+          : html`<div class="ui-empty md-ed-preview-empty">Nothing to preview yet.</div>`}
       </div>`}
     </div>
     <div class="md-ed-status">
