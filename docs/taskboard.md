@@ -80,6 +80,7 @@ tclaude agent taskboard block <task> --on tk_…        # wait on an operator ta
 tclaude agent taskboard unblock <task>
 tclaude agent taskboard drop <task> [--reason "parked in awb"]
 tclaude agent taskboard done <task>
+tclaude agent taskboard reopen <task> [--next|--idea] [--assignee <agent>|operator|--unassign]
 
 tclaude agent taskboard assign <task> --to <agent>|operator
 tclaude agent taskboard unassign <task>
@@ -176,6 +177,24 @@ with the command to fetch them.
   with its thumbnail); click one to open it, and ✕ removes it on *Save*.
   This works for a linked node's board too: the files go through this
   node's staged upload.
+
+### Reopening a task
+
+`reopen` puts a done or dropped task back on the board when it turns out to
+need more work. By default it comes back where it was: in its stage, at its
+place, with the assignee it had (unless that agent has been retired since).
+`--next` or `--idea` puts it in that stage instead, `--assignee` gives it to a
+member or the operator, and `--unassign` takes the assignee off. An assigned
+task is always in next, so `--idea` on an assigned task needs `--unassign`.
+It is one write, and the history records each part: `reopened`, then
+`assigned` or `unassigned`, then `promoted` or `demoted`. A reopen resets the
+failure count, as an unblock does.
+
+Reopening is gated as closing is: your own task needs `taskboard.own`, any
+other needs `taskboard.write` (owners have it). Changing the assignee is
+gated as `assign` and `unassign` are. Someone else who is given the task gets
+its brief; an assignee who had it gets a `reopened by` mail. Across linked
+nodes, `reopen` takes `--peer` like the other verbs.
 
 ## Comments and activity
 
@@ -548,7 +567,7 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 
 From the CLI, add `--peer <node>` to any verb: `ls <group>`, `ls --summary`,
 `show`, `activity` (`history`), `comment add|edit|rm|ls`, `add` (including imports), `ask`, `edit`, `move`, `promote`,
-`demote`, `block`, `unblock`, `drop`, `done`, `assign`, `unassign`, and
+`demote`, `block`, `unblock`, `drop`, `done`, `reopen`, `assign`, `unassign`, and
 `groups set-taskboard-writers`. `take`, `release` and `report` act on
 yourself, so they have no `--peer`.
 
@@ -707,7 +726,9 @@ a CLI verb:
 | ✎ *Edit*, or a click on the task's title (in the list or on a lanes card): the edit form | `edit <task> --title … --body … --ref …`, and the verbs below for where it is, the assignee and its files |
 | Files in the edit form, *Write it myself* or *Ask an agent* | `attach <task> <file>…` / `detach <task> <name>` · `add --attach` · `ask --attach` |
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
-| ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
+| ↺ *Reopen* or ⋯ *Reopen*, on a task under *history* | `reopen <task>` |
+| ⋯ *Reopen in Next* / *Reopen as an idea* | `reopen <task> --next` / `reopen <task> --idea [--unassign]` |
+| Drag a task under *history* among the live tasks, onto the Ideas line, or onto an agent's row | `reopen <task>` in that stage (or `--assignee <agent>`), then `move` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
 | ⋯ *Assign › You (operator)*, or drag a card onto the *You* lane | `assign <task> --to operator` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
@@ -847,7 +868,10 @@ Dragging a card is one action, the same as its CLI verb:
 | Onto *Blocked* (asks the reason) | `block <task> --reason …` |
 | Blocked → Next or In progress | `unblock <task>` |
 | Onto *Done* | `done <task>` |
-| Done → Next or In progress | reopen (`POST /v1/taskboard/tasks/{id}/status {"status":"open"}`) |
+| Done → Next or In progress, in the same lane | `reopen <task>` (an idea comes back in next) |
+| Done → another lane's Next or In progress, or the operator's lane | `reopen <task> --next --assignee <agent>` (`--unassign` onto the Unassigned lane) |
+| Done → the Unassigned lane's *Ideas* | `reopen <task> --idea --unassign` |
+| Done → *Blocked* (asks the reason) | `reopen <task>` (and the lane's assignee), then `block <task> --reason …` |
 | Onto an agent's lane (Next or In progress) | `assign <task> --to <agent>` (an idea is promoted) |
 | Onto the Unassigned lane's *Next* | `unassign <task>` |
 | Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
@@ -910,6 +934,7 @@ those drags aren't accepted in the lanes.
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
+| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|""}` (no `to` keeps the assignee; `""` takes it off) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
@@ -949,7 +974,8 @@ Every change is recorded in the audit log as `taskboard.<verb>`, with the
 group, the task id and, for an assignment, the target agent.
 
 `status` also accepts `{"status":"open"}` on a done or dropped task. This
-reopens the task in the stage and position it had before.
+reopens the task in the stage and position it had before, as a plain
+`reopen` does.
 
 An import answers 200 with `{"group", "created", "results":[…]}`, with one
 result per item in input order. Each result carries `input`, and either `task`

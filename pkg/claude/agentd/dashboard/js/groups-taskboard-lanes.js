@@ -176,6 +176,7 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
   const open = task.status === 'open';
   const block = (api, reason) => api.status(task.id, 'blocked', reason);
+  if (task.status === 'done') return reopenDrop(task, from, to, { assign, block });
   if (from.lane !== to.lane) {
     if (!assign) return null;
     if (to.lane === UNASSIGNED) {
@@ -210,7 +211,6 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     case 'next':
     case 'progress':
       if (task.status === 'blocked') return { kind: 'unblock', label: 'unblock', run: (api) => api.status(task.id, 'open') };
-      if (task.status === 'done') return { kind: 'reopen', label: 'reopen', run: (api) => api.status(task.id, 'open') };
       if (to.column === 'next' && open && task.stage === 'idea') return { kind: 'promote', label: 'promote to next', run: (api) => api.stage(task.id, 'next') };
       return null;
     case 'blocked':
@@ -223,6 +223,36 @@ export function laneDrop(task, from, to, { assign = true } = {}) {
     default:
       return null;
   }
+}
+
+// reopenDrop is a done card dragged out of Done (`taskboard reopen`): it is
+// reopened in the column's stage and the lane's hands, in one write, and
+// onto Blocked it is blocked after (asking why). A move to another lane
+// changes the assignee, so it needs the assign right, as any lane change.
+function reopenDrop(task, from, to, { assign, block }) {
+  if (to.column === 'done') return null;
+  const held = task.assignee?.agent_id || '';
+  const opts = {};
+  let label = 'reopen';
+  if (from.lane !== to.lane) {
+    if (!assign || to.member === false) return null;
+    opts.to = to.lane === UNASSIGNED ? '' : to.lane;
+    label = to.lane === UNASSIGNED ? 'reopen · unassign' : `reopen · assign to ${to.name || to.lane}`;
+  }
+  const lane = from.lane !== to.lane ? opts.to : held;
+  if (to.column === 'ideas') {
+    // An idea has no assignee: only the Unassigned lane's Ideas take one.
+    if (lane) return null;
+    opts.stage = 'idea';
+    label += ' · as an idea';
+  } else if (to.column === 'next' || to.column === 'progress') {
+    if (task.stage === 'idea' || from.lane !== to.lane) opts.stage = 'next';
+  }
+  const reopen = (api) => api.reopen(task.id, opts);
+  if (to.column === 'blocked') {
+    return { kind: 'reopen+block', label: `${label} · block (asks why)`, reason: true, run: twoStep(reopen, block) };
+  }
+  return { kind: 'reopen', label, run: reopen };
 }
 
 // cellAdd is the start state the "+" in a cell carries into the add menu's

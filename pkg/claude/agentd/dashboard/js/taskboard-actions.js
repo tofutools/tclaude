@@ -263,6 +263,17 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     unassign(id) {
       return call('POST', taskPath(id, '/unassign'), {});
     },
+    // reopen puts a done or dropped task back on the board (`taskboard
+    // reopen`): where it was, or in stage, and with to as its assignee ('' takes
+    // it off; undefined keeps it). A plain reopen goes through status, which
+    // a node from before the reopen route answers too.
+    reopen(id, { stage = '', to } = {}) {
+      if (!stage && to === undefined) return call('POST', taskPath(id, '/status'), { status: 'open' });
+      const body = {};
+      if (stage) body.stage = stage;
+      if (to !== undefined) body.to = to;
+      return call('POST', taskPath(id, '/reopen'), body);
+    },
     // moveToGroup moves the task to another group of its node, or with
     // clone copies it there (groups-taskboard-transfer.js).
     moveToGroup(id, group, { clone = false, stage = '' } = {}) {

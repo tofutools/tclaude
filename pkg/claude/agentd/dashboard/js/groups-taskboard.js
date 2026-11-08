@@ -301,7 +301,7 @@ function RowActions({ task, group, tasks, actions, onForm }) {
   // A slot keeps the cluster's buttons lined up down the table.
   const slot = (key) => html`<span key=${key} class="tb-act-slot" aria-hidden="true"></span>`;
   let first;
-  if (closed) first = icon('reopen', '↺', 'Reopen: put it back on the list where it was', go('reopen', 'Reopen', (api) => api.status(task.id, 'open')));
+  if (closed) first = icon('reopen', '↺', 'Reopen: put it back on the list where it was (or drag it where it should go)', go('reopen', 'Reopen', (api) => api.reopen(task.id)));
   else if (task.stage === 'idea') first = icon('promote', '✓', 'Next: taskboard promote, to the end of the queue', go('promote', 'Promote', (api) => api.stage(task.id, 'next')), 'tb-act-go');
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
@@ -343,6 +343,15 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
         })];
       },
     }));
+  }
+  if (closed) {
+    const reopen = (key, label, title, opts) => items.push(item(key, label, title, { run: run('reopen', 'Reopen', (api) => api.reopen(task.id, opts)) }));
+    reopen('reopen', 'Reopen', 'taskboard reopen: back on the list where it was, with its assignee', {});
+    if (task.stage === 'idea' || task.assignee?.agent_id) reopen('reopen-next', 'Reopen in Next', 'taskboard reopen --next', { stage: 'next' });
+    if (task.stage !== 'idea' || task.assignee?.agent_id) {
+      if (!task.assignee?.agent_id) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea', { stage: 'idea' });
+      else if (canAssign(actions)) reopen('reopen-idea', 'Reopen as an idea', 'taskboard reopen --idea --unassign: without its assignee', { stage: 'idea', to: '' });
+    }
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
@@ -393,13 +402,14 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
   // The whole row drags, as an agent row does (⋮⋮ is its grip); a press on
   // a button, link or field in it is a click, not a drag (row-drag.js
   // bindTaskRowDrag).
-  const draggable = !!actions && !closed && !!drag;
+  // A closed row drags too: dropped among the live tasks (or on an agent),
+  // it is reopened there.
+  const draggable = !!actions && !!drag;
   const row = html`<tr class=${`tb-row tb-row-${state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
-      draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? DRAG_TITLE : undefined}
+      draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? (closed ? REOPEN_DRAG_TITLE : DRAG_TITLE) : undefined}
       onDragStart=${draggable ? (event) => { if (!linkDrag(event)) drag.start(event, task); } : undefined} onDragEnd=${draggable ? drag.end : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
-    <td class="tb-ic">${actions && html`${closed ? html`<span class="tb-handle tb-handle-off" aria-hidden="true"></span>` : html`<span class="tb-handle"
-        aria-hidden="true">⋮⋮</span>`}<${RowActions} task=${task} group=${group} tasks=${tasks}
+    <td class="tb-ic">${actions && html`<span class="tb-handle" aria-hidden="true">⋮⋮</span><${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
@@ -469,8 +479,9 @@ function useRowDrag(tasks, actions, group = null) {
     agentDrop.current.off?.();
     if (!group || !canAssign(actions)) return;
     const state = agentDrop.current;
-    // Only an open task can be assigned (a blocked one is refused).
-    const target = (event) => dragged.current?.status === 'open' && agentDropRow(event.target, group);
+    // Only an open task can be assigned (a blocked one is refused); a closed
+    // one is reopened with that agent.
+    const target = (event) => (dragged.current?.status === 'open' || isClosed(dragged.current)) && agentDropRow(event.target, group);
     const onOver = (event) => {
       const hit = target(event);
       if (!hit) { clearAgentTarget(state); return; }
@@ -492,6 +503,10 @@ function useRowDrag(tasks, actions, group = null) {
       event.stopPropagation();
       const task = dragged.current;
       end();
+      if (isClosed(task)) {
+        void actions.run(`${task.id}:reopen`, 'Reopen', (api) => api.reopen(task.id, task.assignee?.agent_id === hit.member.agent_id ? {} : { to: hit.member.agent_id }));
+        return;
+      }
       if (task.assignee?.agent_id === hit.member.agent_id) return;
       void actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, hit.member.agent_id))
         .then((ok) => { if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [hit.member.agent_id] }); });
@@ -535,11 +550,11 @@ function useRowDrag(tasks, actions, group = null) {
       if (row && event.dataTransfer?.setDragImage) event.dataTransfer.setDragImage(row, 12, 12);
       listenForAgents();
       transferOff.current?.();
-      if (group) transferOff.current = listenForTransfer({ task, group, tasks, actions, droppable: binDroppable(task, actions), onDrop: clear });
+      if (group && !isClosed(task)) transferOff.current = listenForTransfer({ task, group, tasks, actions, droppable: binDroppable(task, actions), onDrop: clear });
     },
     // dropUnassign takes the dragged task back from its assignee.
     overUnassign(event) {
-      if (!dragged.current?.assignee) return;
+      if (!dragged.current?.assignee || isClosed(dragged.current)) return;
       accept(event);
     },
     async dropUnassign(event) {
@@ -571,6 +586,17 @@ function useRowDrag(tasks, actions, group = null) {
       const where = over?.id === task.id ? over.where : 'before';
       clear();
       if (moving.id === task.id) return;
+      if (isClosed(moving)) {
+        // A closed task dropped among the live ones is reopened there: in
+        // that task's stage (an idea without its assignee), then placed.
+        const opts = { stage: task.stage };
+        if (task.stage === 'idea' && moving.assignee?.agent_id) opts.to = '';
+        await actions.run(`${moving.id}:move`, 'Reopen', async (api) => {
+          await api.reopen(moving.id, opts);
+          return api.move(moving.id, { [where]: task.id });
+        });
+        return;
+      }
       await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { [where]: task.id }));
     },
     async dropOnIdeas(event) {
@@ -578,7 +604,13 @@ function useRowDrag(tasks, actions, group = null) {
       const moving = dragged.current;
       clear();
       const firstIdea = tasks.find((t) => t.stage === 'idea' && t.id !== moving.id);
-      if (moving.stage !== 'idea') {
+      if (isClosed(moving)) {
+        const opts = moving.assignee?.agent_id ? { stage: 'idea', to: '' } : { stage: 'idea' };
+        await actions.run(`${moving.id}:move`, 'Reopen', async (api) => {
+          const out = await api.reopen(moving.id, opts);
+          return firstIdea ? api.move(moving.id, { before: firstIdea.id }) : out;
+        });
+      } else if (moving.stage !== 'idea') {
         await actions.run(`${moving.id}:move`, 'Demote', (api) => api.stage(moving.id, 'idea'));
       } else if (firstIdea) {
         await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { before: firstIdea.id }));
@@ -588,6 +620,12 @@ function useRowDrag(tasks, actions, group = null) {
 }
 
 const IDEAS_BAND = '__ideas';
+const REOPEN_DRAG_TITLE = 'Drag among the tasks above, onto the Ideas line or onto an agent to reopen it there';
+
+// isClosed: a done or dropped task, which a drag reopens.
+function isClosed(task) {
+  return task?.status === 'done' || task?.status === 'dropped';
+}
 
 // importSummary says what an import did beyond the count: the items that
 // kept their id as the title (with the server's note, e.g. a GitHub ref read
