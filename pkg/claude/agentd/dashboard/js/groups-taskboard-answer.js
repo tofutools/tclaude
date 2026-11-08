@@ -182,6 +182,10 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
   const [picked, setPicked] = useState([]);
   const [text, setText] = useState('');
   const textRef = useRef(null);
+  // With options, focus starts on the recommended one (else the first), not
+  // on a file tile or a link in the context above them.
+  const optionRef = useRef(null);
+  const firstKey = recommended?.key || options[0]?.key;
   const sending = useRef(false);
   const empty = !picked.length && !text.trim();
   const toggle = (key) => {
@@ -199,11 +203,11 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
   };
   return html`<${Dialog} id="taskboard-answer-modal" dialogClass="cron-create-modal taskboard-answer-modal"
     title=${q.title || task.title || task.id} onClose=${onClose} onSubmitHotkey=${() => void submit()}
-    busy=${busy} initialFocusRef=${options.length || !words ? null : textRef} cancel="Cancel" resizeKey="tclaude.dash.modalSize.taskboard-answer"
+    busy=${busy} initialFocusRef=${options.length ? optionRef : words ? textRef : null} cancel="Cancel" resizeKey="tclaude.dash.modalSize.taskboard-answer"
     footer=${html`<${Button} variant="primary" id="taskboard-answer-submit" busy=${busy}
       disabled=${busy || empty} onClick=${() => { void submit(); }}>${busy ? 'Sending…' : 'Send answer'}<//>`}>
     <div class="modal-meta tb-answer-meta">${task.id}${q.n ? ` · Q${q.n}` : ''}${!own ? ` on “${task.title}”` : ''}${askedBy ? ` · asked by ${askedBy}` : ''}${(q.waiting ?? task.waiting) ? ' · waiting for the answer' : ''}</div>
-    ${context ? html`<div class="tb-answer-context"><${MarkdownDocument} source=${context} attachments=${mdFiles} className="markdown-document tb-answer-md" /></div>`
+    ${context ? html`<div class="tb-answer-context" tabindex="0" aria-label="The question"><${MarkdownDocument} source=${context} attachments=${mdFiles} className="markdown-document tb-answer-md" /></div>`
       : own && read.state === 'loading' ? html`<div class="ui-hint tb-answer-context-hint">reading the question…</div>`
       : own && read.state === 'failed' ? html`<div class="ui-hint tb-answer-context-hint">the question's brief could not be read</div>` : null}
     ${files.length > 0 && html`<div class="tb-answer-files" data-answer-files=${files.length}>
@@ -214,13 +218,15 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
       <div class="tb-answer-head"><span class="ui-eyebrow">${q.multi ? `Pick any of ${options.length}` : `Pick one of ${options.length}`}</span>
         ${recommended && html`<span class="tb-answer-rec-line">★ ${askedBy || 'the agent'} recommends <strong>${recommended.label}</strong></span>`}</div>
       <div class="tb-answer-list" role=${q.multi ? 'group' : 'radiogroup'} aria-label="Options">
-        ${options.map((o, i) => html`<label key=${o.key} class=${`tb-answer-opt${picked.includes(o.key) ? ' tb-answer-on' : ''}${o.key === q.recommend ? ' tb-answer-recommended' : ''}`} data-answer-option=${o.key}>
-          <input type=${q.multi ? 'checkbox' : 'radio'} name="tb-answer" value=${o.key} checked=${picked.includes(o.key)} disabled=${busy}
-            onChange=${() => toggle(o.key)} />
-          <span class="tb-answer-body"><span class="tb-answer-label"><span class="tb-answer-n">${i + 1}.</span> ${o.label}${o.key === q.recommend && html`<span class="ui-tag tb-answer-rec">★ recommended</span>`}</span>
-            ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}
-            ${o.preview && html`<pre class="tb-answer-preview" aria-label=${`Preview of ${o.label}`}>${o.preview}</pre>`}</span>
-        </label>`)}
+        ${options.map((o, i) => html`<div key=${o.key} class=${`tb-answer-opt${picked.includes(o.key) ? ' tb-answer-on' : ''}${o.key === q.recommend ? ' tb-answer-recommended' : ''}`} data-answer-option=${o.key}>
+          <label class="tb-answer-pick">
+            <input type=${q.multi ? 'checkbox' : 'radio'} name="tb-answer" value=${o.key} checked=${picked.includes(o.key)} disabled=${busy}
+              ref=${o.key === firstKey ? optionRef : null} onChange=${() => toggle(o.key)} />
+            <span class="tb-answer-body"><span class="tb-answer-label"><span class="tb-answer-n">${i + 1}.</span> ${o.label}${o.key === q.recommend && html`<span class="ui-tag tb-answer-rec">★ recommended</span>`}</span>
+              ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}</span>
+          </label>
+          ${o.preview && html`<pre class="tb-answer-preview" tabindex="0" aria-label=${`Preview of ${o.label}`}>${o.preview}</pre>`}
+        </div>`)}
       </div>
     </div>`}
     ${words ? html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${options.length ? 'Your words' : 'Answer'}</span>
@@ -304,7 +310,7 @@ export function TaskQuestions({ task, nameOf = null, onAnswer = null }) {
           <span class="tb-question-title">${mark.icon} ${q.n ? `Q${q.n} · ` : ''}${q.title || task.title}</span>
           <span class="tb-edit-question-meta">${questionKind(q)}${asker ? ` · asked by ${asker}` : ''}${
             open && q.waiting ? ' · ⏳ waiting' : ''}${
-            !open ? ` · ${q.answer ? (q.state === 'closed' ? 'closed' : 'answered') : q.state || 'closed'}` : ''}</span>
+            !open ? ` · ${q.answer ? (q.state === 'closed' ? 'closed' : 'answered') : q.state && q.state !== 'open' ? q.state : 'closed with the task'}` : ''}</span>
           ${!open && said && html`<span class="tb-edit-question-answer">${said}</span>`}
         </span>
         ${open && onAnswer && html`<${Button} size="sm" variant="primary" class="tb-answer-open" onClick=${() => onAnswer(q.n || 0)}>Answer…<//>`}

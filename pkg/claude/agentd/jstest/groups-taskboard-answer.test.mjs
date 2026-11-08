@@ -153,6 +153,8 @@ test('a question task\'s dialog reads its brief, renders it, and shows its files
   assert.ok(dialog.querySelector('.tb-answer-files [data-file="7"]') && dialog.querySelector('.tb-answer-files [data-file="8"]'), 'each file is a tile');
   assert.match(dialog.querySelector('.tb-answer-rec-line').textContent, /builder recommends Amber/);
   assert.equal(dialog.querySelectorAll('.tb-answer-preview').length, 1, 'an option with a preview shows it beside its label');
+  assert.equal(harness.document.activeElement, dialog.querySelector('[data-answer-option="amber"] input'), 'focus starts on the recommended option, not a file tile');
+  assert.equal(dialog.querySelector('[data-answer-option="amber"] label .tb-answer-preview'), null, 'a preview is outside the option\'s label: selecting its text does not pick it');
   await harness.act(() => dialog.querySelector('.tb-answer-files [data-file="7"] .tb-file-open').click());
   for (let i = 0; i < 5; i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 0)));
   assert.equal(harness.document.querySelector('.image-preview-overlay h2')?.textContent, 'mock.png', 'a tile opens the attachment viewer');

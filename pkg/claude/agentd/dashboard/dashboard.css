@@ -19103,10 +19103,12 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .tb-answer-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .tb-answer-rec-line { font-size: 12px; color: #3fb950; }
 .tb-answer-list { display: flex; flex-direction: column; gap: 6px; }
-.tb-answer-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; cursor: pointer; }
+.tb-answer-opt { display: flex; flex-direction: column; padding: 8px 10px; border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; }
+.tb-answer-pick { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .tb-answer-opt.tb-answer-recommended { border-color: rgba(63, 185, 80, 0.55); box-shadow: inset 3px 0 0 #3fb950; }
 .tb-answer-opt.tb-answer-on { border-color: #58a6ff; background: rgba(88, 166, 255, 0.08); }
 .tb-answer-opt input { margin-top: 3px; }
+.tb-answer-opt .tb-answer-preview { margin-left: 29px; }
 .tb-answer-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .tb-answer-n { color: var(--ui-muted, #7d8590); font-weight: 400; }
 .tb-answer-label { display: block; color: var(--ui-text-strong, #e6edf3); font-weight: 500; }
