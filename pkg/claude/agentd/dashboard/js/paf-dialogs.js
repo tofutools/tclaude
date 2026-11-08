@@ -13,6 +13,7 @@ import {
   safeFilename, spawnableHarnesses,
 } from './paf-model.js';
 import { downloadBlob } from './download.js';
+import { shortId } from './helpers.js';
 import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
@@ -384,7 +385,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
         const badge = rungBadge(row.rung);
         const choice = member(key);
         return html`<tr key=${row.conv_id} data-member=${row.title || key}>
-          <td>${row.title || row.conv_id.slice(0, 8)}</td>
+          <td>${row.title || shortId(row.conv_id)}</td>
           <td>${[row.source_harness, row.source_model].filter(Boolean).join(' · ')}</td>
           <td><${LandingSelects} idPrefix=${`group-import-member-${row.conv_id}`} harness=${choice.harness} model=${choice.model}
             onChange=${(patch) => setMember(key, patch)} sameLabel="(as above)" /></td>

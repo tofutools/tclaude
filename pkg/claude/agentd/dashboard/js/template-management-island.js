@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
-import { pickDirectory } from './helpers.js';
+import { pickDirectory, shortId } from './helpers.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
@@ -810,7 +810,7 @@ function GroupImportPreview({ inspection, into }) {
                 html`<li key=${collision.conv_id}>
                   ${collision.title || collision.conv_id}
                   <span class="gi-k"
-                    >(${(collision.conv_id || '').slice(0, 8)})</span
+                    >(${shortId(collision.conv_id)})</span
                   >
                 </li>`,
             )}

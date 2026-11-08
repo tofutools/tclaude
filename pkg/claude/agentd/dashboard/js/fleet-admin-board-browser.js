@@ -5,7 +5,7 @@ import { Button, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
-import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
+import { ImportDialog, PublishDialog, canPost, postedBy, short } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
 import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
 
@@ -55,7 +55,6 @@ export const TRUST = Object.freeze({
 });
 
 function errText(error) { return error?.message || String(error); }
-const short = (v) => String(v || '').slice(0, 10);
 const when = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '—'; };
 function size(n) {
   if (!(n >= 0)) return '—';

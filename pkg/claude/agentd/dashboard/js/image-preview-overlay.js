@@ -10,6 +10,7 @@ import {
 
 import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
 import { attachmentNavigationStep, previewAttachments } from './attachment-navigation.js';
+import { attachmentSize } from './human-attachments.js';
 
 const html = htm.bind(h);
 
@@ -29,13 +30,6 @@ function attachmentURL(messageID, attachment) {
 
 function safeIDPart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '-');
-}
-
-function attachmentSize(bytes) {
-  const size = Number(bytes || 0);
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
 function PreviewState({ state }) {

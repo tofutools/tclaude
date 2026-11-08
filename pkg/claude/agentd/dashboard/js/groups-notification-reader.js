@@ -4,7 +4,7 @@ import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
 import { openHumanNotifications } from './mail-bridge.js';
-import { attachmentHref, bodilessNotice, messageAttachments, withPeerAttachments } from './human-attachments.js';
+import { attachmentHref, attachmentSize, bodilessNotice, messageAttachments, withPeerAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
@@ -57,13 +57,6 @@ function remoteNodeName(remote) {
 
 async function postPeerJSON(url, body, fetchFn = fetch) {
   await requestJSON(url, { method: 'POST', body, fetchImpl: fetchFn });
-}
-
-function attachmentSize(bytes) {
-  const size = Number(bytes || 0);
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
 function LinkifiedBody({ text }) {

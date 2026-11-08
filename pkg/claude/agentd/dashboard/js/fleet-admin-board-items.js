@@ -27,7 +27,7 @@ function size(n) {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
 }
 
-const short = (v) => String(v || '').slice(0, 10);
+export const short = (v) => String(v || '').slice(0, 10);
 
 // postedBy names who signed an item, and who re-posted it here if that is
 // someone else.

@@ -22,7 +22,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { relTime } from './helpers.js';
+import { relTime, shortAgentId } from './helpers.js';
 import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
@@ -131,7 +131,7 @@ function agentLabel(agentId, group, snapshot) {
   const find = (members) => (members || []).find((member) => member.agent_id === agentId);
   const member = find(group?.members)
     || (snapshot?.groups || []).map((g) => find(g.members)).find(Boolean);
-  return member?.title || agentId.slice(0, 12);
+  return member?.title || shortAgentId(agentId, '');
 }
 
 export function actorLabel(actor, group, snapshot) {
