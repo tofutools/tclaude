@@ -111,6 +111,35 @@ export function isDrawingBoardId(value) {
   return typeof value === 'string' && DRAWING_BOARD_ID.test(value);
 }
 
+// A drawing board's location may carry what to show of it
+// (/drawing-boards/<id>?crop=x,y,w,h&elements=a,b): a task's drawing opened
+// on a linked node's page lands on the part its image shows, as
+// openDrawingBoardAt does here. Both come from a link anyone can type, so
+// only finite numbers and well-formed ids, a bounded number of them, pass.
+const FOCUS_ELEMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const DRAWING_BOARD_FOCUS_MAX_ELEMENTS = 200;
+
+// drawingBoardFocusParams are the location params for a focus { elements,
+// box }: crop and elements, each only when it says something.
+export function drawingBoardFocusParams({ elements = [], box = null } = {}) {
+  const out = {};
+  const b = box ? [box.x, box.y, box.width, box.height] : null;
+  if (b && b.every(Number.isFinite) && box.width > 0 && box.height > 0) out.crop = b.map((n) => String(Math.round(n * 100) / 100)).join(',');
+  const ids = (Array.isArray(elements) ? elements : []).filter((id) => typeof id === 'string' && FOCUS_ELEMENT_ID.test(id)).slice(0, DRAWING_BOARD_FOCUS_MAX_ELEMENTS);
+  if (ids.length) out.elements = ids.join(',');
+  return out;
+}
+
+// drawingBoardFocusOf reads a focus back from location params: { elements,
+// box }, or null when they name nothing.
+export function drawingBoardFocusOf(params) {
+  const nums = String(params?.crop || '').split(',').map((v) => (v.trim() === '' ? NaN : Number(v)));
+  const box = nums.length === 4 && nums.every(Number.isFinite) && nums[2] > 0 && nums[3] > 0
+    ? { x: nums[0], y: nums[1], width: nums[2], height: nums[3] } : null;
+  const elements = String(params?.elements || '').split(',').filter((id) => FOCUS_ELEMENT_ID.test(id)).slice(0, DRAWING_BOARD_FOCUS_MAX_ELEMENTS);
+  return box || elements.length ? { elements, box } : null;
+}
+
 export function drawingBoardIdFromTitle(title) {
   const id = String(title || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   return isDrawingBoardId(id) ? id : '';

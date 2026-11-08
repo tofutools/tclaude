@@ -325,11 +325,47 @@ test('/drawing-boards/<id> opens that tab; bare /drawing-boards offers the list 
   cleanup();
 });
 
+test('/drawing-boards/<id>?crop=…&elements=… opens the tab on that part, as a task drawing on a linked node links it', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  const cleanup = await start(env);
+  const { harness, state } = env;
+  const { drawingBoardFocus } = await harness.importDashboardModule('js/drawing-board-overlay-state.js');
+  const asked = [];
+  const stop = drawingBoardFocus.subscribe((focus) => { if (focus) asked.push(focus); });
+  const restore = (location) => harness.act(async () => {
+    harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', { detail: { location } }));
+    await wait();
+  });
+  const core = await harness.importDashboardModule('js/nav-history-core.js');
+  await restore(core.fromPath('/drawing-boards/plan', '?node=inst_bob1234&crop=10,-20,300.5,200&elements=api,db'));
+  assert.equal(state.activeKey.value, 'drawing_board:plan', 'the tab opens');
+  assert.deepEqual(asked, [{ drawingBoard: 'plan', elements: ['api', 'db'], box: { x: 10, y: -20, width: 300.5, height: 200 } }],
+    'and the board is asked to show the part the link names');
+
+  // Open already: the tab comes forward and still shows that part.
+  await restore(core.fromPath('/drawing-boards/plan', '?crop=0,0,40,30'));
+  assert.deepEqual(asked.at(-1), { drawingBoard: 'plan', elements: [], box: { x: 0, y: 0, width: 40, height: 30 } });
+  // A plain link asks for nothing.
+  const before = asked.length;
+  await restore(core.fromPath('/drawing-boards/plan', ''));
+  assert.equal(asked.length, before);
+  stop();
+  cleanup();
+});
+
 test('the router keeps the /drawing-boards routes and shows them in the Terminals section', async (t) => {
   const harness = await createPreactHarness(t);
   const core = await harness.importDashboardModule('js/nav-history-core.js');
   assert.deepEqual(core.fromPath('/drawing-boards/plan', ''), { tab: 'drawing-boards', selection: 'plan' });
   assert.equal(core.toPath({ tab: 'drawing-boards', selection: 'plan' }), '/drawing-boards/plan');
+  // The part to show rides as params; anything malformed is dropped.
+  const loc = core.fromPath('/drawing-boards/plan', '?crop=1,2,3,4&elements=a,b_c');
+  assert.deepEqual(loc, { tab: 'drawing-boards', selection: 'plan', params: { crop: '1,2,3,4', elements: 'a,b_c' } });
+  assert.equal(core.toQuery(loc), 'crop=1%2C2%2C3%2C4&elements=a%2Cb_c');
+  assert.deepEqual(core.fromPath('/drawing-boards/plan', '?crop=1,2,x,4&elements=a,<b>'), { tab: 'drawing-boards', selection: 'plan' });
+  assert.deepEqual(core.fromPath('/drawing-boards/plan', `?elements=${Array.from({ length: 201 }, (_, i) => `e${i}`).join(',')}`),
+    { tab: 'drawing-boards', selection: 'plan' }, 'more than 200 ids is no focus');
 });
 
 test('detaching a drawing board carries it to the solo page, which renders it and sends it back', async (t) => {

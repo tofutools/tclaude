@@ -39,7 +39,7 @@ import { editorMoveItems } from './resource-editor-header.js';
 import { peerDrawingBoardsShared } from './peer-drawing-boards.js';
 import { DrawingBoardDeleteHost, askDeleteDrawingBoard, onDrawingBoardDeleted } from './drawing-board-manage.js';
 import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
-import { drawingBoardOverlays, openDrawingBoardPane, openLinkedDrawingBoard, revealDrawingBoardWindow } from './drawing-board-overlay-state.js';
+import { drawingBoardFocus, drawingBoardOverlays, openDrawingBoardPane, openLinkedDrawingBoard, revealDrawingBoardWindow } from './drawing-board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
 import { droppedAt, viewportOf } from './overlay-window-model.js';
@@ -2091,6 +2091,7 @@ export function mountTerminalShellIsland({
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
     openDrawingBoardPane: (id) => openLinkedDrawingBoard(id),
+    focusDrawingBoard: (id, focus) => { drawingBoardFocus.value = { drawingBoard: id, elements: focus.elements, box: focus.box }; },
     openProcessPane: (id) => openProcessTab(id),
   });
   // Process editors open as tabs here (process-editor-place.js), and the place

@@ -21,6 +21,7 @@ import { shortcutText } from './keybindings.js';
 import { downloadBlob } from './download.js';
 import { cachedTaskFileURL, readTaskFile, taskFileSource, taskFileURL, taskViewerFile, useTaskThumb } from './attachment-source.js';
 import { AttachmentViewer, firstViewable, viewerKind } from './attachment-viewer.js';
+import { drawingBoardFocusParams } from './drawing-board-model.js';
 
 const html = htm.bind(h);
 
@@ -107,9 +108,11 @@ export function drawingLink(attachment) {
 }
 
 // drawingLinkHref is where a linked node's board opens: that node's page
-// (?node=), on the board, in a window of its own.
+// (?node=), on the board and the part the image shows (crop, elements), in
+// a window of its own.
 export function drawingLinkHref(link) {
-  return `/drawing-boards/${encodeURIComponent(link.board)}?node=${encodeURIComponent(link.node)}`;
+  const params = new URLSearchParams({ node: link.node, ...drawingBoardFocusParams({ elements: link.elements, box: link.box }) });
+  return `/drawing-boards/${encodeURIComponent(link.board)}?${params}`;
 }
 
 // openDrawingLink opens a drawing's board on the part it shows: this node's

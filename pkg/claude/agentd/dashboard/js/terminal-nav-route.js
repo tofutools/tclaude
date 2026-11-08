@@ -26,7 +26,7 @@
 // would rewrite the address bar to a terminal the operator is not looking at,
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
-import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
+import { drawingBoardFocusOf, drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 
 const RESTORE_EVENT = 'tclaude:restore-location';
@@ -98,6 +98,10 @@ export function bindTerminalNavRouting({
   state,
   openAgentPane,
   openDrawingBoardPane = () => null,
+  // focusDrawingBoard(id, { elements, box }) asks the board to show that
+  // part once it is on screen (drawing-board-overlay-state.js
+  // drawingBoardFocus): a location's crop and elements.
+  focusDrawingBoard = () => {},
   openProcessPane = () => null,
   snapshot = null,
   documentRef = globalThis.document,
@@ -141,6 +145,8 @@ export function bindTerminalNavRouting({
       // false corrects the URL to what is on screen.
       if (!loc.selection) { state.requestDrawingBoardMenu(); return false; }
       if (!isDrawingBoardId(loc.selection)) return false;
+      const focus = drawingBoardFocusOf(loc.params);
+      if (focus) focusDrawingBoard(loc.selection, focus);
       const key = drawingBoardPaneKey(loc.selection);
       if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
       return !!(await openDrawingBoardPane(loc.selection));

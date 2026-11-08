@@ -59,6 +59,25 @@ test("a linked node's drawing opens on that node's page, never this node's board
   const opened = [];
   await openDrawingLink({ board: 'plan', node: 'inst_bob1234' }, { open: (...args) => opened.push(args) });
   assert.deepEqual(opened, [['/drawing-boards/plan?node=inst_bob1234', '_blank', 'noopener']]);
+  opened.length = 0;
+  await openDrawingLink({ board: 'plan', node: 'inst_bob1234', elements: ['api', 'db'], box: { x: 1.234, y: -2, width: 30, height: 40 } }, { open: (...args) => opened.push(args) });
+  const url = new URL(opened[0][0], 'http://dash.invalid');
+  assert.equal(url.pathname, '/drawing-boards/plan');
+  assert.deepEqual(Object.fromEntries(url.searchParams), { node: 'inst_bob1234', crop: '1.23,-2,30,40', elements: 'api,db' },
+    'the link carries the part the image shows, as a local drawing opens on it');
+});
+
+test('a drawing board focus survives a URL and nothing malformed does', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { drawingBoardFocusParams, drawingBoardFocusOf } = await harness.importDashboardModule('js/drawing-board-model.js');
+  const focus = { elements: ['a', 'b'], box: { x: 1, y: 2, width: 3, height: 4 } };
+  assert.deepEqual(drawingBoardFocusOf(drawingBoardFocusParams(focus)), focus);
+  assert.deepEqual(drawingBoardFocusParams({ elements: ['ok', 'not ok', 7], box: { x: 0, y: 0, width: -1, height: 2 } }), { elements: 'ok' });
+  assert.deepEqual(drawingBoardFocusParams({}), {});
+  assert.equal(drawingBoardFocusOf({ crop: '1,2,3' }), null);
+  assert.equal(drawingBoardFocusOf({ crop: '1,2,0,4' }), null, 'an empty box is none');
+  assert.equal(drawingBoardFocusOf({}), null);
+  assert.deepEqual(drawingBoardFocusOf({ elements: 'a,,<x>,b' }), { elements: ['a', 'b'], box: null });
 });
 
 test("a drawing's tile offers its drawing board on this node's board only", async (t) => {
