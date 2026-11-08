@@ -12,6 +12,9 @@ type GroupTaskReopen struct {
 	// Stage is where it lands: next or idea; "" keeps the stage it had. An
 	// assigned task lands in next.
 	Stage string
+	// Column, when set, is the custom column (its slug) it reopens into, in
+	// the same write: a column stands in next.
+	Column string
 	// Assignee is who holds it after: KeepAssignee keeps the one it had
 	// (unless that agent has been retired since), "" takes it off, else an
 	// agent id or OperatorAssignee.
@@ -43,6 +46,33 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		}
 		if in.Stage != "" && in.Stage != GroupTaskStageIdea && in.Stage != GroupTaskStageNext {
 			return taskConflict("invalid_arg", "stage is idea or next")
+		}
+		columnLabel := ""
+		if in.Column != "" {
+			if in.Stage == GroupTaskStageIdea {
+				return taskConflict("invalid_arg", "a column stands in next, not the ideas")
+			}
+			cols, err := listGroupTaskColumnsTx(tx, t.GroupID)
+			if err != nil {
+				return err
+			}
+			i := columnIndex(cols, in.Column)
+			if i < 0 {
+				return taskConflict("invalid_arg", "the board has no column %s", in.Column)
+			}
+			columnLabel = cols[i].Label
+			in.Stage = GroupTaskStageNext
+		}
+		// intoColumn puts the reopened task in its column, last.
+		intoColumn := func() error {
+			if in.Column == "" {
+				return nil
+			}
+			if _, err := tx.Exec(`UPDATE group_tasks SET column_slug = ? WHERE id = ?`, in.Column, id); err != nil {
+				return err
+			}
+			return addGroupTaskChangeTx(tx, id, in.Actor, GroupTaskEventColumn, "→ "+columnLabel+" on reopen",
+				[]GroupTaskChange{{Field: "column", Before: "", After: in.Column}}, now)
 		}
 		if err := setGroupTaskStatusTx(tx, t, GroupTaskOpen, "", in.Actor, in.ExpectAssignee, now); err != nil {
 			return err
@@ -99,7 +129,7 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		}
 		anchored := in.Position.Before != "" || in.Position.After != ""
 		if stage == cur.Stage && !anchored {
-			return nil
+			return intoColumn()
 		}
 		pos := GroupTaskPosition{Bottom: true}
 		if stage == GroupTaskStageIdea {
@@ -119,6 +149,12 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
 			return err
 		}
-		return stageChangeEvent(tx, cur, stage, in.Actor, "on reopen", now)
+		if in.Column != "" && stage != GroupTaskStageNext {
+			return taskConflict("invalid_arg", "a column stands in next; place the task beside a queued task, not an idea")
+		}
+		if err := stageChangeEvent(tx, cur, stage, in.Actor, "on reopen", now); err != nil {
+			return err
+		}
+		return intoColumn()
 	})
 }

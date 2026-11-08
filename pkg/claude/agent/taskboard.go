@@ -666,6 +666,7 @@ type taskboardAddParams struct {
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
 	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write); with --assignee or --mine, queued for them, not started"`
 	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
+	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea or --done"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
@@ -743,8 +744,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if p.Assignee != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
-			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --mine, --blocked, --done and --attach are for one task")
+		if p.Assignee != "" || p.Stage != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --stage, --mine, --blocked, --done and --attach are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -773,7 +774,16 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		return rcInvalidArg
 	}
 	assigned := p.Mine || strings.TrimSpace(p.Assignee) != ""
+	stage := strings.TrimSpace(p.Stage)
 	switch {
+	case stage != "" && (p.Next || p.Idea):
+		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea, not both")
+		return rcInvalidArg
+	case stage != "" && p.Done:
+		fmt.Fprintln(stderr, "Error: a task logged as done sits in no column; drop --stage")
+		return rcInvalidArg
+	case stage != "":
+		req["stage"] = stage
 	case p.Next:
 		req["stage"] = "next"
 	case p.Idea:
@@ -1483,6 +1493,7 @@ type taskboardReopenParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…) of a done or dropped task"`
 	Next     bool   `long:"next" help:"Reopen it in the queue (next) instead of the stage it had"`
 	Idea     bool   `long:"idea" help:"Reopen it as an idea (an assigned task needs --unassign too)"`
+	Stage    string `long:"stage" optional:"true" help:"Reopen it in one of the board's custom columns (slug or label, as move --stage takes it); not with --next or --idea"`
 	Assignee string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
 	Unassign bool   `long:"unassign" help:"Reopen it with no assignee"`
 	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
@@ -1495,7 +1506,7 @@ func taskboardReopenCmd() *cobra.Command {
 		Use:   "reopen",
 		Short: "Reopen a done or dropped task, where it was or in another stage, and optionally with another assignee",
 		Long: "Puts a done or dropped task back on the board: by default in the stage and place it had, with the assignee it had. " +
-			"--next or --idea picks the stage, --assignee gives it to a member (or operator), --unassign takes the assignee off. " +
+			"--next or --idea picks the stage (--stage one of the board's custom columns), --assignee gives it to a member (or operator), --unassign takes the assignee off. " +
 			"Reopening your own task needs taskboard.own; anyone else's, taskboard.write. Changing the assignee is gated as assign and unassign are.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardReopenParams, _ *cobra.Command) error {
@@ -1514,6 +1525,9 @@ func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int 
 	case p.Next && p.Idea:
 		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
 		return rcInvalidArg
+	case strings.TrimSpace(p.Stage) != "" && (p.Next || p.Idea):
+		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea, not both")
+		return rcInvalidArg
 	case p.Unassign && assignee != "":
 		fmt.Fprintln(stderr, "Error: give --assignee or --unassign, not both")
 		return rcInvalidArg
@@ -1524,6 +1538,9 @@ func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int 
 	}
 	if p.Idea {
 		req["stage"] = "idea"
+	}
+	if stage := strings.TrimSpace(p.Stage); stage != "" {
+		req["stage"] = stage
 	}
 	if assignee != "" {
 		req["to"] = assignee
