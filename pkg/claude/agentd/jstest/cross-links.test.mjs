@@ -125,7 +125,7 @@ test('a jump to a task on a folded board unfolds the section on the click, not a
   assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'the section opened with the click');
   assert.ok(c.querySelector('[data-task-id="tk_0000000f"]'), 'the card is drawn');
   await until(harness, () => scrolled.some(([id]) => id === 'tk_0000000f'), 'the scroll to the card');
-  assert.ok(Date.now() - start < 1000, 'the scroll follows the render, not a poll or the deadline');
+  assert.ok(Date.now() - start < 1000, 'the scroll comes well before the jump deadline');
 });
 
 test('a click on a lane head jumps to the agent\'s row; hovering outlines it, a folded group\'s header instead', async (t) => {

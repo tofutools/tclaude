@@ -110,7 +110,7 @@ function land(find) {
   // Not drawn yet: look again on the frame after the page changes.
   if (typeof MutationObserver === 'function') {
     observer = new MutationObserver(() => { if (!frame && !finished) frame = requestAnimationFrame(look); });
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'class', 'hidden', 'aria-expanded'] });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'class', 'hidden', 'aria-expanded', 'style'] });
   }
   deadline = setTimeout(() => {
     if (finished) return;
