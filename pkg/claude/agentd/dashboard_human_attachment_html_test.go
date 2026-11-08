@@ -68,10 +68,15 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	for needle, why := range map[string]string{
 		"role=\"dialog\"":     "the image viewer exposes dialog semantics",
 		"aria-modal=\"true\"": "the image viewer is modal",
-		"method: 'HEAD'":      "the image viewer distinguishes missing files before loading",
+		"source.check(":       "the image viewer distinguishes missing files before loading",
 	} {
 		if !strings.Contains(preview, needle) {
 			t.Errorf("image preview source missing %q (%s)", needle, why)
 		}
+	}
+	// A message's files are checked with a HEAD on their route before the
+	// viewer loads them (attachment-source.js messageFileSource).
+	if source := string(mustReadFS(dashboardAssetsFS, "js/attachment-source.js")); !strings.Contains(source, "method: 'HEAD'") {
+		t.Error("a message's files are no longer checked with a HEAD before the viewer loads them")
 	}
 }

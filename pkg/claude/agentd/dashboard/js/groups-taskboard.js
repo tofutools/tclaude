@@ -43,6 +43,7 @@ import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
+import { FilesCount } from './groups-taskboard-files.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import { agentLink } from './cross-links.js';
 import {
@@ -475,7 +476,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
     <td class="tb-ref-cell"><${RefChip} task=${task} /></td>
     <td class="tb-deps-cell">${deps.length ? html`<${DepChips} task=${task} byId=${byId} />` : html`<span class="tb-none">—</span>`}</td>
-    <td class="tb-files-cell">${files ? html`<span class="tb-files" title=${`${files} file${files === 1 ? '' : 's'} on this task`}>📎 ${files}</span>` : html`<span class="tb-none">—</span>`}</td>
+    <td class="tb-files-cell">${files ? html`<${FilesCount} api=${readApi} task=${task} />` : html`<span class="tb-none">—</span>`}</td>
   </tr>`;
   return row;
 }

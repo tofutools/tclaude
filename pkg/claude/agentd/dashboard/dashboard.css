@@ -19016,6 +19016,13 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-file-removed { opacity: 0.45; }
 .tb-file-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
 .tb-file-open:disabled { cursor: default; }
+/* The List's 📎 count opens the attachment viewer on the task's files
+   (groups-taskboard-files.js FilesCount). */
+.tb-files-cell .tb-files-count { display: inline; padding: 0; border: 0; background: none; color: #8b949e; font: inherit; cursor: pointer; }
+.tb-files-cell .tb-files-count:hover, .tb-files-cell .tb-files-count:focus-visible { color: #58a6ff; text-decoration: underline; }
+/* The task viewer's wrapper (useTaskViewer) only fences its events off
+   from the edit form; the viewer itself is a fixed overlay. */
+.tb-file-viewer { display: contents; }
 .tb-file-thumb { display: flex; align-items: center; justify-content: center; width: 100%; height: 64px; object-fit: cover; background: #161b22; }
 .tb-file-ext { color: #6e7681; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; }
 .tb-file-name { padding: 4px 7px 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
