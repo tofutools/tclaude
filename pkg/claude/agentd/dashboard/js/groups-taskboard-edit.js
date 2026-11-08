@@ -26,7 +26,8 @@ import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
-import { TaskFiles } from './groups-taskboard-files.js';
+import { TaskFiles, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
+import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
 import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
@@ -242,10 +243,14 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const sending = useRef(false);
   const titleRef = useRef(null);
   const held = (task.attachments || []).length - removed.length;
+  const briefEditor = useRef(null);
   const intake = useAttachmentIntake({ setAttachments: setPending, attachments: pending, busy: () => sending.current,
-    limits: taskFileLimits(held), onReject: (text) => shellToast(text, true),
+    limits: taskFileLimits(held), onReject: (text) => shellToast(text, true), nameFile: taskPastedName,
     // A paste or a drop in the Activity's comment box is the comment's.
-    ignore: (event) => !!event.target?.closest?.(COMMENT_AREA) });
+    ignore: (event) => !!event.target?.closest?.(COMMENT_AREA),
+    // One on the brief is linked there too.
+    onAdded: (added, event) => { if (event?.target?.closest?.('.tb-edit-body')) briefEditor.current?.insertFiles(added.map((a) => a.name), event); } });
+  const briefFiles = useMarkdownFiles(api, task, pending, draft.body);
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
   const tasks = entry?.tasks || [];
   const steps = editPlan(base, draft, { add: pending.map(({ file, name }) => ({ file, name })), remove: removed, bodyKnown: brief.state === 'ready' });
@@ -314,8 +319,10 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('Title', html`<${Input} class="tb-edit-title" aria-label="Title" required maxLength=${200} value=${draft.title} disabled=${busy}
       domRef=${titleRef} onInput=${(event) => set('title')(event.currentTarget.value)}
       onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void save(); } }} />`)}
-    ${row('Brief', html`<${Textarea} class="tb-edit-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy || brief.state !== 'ready'}
-      placeholder=${brief.state === 'loading' ? 'reading the brief…' : 'what the assignee needs to know'} onInput=${(event) => set('body')(event.currentTarget.value)} />`,
+    ${row('Brief', html`<${MarkdownEditor} class="tb-edit-body" label="Brief" value=${draft.body} disabled=${busy || brief.state !== 'ready'}
+      placeholder=${brief.state === 'loading' ? 'reading the brief…' : 'what the assignee needs to know (Markdown)'} onInput=${set('body')}
+      editorRef=${briefEditor} attachments=${briefFiles} onPickFiles=${(picked) => intake.add(picked).map((a) => a.name)}
+      modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} saves`} />`,
       brief.state === 'failed' ? 'the brief could not be read, so Save leaves it as it is' : null)}
     ${row('Ref', html`<span class="tb-edit-ref-line"><${Input} class="tb-edit-ref" aria-label="Ref" value=${draft.ref} disabled=${busy}
       placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />

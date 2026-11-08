@@ -156,6 +156,16 @@ function imageNameKeys(value) {
 // files happened to arrive in.
 const AMBIGUOUS = Symbol('ambiguous attachment name');
 
+// sameOriginBlob reports whether url is a blob: URL this page minted: the task
+// board reads a task's files through its api into blobs (a linked node's
+// files too), and a file picked but not saved yet is one already. A blob: URL
+// can only be minted by its own origin, so it holds bytes the dashboard
+// itself read, never a third party's.
+function sameOriginBlob(url) {
+  const origin = globalThis.location?.origin;
+  return !!origin && origin !== 'null' && url.startsWith(`blob:${origin}/`);
+}
+
 // attachmentImageIndex maps the names a document can use onto the download
 // routes of the images published with it.
 //
@@ -184,7 +194,7 @@ function attachmentImageIndex(attachments) {
     // them before it parses — `/<tab>/host/x` reads as `//host/x` — so any
     // shape test that runs on the raw string is testing a different string
     // than the one that will be resolved.
-    if (/[\t\n\r]/.test(url) || !/^\/(?![/\\])/.test(url)) continue;
+    if (/[\t\n\r]/.test(url) || !(/^\/(?![/\\])/.test(url) || sameOriginBlob(url))) continue;
     for (const key of imageNameKeys(attachment.filename)) {
       // Two files can answer to one key: published under the same name, under
       // names differing only in case, or as a percent-encoded spelling of each
@@ -415,7 +425,38 @@ export function markdownToTree(parser, source, { attachments } = {}) {
   // itself to the first `#` and turns the document's title into a paragraph.
   const text = String(source ?? '').replace(/^\uFEFF/, '');
   if (!text.trim()) return [];
-  return walk(parser.parse(text, {}), attachmentImageIndex(attachments));
+  return taskLists(walk(parser.parse(text, {}), attachmentImageIndex(attachments)));
+}
+
+// TASK_MARKER is a task list item's `[ ]` or `[x]`, GFM's task list syntax.
+const TASK_MARKER = /^\[([ xX])\](?:[ \t]+|$)/;
+
+// taskLists turns a list item that opens with `[ ]` or `[x]` into one with a
+// checkbox, as GFM renders a task list. markdown-it has no task lists of its
+// own. The checkbox is built here, after the walk, from the marker's text:
+// no markup in the source can make one, and it is always disabled.
+function taskLists(nodes) {
+  const stack = [...nodes];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node === 'string') continue;
+    if (node.tag === 'li') markTask(node);
+    for (const child of node.children || []) stack.push(child);
+  }
+  return nodes;
+}
+
+function markTask(item) {
+  // A tight list puts the text straight in the item; a loose one in a <p>.
+  const holder = typeof item.children[0] === 'string' ? item : item.children[0]?.tag === 'p' ? item.children[0] : null;
+  const first = holder?.children[0];
+  if (typeof first !== 'string') return;
+  const marker = TASK_MARKER.exec(first);
+  if (!marker) return;
+  holder.children[0] = first.slice(marker[0].length);
+  const checked = marker[1] !== ' ';
+  holder.children.unshift(element('input', { type: 'checkbox', disabled: true, checked, class: 'markdown-task-box' }, []), ' ');
+  item.attrs = { ...item.attrs, class: 'markdown-task-item' };
 }
 
 // remoteImageSources lists the src of every remote image in a rendered tree, in

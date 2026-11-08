@@ -244,7 +244,30 @@ test('a screenshot pasted into the New task form goes with the add', async (t) =
   assert.equal(fields.title, 'Checkout button overlaps');
   assert.equal(fields.files.length, 1);
   assert.equal(fields.files[0].file, shot);
-  assert.match(fields.files[0].name, /^pasted-\d+\.png$/, 'a nameless screenshot is sent under the name it was listed with');
+  assert.match(fields.files[0].name, /^pasted-\d{8}-\d{6}-\d+\.png$/, 'a nameless screenshot is sent under the name it was listed with');
+  assert.equal(fields.body, '', 'a paste outside the brief links nothing there');
+});
+
+test('a screenshot pasted into the brief is a task file and linked in the brief where it was pasted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NewTaskDialog } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const api = fakeApi();
+  api.create = async (...args) => { api.calls.push(['create', ...args]); return { id: 'tk_9' }; };
+  await harness.mount(harness.html`<${NewTaskDialog} group=${{ name: 'crew', members: [] }} entry=${{ tasks: [] }} api=${api} onClose=${() => {}} />`);
+  const dialog = harness.document.querySelector('#taskboard-new-modal');
+  const brief = dialog.querySelector('.tb-new-body textarea');
+  await harness.input(brief, 'Look:');
+  brief.selectionStart = 5;
+  brief.selectionEnd = 5;
+  const shot = new Blob(['png'], { type: 'image/png' });
+  const paste = 'onpaste' in dialog ? 'paste' : 'Paste';
+  await harness.act(() => harness.fireEvent(brief, paste, { clipboardData: { files: [shot], items: [] } }));
+  assert.equal(dialog.querySelectorAll('.tb-files-list li').length, 1, 'the screenshot is a file of the task');
+  assert.match(brief.value, /^Look:\n!\[pasted-\d{8}-\d{6}-\d+\]\(pasted-\d{8}-\d{6}-\d+\.png\)\n$/, 'and the brief shows it inline');
+  await harness.input(dialog.querySelector('.tb-new-title'), 'Checkout button overlaps');
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-new-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const [, , fields] = api.calls[0];
+  assert.ok(fields.body.includes(`(${fields.files[0].name})`), 'the link names the file sent with the add');
 });
 
 test('the board context has no brief: the form reads the task in full', async (t) => {
@@ -254,7 +277,7 @@ test('the board context has no brief: the form reads the task in full', async (t
   api.task = async (id) => { api.calls.push(['task', id]); return { ...listed, body: 'the real brief' }; };
   const { harness, dialog, save } = await mountEdit(t, listed, { api });
   await harness.act(() => new Promise((r) => setTimeout(r, 0)));
-  assert.equal(dialog.querySelector('.tb-edit-body').value, 'the real brief', 'the brief is read in full');
+  assert.equal(dialog.querySelector('.tb-edit-body textarea').value, 'the real brief', 'the brief is read in full');
   await harness.input(dialog.querySelector('.tb-edit-title'), 'Release 2.4 notes');
   await save();
   assert.deepEqual(api.calls, [['task', 'tk_00000001'], ['edit', 'tk_00000001', { title: 'Release 2.4 notes' }]],
@@ -267,7 +290,7 @@ test('a brief the form could not read is left as it is', async (t) => {
   failing.task = async () => { throw new Error('offline'); };
   const other = await mountEdit(t, listed, { api: failing });
   await other.harness.act(() => new Promise((r) => setTimeout(r, 0)));
-  assert.equal(other.dialog.querySelector('.tb-edit-body').disabled, true);
+  assert.equal(other.dialog.querySelector('.tb-edit-body textarea').disabled, true);
   assert.match(other.dialog.textContent, /the brief could not be read/);
   await other.harness.input(other.dialog.querySelector('.tb-edit-title'), 'renamed');
   await other.save();
@@ -320,7 +343,7 @@ test('a comment being written keeps the form open: Save does not send it, and cl
   const { harness, dialog, save, closed, flush } = await mountEdit(t, task(), { api });
   await flush();
   assert.match(dialog.textContent, /no comments yet/);
-  await harness.input(dialog.querySelector('.tb-comment-new'), 'half a thought');
+  await harness.input(dialog.querySelector('.tb-comment-new textarea'), 'half a thought');
   await flush();
   await save();
   assert.equal(closed(), false, 'an unsent comment is not lost to Save');
@@ -341,13 +364,13 @@ test('files dropped or pasted on the comment box go with the comment, not the ta
   await flush();
   const composer = dialog.querySelector('.tb-comment-composer');
   const shot = new File(['png'], 'shot.png', { type: 'image/png' });
-  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new'), 'drop', { dataTransfer: { types: ['Files'], files: [shot] } }));
+  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new textarea'), 'drop', { dataTransfer: { types: ['Files'], files: [shot] } }));
   const paste = 'onpaste' in composer ? 'paste' : 'Paste';
   const log = new File(['x'], 'cart.log', { type: 'text/plain' });
-  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new'), paste, { clipboardData: { files: [log], items: [] } }));
+  await harness.act(() => harness.fireEvent(composer.querySelector('.tb-comment-new textarea'), paste, { clipboardData: { files: [log], items: [] } }));
   assert.deepEqual([...composer.querySelectorAll('.att-name')].map((n) => n.textContent), ['shot.png', 'cart.log'], 'the comment holds them');
   assert.equal(dialog.querySelectorAll('[data-file-new]').length, 0, 'the task\'s own files do not');
-  await harness.input(composer.querySelector('.tb-comment-new'), 'see the shot');
+  await harness.input(composer.querySelector('.tb-comment-new textarea'), 'see the shot');
   await harness.act(async () => { harness.fireEvent(dialog.querySelector('#taskboard-comment-send'), 'click'); });
   await flush();
   const sent = api.calls.find((c) => c[0] === 'comment');
@@ -356,7 +379,7 @@ test('files dropped or pasted on the comment box go with the comment, not the ta
   // An open edit of a comment is unsaved input: Save waits, and writes nothing.
   await harness.input(dialog.querySelector('.tb-edit-title'), 'renamed');
   await harness.act(() => harness.fireEvent(dialog.querySelector('[data-comment="1"] .tb-comment-edit'), 'click'));
-  await harness.input(dialog.querySelector('.tb-comment-edit-body'), 'mine, reworded');
+  await harness.input(dialog.querySelector('.tb-comment-edit-body textarea'), 'mine, reworded');
   await flush();
   await save();
   assert.equal(api.calls.some((c) => c[0] === 'edit'), false, 'Save does not run while a comment is being edited');

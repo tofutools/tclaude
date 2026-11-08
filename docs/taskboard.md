@@ -985,6 +985,21 @@ a CLI verb:
   (say, a close that needs `taskboard.assign`), the rest still land, and the
   form stays open and names what was not saved. A done or dropped task
   reopens when you pick another place for it.
+- **The brief and comments are written in a Markdown editor**, in *Write
+  it myself*, the edit form and a comment (new or edited). Its toolbar has a
+  heading level, bold, italic, inline code, strikethrough, bullet, numbered
+  and task lists, quote, code block, table, rule, link, 📎 and a syntax
+  reference (?); a comment's toolbar has the everyday ones. *Write*,
+  *Preview* and (for a brief) *Split* switch between the text, the rendered
+  brief as the card shows it, and both side by side; the choice is
+  remembered. Ctrl+B, Ctrl+I, Ctrl+E and Ctrl+K format (Cmd on macOS), Enter
+  continues a list, Tab and Shift+Tab nest a list item, and Ctrl+Enter adds
+  or saves the task, or sends the comment. A screenshot or file pasted or
+  dropped on the text is added to the task's (or comment's) files and linked
+  where it landed: `![name](name.png)` shows an image inline, wherever the
+  brief or comment is rendered. A task list (`- [ ]`, `- [x]`) renders as
+  checkboxes. The editor (CodeMirror) loads the first time one opens; until
+  then, or if it cannot load, it is a plain text box with the same toolbar.
 - **Hovering a title** shows the task's card: its title, its id, where it
   is (and why it is blocked), who holds it, who made it and when, its last
   change, its ref and dependencies, its files, and 💬 with the latest comment.
