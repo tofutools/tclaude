@@ -68,63 +68,8 @@ func serveDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string) 
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid export request: "+err.Error())
 		return
 	}
-	if len(req.Elements) > drawingBoardMaxLiveElements {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "too many element ids")
-		return
-	}
-	for _, e := range req.Elements {
-		if !elementIDPattern.MatchString(e) {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "invalid element id "+strconv.Quote(e))
-			return
-		}
-	}
-	if g := req.Region; g != nil {
-		for _, v := range []float64{g.X, g.Y, g.Width, g.Height} {
-			if math.IsNaN(v) || math.Abs(v) > drawingBoardMaxCoordinate {
-				writeError(w, http.StatusBadRequest, "invalid_arg", "region is out of range")
-				return
-			}
-		}
-	}
-	board, err := db.GetCollabDrawingBoard(id)
-	if err != nil {
-		writeDrawingBoardStoreError(w, err)
-		return
-	}
-	rows, err := db.ListCollabDrawingBoardElements(id, -1)
-	if err != nil {
-		writeDrawingBoardStoreError(w, err)
-		return
-	}
-	bodies := make([]json.RawMessage, 0, len(rows))
-	for _, row := range rows {
-		bodies = append(bodies, json.RawMessage(row.Body))
-	}
-	select {
-	case drawingBoardExportSlots <- struct{}{}:
-		defer func() { <-drawingBoardExportSlots }()
-	case <-r.Context().Done():
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), drawingBoardExportDeadline)
-	defer cancel()
-	img, err := drawingboard.Render(ctx, drawingboard.DecodeElements(bodies), drawingboard.Options{
-		Format: req.Format, Elements: req.Elements, Region: req.Region, Scale: req.Scale,
-	})
-	var missing *drawingboard.MissingElementsError
-	switch {
-	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
-		writeError(w, http.StatusServiceUnavailable, "export_timeout",
-			"the export took too long to draw; export a part of the drawing board, or at a smaller scale")
-		return
-	case errors.As(err, &missing):
-		writeError(w, http.StatusNotFound, "unknown_elements", err.Error())
-		return
-	case errors.Is(err, drawingboard.ErrNothingToExport):
-		writeError(w, http.StatusUnprocessableEntity, "nothing_to_export", "nothing to export: the drawing board, or the region, is empty")
-		return
-	case err != nil:
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+	img, version, ok := renderDrawingBoardExport(w, r, id, req)
+	if !ok {
 		return
 	}
 	ext := "png"
@@ -137,8 +82,74 @@ func serveDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string) 
 	w.Header().Set("Content-Disposition", `attachment; filename="`+id+`.`+ext+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Drawing-board-Version", strconv.FormatInt(board.Version, 10))
+	w.Header().Set("X-Drawing-board-Version", strconv.FormatInt(version, 10))
 	w.Header().Set("X-Drawing-board-Export-Elements", strconv.Itoa(len(img.Elements)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(img.Data)
+}
+
+// renderDrawingBoardExport checks an export request and renders it, from
+// the board as stored now. It writes the refusal itself; version is the
+// board version the image shows.
+func renderDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string, req drawingBoardExportRequest) (*drawingboard.Image, int64, bool) {
+	if len(req.Elements) > drawingBoardMaxLiveElements {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "too many element ids")
+		return nil, 0, false
+	}
+	for _, e := range req.Elements {
+		if !elementIDPattern.MatchString(e) {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "invalid element id "+strconv.Quote(e))
+			return nil, 0, false
+		}
+	}
+	if g := req.Region; g != nil {
+		for _, v := range []float64{g.X, g.Y, g.Width, g.Height} {
+			if math.IsNaN(v) || math.Abs(v) > drawingBoardMaxCoordinate {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "region is out of range")
+				return nil, 0, false
+			}
+		}
+	}
+	board, err := db.GetCollabDrawingBoard(id)
+	if err != nil {
+		writeDrawingBoardStoreError(w, err)
+		return nil, 0, false
+	}
+	rows, err := db.ListCollabDrawingBoardElements(id, -1)
+	if err != nil {
+		writeDrawingBoardStoreError(w, err)
+		return nil, 0, false
+	}
+	bodies := make([]json.RawMessage, 0, len(rows))
+	for _, row := range rows {
+		bodies = append(bodies, json.RawMessage(row.Body))
+	}
+	select {
+	case drawingBoardExportSlots <- struct{}{}:
+		defer func() { <-drawingBoardExportSlots }()
+	case <-r.Context().Done():
+		return nil, 0, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), drawingBoardExportDeadline)
+	defer cancel()
+	img, err := drawingboard.Render(ctx, drawingboard.DecodeElements(bodies), drawingboard.Options{
+		Format: req.Format, Elements: req.Elements, Region: req.Region, Scale: req.Scale,
+	})
+	var missing *drawingboard.MissingElementsError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+		writeError(w, http.StatusServiceUnavailable, "export_timeout",
+			"the export took too long to draw; export a part of the drawing board, or at a smaller scale")
+		return nil, 0, false
+	case errors.As(err, &missing):
+		writeError(w, http.StatusNotFound, "unknown_elements", err.Error())
+		return nil, 0, false
+	case errors.Is(err, drawingboard.ErrNothingToExport):
+		writeError(w, http.StatusUnprocessableEntity, "nothing_to_export", "nothing to export: the drawing board, or the region, is empty")
+		return nil, 0, false
+	case err != nil:
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return nil, 0, false
+	}
+	return img, board.Version, true
 }

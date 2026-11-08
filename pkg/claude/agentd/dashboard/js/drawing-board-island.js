@@ -26,6 +26,7 @@ import {
   DRAWING_BOARD_ZOOM_MAX, DRAWING_BOARD_ZOOM_MIN, drawingBoardAge, clampDrawingBoardZoom, groupDrawingBoards, wheelIsMouse, wheelPan, wheelPixels,
 } from './drawing-board-model.js';
 import { DrawingBoardContextMenu } from './drawing-board-context-menu.js';
+import { drawingBoardFocus } from './drawing-board-overlay-state.js';
 import { announceDrawingBoardDeleted, askDeleteDrawingBoard, drawingBoardIsGone, exportDrawingBoard, freeDrawingBoardId, importDrawingBoardFile } from './drawing-board-manage.js';
 import { clipboardReadNote } from './insecure-origin.js';
 import { DrawingBoardMinimap } from './drawing-board-minimap.js';
@@ -1358,12 +1359,37 @@ export function DrawingBoardEditor({
 
   // fitView shows everything, never closer than actual size.
   function fitView() {
-    const box = contentBounds(liveElements(elements.current));
+    fitBox(contentBounds(liveElements(elements.current)));
+  }
+
+  // fitBox shows a part of the drawing board, never closer than actual size.
+  // It says whether it could: not before the editor is laid out.
+  function fitBox(box) {
     const rect = svgRef.current?.getBoundingClientRect?.();
-    if (!box || !rect?.width) return;
+    if (!box || !rect?.width) return false;
     const zoom = clampDrawingBoardZoom(Math.min(1, rect.width / (box.width + 80), rect.height / (box.height + 80)));
     setView({ zoom, x: box.x + box.width / 2 - rect.width / 2 / zoom, y: box.y + box.height / 2 - rect.height / 2 / zoom });
+    return true;
   }
+
+  // A request to show part of this drawing board (openDrawingBoardAt: a task's
+  // drawing) is taken once the board has loaded: the view fits the
+  // elements it names that are still here, selected, or else its box.
+  // A tab that is not laid out yet is tried again for a few seconds.
+  const focus = drawingBoardFocus.value;
+  const [focusTry, setFocusTry] = useState(0);
+  useEffect(() => {
+    if (!focus || focus.drawingBoard !== drawingBoardId || status !== 'ready') return undefined;
+    const picked = focus.elements.map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
+    const box = (picked.length && contentBounds(picked)) || focus.box;
+    if (!box || fitBox(box) || focusTry >= 50) {
+      drawingBoardFocus.value = null;
+      if (picked.length) setSelected(picked.map((el) => el.id));
+      return undefined;
+    }
+    const again = setTimeout(() => setFocusTry((n) => n + 1), 100);
+    return () => clearTimeout(again);
+  }, [focus, status, focusTry]);
 
   // contextItems offers what applies to what was clicked, through the same
   // actions as the toolbar and the keys.

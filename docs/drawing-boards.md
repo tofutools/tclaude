@@ -329,6 +329,30 @@ is close to the editor's, not identical, and lines are clean rather than rough.
 
 Exporting needs read access to the drawing board, as `show` does.
 
+### Putting a drawing on a task
+
+`--attach-to <task>` attaches the export to a task as a PNG instead of writing
+a file. The file carries a link back to the drawing board: the task's viewer
+shows *✎ Edit in drawing board*, which opens the board on the part the image
+shows, and `taskboard attachments` names the board and version it came from.
+
+```bash
+tclaude agent drawing-board export plan --attach-to tk_4f0a                 # the whole board
+tclaude agent drawing-board export plan --elements api,db --attach-to tk_4f0a --name api.png
+tclaude agent drawing-board export plan --attach-to tk_4f0a --comment "Reworked the API side"
+```
+
+- Exporting the same part (the same `--elements` or `--region`) of the same
+  board to the task again updates that file in place, so a task keeps one
+  current picture rather than a pile of versions. `--replace <id>` names the
+  file to update explicitly.
+- `--comment "…"` posts a new comment carrying the drawing instead.
+- A drawing is always a PNG: a task takes no SVG. `--name` sets the file's
+  name (default `<board>.png`).
+- It needs read access to the drawing board and the task's attach rules
+  (`taskboard.write`, or `taskboard.own` on your own task); with `--comment`,
+  its commenting rules.
+
 ## Elements and merging
 
 The server keeps only the element keys it knows and bounds each of them:

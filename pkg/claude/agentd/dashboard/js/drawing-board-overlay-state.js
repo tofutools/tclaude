@@ -4,7 +4,7 @@
 // time: a tab or a window. Opening a drawing board starts here rather than in
 // terminals-tab.js, whose facade stays free of Preact.
 
-import { computed } from '@preact/signals';
+import { computed, signal } from '@preact/signals';
 import { drawingBoardPaneSeed } from './drawing-board-model.js';
 import { closeOverlayTab, labelOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { openTerminalPane } from './terminals-tab.js';
@@ -31,6 +31,18 @@ export function revealDrawingBoardWindow(id) {
 export function openDrawingBoardPane(id, label, options) {
   if (revealDrawingBoardWindow(id)) return Promise.resolve(null);
   return openTerminalPane(drawingBoardPaneSeed(id, label), options);
+}
+
+// drawingBoardFocus is a request to show part of a drawing board: { drawingBoard,
+// elements, box }. The board's editor takes it once it has loaded, fits its
+// view to those elements (or, when none is left, to box) and selects them.
+export const drawingBoardFocus = signal(null);
+
+// openDrawingBoardAt opens a drawing board on the part a drawing-board export
+// shows (a task's drawing, tk_413bdf5d).
+export function openDrawingBoardAt(id, { elements = [], box = null } = {}) {
+  drawingBoardFocus.value = { drawingBoard: id, elements: [...elements], box };
+  return openDrawingBoardPane(id);
 }
 
 // openLinkedDrawingBoard opens the drawing board a URL names. Like a retired agent's deep link,

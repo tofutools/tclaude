@@ -77,3 +77,32 @@ func TestDrawingBoardExportSendsThePartAndWritesTheImage(t *testing.T) {
 		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
 	}
 }
+
+func TestDrawingBoardExportAttachesToATask(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
+		gotPath = method + " " + path
+		raw, _ := json.Marshal(in)
+		gotBody = nil
+		require.NoError(t, json.Unmarshal(raw, &gotBody))
+		return json.Unmarshal([]byte(`{"id":"tk_1","replaced":true,"attachment":{"id":4,"name":"plan.png","size":99,"drawing":{"version":7}}}`), out)
+	}
+	var stdout, stderr bytes.Buffer
+	rc := runDrawingBoardExport(&drawingBoardExportParams{AttachTo: "tk_1", Elements: []string{"api"}, Name: "api"}, "plan", &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, "POST /v1/taskboard/tasks/tk_1/drawings", gotPath)
+	assert.Equal(t, map[string]any{"board": "plan", "elements": []any{"api"}, "name": "api"}, gotBody)
+	assert.Contains(t, stdout.String(), "Updated plan.png (file 4) on tk_1: drawing board plan at version 7")
+
+	for _, bad := range []drawingBoardExportParams{
+		{AttachTo: "tk_1", Output: "x.png"},
+		{AttachTo: "tk_1", Format: "svg"},
+		{Output: "x.png", Comment: "see"},
+		{Output: "x.png", Replace: 3},
+	} {
+		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
+	}
+}
