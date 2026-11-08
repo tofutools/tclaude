@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -288,17 +289,14 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 // either. It answers the image, the board's version and the node's pinned
 // instance ID, or writes the refusal.
 func peerDrawingBoardPNG(w http.ResponseWriter, r *http.Request, ref, board string, export drawingBoardExportRequest) (*drawingboard.Image, int64, string, bool) {
-	// Only operator-chosen labels and pinned identities select a node.
-	peer, err := resolveFederationPeerOpt(ref, false)
-	if err != nil {
-		writeFedErr(w, err)
-		return nil, 0, "", false
-	}
+	// The peer view resolves ref itself, after an agent's limit and audit,
+	// so an agent cannot probe which nodes exist uncounted here either; it
+	// leaves the pinned instance ID in the request's node.
 	body, _ := json.Marshal(export)
 	tail := "drawing-boards/" + board + "/export"
 	req := r.Clone(r.Context())
-	req.URL.Path, req.URL.RawPath, req.URL.RawQuery = "/v1/federation/peer/"+peer.InstanceID+"/"+tail, "", "format=json"
-	req.SetPathValue("node", peer.InstanceID)
+	req.URL.Path, req.URL.RawPath, req.URL.RawQuery = "/v1/federation/peer/"+url.PathEscape(ref)+"/"+tail, "", "format=json"
+	req.SetPathValue("node", ref)
 	req.SetPathValue("tail", tail)
 	req.Body, req.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
 	req.Header = r.Header.Clone()
@@ -316,8 +314,14 @@ func peerDrawingBoardPNG(w http.ResponseWriter, r *http.Request, ref, board stri
 		writeError(w, http.StatusBadGateway, "peer_reply", "the linked node did not answer a PNG")
 		return nil, 0, "", false
 	}
+	// The reference keeps the node the view reached, pinned: never the label.
+	inst := req.PathValue("node")
+	if p, err := db.GetFederationPeer(inst); err != nil || p == nil {
+		writeError(w, http.StatusInternalServerError, "peer", "could not name the linked node the drawing came from")
+		return nil, 0, "", false
+	}
 	return &drawingboard.Image{Data: out.Data, ContentType: out.ContentType, Width: out.Width, Height: out.Height, Crop: out.Crop},
-		out.Version, peer.InstanceID, true
+		out.Version, inst, true
 }
 
 func isPNG(data []byte) bool {

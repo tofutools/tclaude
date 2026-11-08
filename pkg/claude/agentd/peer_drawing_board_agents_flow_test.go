@@ -241,6 +241,15 @@ func TestTaskboardDrawingFromALinkedNode(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), agentd.PermDrawingBoardsRead)
 	assert.Len(t, p.envelopes(proto.KindPeerViewOpen), before, "nothing went out")
 	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermDrawingBoardsRead, `{"peer":["`+inst+`"]}`, "test"))
+	// A node it names that does not exist is counted and audited as any
+	// agent peer view is: no uncounted probing of which nodes there are.
+	probe := agentd.AsAgentPeer(testharness.JSONRequest(t, "POST", drawings, map[string]any{"board": "plan", "node": "nosuch"}), caller)
+	rec = testharness.Serve(f.Mux, probe)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	probes, err := db.ListAuditLog(db.AuditLogFilter{Verb: "federation.peer_view.agent.out"})
+	require.NoError(t, err)
+	require.NotEmpty(t, probes)
+	assert.Contains(t, probes[0].Detail, "peer=nosuch")
 	part := decode(attach(agentReq(), exported), http.StatusCreated)
 	assert.NotEqual(t, first.Attachment.ID, part.Attachment.ID, "a part of the board is a file of its own")
 	assert.Equal(t, inst, part.Attachment.Drawing.Node)
