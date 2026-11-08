@@ -49,20 +49,23 @@ function persistTableSort(tableKey, value) {
   catch (_) { /* write-through is best-effort */ }
 }
 
+// nextSort is the dashboard tables' header cycle: a new column sorts
+// ascending, the sorted one flips to descending, and a third click drops the
+// sort (null) back to the server's order.
+function nextSort(cur, col) {
+  if (!cur || cur.col !== col) return { col, dir: 'asc' };
+  return cur.dir === 'asc' ? { col, dir: 'desc' } : null;
+}
+
 // cycleSort advances one table's sort through the three-state cycle
 // and persists the result.
 function cycleSort(tableKey, col) {
   // Pull in island writes made since boot before changing a legacy table.
   try { sortState = JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {}; }
   catch (_) { /* keep the usable in-memory state if persistence is malformed */ }
-  const cur = sortState[tableKey];
-  if (!cur || cur.col !== col) {
-    sortState[tableKey] = { col, dir: 'asc' };
-  } else if (cur.dir === 'asc') {
-    sortState[tableKey] = { col, dir: 'desc' };
-  } else {
-    delete sortState[tableKey];
-  }
+  const next = nextSort(sortState[tableKey], col);
+  if (next) sortState[tableKey] = next;
+  else delete sortState[tableKey];
   persistTableSort(tableKey, sortState[tableKey] || null);
 }
 
@@ -364,7 +367,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, applySort, applySortState, tableSortState, loadSortState, timestampSortValue,
+  nextSort, cycleSort, applySort, applySortState, tableSortState, loadSortState, timestampSortValue,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   LINK_COLS, LINK_ACCESSORS,

@@ -15,7 +15,7 @@ import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
 import { freeDrawingBoardId } from './drawing-board-manage.js';
 import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
-import { Button, Menu, MenuItem, MenuSep, SortTh } from './ui-components.js';
+import { Button, Menu, MenuItem, MenuSep } from './ui-components.js';
 import { applySortState, tableSortState, timestampSortValue } from './sort.js';
 import { relTime } from './helpers.js';
 import { LockChip } from './resource-lock.js';
@@ -33,6 +33,7 @@ import { registerResourceRemover } from './resource-dnd.js';
 import { askResourceName } from './resource-name-dialog.js';
 import { groupContextEntry } from './process-context.js';
 import { RowMenu } from './row-menu.js';
+import { TableHead } from './table-kit.js';
 
 export { RowMenu };
 
@@ -113,9 +114,7 @@ export function ResourceTable({ head = true, attrs = {}, children }) {
   const cls = ['gr-rtable', 'ui-table-auto', ...String(extra).split(/\s+/).filter((c) => c && c !== 'gr-rtable')].join(' ');
   return html`<table class=${cls} ...${rest}>
     <colgroup>${RESOURCE_COLS.map((c) => html`<col key=${c.key} class=${`${c.key === 'detail' ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />`)}</colgroup>
-    ${head && html`<thead><tr>${RESOURCE_COLS.map((c) => (c.col
-    ? html`<${SortTh} key=${c.key} active=${active?.col === c.col} dir=${active?.dir} data-sort-table=${RESOURCE_SORT} data-sort-col=${c.col} sortLabel=${c.label}>${c.label}<//>`
-    : html`<th key=${c.key}></th>`))}</tr></thead>`}
+    ${head && html`<${TableHead} cols=${RESOURCE_COLS} activeCol=${active?.col} dir=${active?.dir} sortTable=${RESOURCE_SORT} />`}
     <tbody>${children}</tbody>
   </table>`;
 }

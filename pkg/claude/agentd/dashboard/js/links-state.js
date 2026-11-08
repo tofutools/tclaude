@@ -1,6 +1,6 @@
 import { batch, computed, signal } from '@preact/signals';
 import { dashPrefs } from './prefs.js';
-import { applySortState, LINK_ACCESSORS, persistTableSort, persistedTableSort } from './sort.js';
+import { applySortState, LINK_ACCESSORS, nextSort, persistedTableSort, persistTableSort } from './sort.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.links';
 
@@ -66,11 +66,7 @@ export function createLinksState({
   }
 
   function cycleSort(column) {
-    const current = sort.value;
-    let next;
-    if (!current || current.col !== column) next = { col: column, dir: 'asc' };
-    else if (current.dir === 'asc') next = { col: column, dir: 'desc' };
-    else next = null;
+    const next = nextSort(sort.value, column);
     sort.value = next;
     writeSort('links', next);
   }

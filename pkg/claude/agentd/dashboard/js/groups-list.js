@@ -2,7 +2,7 @@ import { PeerGroupDrawingBoards } from './peer-drawing-boards-ui.js';
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, MenuItem, Select, SortTh } from './ui-components.js';
+import { Button, MenuItem, Select } from './ui-components.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -36,6 +36,7 @@ import { firstUnreadHumanNotification } from './human-notification-attention.js'
 import { groupQueuedSpawns } from './queued-spawns.js';
 import { SpawnQueueBlock, groupCapacityQueued } from './spawn-queue-block.js';
 import { modClickText, modifierText } from './keybindings.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -246,20 +247,10 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
 // SortHead's `lead` fills the untitled control column's header cell.
 function SortHead({ table, columns, lead = null }) {
   const active = tableSortState(table, columns);
-  return html`<thead class=${lead ? 'gf-lead-head' : undefined}><tr>${columns.map((column) => {
-    const label = column.wizardLabel
-      ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
-      : (column.label || '');
-    if (!column.col) return html`<th key=${column.key || column.label || 'blank'}>${lead && column.key === 'ctl' ? lead : label}</th>`;
-    return html`<${SortTh}
-      key=${column.key || column.col}
-      active=${active?.col === column.col}
-      dir=${active?.dir}
-      data-sort-table=${table}
-      data-sort-col=${column.col}
-      sortLabel=${isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label}
-    >${label}<//>`;
-  })}</tr></thead>`;
+  return html`<${TableHead} cols=${columns} activeCol=${active?.col} dir=${active?.dir} sortTable=${table}
+    lead=${lead} theadClass=${lead ? 'gf-lead-head' : undefined}
+    label=${(column) => (column.wizardLabel ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />` : (column.label || ''))}
+    sortLabel=${(column) => (isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label)} />`;
 }
 
 // ListPager is a virtual list's pager; groups-island.js (this node's lists)

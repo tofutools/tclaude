@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
-import { Button, Input, SortTh } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -86,12 +87,8 @@ function SlugsView({ state, current }) {
 }
 
 function SudoHeader({ state, current }) {
-  return html`<thead><tr>${SUDO_COLUMNS.map((column) => {
-    if (!column.key) return html`<th>${column.label}</th>`;
-    const active = current.sudoSort?.key === column.key;
-    return html`<${SortTh} active=${active} dir=${current.sudoSort?.dir} sortLabel=${column.label}
-      onSort=${() => state.cycleSudoSort(column.key)}>${column.label}<//>`;
-  })}</tr></thead>`;
+  return html`<${TableHead} cols=${SUDO_COLUMNS} activeCol=${current.sudoSort?.key} dir=${current.sudoSort?.dir}
+    isSortable=${(column) => !!column.key} colOf=${(column) => column.key} onSort=${(key) => state.cycleSudoSort(key)} />`;
 }
 
 function SudoView({ state, actions, current }) {

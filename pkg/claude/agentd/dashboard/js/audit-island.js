@@ -7,7 +7,8 @@ import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 import { useDismissablePopover } from './hover-popover.js';
-import { Input, Select, SortTh } from './ui-components.js';
+import { Input, Select } from './ui-components.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -59,10 +60,9 @@ function SpawnDetails({ entry }) {
   </span>`;
 }
 function Header({ current, state, actions }) {
-  return html`<thead><tr>${AUDIT_COLUMNS.map((column) => (column.key
-    ? html`<${SortTh} key=${column.label} active=${column.key === current.sort} dir=${current.dir} sortLabel=${column.label}
-        onSort=${() => { state.cycleSort(column.key); actions.load(); }}>${column.label}<//>`
-    : html`<th key=${column.label}>${column.label}</th>`))}</tr></thead>`;
+  return html`<${TableHead} cols=${AUDIT_COLUMNS} activeCol=${current.sort} dir=${current.dir}
+    isSortable=${(column) => !!column.key} colOf=${(column) => column.key}
+    onSort=${(key) => { state.cycleSort(key); actions.load(); }} />`;
 }
 function Rows({ current, state, actions }) {
   if (current.request.phase === 'loading') return html`<div class="empty">Loading audit log…</div>`;
