@@ -108,6 +108,9 @@ type GroupTask struct {
 	// Column is the slug of the group's custom column a live task of stage
 	// next stands in (In review, In CI, …), "" for none (tcl-plby5h).
 	Column string
+	// OperatorRequest is a question task's question and, once answered, its
+	// answer, as JSON (GroupTaskQuestion); empty for any other task.
+	OperatorRequest string
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
@@ -144,14 +147,14 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at, column_slug`
+	started_at, column_slug, operator_request`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
 	var assigned, created, updated, closed, archived, started dbTimestamp
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
-		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column); err != nil {
+		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest); err != nil {
 		return nil, err
 	}
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
@@ -225,6 +228,10 @@ type NewGroupTask struct {
 	// the holder the caller was authorised against for it.
 	Blocks       string
 	BlocksExpect string
+	// Question makes the new task a question for the operator (its
+	// assignee): stored in operator_request, answered with
+	// AnswerGroupTask.
+	Question *GroupTaskQuestion
 }
 
 type taskTx interface {
@@ -511,6 +518,19 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	}
 	if err := addGroupTaskEventTx(tx, id, in.Actor, kind, detail, now); err != nil {
 		return nil, err
+	}
+	if in.Question != nil {
+		if in.AssigneeID != OperatorAssignee || status != GroupTaskOpen {
+			return nil, taskConflict("invalid_arg", "a question is an open task for the operator")
+		}
+		in.Question.AskedBy = in.Actor
+		raw, err := in.Question.encode()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`UPDATE group_tasks SET operator_request = ? WHERE id = ?`, raw, id); err != nil {
+			return nil, err
+		}
 	}
 	if in.AssigneeID != "" {
 		if err := setGroupTaskAssigneeTx(tx, id, in.AssigneeID, in.AssignedBy, in.Hold == "", now); err != nil {

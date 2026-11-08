@@ -229,6 +229,8 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/taskboard/tasks/{id}/assign":           {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/unassign":         {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
 	"POST /v1/taskboard/tasks/{id}/start":            {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/answer":           {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/answer":            {slugs: []string{PermTaskboardRead}, target: agentViewNode},
 	// A move or clone across nodes (taskboard_transfer.go): create on the
 	// target, then drop the original on its source with a note.
 	"POST /v1/groups/{name}/taskboard/transfer-in": {slugs: []string{PermTaskboardTransfer}, target: agentViewGroup},

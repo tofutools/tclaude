@@ -40,6 +40,7 @@ import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
+import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
@@ -321,6 +322,9 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [] }) {
   const item = (key, label, title, rest) => ({ label, attrs: { 'data-task-menu': key, title }, ...rest });
   const items = [];
   if (actions.busy) return items;
+  if (canAnswer(task, actions)) {
+    items.push(item('answer', 'Answer…', 'taskboard answer: pick an option and/or answer in words; the agent that asked gets it', { run: () => onForm('answer') }));
+  }
   if (canAssign(actions) && !closed && task.status === 'open') {
     items.push(item('assign', 'Assign', `taskboard assign --to: give it to a member, the brief goes to its inbox${task.stage === 'idea' ? ' and the idea joins the queue' : ''} (or drag the row onto an agent)`, {
       children: () => {
@@ -460,6 +464,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
+      <${QuestionTag} task=${task} askedBy=${actorLabel(askerOf(task), group, snapshot)} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
@@ -792,7 +797,12 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   // in the reason dialog (groups-taskboard-reason.js).
   const [editing, setEditing] = useState('');
   const [reasoning, setReasoning] = useState(null);
-  const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setReasoning(mode ? { id, kind: mode } : null));
+  const [answering, setAnswering] = useState('');
+  const onForm = (id, mode) => {
+    if (mode === 'edit') setEditing(id);
+    else if (mode === 'answer') setAnswering(id);
+    else setReasoning(mode ? { id, kind: mode } : null);
+  };
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
   // The band heads every idea-stage row the filter leaves (a blocked or
@@ -826,9 +836,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}
     onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
       (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
+  const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-board" data-taskboard=${name}>
     ${editDialog}
     ${reasonDialog}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}

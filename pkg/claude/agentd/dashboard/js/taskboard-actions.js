@@ -325,6 +325,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     archiveDone(group, olderThan = '') {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
     },
+    // answer answers a question task (`taskboard answer`): picked option
+    // keys and/or text; the task closes as done.
+    answer(id, picked = [], text = '') {
+      return call('POST', taskPath(id, '/answer'), { picked, text });
+    },
     // moveToGroup moves the task to another group of its node, or with
     // clone copies it there (groups-taskboard-transfer.js).
     moveToGroup(id, group, { clone = false, stage = '' } = {}) {
