@@ -14,7 +14,11 @@ function fakeApi() {
   const calls = [];
   return {
     calls,
-    task: async (id) => { calls.push(['task', id]); return row(id, id === 'tk_0000000a' ? 'archived one' : 'x', { body: 'brief' }); },
+    task: async (id) => {
+      calls.push(['task', id]);
+      if (id === 'tk_0000000g') throw Object.assign(new Error('gone'), { status: 404 });
+      return row(id, id === 'tk_0000000a' ? 'archived one' : 'x', { body: 'brief', group: id === 'tk_0000000m' ? 'elsewhere' : 'crew' });
+    },
     activity: async (id) => ({ id, entries: [] }),
     fileData: async () => ({ data: '' }),
     edit: async () => ({}), status: async () => ({}), move: async () => ({}), stage: async () => ({}),
@@ -111,6 +115,27 @@ test('a link to a task (or Back/Forward) opens its form, and leaving it closes t
   await settle();
   assert.ok(api.calls.some(([verb, id]) => verb === 'task' && id === 'tk_0000000a'), 'a task off the list is read');
   assert.ok(modal(), 'and opened');
+});
+
+test('a link the board cannot open lets go of the location in place', async (t) => {
+  const { settle, routes, route, modal, announced } = await mountBoard(t);
+  await settle();
+  for (const id of ['tk_0000000m', 'tk_0000000g']) {
+    announced.length = 0;
+    routes.restoreOverlays({ task: `${id}:crew` });
+    await settle();
+    assert.equal(modal(), null, `${id}: no form`);
+    assert.equal(route.taskRoute.value, null, `${id}: the route is let go`);
+    assert.deepEqual(announced, [{ closed: false, replace: true }], `${id}: the location drops it in place`);
+  }
+});
+
+test('on a peer\'s own view a task\'s link keeps node=', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { taskPath } = await harness.importDashboardModule('js/task-route.js');
+  globalThis.__tclaudeRemoteNode = { id: 'inst_peer1' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  assert.equal(taskPath({ taskId: 'tk_1', group: 'crew' }), '/groups?task=tk_1%3Acrew&node=inst_peer1');
 });
 
 test('⋯ Copy link copies the task\'s whole link', async (t) => {

@@ -40,9 +40,14 @@ export function formatTaskRoute({ taskId, node = '', group }) {
   return `${taskId}${node ? `@${node}` : ''}:${group}`;
 }
 
-// taskPath is a task's dashboard path, for an <a href> or a copied link.
+// taskPath is a task's dashboard path, for an <a href> or a copied link. On a
+// peer's own view (remote-node.js) the page is that node's, so the link keeps
+// node=, as every location there does (nav-history.js preservedQuery).
 export function taskPath(target) {
-  return `/groups?${new URLSearchParams({ task: formatTaskRoute(target) })}`;
+  const query = new URLSearchParams({ task: formatTaskRoute(target) });
+  const remote = globalThis.__tclaudeRemoteNode?.id;
+  if (remote) query.set('node', remote);
+  return `/groups?${query}`;
 }
 
 // taskURL is the whole link, on this dashboard's origin.
@@ -87,6 +92,16 @@ export function closeTaskRoute(target) {
   if (!sameTask(taskRoute.value, target)) return;
   taskRoute.value = null;
   announceOverlay({ closed: true });
+}
+
+// dropTaskRoute lets go of a task the location asks for that its board
+// cannot open (gone, on another board by now, or a read-only board): the
+// location drops it in place, so no later location carries it and no form
+// opens out of nowhere later.
+export function dropTaskRoute(target) {
+  if (!sameTask(taskRoute.value, target)) return;
+  taskRoute.value = null;
+  announceOverlay({ replace: true });
 }
 
 // A link (or Back/Forward) asks for a task: unfold its group and Task board

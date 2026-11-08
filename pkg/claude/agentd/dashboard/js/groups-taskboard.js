@@ -46,7 +46,7 @@ import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { FilesCount } from './groups-taskboard-files.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import { agentLink, jumpToTask } from './cross-links.js';
-import { closeTaskRoute, copyLinkItem, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
+import { closeTaskRoute, copyLinkItem, dropTaskRoute, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
 import {
   COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
   useTaskboardEntry,
@@ -807,8 +807,11 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   // or closes it here.
   const node = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   const routeOf = (id) => ({ taskId: id, node, group: group.name });
+  const jumped = useRef('');
   const board = useMemo(() => ({ group: group.name, node }), [group.name, node]);
-  const openEdit = (id) => { setEditing(id); openTaskRoute(routeOf(id)); };
+  // A click (✎, the title) opens the form where the task already is: no
+  // jump to it, which is for a link (jumped below).
+  const openEdit = (id) => { jumped.current = id; setEditing(id); openTaskRoute(routeOf(id)); };
   const closeEdit = () => { if (editing) closeTaskRoute(routeOf(editing)); setEditing(''); };
   const onForm = (id, mode) => {
     if (mode === 'edit') openEdit(id);
@@ -822,7 +825,6 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const want = taskRoute.value;
   const wanted = want && want.group === group.name && (want.node || '') === node ? want : null;
   const wantedListed = !!(wanted && listed(wanted.taskId));
-  const jumped = useRef('');
   useEffect(() => {
     if (!wanted) {
       jumped.current = '';
@@ -830,10 +832,20 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       if (editing && !sameTask(want, routeOf(editing))) setEditing('');
       return undefined;
     }
+    // A read-only board has no edit form to open.
+    if (!actions) { dropTaskRoute(wanted); return undefined; }
     if (editing !== wanted.taskId) setEditing(wanted.taskId);
     let live = true;
-    if (!wantedListed && fetched?.id !== wanted.taskId && readApi?.task) {
-      readApi.task(wanted.taskId).then((task) => { if (live && task?.id === wanted.taskId) setFetched(task); }).catch(() => {});
+    if (!wantedListed && fetched?.id !== wanted.taskId) {
+      // A task off the list (history, archived) is read by id, which names
+      // no group: one moved to another group since the link was made is
+      // that board's, not this one's, and a gone one has no form.
+      const read = readApi?.task ? readApi.task(wanted.taskId) : Promise.reject(new Error('no read'));
+      read.then((task) => {
+        if (!live) return;
+        if (task?.id === wanted.taskId && (task.group || group.name) === group.name) setFetched(task);
+        else dropTaskRoute(wanted);
+      }).catch(() => { if (live) dropTaskRoute(wanted); });
     }
     if (jumped.current !== wanted.taskId) {
       jumped.current = wanted.taskId;

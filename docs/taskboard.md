@@ -1042,6 +1042,8 @@ is, so a name holding `:` or `@` still reads back.
 Opening the link unfolds the group and its Task board, scrolls to the task
 and opens its edit form. That works for a task in history or archived as
 well. You can share it with an agent or paste it back to ask about the task.
+A link to a task that has moved to another group since, or is gone, opens
+nothing and leaves the address bar.
 
 - A task's title is that link, in the List and on a lanes card. A plain
   click still opens the edit form in place. A middle click or a Ctrl/⌘-click
