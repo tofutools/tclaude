@@ -29,7 +29,7 @@ type drawingBoardExportParams struct {
 	Comment  string   `long:"comment" optional:"true" help:"With --attach-to: post the drawing as a new comment with this text"`
 	Name     string   `long:"name" optional:"true" help:"With --attach-to: the file's name (default: the drawing board's id, .png)"`
 	Replace  int64    `long:"replace" optional:"true" help:"With --attach-to: update this drawing file (its id from 'taskboard show') instead of matching by board and part"`
-	Node     string   `long:"node" optional:"true" help:"Export a linked node's drawing board, by its label or instance ID (operator only; at most about 6 MiB)"`
+	Node     string   `long:"node" optional:"true" help:"Export a linked node's drawing board, by its label or instance ID (at most about 6 MiB); with --attach-to it is attached to a task here"`
 }
 
 func drawingBoardExportCmd() *cobra.Command {
@@ -41,7 +41,8 @@ func drawingBoardExportCmd() *cobra.Command {
 			"(with the text on them and the lines between them), and --region only what meets a box, cropped to it. " +
 			"With --attach-to it puts the PNG on a task instead (or on a new comment with --comment), with a link back to " +
 			"the drawing board; exporting the same part to the task again updates that file. " +
-			"--node exports a linked node's drawing board under the grants it gave this node (operator only). " +
+			"--node exports a linked node's drawing board under the grants it gave this node (an agent also needs drawing-boards.read granted peer=<node>); " +
+			"with --attach-to the linked node draws it and the task here keeps it, with the node in its link back. " +
 			"Text is drawn in the Go fonts, so it is close to the editor's, not identical. Needs read access to the drawing board.",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -95,9 +96,6 @@ func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stder
 		return rcInvalidArg
 	case attach == "" && (p.Comment != "" || p.Name != "" || p.Replace != 0):
 		fmt.Fprintln(stderr, "Error: --comment, --name and --replace go with --attach-to")
-		return rcInvalidArg
-	case attach != "" && strings.TrimSpace(p.Node) != "":
-		fmt.Fprintln(stderr, "Error: --node exports a linked node's drawing board to a file; attaching it to a task is not supported yet")
 		return rcInvalidArg
 	case attach != "" && strings.EqualFold(strings.TrimSpace(p.Format), "svg"):
 		fmt.Fprintln(stderr, "Error: a drawing is attached as a PNG; export an SVG with -o")
@@ -199,6 +197,11 @@ func fetchDrawingBoardExport(id, node string, req map[string]any) (data []byte, 
 func attachDrawingBoardExport(board, task string, p *drawingBoardExportParams, req map[string]any, stdout, stderr io.Writer) int {
 	delete(req, "format")
 	req["board"] = board
+	where := "drawing board " + board
+	if node := strings.TrimSpace(p.Node); node != "" {
+		req["node"] = node
+		where += " on " + node
+	}
 	if p.Name != "" {
 		req["name"] = p.Name
 	}
@@ -232,11 +235,11 @@ func attachDrawingBoardExport(board, task string, p *drawingBoardExportParams, r
 	a := out.Attachment
 	switch {
 	case out.Comment != 0:
-		fmt.Fprintf(stdout, "Commented on %s (#%d) with %s (file %d, %d bytes): drawing board %s at version %d.\n", out.ID, out.Comment, a.Name, a.ID, a.Size, board, version)
+		fmt.Fprintf(stdout, "Commented on %s (#%d) with %s (file %d, %d bytes): %s at version %d.\n", out.ID, out.Comment, a.Name, a.ID, a.Size, where, version)
 	case out.Replaced:
-		fmt.Fprintf(stdout, "Updated %s (file %d) on %s: drawing board %s at version %d.\n", a.Name, a.ID, out.ID, board, version)
+		fmt.Fprintf(stdout, "Updated %s (file %d) on %s: %s at version %d.\n", a.Name, a.ID, out.ID, where, version)
 	default:
-		fmt.Fprintf(stdout, "Attached %s (file %d, %d bytes) to %s: drawing board %s at version %d. Exporting the same part again updates it.\n", a.Name, a.ID, a.Size, out.ID, board, version)
+		fmt.Fprintf(stdout, "Attached %s (file %d, %d bytes) to %s: %s at version %d. Exporting the same part again updates it.\n", a.Name, a.ID, a.Size, out.ID, where, version)
 	}
 	return rcOK
 }

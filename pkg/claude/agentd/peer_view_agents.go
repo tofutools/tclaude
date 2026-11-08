@@ -195,6 +195,13 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/cron/{id}/run-now":              {slugs: []string{PermSelfSchedule}, target: agentViewNode},
 	"GET /api/groups/{name}/process":          {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
 	"POST /api/groups/{name}/process/advance": {slugs: []string{PermProcessAdvance}, target: agentViewGroup},
+	// Collab drawing boards (peer_drawing_boards.go): read and export, never
+	// edit. A board id names no group, so the agent holds drawing-boards.read
+	// for the whole peer here, and the receiver serves only the boards in
+	// the groups it granted this node groups.resources.read in.
+	"GET /api/drawing-boards":              {slugs: []string{PermDrawingBoardsRead}, target: agentViewNode},
+	"GET /api/drawing-boards/{id}":         {slugs: []string{PermDrawingBoardsRead}, target: agentViewNode},
+	"POST /api/drawing-boards/{id}/export": {slugs: []string{PermDrawingBoardsRead}, target: agentViewNode},
 	// A group's task board (peer_taskboard.go). The group routes are held per
 	// group; a route addressed by a task id names no group in its path, so it
 	// takes a node-wide grant here and the receiver's per-group peer grants

@@ -1,12 +1,16 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,7 +24,12 @@ import (
 // reference back to the board so the viewer can open it there.
 //
 //	POST /v1/taskboard/tasks/{id}/drawings
-//	{board, elements?, region?, scale?, name?, comment?, replace?}
+//	{board, node?, elements?, region?, scale?, name?, comment?, replace?}
+//
+// With node, the board is a linked node's: that node draws it through its
+// peer view, as the caller (the operator, or an agent under its peer=
+// grants and the node's grants to this one), and the file here keeps the
+// node in its reference.
 //
 // It needs read access to the board and the task's own attach rules (or,
 // with a comment, its commenting rules). Exporting the same part of the same
@@ -33,7 +42,10 @@ const taskboardDrawingBodyLimit = drawingBoardExportBodyLimit + 64<<10
 // taskboardDrawingRef is a drawing file's reference back to its board, as
 // stored (db GroupTaskAttachment.Drawing) and on the wire.
 type taskboardDrawingRef struct {
-	Board   string `json:"board"`
+	Board string `json:"board"`
+	// Node is the linked node the board is on (its instance ID), empty for
+	// this node's own.
+	Node    string `json:"node,omitempty"`
 	Version int64  `json:"version"`
 	// Elements is the ids the export picked, when there are at most
 	// taskboardDrawingRefMaxElements of them; a bigger pick keeps only its
@@ -77,7 +89,7 @@ func newTaskboardDrawingRef(board string, version int64, elements []string, regi
 
 // sameSelection says two references export the same part of the same board.
 func (d taskboardDrawingRef) sameSelection(o taskboardDrawingRef) bool {
-	if d.Board != o.Board || d.Selection != o.Selection {
+	if d.Board != o.Board || d.Node != o.Node || d.Selection != o.Selection {
 		return false
 	}
 	switch {
@@ -98,6 +110,7 @@ func drawingRefOf(a db.GroupTaskAttachment) (taskboardDrawingRef, bool) {
 
 type taskboardDrawingRequest struct {
 	Board    string            `json:"board"`
+	Node     string            `json:"node"`
 	Elements []string          `json:"elements"`
 	Region   *drawingboard.Box `json:"region"`
 	Scale    float64           `json:"scale"`
@@ -160,12 +173,21 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if _, ok := requireDrawingBoardAccess(w, r, req.Board, false); !ok {
-		return
+	export := drawingBoardExportRequest{Format: drawingboard.FormatPNG, Elements: req.Elements, Region: req.Region, Scale: req.Scale}
+	var (
+		img     *drawingboard.Image
+		version int64
+		node    string
+		ok      bool
+	)
+	if strings.TrimSpace(req.Node) != "" {
+		img, version, node, ok = peerDrawingBoardPNG(w, r, strings.TrimSpace(req.Node), req.Board, export)
+	} else {
+		if _, ok := requireDrawingBoardAccess(w, r, req.Board, false); !ok {
+			return
+		}
+		img, version, ok = renderDrawingBoardExport(w, r, req.Board, export)
 	}
-	img, version, ok := renderDrawingBoardExport(w, r, req.Board, drawingBoardExportRequest{
-		Format: drawingboard.FormatPNG, Elements: req.Elements, Region: req.Region, Scale: req.Scale,
-	})
 	if !ok {
 		return
 	}
@@ -175,6 +197,11 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 		return
 	}
 	ref := newTaskboardDrawingRef(req.Board, version, req.Elements, req.Region, img.Crop)
+	ref.Node = node
+	from := "drawing board " + req.Board
+	if node != "" {
+		from += " on " + node
+	}
 	refJSON, _ := json.Marshal(ref)
 	actor := taskboardActor(r)
 	if comment != "" {
@@ -199,7 +226,7 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			writeError(w, http.StatusInternalServerError, "db", "read the comment's file back")
 			return
 		}
-		setAuditDetail(r, fmt.Sprintf("commented on %s (#%d) with drawing board %s", t.ID, c.ID, req.Board))
+		setAuditDetail(r, fmt.Sprintf("commented on %s (#%d) with %s", t.ID, c.ID, from))
 		mailTaskboardComment(r, g, t, c)
 		writeJSON(w, http.StatusCreated, map[string]any{"id": t.ID, "group": g.Name, "comment": c.ID,
 			"attachment": taskboardAttachmentViews(files[c.ID][:1])[0]})
@@ -240,7 +267,7 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			writeTaskboardError(w, err)
 			return
 		}
-		setAuditDetail(r, fmt.Sprintf("updated drawing %s on %s from drawing board %s", updated.Name, t.ID, req.Board))
+		setAuditDetail(r, fmt.Sprintf("updated drawing %s on %s from %s", updated.Name, t.ID, from))
 		writeJSON(w, http.StatusOK, map[string]any{"id": t.ID, "group": g.Name, "replaced": true,
 			"attachment": taskboardAttachmentViews([]db.GroupTaskAttachment{*updated})[0]})
 		return
@@ -250,7 +277,50 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 		writeTaskboardError(w, err)
 		return
 	}
-	setAuditDetail(r, fmt.Sprintf("attached drawing %s to %s from drawing board %s", added[0].Name, t.ID, req.Board))
+	setAuditDetail(r, fmt.Sprintf("attached drawing %s to %s from %s", added[0].Name, t.ID, from))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": t.ID, "group": g.Name,
 		"attachment": taskboardAttachmentViews(added)[0]})
+}
+
+// peerDrawingBoardPNG has the linked node ref draw board as a PNG, through
+// its peer view as the caller: the operator's view, or an agent's under its
+// peer= grants (servePeerViewForAgent); the node's grants to this one bound
+// either. It answers the image, the board's version and the node's pinned
+// instance ID, or writes the refusal.
+func peerDrawingBoardPNG(w http.ResponseWriter, r *http.Request, ref, board string, export drawingBoardExportRequest) (*drawingboard.Image, int64, string, bool) {
+	// Only operator-chosen labels and pinned identities select a node.
+	peer, err := resolveFederationPeerOpt(ref, false)
+	if err != nil {
+		writeFedErr(w, err)
+		return nil, 0, "", false
+	}
+	body, _ := json.Marshal(export)
+	tail := "drawing-boards/" + board + "/export"
+	req := r.Clone(r.Context())
+	req.URL.Path, req.URL.RawPath, req.URL.RawQuery = "/v1/federation/peer/"+peer.InstanceID+"/"+tail, "", "format=json"
+	req.SetPathValue("node", peer.InstanceID)
+	req.SetPathValue("tail", tail)
+	req.Body, req.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
+	req.Header = r.Header.Clone()
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleFederationPeerView(rec, req)
+	if rec.Code != http.StatusOK {
+		copyRecorded(w, rec)
+		return nil, 0, "", false
+	}
+	var out drawingBoardExportJSON
+	// What a linked node answers is its content: it is stored as a PNG only
+	// when it is one.
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.ContentType != "image/png" || !isPNG(out.Data) {
+		writeError(w, http.StatusBadGateway, "peer_reply", "the linked node did not answer a PNG")
+		return nil, 0, "", false
+	}
+	return &drawingboard.Image{Data: out.Data, ContentType: out.ContentType, Width: out.Width, Height: out.Height, Crop: out.Crop},
+		out.Version, peer.InstanceID, true
+}
+
+func isPNG(data []byte) bool {
+	_, err := png.DecodeConfig(bytes.NewReader(data))
+	return err == nil
 }

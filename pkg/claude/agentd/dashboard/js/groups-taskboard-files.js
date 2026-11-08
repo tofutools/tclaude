@@ -87,24 +87,39 @@ function extLabel(name) {
 
 const DRAWING_BOARD_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const ELEMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 
 // drawingLink is where a drawing-board export (a file with `drawing`,
-// tk_413bdf5d) opens its board: { board, version, elements, box }, or null
-// for any other file. The reference comes from the board's node, so only
-// well-formed ids and a finite box pass.
+// tk_413bdf5d) opens its board: { board, version, elements, box, node }, or
+// null for any other file. node is the linked node the board is on (export
+// --node --attach-to), '' for this node's own. The reference comes from the
+// board's node, so only well-formed ids and a finite box pass.
 export function drawingLink(attachment) {
   const d = attachment?.drawing;
   if (!d || typeof d !== 'object' || !DRAWING_BOARD_ID.test(String(d.board || ''))) return null;
+  const node = d.node === undefined || d.node === '' ? '' : String(d.node);
+  if (node && !NODE_ID.test(node)) return null;
   const elements = Array.isArray(d.elements) ? d.elements.filter((id) => typeof id === 'string' && ELEMENT_ID.test(id)).slice(0, 5000) : [];
   const c = d.crop || {};
   const box = [c.x, c.y, c.width, c.height].every(Number.isFinite) && c.width > 0 && c.height > 0
     ? { x: c.x, y: c.y, width: c.width, height: c.height } : null;
-  return { board: d.board, version: Number.isFinite(d.version) ? d.version : 0, elements, box };
+  return { board: d.board, version: Number.isFinite(d.version) ? d.version : 0, elements, box, node };
 }
 
-// openDrawingLink opens a drawing's board on the part it shows. The opener
-// is loaded on use: it lives with the terminal shell.
-export function openDrawingLink(link) {
+// drawingLinkHref is where a linked node's board opens: that node's page
+// (?node=), on the board, in a window of its own.
+export function drawingLinkHref(link) {
+  return `/drawing-boards/${encodeURIComponent(link.board)}?node=${encodeURIComponent(link.node)}`;
+}
+
+// openDrawingLink opens a drawing's board on the part it shows: this node's
+// own in its Collab tab (the opener is loaded on use: it lives with the
+// terminal shell), a linked node's on that node's page.
+export function openDrawingLink(link, win = globalThis.window) {
+  if (link.node) {
+    win?.open?.(drawingLinkHref(link), '_blank', 'noopener');
+    return Promise.resolve(null);
+  }
   return import('./drawing-board-overlay-state.js').then((m) => m.openDrawingBoardAt(link.board, link));
 }
 
@@ -122,8 +137,10 @@ export function StoredTile({ api, taskId, attachment, removed, onToggle, busy, n
     <span class="tb-file-name" title=${attachment.name}>${attachment.name}</span>
     <span class="tb-file-size">${formatAttachmentSize(attachment.size)}${by ? ` · ${by}` : ''}${removed ? ' · removed on Save' : ''}</span>
     ${drawing && html`<${Button} size="sm" class="tb-file-drawing" disabled=${removed}
-      title=${`Open drawing board ${drawing.board} on the part this image shows (it was drawn at version ${drawing.version})`}
-      onClick=${() => { void openDrawingLink(drawing).catch(() => {}); }}>✎ Edit in drawing board<//>`}
+      title=${drawing.node
+        ? `Open drawing board ${drawing.board} on the linked node ${drawing.node}, on its page (it was drawn at version ${drawing.version})`
+        : `Open drawing board ${drawing.board} on the part this image shows (it was drawn at version ${drawing.version})`}
+      onClick=${() => { void openDrawingLink(drawing).catch(() => {}); }}>${drawing.node ? '✎ Open on its node' : '✎ Edit in drawing board'}<//>`}
     ${onToggle && html`<button data-ui-exempt type="button" class="tb-file-rm" disabled=${busy}
       title=${removed ? 'Keep this file' : 'Remove this file (on Save)'} aria-label=${`${removed ? 'Keep' : 'Remove'} ${attachment.name}`}
       onClick=${() => onToggle(attachment.id)}>${removed ? '↺' : '✕'}</button>`}

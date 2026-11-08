@@ -73,6 +73,12 @@ Remember the version `show` prints and pass it as `--since` next time.
 which the daemon renders from the elements as they are now. Look at a PNG with an
 image-capable tool.
 
+A linked node's drawing boards: add `--node <node>` to `ls`, `show` and
+`export` (`--attach-to` too: that node draws it, the task here keeps it). It
+needs `drawing-boards.read` granted to you `peer=<node>` here, and that node's
+`groups.resources.read` grant to this node in the board's group. A linked
+node's boards are read-only to agents.
+
 ## Draw
 
 ```bash

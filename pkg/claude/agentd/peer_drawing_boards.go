@@ -110,12 +110,29 @@ func peerDrawingBoardGroupAllows(peer string, b *db.CollabDrawingBoard, slug str
 	return fedPeerAllows(peer, g.ID, slug)
 }
 
+// peerHoldsDrawingBoardsSomewhere reports whether the peer reads drawing
+// boards in any active group, so the list is its at all. It is the peer's
+// grant, whoever on the peer asks: its operator, or an agent whose own node
+// checked its peer= grant (agentPeerViewRoutes), as the board reads are.
+func peerHoldsDrawingBoardsSomewhere(peer string) bool {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if !g.IsArchived() && (fedPeerAllows(peer, g.ID, PermGroupsResourcesRead) || fedPeerAllows(peer, g.ID, PermGroupsResourcesWrite)) {
+			return true
+		}
+	}
+	return false
+}
+
 func servePeerDrawingBoardList(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	if v.unrestricted() {
 		peerDashboardMux().ServeHTTP(w, peerAsLocalRequest(r))
 		return
 	}
-	if !peerOperatorHoldsInSomeGroup(v, PermGroupsResourcesRead) && !peerOperatorHoldsInSomeGroup(v, PermGroupsResourcesWrite) {
+	if !peerHoldsDrawingBoardsSomewhere(v.peer.InstanceID) {
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
