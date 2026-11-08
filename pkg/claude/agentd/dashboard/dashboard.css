@@ -18951,7 +18951,10 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 /* Ctrl/Cmd held: a clone, green as the groups view's clone look. */
 .tb-transfer-over.tb-transfer-clone { background: rgba(63, 185, 80, 0.06); box-shadow: inset 0 0 0 1px #3fb950; }
 .tb-transfer-over.tb-transfer-clone[data-tb-transfer]::after { background: #238636; box-shadow: 0 0 0 3px #238636; }
-.tb-card { padding: 6px 8px; cursor: grab; }
+.tb-card { padding: 6px 8px; cursor: grab; position: relative; }
+.tb-card-menu { position: absolute; bottom: 2px; right: 4px; opacity: 0; }
+.tb-card:hover .tb-card-menu, .tb-card-menu:focus-within { opacity: 1; }
+.tb-archive-done { display: inline-block; }
 .tb-card[draggable] { user-select: none; }
 .tb-card.tb-card-idea { border-style: dashed; }
 /* A done card is dimmed by colour, not opacity: opacity would also apply to

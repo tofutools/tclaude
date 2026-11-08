@@ -305,7 +305,7 @@ function RowActions({ task, group, tasks, actions, onForm }) {
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
   return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm })}
-    glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop" /></span>`;
+    glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
 // rowMenu is a row's ⋯ items (row-menu.js): assign (to a member), block or
@@ -382,7 +382,31 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
   if (!closed && canClose(task, actions)) {
     items.push(item('drop', 'Drop…', 'taskboard drop: take it off the board (park it in the tracker first)', { danger: true, run: () => onForm('drop') }));
   }
+  items.push(...archiveItems(task, actions));
   return items;
+}
+
+// archiveItems is a closed task's ⋯ Archive (`taskboard archive`): it
+// leaves the history, kept and recoverable (unarchive, reopen). A live task
+// is dropped first, through ⋯ Drop…, which asks the reason. The route takes
+// the board's write (or the assignee's own), as any change of a closed task.
+export function archiveItems(task, actions) {
+  if (!actions || actions.busy || typeof actions.api?.archive !== 'function') return [];
+  if (task.status !== 'done' && task.status !== 'dropped') return [];
+  return [{
+    label: 'Archive',
+    attrs: { 'data-task-menu': 'archive', title: 'taskboard archive: out of the history, kept (ls --archived; unarchive brings it back)' },
+    run: () => actions.run(`${task.id}:archive`, 'Archive', (api) => api.archive(task.id)),
+  }];
+}
+
+// openRowMenu opens the ⋯ menu inside el on a right-click, in place of the
+// browser's own menu.
+export function openRowMenu(event, selector) {
+  const more = event.currentTarget?.querySelector?.(selector);
+  if (!more || event.target?.closest?.('a[href], input, textarea')) return;
+  event.preventDefault();
+  more.click();
 }
 
 // assignableMembers are the group's members a task can go to: active
@@ -412,6 +436,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
   const row = html`<tr class=${`tb-row tb-row-${state}${closed ? ' tb-closed' : ''}${over}${drag?.dragging === task.id ? ' tb-dragging' : ''}`} data-task-id=${task.id}
       draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? (closed ? REOPEN_DRAG_TITLE : DRAG_TITLE) : undefined}
       onDragStart=${draggable ? (event) => { if (!linkDrag(event)) drag.start(event, task); } : undefined} onDragEnd=${draggable ? drag.end : undefined}
+      onContextMenu=${actions ? (event) => openRowMenu(event, '.tb-row-actions .tb-act-more') : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
     <td class="tb-ic">${actions && html`<span class="tb-handle" aria-hidden="true">⋮⋮</span><${RowActions} task=${task} group=${group} tasks=${tasks}
         actions=${actions} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
@@ -697,14 +722,30 @@ function ImportPanel({ group, actions, initial = {}, onClose }) {
 // HistoryLine is the "n done this week · ▸ history" line: a row of the list's
 // table under its tasks (the closed ones follow it, in the same columns),
 // or a line of its own under an empty list.
-function HistoryLine({ entry, open, onToggle, wizard, row = false }) {
+// ARCHIVE_AGES are the "Archive done" choices: every done task, or those
+// closed longer ago than an age (`taskboard archive <group> --done --older-than`).
+export const ARCHIVE_AGES = [
+  { age: '', label: 'All done tasks' },
+  { age: '1d', label: 'Done over a day ago' },
+  { age: '7d', label: 'Done over a week ago' },
+  { age: '30d', label: 'Done over 30 days ago' },
+];
+
+function HistoryLine({ entry, group = null, actions = null, open, onToggle, wizard, row = false }) {
   const counts = entry.counts || {};
   const closed = entry.closed || [];
   const parts = [`${counts.done_this_week || 0} done this week`];
   if (counts.dropped) parts.push(`${counts.dropped} dropped`);
+  const archivable = !!group && !!actions && !actions.busy && typeof actions.api?.archiveDone === 'function' && closed.some((task) => task.status === 'done');
+  const archive = archivable && ARCHIVE_AGES.map(({ age, label }) => ({
+    key: age || 'all', label, attrs: { 'data-archive-done': age || 'all', title: `taskboard archive ${group.name} --done${age ? ` --older-than ${age}` : ''}` },
+    run: () => actions.run(`${group.name}:archive-done`, 'Archive done', (api) => api.archiveDone(group.name, age)),
+  }));
   const body = html`${parts.join(' · ')}
     ${closed.length > 0 && html` · <${Button} size="sm" variant="link" class="tb-history-toggle" aria-expanded=${open ? 'true' : 'false'}
       onClick=${onToggle}>${open ? '▾' : '▸'} ${wizard ? 'chronicle' : 'history'}<//>`}
+    ${archive && html` · <span class="tb-archive-done"><${RowMenu} label="done tasks" items=${archive} glyph="Archive done ▾"
+      title="Archive done tasks: they leave the history, kept (ls --archived)" buttonClass="tb-archive-done-btn" /></span>`}
     <span class="tb-history-note"> — ${wizard
       ? 'a quest leaves the board when it is fulfilled; it stays in the chronicle'
       : 'a task leaves the list when it is done or dropped; it stays in history'}</span>`;
@@ -745,7 +786,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
   // The Lanes view has no Filter: its history is all or nothing.
   const closed = view === 'list' ? (entry.closed || []).filter(shows) : (history ? entry.closed || [] : []);
-  const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
+  const historyLine = html`<${HistoryLine} entry=${entry} group=${group} actions=${actions} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
   const table = tasks.length ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}

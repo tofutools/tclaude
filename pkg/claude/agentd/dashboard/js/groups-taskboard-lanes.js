@@ -33,7 +33,8 @@ import {
 import { markLanded } from './drop-landing.js';
 import { REVEAL_FRESH_MS, agentLink, taskRevealRequest } from './cross-links.js';
 import { listenForTransfer } from './groups-taskboard-transfer.js';
-import { DepChips, RefChip, actorLabel, boardTasks, assignableMembers, binDroppable, canAssign, operatorName } from './groups-taskboard.js';
+import { DepChips, RefChip, actorLabel, archiveItems, boardTasks, assignableMembers, binDroppable, canAssign, openRowMenu, operatorName } from './groups-taskboard.js';
+import { RowMenu } from './row-menu.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
@@ -310,13 +311,17 @@ function cardHint(task) {
 // card (groups-taskboard-card.js), which carries its id.
 // `marker` (lanes triage and one row, groups-taskboard-lanes-flat.js) is a corner badge
 // saying who holds the task, with a class for the card's edge.
-export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null }) {
+// menu, when given, is the card's ⋯ items (Archive): its ⋯ shows on hover,
+// and a right-click opens it.
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu = null }) {
   const done = task.status === 'done';
   return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
+      onContextMenu=${menu?.length ? (event) => openRowMenu(event, '.tb-card-more') : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
     ${marker?.badge}
+    ${menu?.length > 0 && html`<span class="tb-card-menu"><${RowMenu} label=${task.title} items=${menu} buttonClass="tb-card-more" /></span>`}
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} /></div>`}
@@ -675,7 +680,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          onEdit=${actions ? onEdit : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;

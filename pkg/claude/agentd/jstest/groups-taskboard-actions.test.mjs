@@ -25,7 +25,7 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
-    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen') };
+    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -392,4 +392,26 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   assert.deepEqual(await menu('tk_00000002'), ['Block…']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
   assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…']);
+});
+
+test('a task archives from its ⋯ or a right-click, and the history line archives the done tasks', async (t) => {
+  const { harness, c, api, rowOf, menu, click } = await mountBoard(t, 'tba-archive');
+  assert.ok(!(await menu('tk_00000001')).includes('Archive'), 'a live task is dropped first, which asks why');
+
+  // A right-click on a row opens its ⋯, in place of the browser's menu.
+  await click(c.querySelector('.tb-history-toggle'));
+  const ctx = await harness.act(async () => harness.fireEvent(rowOf('tk_00000005'), 'contextmenu'));
+  assert.ok(c.querySelector('.gr-add-menu'), 'the row menu opens');
+  assert.ok([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].some((b) => b.textContent.trim() === 'Archive'));
+  void ctx;
+  api.calls.length = 0;
+  await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive'));
+  assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
+
+  // Archive done ▾: every done task, or those done longer ago than an age.
+  api.calls.length = 0;
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-done]')].map((b) => b.dataset.archiveDone), ['all', '1d', '7d', '30d']);
+  await click(c.querySelector('[data-archive-done="7d"]'));
+  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']]);
 });

@@ -29,7 +29,7 @@ function fakeApi() {
   const calls = [];
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'),
-    stage: record('stage'), status: record('status'), assign: record('assign'), unassign: record('unassign'),
+    stage: record('stage'), status: record('status'), assign: record('assign'), unassign: record('unassign'), archive: record('archive'),
     start: record('start'), hold: record('hold'),
     create: async (...args) => { calls.push(['create', ...args]); return { id: 'tk_00000099', title: args[1].title }; } };
 }
@@ -249,6 +249,7 @@ test('a read-only board draws the lanes without drags or a cell +', async (t) =>
   assert.ok(ro.c.querySelector('.tb-lanes'));
   assert.equal(ro.c.querySelector('.tb-card[draggable]'), null);
   assert.equal(ro.c.querySelector('.tb-cell-add'), null);
+  assert.equal(ro.c.querySelector('.tb-card-more'), null, 'no ⋯ on a card');
 });
 
 test('a diagonal drag runs both writes through the real handlers, the lane first', async (t) => {
@@ -598,4 +599,17 @@ test('a done card dragged out of Done reopens there, in the column\'s stage and 
   assert.deepEqual(await run(blocked, 'more to do'), [['reopen', 'tk_000000d1', {}], ['status', 'tk_000000d1', 'blocked', 'more to do']]);
   assert.equal(laneDrop(done, at('agt_builder', 'done'), at('agt_tester', 'next'), { assign: false }), null, 'another lane needs assign');
   assert.equal(laneDrop(done, at('agt_builder', 'done'), at('', 'done')), null);
+});
+
+test('a lanes card has a ⋯ with Archive, also on a right-click', async (t) => {
+  const { api, c, card, harness } = await mountLanes(t, 'tbl-archive');
+  assert.equal(card('tk_00000001').querySelector('.tb-card-more'), null, 'a live card has none');
+  const el = card('tk_00000005');
+  assert.ok(el.querySelector('.tb-card-more'), 'a done card has a ⋯');
+  await harness.act(async () => { harness.fireEvent(el, 'contextmenu'); });
+  const item = [...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive');
+  assert.ok(item, 'the right-click opens it');
+  api.calls.length = 0;
+  await harness.act(async () => { harness.fireEvent(item, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
 });
