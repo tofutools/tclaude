@@ -141,3 +141,72 @@ test('a 📎 count with no viewable file, or no api to read it, stays plain', as
   assert.equal(c.querySelector('.a .tb-files').textContent.trim(), '📎 1');
   assert.equal(c.querySelector('.b button'), null);
 });
+
+test('an open viewer keeps its place when the board re-reads the task (a snapshot poll)', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskFiles } = await harness.importDashboardModule('js/groups-taskboard-files.js');
+  const { useState } = harness.hooks;
+  const api = fakeApi();
+  let poll = null;
+  function Board() {
+    // Each poll hands over fresh objects for the same files.
+    const [task, setTask] = useState({ id: 'tk_view_poll', attachments: files.map((f) => ({ ...f })) });
+    poll = () => setTask({ id: 'tk_view_poll', attachments: files.map((f) => ({ ...f })) });
+    return harness.html`<${TaskFiles} api=${api} task=${task} removed=${[]} onToggle=${() => {}}
+      intake=${{ add() {}, remove() {} }} pending=${[]} busy=${false} />`;
+  }
+  const { container: c } = await harness.mount(harness.html`<${Board} />`);
+  await settle(harness);
+  await harness.act(() => tile(c, 4).click());
+  await settle(harness);
+  assert.equal(c.querySelector('.image-preview-overlay h2').textContent, 'chart-2.png');
+  await harness.act(() => poll());
+  await settle(harness);
+  assert.equal(c.querySelector('.image-preview-overlay h2')?.textContent, 'chart-2.png', 'still on the same file');
+  assert.equal(c.querySelector('.attachment-preview-position').textContent, '2 of 2', 'and in its place');
+  await harness.act(() => c.querySelector('[aria-label="Previous attachment"]').click());
+  await settle(harness);
+  assert.equal(c.querySelector('.image-preview-overlay h2').textContent, 'chart.png', '‹ steps from the open file');
+});
+
+test('a paste, a drop or Ctrl+Enter in the viewer stays out of the form around it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskFiles } = await harness.importDashboardModule('js/groups-taskboard-files.js');
+  const reached = [];
+  const { container: c } = await harness.mount(harness.html`<div class="form"
+      onPaste=${() => reached.push('paste')} onDrop=${() => reached.push('drop')}
+      onKeyDown=${(event) => reached.push(event.key)}>
+    <${TaskFiles} api=${fakeApi()} task=${{ id: 'tk_view_fence', attachments: files }} removed=${[]} onToggle=${() => {}}
+      intake=${{ add() {}, remove() {} }} pending=${[]} busy=${false} />
+  </div>`);
+  await settle(harness);
+  await harness.act(() => tile(c, 1).click());
+  await settle(harness);
+  const stage = c.querySelector('.image-preview-stage');
+  harness.fireEvent(stage, 'paste');
+  harness.fireEvent(stage, 'drop');
+  harness.fireEvent(stage, 'keydown', { key: 'Enter', ctrlKey: true });
+  assert.deepEqual(reached, [], 'none reaches the form');
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(c.querySelector('.image-preview-overlay'), null, 'the viewer\'s own keys still work');
+});
+
+test('a task file\'s bytes are kept per board and typed only from a safe list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { taskFileSource, taskViewerFile, safeFileType } = await harness.importDashboardModule('js/attachment-source.js');
+  // A linked node's board claims a local file's hash: each board reads its own.
+  const local = fakeApi();
+  const peer = { reads: [], async fileData() { this.reads.push(1); return { data: b64('peer bytes') }; } };
+  const claimed = { id: 2, name: 'plan.md', sha256: 'b'.repeat(64) };
+  const mine = await taskFileSource(local, 'tk_1').text(claimed);
+  const theirs = await taskFileSource(peer, 'tk_1').text(claimed);
+  assert.match(mine.text, /^# Plan/);
+  assert.equal(theirs.text, 'peer bytes');
+  assert.notEqual(taskFileSource(local, 'tk_1').href(claimed), taskFileSource(peer, 'tk_1').href(claimed));
+  // A reply's url never reaches the viewer (a document's image index).
+  assert.equal(taskViewerFile({ id: 1, name: 'x.png', url: '/api/human-messages/1/attachment' }).url, undefined);
+  // Only raster images, video and PDF keep a type; markup is bytes.
+  assert.equal(safeFileType('a.PNG'), 'image/png');
+  assert.equal(safeFileType('a.pdf'), 'application/pdf');
+  for (const name of ['a.html', 'a.htm', 'a.svg', 'a.xhtml', 'a.js', 'noext']) assert.equal(safeFileType(name), '', name);
+});

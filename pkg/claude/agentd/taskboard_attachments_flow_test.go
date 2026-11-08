@@ -376,7 +376,7 @@ func TestTaskboardAttachmentsViewerVerdicts(t *testing.T) {
 	h.f.HaveGroup("crew")
 	created := h.fileTask(h.upload("", "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "with files"},
 		[2]string{"shot.png", string(tbPNG)}, [2]string{"plan.md", "# Plan\n\n- one\n"},
-		[2]string{"log.txt", "a log"}, [2]string{"fake.png", "not an image"}), http.StatusCreated)
+		[2]string{"log.txt", "a log"}, [2]string{"spec.pdf", "%PDF-1.4\n%%EOF\n"}, [2]string{"fake.png", "not an image"}), http.StatusCreated)
 
 	rec := h.call("", http.MethodGet, "/v1/taskboard/tasks/"+created.ID+"/attachments", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -397,6 +397,7 @@ func TestTaskboardAttachmentsViewerVerdicts(t *testing.T) {
 		"shot.png": {true, false, false},
 		"plan.md":  {false, true, false},
 		"log.txt":  {false, false, false},
+		"spec.pdf": {false, false, false},
 		"fake.png": {false, false, false}, // claimed an image, its bytes are not
 	}, got)
 }

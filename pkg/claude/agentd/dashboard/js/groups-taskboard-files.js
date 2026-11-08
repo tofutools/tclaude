@@ -50,17 +50,33 @@ async function openFallback(api, taskId, attachment) {
 // useTaskViewer is a task's (or a comment's) files in the attachment
 // viewer: open(attachment) opens it on one of them, or falls back for a
 // file without a viewer; `viewer` is the open viewer to render.
+//
+// The open file is held by id and looked up in the current list: the board
+// re-reads its tasks on every snapshot poll, so the objects change under an
+// open viewer while the files stay the same.
+//
+// The viewer renders where the caller puts it, which in the edit form is
+// inside the form's dialog. Its wrapper keeps a paste, a drop or Ctrl/Cmd+
+// Enter in the viewer from reaching the form (which would take the pasted
+// files, or Save); the viewer itself uses none of them, and its own keys
+// (Escape, the arrows, zoom) listen on the document, which a stop at the
+// wrapper would cut off, so other keys pass.
 export function useTaskViewer(api, taskId, attachments, surface = 'taskboard') {
-  const [shown, setShown] = useState(null);
+  const [shownId, setShownId] = useState(null);
   const source = useMemo(() => taskFileSource(api, taskId), [api, taskId]);
   const files = useMemo(() => (attachments || []).map(taskViewerFile), [attachments]);
   const open = (attachment) => {
     const file = files.find((f) => f.id === attachment.id) || taskViewerFile(attachment);
-    if (viewerKind(file) && api?.fileData) { setShown(file); return; }
+    if (viewerKind(file) && api?.fileData) { setShownId(file.id); return; }
     void openFallback(api, taskId, attachment).catch(() => {});
   };
-  const viewer = shown && html`<${AttachmentViewer} source=${source} attachment=${shown} attachments=${files}
-    surface=${`${surface}-${taskId}`} onClose=${() => setShown(null)} />`;
+  const shown = shownId === null ? null : files.find((f) => f.id === shownId) || null;
+  const stop = (event) => event.stopPropagation();
+  const stopSubmit = (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.stopPropagation(); };
+  const viewer = shown && html`<div class="tb-file-viewer" onPaste=${stop} onDrop=${stop} onDragOver=${stop} onDragEnter=${stop} onKeyDown=${stopSubmit}>
+    <${AttachmentViewer} source=${source} attachment=${shown} attachments=${files}
+      surface=${`${surface}-${taskId}`} onClose=${() => setShownId(null)} />
+  </div>`;
   return { open, viewer, files, first: firstViewable(files) };
 }
 

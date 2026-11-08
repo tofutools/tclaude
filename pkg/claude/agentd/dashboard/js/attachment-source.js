@@ -76,18 +76,34 @@ export async function readTaskFile(api, taskId, attachment) {
   return base64Blob(out?.data, safeFileType(attachment.filename || attachment.name) || 'application/octet-stream');
 }
 
-// taskURLs caches a task file's object URL by its content (or, without a
-// hash, by task and id), so a re-render (every snapshot poll) or a second
-// open never reads it again. Blobs are small (a few MiB at most, capped by
-// the board) and few, so they stay for the page's life.
-const taskURLs = new Map();
-// ready is the URLs already made, for href's synchronous read.
-const ready = new Map();
+// boardCaches keeps, per board (its api: one per node), a task file's
+// { blob, url } by its content (or, without a hash, by task and id), so a
+// re-render (every snapshot poll) or a second open never reads it again.
+// Per board, because a hash or an id is the board's claim: a linked node's
+// board naming a local file's hash must not be served the local bytes, nor
+// the other way round. Blobs are small (a few MiB at most, capped by the
+// board) and few, so they stay for the page's life.
+const boardCaches = new WeakMap();
+const fallbackCache = { files: new Map(), ready: new Map() };
+
+function cacheOf(api) {
+  if (!api || (typeof api !== 'object' && typeof api !== 'function')) return fallbackCache;
+  let cache = boardCaches.get(api);
+  if (!cache) {
+    // files: key → Promise<{ blob, url }>; ready: key → url, for href's
+    // synchronous read.
+    cache = { files: new Map(), ready: new Map() };
+    boardCaches.set(api, cache);
+  }
+  return cache;
+}
+
 const taskFileKey = (taskId, attachment) => attachment.sha256 || `${taskId}#${attachment.id}`;
 
 // taskBlob is { blob, url } for a task's file, read once.
 async function taskBlob(api, taskId, attachment) {
   const key = taskFileKey(taskId, attachment);
+  const { files: taskURLs, ready } = cacheOf(api);
   if (!taskURLs.has(key)) {
     const pending = readTaskFile(api, taskId, attachment).then((blob) => ({ blob, url: URL.createObjectURL(blob) }));
     taskURLs.set(key, pending);
@@ -107,7 +123,7 @@ function stateOf(err) {
 export function taskFileSource(api, taskId) {
   return {
     key: taskId,
-    href: (attachment) => ready.get(taskFileKey(taskId, attachment)) || '',
+    href: (attachment) => cacheOf(api).ready.get(taskFileKey(taskId, attachment)) || '',
     async check(attachment) {
       try {
         await taskBlob(api, taskId, attachment);
@@ -129,12 +145,15 @@ export function taskFileSource(api, taskId) {
 
 // taskViewerFile is a task's file in the viewer's shape: a notification
 // file's fields (`filename`, `size_bytes`, the daemon's `previewable` /
-// `markdown` / `video` verdicts), and the board's own beside them.
+// `markdown` / `video` verdicts), and the board's own beside them. A task's
+// file has no download route: a `url` in the reply (a linked node's claim)
+// is dropped, or a document could point an image at any route here.
 export function taskViewerFile(attachment) {
+  const { url: _url, ...rest } = attachment || {};
   return {
-    ...attachment,
-    filename: attachment.name,
-    size_bytes: attachment.size,
+    ...rest,
+    filename: rest.name,
+    size_bytes: rest.size,
   };
 }
 
@@ -142,7 +161,7 @@ export function taskViewerFile(attachment) {
 // through the same cache the viewer reads from.
 export function useTaskThumb(api, taskId, attachment) {
   const key = attachment.image && api?.fileData ? taskFileKey(taskId, attachment) : '';
-  const [url, setUrl] = useState(() => (key ? ready.get(key) || '' : ''));
+  const [url, setUrl] = useState(() => (key ? cacheOf(api).ready.get(key) || '' : ''));
   useEffect(() => {
     if (!key || url) return undefined;
     let live = true;
