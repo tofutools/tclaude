@@ -41,11 +41,11 @@ function fakeApi({ entries = STREAM, failComment = 0 } = {}) {
   return api;
 }
 
-async function mountActivity(t, { api = fakeApi(), me = 'human:operator', the = task() } = {}) {
+async function mountActivity(t, { api = fakeApi(), me = 'human:operator', the = task(), onAnswer = null } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskActivity } = await harness.importDashboardModule('js/groups-taskboard-comments.js');
   const drafts = [];
-  const { container } = await harness.mount(harness.html`<${TaskActivity} api=${api} task=${the} me=${me} onDraft=${(d) => drafts.push(d)} />`);
+  const { container } = await harness.mount(harness.html`<${TaskActivity} api=${api} task=${the} me=${me} onDraft=${(d) => drafts.push(d)} onAnswer=${onAnswer} />`);
   const settle = async () => { for (let i = 0; i < 4; i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 0))); };
   await settle();
   const click = async (el) => { await harness.act(() => harness.fireEvent(el, 'click')); await settle(); };
@@ -217,7 +217,7 @@ test('the viewer\'s author follows this node\'s id arriving after the first pain
 
 // Questions in the activity (tk_8b2c86f7): a question is an entry with its
 // options, its answer shows right under it (not at its own place), and an
-// open one is answered inline.
+// open one's Answer… asks the form to open the Answer dialog on it.
 const QUESTION_OPTS = [{ key: 'amber', label: 'Amber' }, { key: 'teal', label: 'Teal' }];
 const QA_STREAM = [
   { id: 10, at: ago(30), actor: 'agent:agt_dev', kind: 'comment', comment: comment(10, { kind: 'question', body: 'The lane needs a tint.', author: 'agent:agt_dev', author_name: 'dev',
@@ -229,10 +229,10 @@ const QA_STREAM = [
     question: { kind: 'question', n: 2, title: 'Behind a flag?', options: [{ key: 'flag', label: 'Behind a flag' }, { key: 'on', label: 'On by default' }], asked_by: 'agent:agt_dev', state: 'open' } }) },
 ];
 
-test('a question shows its answer right under it, and an open one is answered inline', async (t) => {
+test('a question shows its answer right under it, and an open one\'s Answer… opens the Answer dialog', async (t) => {
   const api = fakeApi({ entries: QA_STREAM });
-  api.answer = async (...args) => { api.calls.push(['answer', ...args]); return {}; };
-  const { harness, container, click, commentEl } = await mountActivity(t, { api });
+  const asked = [];
+  const { container, click, commentEl } = await mountActivity(t, { api, onAnswer: (n) => asked.push(n) });
   const q1 = commentEl(10);
   assert.match(q1.querySelector('.tb-question-title').textContent, /Lane colour\?/);
   assert.match(q1.querySelector('.tb-question-picked').textContent, /Amber/, 'the picked option is marked');
@@ -242,11 +242,13 @@ test('a question shows its answer right under it, and an open one is answered in
   assert.deepEqual(order, ['10', '11', '13']);
   assert.equal(q1.querySelector('.tb-answer-open'), null, 'an answered question offers no Answer');
 
-  const q2 = commentEl(13);
-  await click(q2.querySelector('.tb-answer-open'));
-  await harness.act(async () => { harness.fireEvent(q2.querySelector('[data-answer-option="on"] input'), 'change'); });
-  await click(q2.querySelector('.tb-question-send'));
-  assert.deepEqual(api.calls.filter((c) => c[0] === 'answer'), [['answer', 'tk_00000001', ['on'], '', 2]]);
+  await click(commentEl(13).querySelector('.tb-answer-open'));
+  assert.deepEqual(asked, [2], 'Answer… names the question it answers');
+});
+
+test('without onAnswer an open question offers no Answer', async (t) => {
+  const { commentEl } = await mountActivity(t, { api: fakeApi({ entries: QA_STREAM }) });
+  assert.equal(commentEl(13).querySelector('.tb-answer-open'), null);
 });
 
 test('the asker may withdraw its own open question', async (t) => {

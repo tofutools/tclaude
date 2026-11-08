@@ -535,8 +535,14 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   answered is not reopened: ask again instead. `--idea` puts it in the
   operator's ideas, not waiting on them (no `--blocks` or `--wait` then).
 - The operator answers in the dashboard: *Answer…* on the question's card,
-  on the task's card, in the List's ⋯ menu, or inline in the task's
-  activity. Or with `answer <task> [--question n] --pick
+  on the task's card, in the List's ⋯ menu, or in the task's edit form
+  (its *Questions*, at the top, and each open question in its activity).
+  Every one opens the same Answer dialog, which shows the question with
+  everything needed to decide: its context rendered as Markdown, the files
+  that go with it (a question task's own, asked with `--attach`, or those
+  of the task it is asked on) opening in the attachment viewer, and each
+  option with its description and preview, the recommended one marked.
+  Or with `answer <task> [--question n] --pick
   <key|label|n>[,…] [--text "…"]`; `--question` is needed only when the
   task has several questions open. The agent that asked gets `[taskboard]
   answered Q2: <group> · tk_… "<task>"` (`answered:` for a question task)

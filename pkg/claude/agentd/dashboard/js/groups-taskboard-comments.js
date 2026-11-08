@@ -10,7 +10,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Textarea } from './ui-components.js';
+import { Button } from './ui-components.js';
 import { relTime } from './helpers.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { useAttachmentIntake } from './attachment-intake.js';
@@ -19,7 +19,9 @@ import { taskFileLimits } from './taskboard-actions.js';
 import { FilesField, StoredFiles, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
 import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { SOURCE_MARK, questionSource } from './groups-taskboard-answer.js';
+import { SOURCE_MARK, answerWords, questionSource } from './groups-taskboard-answer.js';
+
+export { answerWords };
 
 const html = htm.bind(h);
 
@@ -159,60 +161,13 @@ const QUESTION_STATE = { answered: 'answered', withdrawn: 'withdrawn by its aske
 // (questionSource).
 const SOURCE_KIND = { '': 'asked the operator', approval: 'asked the operator for access', notify: 'asked the operator in Messages' };
 
-// answerWords is an answer as the activity shows it: the picked labels,
-// then the words.
-export function answerWords(question) {
-  const a = question?.answer;
-  if (!a) return '';
-  const labels = (a.picked || []).map((key) => (question.options || []).find((o) => o.key === key)?.label || key);
-  return [labels.length ? `Picked ${labels.join(', ')}` : '', a.text ? `“${a.text}”` : ''].filter(Boolean).join(' — ');
-}
-
-// QuestionAnswerForm answers a question in the activity: the options (one,
-// or any for a multi-select question) and words, as the Answer dialog does.
-function QuestionAnswerForm({ question, busy, onSubmit, onCancel }) {
-  const options = question.options || [];
-  // An access request takes a pick only.
-  const words = questionSource(question) !== 'approval';
-  const [picked, setPicked] = useState([]);
-  const [text, setText] = useState('');
-  const empty = !picked.length && !text.trim();
-  const toggle = (key) => {
-    if (!question.multi) return setPicked([key]);
-    setPicked(picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key]);
-  };
-  const submit = () => { if (!empty && !busy) void onSubmit({ picked, text: text.trim() }); };
-  return html`<div class="tb-question-form">
-    ${options.length > 0 && html`<div class="tb-answer-list" role=${question.multi ? 'group' : 'radiogroup'} aria-label="Options">
-      ${options.map((o) => html`<label key=${o.key} class=${`tb-answer-opt${picked.includes(o.key) ? ' tb-answer-on' : ''}`} data-answer-option=${o.key}>
-        <input type=${question.multi ? 'checkbox' : 'radio'} name=${`tb-q-${question.n}`} value=${o.key} checked=${picked.includes(o.key)} disabled=${busy}
-          onChange=${() => toggle(o.key)} />
-        <span><span class="tb-answer-label">${o.label}${o.key === question.recommend && html`<span class="ui-tag tb-answer-rec">recommended</span>`}</span>
-          ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}</span>
-      </label>`)}
-    </div>`}
-    ${words && html`<${Textarea} class="tb-answer-text" rows=${2} aria-label="Answer in your own words" value=${text} maxLength=${4000} disabled=${busy}
-      placeholder=${options.length ? 'optional: with your pick, or instead of one' : 'your answer'}
-      onInput=${(event) => setText(event.currentTarget.value)}
-      onKeyDown=${(event) => {
-        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); submit(); }
-        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); }
-      }} />`}
-    <span class="tb-comment-editor-acts">
-      <${Button} size="sm" variant="primary" class="tb-question-send" busy=${busy} disabled=${busy || empty} onClick=${submit}>Send answer<//>
-      <${Button} size="sm" variant="ghost" disabled=${busy} onClick=${onCancel}>Cancel<//>
-    </span>
-  </div>`;
-}
-
 // QuestionEntry is a question in a task's activity (tk_8b2c86f7): who
 // asked, the question and its context, its options, and right under it the
-// answer once given, or Answer… while it is open. Its asker withdraws an
-// open question by deleting it.
-function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged }) {
+// answer once given, or Answer… while it is open, which opens the Answer
+// dialog (onAnswer(n)). Its asker withdraws an open question by deleting it.
+function QuestionEntry({ api, task, entry, me, nameOf, onAnswer, onChanged }) {
   const comment = entry.comment;
   const q = comment.question;
-  const [answering, setAnswering] = useState(false);
   const [busy, setBusy] = useState(false);
   const deleted = !!comment.deleted_at;
   const open = q.state === 'open' && (task.status === 'open' || task.status === 'blocked');
@@ -226,7 +181,6 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
     setBusy(true);
     try {
       await fn();
-      setAnswering(false);
       onChanged();
     } catch (cause) {
       shellToast(`${what} failed: ${cause?.message || cause}`, true);
@@ -238,9 +192,6 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
     const ok = await shellConfirm({ title: `Withdraw Q${q.n}?`, body: 'The question leaves the operator\'s lane; the activity keeps a note of it.', okLabel: 'Withdraw' });
     if (ok) void run('Withdraw', () => api.deleteComment(task.id, comment.id));
   };
-  // By number; a node from before per-task questions sends none, and is
-  // answered through the question task's own route.
-  const which = q.n || 0;
   return html`<li class=${`tb-activity-comment tb-activity-question tb-question-${q.state || 'open'}`} data-comment=${comment.id} data-question-n=${q.n}>
     <div class="tb-comment-head">
       <span class="tb-comment-author">${authorOf(comment, nameOf)}</span>
@@ -265,10 +216,8 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
         <span class="tb-activity-at" title=${q.answer.answered_at}>${relTime(q.answer.answered_at)}</span></div>
       <div class="tb-comment-body">${ended ? q.answer.text : answerWords(q)}</div>
     </div>`}
-    ${open && canAnswerIt && !answering && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
-      onClick=${() => setAnswering(true)}>Answer…<//></div>`}
-    ${open && answering && html`<${QuestionAnswerForm} question=${q} busy=${busy} onCancel=${() => setAnswering(false)}
-      onSubmit=${(answer) => run('Answer', () => api.answer(task.id, answer.picked, answer.text, which))} />`}
+    ${open && onAnswer && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
+      onClick=${() => onAnswer(q.n || 0)}>Answer…<//></div>`}
   </li>`;
 }
 
@@ -283,8 +232,9 @@ function ChangeEntry({ entry, nameOf }) {
 // TaskActivity is the stream and the composer. It reads the stream when it
 // opens, after each comment, and when the task's comment count or update
 // time moves (the board's poll). onDraft(dirty) tells the form a comment is
-// being written, so closing it asks first.
-export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () => {} }) {
+// being written, so closing it asks first. onAnswer(n), when given, puts
+// Answer… on an open question: the form opens the Answer dialog on it.
+export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () => {}, onAnswer = null }) {
   const [stream, setStream] = useState({ state: 'loading', entries: [] });
   const [reads, setReads] = useState(0);
   const [draft, setDraft] = useState('');
@@ -357,7 +307,6 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
   const asked = new Set(stream.entries.filter((entry) => entry.comment?.question).map((entry) => entry.comment.question.n));
   const entries = stream.entries.filter((entry) => entry.kind !== 'comment_edited' && !(entry.comment?.answers && asked.has(entry.comment.answers)));
   const comments = entries.filter((entry) => entry.comment).length;
-  const canAnswerIt = typeof api?.answer === 'function' && api?.can?.assign !== false;
   return html`<div class="tb-activity" data-task-activity=${task.id}>
     ${stream.state === 'loading' && html`<div class="ui-hint">reading the activity…</div>`}
     ${stream.state === 'failed' && html`<div class="ui-hint">the activity could not be read${stream.error ? `: ${stream.error}` : ''}</div>`}
@@ -365,7 +314,7 @@ export function TaskActivity({ api, task, me = '', nameOf = null, onDraft = () =
     ${entries.length > 0 && html`<ol class="tb-activity-list" ref=${list}>
       ${entries.map((entry, i) => (entry.comment?.question
         ? html`<${QuestionEntry} key=${`q-${entry.comment.id}`} api=${api} task=${task} entry=${entry} me=${me} nameOf=${nameOf}
-            canAnswerIt=${canAnswerIt} onChanged=${() => setReads((n) => n + 1)} />`
+            onAnswer=${onAnswer} onChanged=${() => setReads((n) => n + 1)} />`
         : entry.comment
         ? html`<${CommentEntry} key=${`c-${entry.comment.id}`} api=${api} taskId=${task.id} entry=${entry} me=${me} nameOf=${nameOf}
             onChanged=${() => setReads((n) => n + 1)} onEditing=${onEditing} />`
