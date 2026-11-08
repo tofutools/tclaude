@@ -106,6 +106,28 @@ test('a jump to a task scrolls to the card, opening the cell that holds it past 
   assert.ok(harness.document.querySelector('#drop-landing-layer .drop-landing-blip'), 'and it blips');
 });
 
+test('a jump to a task on a folded board unfolds the section on the click, not at the next poll', async (t) => {
+  const tasks = [row('tk_0000000f', 'folded target', { assignee: builder })];
+  const { harness, c, dashPrefs } = await mount(t, 'xl-fold', { tasks });
+  const scrolled = layout(t, harness);
+  const toggle = () => c.querySelector('[data-fused-section="taskboard"] .gf-section-toggle');
+  await harness.act(() => harness.fireEvent(toggle(), 'click'));
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.taskboard.xl-fold'), '0');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'the board starts folded');
+  assert.equal(c.querySelector('[data-task-id="tk_0000000f"]'), null);
+
+  // The agent's row link, clicked: one render flush and no timers later the
+  // section is open and the card drawn.
+  const link = c.querySelector('[data-agent-tasks="agt_builder"] .tb-agent-task-title');
+  assert.ok(link, 'the agent row links to its task');
+  const start = Date.now();
+  await harness.act(() => harness.fireEvent(link, 'click'));
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'the section opened with the click');
+  assert.ok(c.querySelector('[data-task-id="tk_0000000f"]'), 'the card is drawn');
+  await until(harness, () => scrolled.some(([id]) => id === 'tk_0000000f'), 'the scroll to the card');
+  assert.ok(Date.now() - start < 1000, 'the scroll follows the render, not a poll or the deadline');
+});
+
 test('a click on a lane head jumps to the agent\'s row; hovering outlines it, a folded group\'s header instead', async (t) => {
   const { harness, c, dashPrefs } = await mount(t, 'xl-agent');
   const scrolled = layout(t, harness);
