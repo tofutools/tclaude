@@ -44,7 +44,7 @@ import (
 // reaches the mock in ~2s alone, but the smoke job runs eight CLIs at once,
 // and on a starved runner one took ~60s to send its first request with no
 // modal in sight (tk_ca70bf44).
-const dirTrustDeadline = 4 * time.Minute
+const dirTrustDeadline = 2 * time.Minute
 
 // seedTrustLikeProduction calls the production seeder with the launch's own
 // environment — the same call session.New makes for a --trust-dir spawn, whose
@@ -97,11 +97,13 @@ func dirTrustRun(
 
 // requireDirTrustCleared fails a seeded run that did not reach the provider,
 // saying which way it went: the modal (the seed was not honoured), or neither
-// evidence before the liveness guard (a hang).
+// evidence before the liveness guard (a hang), or an early exit.
 func requireDirTrustCleared(t *testing.T, res copilotfixture.PTYResult, what string) {
 	t.Helper()
 	require.False(t, res.Contains(copilotfixture.TrustPromptMarker),
 		"%s: the trust modal is on screen, so the seeded folder was not trusted; transcript:\n%s", what, res.TranscriptText())
+	require.False(t, res.Exited && !res.Settled,
+		"%s: the CLI exited (code %d) before contacting the provider; transcript:\n%s", what, res.ExitCode, res.TranscriptText())
 	require.True(t, res.Settled,
 		"%s: no provider request and no modal within %s (a hang, not a verdict); elapsed %s, max output gap %s; transcript:\n%s",
 		what, dirTrustDeadline, res.Elapsed, res.MaxOutputGap, res.TranscriptText())

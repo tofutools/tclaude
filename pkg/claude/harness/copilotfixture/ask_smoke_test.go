@@ -37,7 +37,11 @@ import (
 // that never exits, and must sit well above any run a loaded runner produces:
 // the smoke job runs eight CLIs on four vCPUs on purpose, and a healthy ~2s
 // capture took over 60s there (tk_ca70bf44). A clean run pays none of it.
-const askDeadline = 4 * time.Minute
+// The cost: a 429 retry storm that ends in success (RunTimeout once sat
+// below one) no longer fails here; one that ends in failure still fails the
+// exit-code checks. The smoke job's -timeout (ci.yml) is sized to the sum
+// of these guards, so a CLI that hangs everywhere still fails per scenario.
+const askDeadline = 2 * time.Minute
 
 // askArgv is the production ask argv, with the binary left as-is.
 func askArgv(t *testing.T, spec harness.AskSpec) []string {

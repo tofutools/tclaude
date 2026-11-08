@@ -45,7 +45,7 @@ const softExitWindow = 12 * time.Second
 
 // softExitDeadline is only the liveness guard: startup on a loaded runner may
 // take as long as it takes, since the window above starts after it.
-const softExitDeadline = 4 * time.Minute
+const softExitDeadline = 2 * time.Minute
 
 // softExitBusyTurn holds the TUI mid-turn for the whole scenario: ~40 deltas
 // at 700ms is far longer than the deadline, so the turn is still in flight
