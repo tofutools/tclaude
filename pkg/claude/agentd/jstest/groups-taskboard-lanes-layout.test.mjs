@@ -42,7 +42,7 @@ async function mountLanes(t, name, { by = null, groupMembers = members() } = {})
 
 test('resizeColumns trades width between neighbours and keeps the minimums', async (t) => {
   const harness = await createPreactHarness(t);
-  const { resizeColumns, gridColumns, MIN_PX } = await harness.importDashboardModule('js/groups-taskboard-lanes-layout.js');
+  const { resizeColumns, gridColumns, gridMinWidth, DEFAULT_LANE_PX, MIN_PX } = await harness.importDashboardModule('js/groups-taskboard-lanes-layout.js');
   const measured = [170, 200, 200, 200, 200, 200];
   assert.deepEqual(resizeColumns(measured, 0, 40), { lane: 210, stages: [200, 200, 200, 200, 200] }, 'the lane column grows into the stages');
   assert.equal(resizeColumns(measured, 0, -500).lane, MIN_PX.lane, 'not below its minimum');
@@ -52,6 +52,8 @@ test('resizeColumns trades width between neighbours and keeps the minimums', asy
   assert.equal(gridColumns({ lane: 200, stages: [1, 2, 1, 1, 1] }),
     `200px minmax(${MIN_PX.stage}px, 1fr) minmax(${MIN_PX.stage}px, 2fr) minmax(${MIN_PX.stage}px, 1fr) minmax(${MIN_PX.stage}px, 1fr) minmax(${MIN_PX.stage}px, 1fr)`);
   assert.equal(gridColumns(null), '');
+  assert.equal(gridMinWidth(null), DEFAULT_LANE_PX + 5 * MIN_PX.stage, 'the default grid\'s minimum width');
+  assert.equal(gridMinWidth({ lane: 200, stages: [1, 2, 1, 1, 1] }), 200 + 5 * MIN_PX.stage, 'a stored lane width counts');
 });
 
 test('a stored order sorts lanes and headings; a lane it does not list appends at the end', async (t) => {

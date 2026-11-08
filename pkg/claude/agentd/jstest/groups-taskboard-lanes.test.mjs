@@ -41,15 +41,16 @@ const members = () => [
   { conv_id: 'conv-no-agent', title: 'plain' },
 ];
 
-async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {} } = {}) {
+async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}, extraTasks = [], prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   if (by) dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${name}`, by);
+  for (const [key, value] of Object.entries(prefs)) dashPrefs.setItem(key, value);
   const source = {
-    context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'),
+    context: harness.signals.signal({ groups: [{ ...board(name), tasks: [...board(name).tasks, ...extraTasks] }] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => {},
   };
   const group = { name, members: members(), ...groupExtra };
@@ -136,7 +137,7 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.equal(c.querySelector('table.tb-table'), null, 'no list in the lanes view');
   const lanes = [...c.querySelectorAll('[data-lane-row]')].map((el) => el.dataset.laneRow);
   assert.deepEqual(lanes, ['operator', 'unassigned', 'agt_lead', 'agt_builder', 'agt_tester'], 'the offline researcher folds');
-  assert.deepEqual([...c.querySelectorAll('[data-lane-group]')].map((el) => [...el.children].map((part) => part.textContent.trim())),
+  assert.deepEqual([...c.querySelectorAll('[data-lane-group]')].map((el) => [...el.querySelectorAll('.ui-eyebrow, .tb-lane-sub, .tb-lane-fold')].map((part) => part.textContent.trim())),
     [['lead', '1 agent'], ['dev', '2 agents'], ['researcher', '1 agent · offline', '▸ show offline lanes']]);
   assert.deepEqual(ids('unassigned', 'ideas'), ['tk_00000004']);
   assert.deepEqual(ids('unassigned', 'next'), ['tk_00000001']);
@@ -365,6 +366,43 @@ test('a long agent name ends in an ellipsis with the full name as its title; the
   assert.equal(name.getAttribute('title'), long);
   assert.equal(name.querySelector('.tb-lane-label').textContent, long, 'the label is its own span, so it can end in …');
   assert.equal(name.querySelector('.tb-avatar').textContent, 'B');
+});
+
+test('a cell holding many tasks draws the first three and "+ n more", which opens and closes it in place', async (t) => {
+  const ideas = ['tk_000000a1', 'tk_000000a2', 'tk_000000a3', 'tk_000000a4', 'tk_000000a5'].map((id) => row(id, `idea ${id}`, { stage: 'idea' }));
+  const { c, cell, ids, harness } = await mountLanes(t, 'tbl-cap', { extraTasks: ideas });
+  const more = () => cell('unassigned', 'ideas').querySelector('.tb-cell-more');
+  assert.equal(ids('unassigned', 'ideas').length, 3, 'six ideas, three drawn');
+  assert.equal(more().textContent, '+ 3 more');
+  assert.equal(more().getAttribute('aria-expanded'), 'false');
+  assert.match(c.querySelector('.tb-col-ideas').textContent, /6$/, 'the column head still counts every idea');
+  assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more'), null, 'a cell within the cap has no toggle');
+  await harness.act(async () => { harness.fireEvent(more(), 'click'); });
+  assert.equal(ids('unassigned', 'ideas').length, 6, 'opened, every card is drawn');
+  assert.equal(more().textContent, 'Show fewer');
+  assert.equal(more().getAttribute('aria-expanded'), 'true');
+  await harness.act(async () => { harness.fireEvent(more(), 'click'); });
+  assert.equal(ids('unassigned', 'ideas').length, 3, 'and closes again');
+  const grid = c.querySelector('.tb-lanes');
+  assert.match(grid.getAttribute('style'), /--tb-lane-min: 620px/, 'rows are at least the grid\'s minimum width, so the sideways scroll keeps the lane column pinned');
+});
+
+test('a task dropped into a full cell opens it, so the card does not land behind "+ n more"', async (t) => {
+  const queued = ['tk_000000b1', 'tk_000000b2', 'tk_000000b3'].map((id) => row(id, `queued ${id}`));
+  const { cell, drag, api } = await mountLanes(t, 'tbl-land', { extraTasks: queued });
+  const more = () => cell('unassigned', 'next').querySelector('.tb-cell-more');
+  assert.equal(more().textContent, '+ 1 more', 'four queued, three drawn');
+  const out = await drag('tk_00000004', 'unassigned', 'next');
+  assert.equal(out.taken, true);
+  assert.ok(api.calls.length > 0, 'the drop ran');
+  assert.equal(more().getAttribute('aria-expanded'), 'true', 'the full cell opened for the card dropped into it');
+});
+
+test('a stored lane width sets the grid\'s minimum width with its columns', async (t) => {
+  const { c } = await mountLanes(t, 'tbl-minw', { prefs: { 'tclaude.dash.groups.taskboard.lanes-widths.tbl-minw': JSON.stringify({ lane: 240, stages: [1, 1, 1, 1, 1] }) } });
+  const style = c.querySelector('.tb-lanes').getAttribute('style');
+  assert.match(style, /--tb-lane-cols: 240px /);
+  assert.match(style, /--tb-lane-min: 690px/, 'the stored lane column plus five stage minimums');
 });
 
 test("a linked node's group shows that node's board in lanes", async (t) => {
