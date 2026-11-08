@@ -2410,7 +2410,7 @@ CREATE TABLE group_tasks (
 			updated_at   INTEGER NOT NULL,
 			closed_at    INTEGER,
 			archived_at  INTEGER
-		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER) STRICT;
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
 
@@ -2419,6 +2419,12 @@ CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS
 CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
 
 CREATE INDEX idx_group_tasks_blocked_on ON group_tasks(blocked_on) WHERE blocked_on <> '';
+
+CREATE TRIGGER group_tasks_column_clear
+			AFTER UPDATE OF stage, status, group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND (NEW.stage <> 'next' OR NEW.status NOT IN ('open','blocked')
+				OR NOT EXISTS (SELECT 1 FROM group_task_columns c WHERE c.group_id = NEW.group_id AND c.slug = NEW.column_slug))
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
 
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2469,3 +2475,17 @@ CREATE INDEX idx_group_task_attachments_sha ON group_task_attachments(sha256);
 
 CREATE INDEX idx_group_task_attachments_comment ON group_task_attachments(comment_id)
 			WHERE comment_id IS NOT NULL;
+
+CREATE TABLE group_task_columns (
+			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			slug       TEXT NOT NULL,
+			label      TEXT NOT NULL,
+			position   INTEGER NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (group_id, slug)
+		) STRICT;
+
+CREATE TRIGGER group_task_columns_removed
+			AFTER DELETE ON group_task_columns
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
