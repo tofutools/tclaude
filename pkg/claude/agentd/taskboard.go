@@ -314,6 +314,8 @@ type taskboardRef struct {
 	// PR is a GitHub pull request's or GitLab merge request's status, as
 	// the agent rows show it, from the same caches (taskboard_refs.go).
 	PR *taskboardRefPR `json:"pr,omitempty"`
+	// Tracker is a tracker issue's title and status at its last lookup.
+	Tracker *taskboardRefTracker `json:"tracker,omitempty"`
 }
 
 type taskboardTaskView struct {
@@ -552,7 +554,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		v.LastEditedByName, v.CreatedByName = actorName(a.LastEditedBy), actorName(t.CreatedBy)
 		out = append(out, v)
 	}
-	stampTaskRefPRs(out)
+	stampTaskRefStatus(out)
 	return out, nil
 }
 

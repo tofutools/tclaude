@@ -17,12 +17,12 @@ func TestTaskboardRefsText(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"tk_00000001","ref":{"kind":"github","url":"https://github.com/o/r/pull/7","label":"#7"},
 		"refs":[{"kind":"github","url":"https://github.com/o/r/pull/7","label":"#7",
 			"pr":{"number":7,"state":"open","checks":{"total":25,"passed":23,"failed":2,"pending":0,"state":"failing"},"reviews":{"decision":"approved","approved":1,"changes_requested":0}}},
-		{"kind":"awb","url":"https://awb.example/#/issues/tcl-a1b2c3","label":"tcl-a1b2c3"}]}`), &task))
+		{"kind":"awb","url":"https://awb.example/#/issues/tcl-a1b2c3","label":"tcl-a1b2c3","tracker":{"title":"Show the context","status":"in_progress"}}]}`), &task))
 	assert.Equal(t, "#7 +1", task.refText())
 	refs := task.allRefs()
 	require.Len(t, refs, 2)
 	assert.Equal(t, "github #7 https://github.com/o/r/pull/7 (open · CI 23/25 failing · approved)", refs[0].line())
-	assert.Equal(t, "awb tcl-a1b2c3 https://awb.example/#/issues/tcl-a1b2c3", refs[1].line())
+	assert.Equal(t, "awb tcl-a1b2c3 https://awb.example/#/issues/tcl-a1b2c3 (in_progress: Show the context)", refs[1].line())
 
 	var old taskboardTask
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"tk_00000002","ref":{"kind":"linear","label":"LIN-1"}}`), &old))

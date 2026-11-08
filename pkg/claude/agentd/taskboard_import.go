@@ -288,8 +288,19 @@ func taskboardRefFallbackTitle(kind, refURL, label string) string {
 }
 
 // lookupTaskboardRef finds a ref's title through its tracker's proxy. On any
-// refusal or failure it returns the fallback title and a note.
+// refusal or failure it returns the fallback title and a note. What it
+// found (the title and the issue's status) is kept for the board to show
+// on the ref (taskboard_refs.go): a lookup is when the tracker is read.
 func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, resolvedURL, note string) {
+	title, resolvedURL, status, note := lookupTaskboardRefStatus(r, kind, refURL, label)
+	if note == "" {
+		saveTaskRefTracker(kind, firstNonEmpty(refURL, resolvedURL), label, title, status)
+	}
+	return title, resolvedURL, note
+}
+
+// lookupTaskboardRefStatus is lookupTaskboardRef, with the issue's status.
+func lookupTaskboardRefStatus(r *http.Request, kind, refURL, label string) (title, resolvedURL, status, note string) {
 	fallback := taskboardRefFallbackTitle(kind, refURL, label)
 	cfg, _ := config.Load()
 	var (
@@ -300,37 +311,37 @@ func lookupTaskboardRef(r *http.Request, kind, refURL, label string) (title, res
 	switch kind {
 	case "awb":
 		if !cfg.AWBProxyEnabled() {
-			return fallback, "", "no awb proxy is configured"
+			return fallback, "", "", "no awb proxy is configured"
 		}
 		path, body = "/v1/awb/issue/show", map[string]any{"id": label}
 		resolvedURL = awbIssueURL(label)
 	case "linear":
 		if !cfg.LinearProxyConfigured() && strings.TrimSpace(os.Getenv("LINEAR_API_KEY")) == "" {
-			return fallback, "", "no Linear proxy is configured"
+			return fallback, "", "", "no Linear proxy is configured"
 		}
 		path, body = "/v1/linear/issue/view", map[string]any{"identifier": label}
 	case "github":
 		owner, name, n, pull, ok := githubRefParts(refURL)
 		if !ok {
-			return fallback, "", "not a GitHub issue or pull request URL"
+			return fallback, "", "", "not a GitHub issue or pull request URL"
 		}
 		if !cfg.GitProxyEnabled() {
-			return fallback, "", "no GitHub proxy is configured"
+			return fallback, "", "", "no GitHub proxy is configured"
 		}
 		repo = owner + "/" + name
 		path, body = "/v1/github/issue/view", map[string]any{"number": n}
 		if pull {
 			path = "/v1/github/pr/view"
 		}
-		t, u, note := readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
+		t, u, st, note := readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
 		// owner/repo#n names an issue or a pull request alike; try the pull
 		// request when no issue has the number.
 		if note != "" && !pull && strings.Contains(note, "no issue") {
 			return readTaskboardRefTitle(r, kind, "/v1/github/pr/view", body, repo, fallback, resolvedURL)
 		}
-		return t, u, note
+		return t, u, st, note
 	default:
-		return fallback, "", "a plain URL is not looked up"
+		return fallback, "", "", "a plain URL is not looked up"
 	}
 	return readTaskboardRefTitle(r, kind, path, body, repo, fallback, resolvedURL)
 }
@@ -356,11 +367,12 @@ func resolveTaskboardRefLink(r *http.Request, kind, refURL, label string) string
 	return refURL
 }
 
-// readTaskboardRefTitle runs one proxy read and takes the title from it.
-func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, fallback, resolvedURL string) (title, outURL, note string) {
+// readTaskboardRefTitle runs one proxy read and takes the title from it,
+// and the issue's status: awb's status, Linear's state name, GitHub's state.
+func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, fallback, resolvedURL string) (title, outURL, issueStatus, note string) {
 	status, payload, errText := taskboardProxyRead(r, path, body)
 	if status != http.StatusOK {
-		return fallback, resolvedURL, "lookup refused: " + guideText(errText, 160)
+		return fallback, resolvedURL, "", "lookup refused: " + guideText(errText, 160)
 	}
 	var out struct {
 		JSON     json.RawMessage `json:"json"`
@@ -376,26 +388,47 @@ func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, f
 		if repo != "" && out.Repo != "" && !strings.EqualFold(out.Repo, repo) {
 			msg = fmt.Sprintf("the GitHub proxy reaches %s from your repository, not %s", out.Repo, repo)
 		}
-		return fallback, resolvedURL, msg
+		return fallback, resolvedURL, "", msg
 	}
 	if repo != "" && !strings.EqualFold(out.Repo, repo) {
-		return fallback, resolvedURL, fmt.Sprintf("the GitHub proxy reaches %s from your repository, not %s", out.Repo, repo)
+		return fallback, resolvedURL, "", fmt.Sprintf("the GitHub proxy reaches %s from your repository, not %s", out.Repo, repo)
 	}
 	var issue struct {
-		Title string `json:"title"`
-		URL   string `json:"url"`
+		Title  string          `json:"title"`
+		URL    string          `json:"url"`
+		Status string          `json:"status"`
+		State  json.RawMessage `json:"state"`
 	}
 	if json.Unmarshal(out.JSON, &issue) != nil {
-		return fallback, resolvedURL, "the proxy returned no issue"
+		return fallback, resolvedURL, "", "the proxy returned no issue"
 	}
 	t, err := validateTaskTitle(sanitizeTaskTitle(issue.Title))
 	if err != nil {
-		return fallback, resolvedURL, "the tracker's title is not usable: " + err.Error()
+		return fallback, resolvedURL, "", "the tracker's title is not usable: " + err.Error()
 	}
 	if resolvedURL == "" && kind == "linear" && validateTaskRefURL(issue.URL) == nil {
 		resolvedURL = issue.URL
 	}
-	return t, resolvedURL, ""
+	return t, resolvedURL, trackerStatus(issue.Status, issue.State), ""
+}
+
+// trackerStatus is an issue's status as its tracker gives it: a status
+// string (awb), a state string (GitHub), or a state object's name (Linear).
+func trackerStatus(status string, state json.RawMessage) string {
+	if s := strings.TrimSpace(status); s != "" {
+		return sanitizeTaskTitle(s)
+	}
+	var name string
+	if json.Unmarshal(state, &name) == nil {
+		return sanitizeTaskTitle(name)
+	}
+	var obj struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(state, &obj) == nil {
+		return sanitizeTaskTitle(obj.Name)
+	}
+	return ""
 }
 
 // sanitizeTaskTitle makes a tracker's title fit a task's: forbidden runes
@@ -507,12 +540,17 @@ func handleTaskboardRefLookup(w http.ResponseWriter, r *http.Request, g *db.Agen
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), taskboardRefLookupBudget)
 	defer cancel()
-	title, resolvedURL, note := lookupTaskboardRef(r.WithContext(ctx), kind, refURL, label)
+	title, resolvedURL, status, note := lookupTaskboardRefStatus(r.WithContext(ctx), kind, refURL, label)
+	if note == "" {
+		// The board shows it on the ref from now on: the dashboard looks a
+		// task's refs up when the operator opens the task.
+		saveTaskRefTracker(kind, firstNonEmpty(refURL, resolvedURL), label, title, status)
+	}
 	if refURL == "" {
 		refURL = resolvedURL
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"kind": kind, "url": refURL, "label": label, "title": title,
+		"kind": kind, "url": refURL, "label": label, "title": title, "status": status,
 		"resolved": note == "", "note": note,
 	})
 }

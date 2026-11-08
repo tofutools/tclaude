@@ -230,6 +230,10 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     from the same caches the agent rows read, so a board read sends no
     request to the forge. A pull request no agent shows has whatever the
     hover cards last read for it, and at least its number.
+  - An awb, Linear or GitHub issue ref carries its issue's title and status
+    (`tracker`) as its last lookup found them. A lookup happens on
+    `--resolve-ref`, an import, and the dashboard's ref lookup. A board read
+    asks no tracker. A ref never looked up has none.
   - A linked node from before several refs keeps only the first: `add` and
     `edit` with `--add-ref` or `--rm-ref` on it fail, saying so. A move to
     such a node leaves the original where it is, with all its refs, and says so.
@@ -1434,7 +1438,7 @@ those drags aren't accepted in the lanes.
 | `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
 | `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
 | `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
-| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","resolved","note"}`), titled through the tracker proxy as an import is; adds nothing, needs board read |
+| (dashboard: *From a tracker…*; no CLI verb) | `POST /v1/groups/{name}/taskboard/ref-lookup {"ref"}`: what the ref would be (`{"kind","url","label","title","status","resolved","note"}`; it also keeps the title and status for the board to show on that ref), titled through the tracker proxy as an import is; adds nothing, needs board read |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

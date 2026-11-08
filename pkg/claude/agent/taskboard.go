@@ -184,6 +184,11 @@ type taskboardRef struct {
 			ChangesRequested int    `json:"changes_requested"`
 		} `json:"reviews,omitempty"`
 	} `json:"pr,omitempty"`
+	// Tracker is a tracker issue's title and status at its last lookup.
+	Tracker *struct {
+		Title  string `json:"title,omitempty"`
+		Status string `json:"status,omitempty"`
+	} `json:"tracker,omitempty"`
 }
 
 // allRefs are the task's refs: Refs, or Ref alone from an older node.
@@ -236,6 +241,9 @@ func (r taskboardRef) line() string {
 		if len(status) > 0 {
 			parts = append(parts, "("+strings.Join(status, " · ")+")")
 		}
+	}
+	if tr := r.Tracker; tr != nil && (tr.Status != "" || tr.Title != "") {
+		parts = append(parts, "("+strings.Join(nonEmpty(tr.Status, tr.Title), ": ")+")")
 	}
 	return strings.Join(parts, " ")
 }

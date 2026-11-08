@@ -229,6 +229,7 @@ type tbRefLookup struct {
 	URL      string `json:"url"`
 	Label    string `json:"label"`
 	Title    string `json:"title"`
+	Status   string `json:"status"`
 	Resolved bool   `json:"resolved"`
 	Note     string `json:"note"`
 }
@@ -258,6 +259,7 @@ func TestTaskboardRefLookupTitlesATicketWithoutAddingIt(t *testing.T) {
 	assert.Equal(t, "tcl-abc123", got.Label)
 	assert.Equal(t, "https://awb.example/#/issues/tcl-abc123", got.URL)
 	assert.Equal(t, "Title of tcl-abc123", got.Title)
+	assert.Equal(t, "open", got.Status)
 	assert.True(t, got.Resolved)
 
 	got = h.lookupRef(member, map[string]any{"ref": "tcl-abc123"}, http.StatusOK)
@@ -288,4 +290,47 @@ func TestTaskboardRefLookupTitlesATicketWithoutAddingIt(t *testing.T) {
 	h.agent(t, outsider)
 	rec = h.call(outsider, http.MethodPost, "/v1/groups/crew/taskboard/ref-lookup", map[string]any{"ref": "LIN-1"})
 	assert.Equal(t, http.StatusForbidden, rec.Code, "the lookup needs the board's read access")
+}
+
+// A tracker ref shows its issue's title and status from its last lookup
+// (tk_01ad0884): the dashboard's ref lookup, an import, or an add that
+// resolves a link-less id. A board read itself asks no tracker.
+func TestTaskboardTrackerRefShowsItsLastLookup(t *testing.T) {
+	const member = "tb-tracker-6666"
+	h := newTaskboardImportFlow(t, member)
+	require.NoError(t, db.GrantAgentPermission(member, agentd.PermAWBRead, "test"))
+	type ref struct {
+		Label   string `json:"label"`
+		Tracker *struct {
+			Title  string `json:"title"`
+			Status string `json:"status"`
+		} `json:"tracker"`
+	}
+	type task struct {
+		Refs []ref `json:"refs"`
+	}
+	add := func(body map[string]any) task {
+		rec := h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks", body)
+		require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+		var out task
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+	// Never looked up: no tracker status, only the ref.
+	unseen := add(map[string]any{"title": "unseen", "ref": "tcl-zzz999"})
+	require.Len(t, unseen.Refs, 1)
+	assert.Nil(t, unseen.Refs[0].Tracker)
+
+	h.lookupRef(member, map[string]any{"ref": "tcl-abc123"}, http.StatusOK)
+	seen := add(map[string]any{"title": "seen", "ref": "https://github.com/o/r/pull/9", "add_refs": []string{"tcl-abc123"}})
+	require.Len(t, seen.Refs, 2)
+	assert.Nil(t, seen.Refs[0].Tracker, "a pull request has its PR status instead")
+	require.NotNil(t, seen.Refs[1].Tracker)
+	assert.Equal(t, "Title of tcl-abc123", seen.Refs[1].Tracker.Title)
+	assert.Equal(t, "open", seen.Refs[1].Tracker.Status)
+
+	// The board's read shows it too.
+	rec := h.call(member, http.MethodGet, "/v1/groups/crew/taskboard", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"tracker":{"title":"Title of tcl-abc123","status":"open"`)
 }

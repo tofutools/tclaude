@@ -1,10 +1,15 @@
 package agentd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -194,12 +199,15 @@ func taskRefPRNumber(rawURL string) (int, bool) {
 	return 0, false
 }
 
-// stampTaskRefPRs gives every pull request ref in views its status, read
-// from the caches the agent rows read (prStateKey identity, one batch read
-// each), so a task's PR shows what an agent's shows. It reads only: the
-// forge reads the agent rows, presented PRs and the hover cards already
-// make fill those caches, and a board read adds none.
-func stampTaskRefPRs(views []taskboardTaskView) {
+// stampTaskRefStatus gives every ref in views what tclaude last read about
+// it. A pull request's status comes from the caches the agent rows read
+// (prStateKey identity, one batch read each), so a task's PR shows what an
+// agent's shows; a tracker issue's title and status come from its last
+// lookup. It reads only: the forge reads the agent rows, presented PRs and
+// the hover cards already make, and the lookups an add, an import or the
+// dashboard's ref lookup make, fill those caches. A board read adds none.
+func stampTaskRefStatus(views []taskboardTaskView) {
+	stampTaskRefTrackers(views)
 	var urls []string
 	for i := range views {
 		for _, ref := range views[i].Refs {
@@ -223,6 +231,80 @@ func stampTaskRefPRs(views []taskboardTaskView) {
 			key := prStateKey(ref.URL)
 			ref.PR = &taskboardRefPR{Number: n, State: states[key].state, Title: titles[key],
 				Checks: checks[key], Reviews: reviews[key]}
+		}
+	}
+}
+
+// taskboardRefTracker is what a tracker said about a ref's issue at its
+// last lookup: its title and status, and when.
+type taskboardRefTracker struct {
+	Title     string `json:"title,omitempty"`
+	Status    string `json:"status,omitempty"`
+	FetchedAt string `json:"fetched_at,omitempty"`
+}
+
+// taskRefTrackerCacheKey is the git cache key of a ref's issue, "" for a
+// ref that names no tracker issue (a plain link).
+func taskRefTrackerCacheKey(kind, refURL, label string) string {
+	k := taskboardRefKey(kind, refURL, label)
+	if k == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte("task-ref\x00" + k))
+	return "tref_" + hex.EncodeToString(h[:8])
+}
+
+// saveTaskRefTracker keeps what a lookup found about a ref's issue.
+func saveTaskRefTracker(kind, refURL, label, title, status string) {
+	key := taskRefTrackerCacheKey(kind, refURL, label)
+	if key == "" || (title == "" && status == "") {
+		return
+	}
+	now := time.Now()
+	data, err := json.Marshal(taskboardRefTracker{Title: title, Status: status, FetchedAt: rfc3339(now)})
+	if err != nil {
+		return
+	}
+	if err := db.SaveGitCache(key, data, now); err != nil {
+		slog.Warn("taskboard: failed to keep a ref's lookup", "error", err, "kind", kind, "module", "agentd")
+	}
+}
+
+// stampTaskRefTrackers gives every tracker ref in views (not a pull request)
+// its issue's title and status from its last lookup, in one batch read.
+func stampTaskRefTrackers(views []taskboardTaskView) {
+	keyOf := map[*taskboardRef]string{}
+	var keys []string
+	for i := range views {
+		for _, ref := range views[i].Refs {
+			if _, pr := taskRefPRNumber(ref.URL); pr {
+				continue
+			}
+			label := ref.Label
+			if ref.ID != "" {
+				label = ref.ID
+			}
+			if key := taskRefTrackerCacheKey(ref.Kind, ref.URL, label); key != "" {
+				keyOf[ref] = key
+				keys = append(keys, key)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	rows, err := db.LoadGitCacheBatch(keys)
+	if err != nil {
+		return
+	}
+	for ref, key := range keyOf {
+		row := rows[key]
+		if row == nil {
+			continue
+		}
+		var info taskboardRefTracker
+		if json.Unmarshal(row.Data, &info) == nil {
+			ref.Tracker = &info
 		}
 	}
 }
