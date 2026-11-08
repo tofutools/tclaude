@@ -769,7 +769,8 @@ const ARCHIVE_KINDS = [
 function archiveMenu(group, actions, closed, counts) {
   if (!group || !actions || actions.busy || typeof actions.api?.archiveDone !== 'function') return null;
   const has = {
-    done: closed.some((task) => task.status === 'done'),
+    // The closed list is capped: a count says so too when it holds none.
+    done: closed.some((task) => task.status === 'done') || (counts.done_this_week || 0) > 0,
     dropped: typeof actions.api?.archiveClosed === 'function' && (closed.some((task) => task.status === 'dropped') || (counts.dropped || 0) > 0),
   };
   const kinds = ARCHIVE_KINDS.filter((kind) => kind.statuses.every((status) => has[status]));
