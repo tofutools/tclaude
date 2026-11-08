@@ -693,10 +693,14 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setReasoning(mode ? { id, kind: mode } : null));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
-  const ideasBand = !hidden.includes('idea') && (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
+  // The band heads every idea-stage row the filter leaves (a blocked or
+  // assigned idea is not in the "ideas" state), so no idea passes for a queue
+  // row a drop next to would demote into.
+  const ideasBand = (ideas.length > 0 || (actions && queue.length > 0 && !hidden.includes('idea'))) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
       onDragOver=${actions ? drag.overIdeas : undefined} onDrop=${actions ? drag.dropOnIdeas : undefined}><td colspan=${TABLE_COLS}>
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
-  const closed = (entry.closed || []).filter(shows);
+  // The Lanes view has no Filter: its history is all or nothing.
+  const closed = view === 'list' ? (entry.closed || []).filter(shows) : (history ? entry.closed || [] : []);
   const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
@@ -730,7 +734,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
       onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
-      <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(null)}>show all<//></div>`}
+      <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(hidden.filter((state) => state === 'done' || state === 'dropped'))}>show all<//></div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
@@ -822,7 +826,9 @@ function ListFilter({ group, prefs }) {
   const [open, setOpen] = useState(false);
   const hidden = prefs.listHidden;
   const changes = LIST_STATES.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
-  const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
+  // Element ids from the group's name, every other character spelled out,
+  // so name@node and a local name-node never share one.
+  const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9-]/g, (c) => `_${c.codePointAt(0).toString(16)}_`)}`;
   return html`<${ViewMenu} open=${open} onOpenChange=${setOpen} label="Filter ▾" badge=${changes} buttonClass="tb-list-filter"
       ids=${{ button: `${id}-btn`, menu: `${id}-menu`, badge: `${id}-badge` }} title="Choose which task states the list shows">
     <${ViewMenuHeading}>State<//>
