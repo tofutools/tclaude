@@ -4,6 +4,7 @@ import htm from 'htm';
 import { accessHint } from './fleet-harness-model.js';
 import { Button } from './ui-components.js';
 import { localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -44,9 +45,8 @@ function ScriptRow({ head, node, script, job, onCheck, onUpdate }) {
       ${script.checked_at && html` <span class="muted">· ${when(script.checked_at)}</span>`}
       ${job && html`<div class=${job.state === 'failed' ? 'fa-danger' : 'muted'}>update ${job.state}${job.error ? ` — ${job.error}` : ''}${job.finished_at ? ` · ${when(job.finished_at)}` : ''}</div>`}
       ${more && html`<details><summary class="muted">details</summary>
-        ${items.length > 0 && html`<table class="fa-table ui-compact"><thead><tr><th>Item</th><th>Current</th><th>Latest</th><th></th></tr></thead>
-          <tbody>${items.map((it, i) => html`<tr key=${i}><td>${it.name}</td><td>${it.current || ''}</td><td>${it.latest || ''}</td>
-            <td>${it.update_available === true ? html`<span class="fa-warn">pending</span>` : it.update_available === false ? html`<span class="muted">up to date</span>` : ''}${it.detail ? html` <span class="muted">${it.detail}</span>` : ''}</td></tr>`)}</tbody></table>`}
+        ${items.length > 0 && html`<${FaTable} head=${['Item', 'Current', 'Latest', '']}>${items.map((it, i) => html`<tr key=${i}><td>${it.name}</td><td>${it.current || ''}</td><td>${it.latest || ''}</td>
+            <td>${it.update_available === true ? html`<span class="fa-warn">pending</span>` : it.update_available === false ? html`<span class="muted">up to date</span>` : ''}${it.detail ? html` <span class="muted">${it.detail}</span>` : ''}</td></tr>`)}<//>`}
         ${script.details && html`<pre class="fa-script-out">${script.details}</pre>`}
         ${job?.output && html`<div class="muted">Last update output</div><pre class="fa-script-out">${job.output}</pre>`}
       </details>`}
@@ -94,9 +94,7 @@ export function UpdateScriptsSection({ nodes, actions, confirm, toast, timers = 
   return html`<div id="fleet-update-scripts">
     <h4>Custom updates</h4>
     <div class="muted">Each node's own status and update scripts, from <code>updates.scripts</code> in its config. A peer shows here when it shares node.update.</div>
-    <table class="fa-table ui-compact">
-      <thead><tr><th>Node</th><th>Target</th><th>Status</th><th></th></tr></thead>
-      <tbody>${nodes.map((node) => {
+    <${FaTable} head=${['Node', 'Target', 'Status', '']}>${nodes.map((node) => {
         const d = data[node.id] || {};
         const scripts = d.data?.scripts || [];
         const latest = new Map();
@@ -108,7 +106,6 @@ export function UpdateScriptsSection({ nodes, actions, confirm, toast, timers = 
         if (d.data.error) return html`<tr key=${node.id} data-node=${node.id}>${head}<td colspan="3" class="fa-danger">${d.data.error}</td></tr>`;
         if (!scripts.length) return html`<tr key=${node.id} data-node=${node.id}>${head}<td colspan="3" class="muted">no update scripts configured</td></tr>`;
         return scripts.map((s, i) => html`<${ScriptRow} key=${`${node.id}/${s.name}`} head=${i === 0 ? head : null} node=${node} script=${s} job=${latest.get(s.name)} onCheck=${onCheck} onUpdate=${onUpdate} />`);
-      })}</tbody>
-    </table>
+      })}<//>
   </div>`;
 }

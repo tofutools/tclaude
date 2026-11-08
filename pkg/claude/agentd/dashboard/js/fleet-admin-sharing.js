@@ -11,6 +11,7 @@ import { RequestAccessDialog, USAGE_PERM, createPeerAccessActions, parseUSD } fr
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { Button } from './ui-components.js';
 import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 const DAY_MS = 86400000;
@@ -109,25 +110,19 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
     <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//></h4>
     ${received?.error ? html`<div class="fa-danger">${received.error}</div>` : !received ? html`<div class="empty">Asking peers…</div>`
       : receivedRows.length === 0 ? html`<div class="empty">${received.offline ? 'Federation is off.' : 'No peer shares usage with you. Ask one from its peer view (ask for usage…).'}</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-shares-received">
-      <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
-      <tbody>${receivedRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
-        <${Button} size="sm" data-fa="ask-more" onClick=${() => setAsking(s)}>Ask for more…<//></${ShareRow}>`)}</tbody>
-    </table>`}
+    <${FaTable} id="fleet-shares-received" head=${['Peer', 'Gateway', 'Spent', 'Ends', '']}>${receivedRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
+        <${Button} size="sm" data-fa="ask-more" onClick=${() => setAsking(s)}>Ask for more…<//></${ShareRow}>`)}<//>`}
     ${receivedErrors.length > 0 && html`<div class="muted">Could not ask: ${receivedErrors.map(([p, e]) => `${p} (${e})`).join(', ')}</div>`}
     <h4 class="fa-h">You share <span class="muted">— peers whose agents bill your model gateways</span></h4>
     ${given?.error ? html`<div class="fa-danger">${given.error}</div>` : !given ? html`<div class="empty">Loading…</div>`
       : givenRows.length === 0 ? html`<div class="empty">You share no model gateway. Grant <code>models.proxy</code> on Peer grants, with a dollar cap and a time, or approve a peer's usage request.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-shares-given">
-      <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
-      <tbody>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
+    <${FaTable} id="fleet-shares-given" head=${['Peer', 'Gateway', 'Spent', 'Ends', '']}>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
         ${s.since && s.pool && html`<span class="muted" title="Change it on Peer grants, as that node group's grant">from node group ${s.pool}</span>`}
         ${s.since && !s.pool && html`${s.grant_expires_at && html`<${Button} size="sm" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…<//>`}
         ${s.max_usd > 0 && html`<input class="fa-share-add" aria-label=${`Dollars to add for ${s.peer_name || s.peer}`} placeholder="+$" size="5" inputmode="decimal"
           value=${raise[s.peer + s.gateway] || ''} onInput=${(e) => setRaise({ ...raise, [s.peer + s.gateway]: e.currentTarget.value })} />
           <${Button} size="sm" data-fa="raise-share" onClick=${() => raiseBy(s)}>Raise…<//>`}
-        <${Button} size="sm" variant="ghost danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…<//>`}</${ShareRow}>`)}</tbody>
-    </table>`}
+        <${Button} size="sm" variant="ghost danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…<//>`}</${ShareRow}>`)}<//>`}
     <div class="muted fa-cli-note">You are notified when a share reaches 80% and 100% of its cap and when it ends, on both sides. Dollars are what the gateway charges from the provider's token counts; use an API key for a shared gateway, not a subscription login. CLI: <code>tclaude federation shares [--given]</code>.</div>
     ${asking && html`<${RequestAccessDialog} node=${asking.peer_name || asking.peer} perm=${USAGE_PERM} gateway=${String(asking.scope || '').startsWith('http_proxy=') ? asking.gateway : ''} onClose=${() => setAsking(null)} actions=${peerAccess(asking.peer)} />`}
   </div>`;

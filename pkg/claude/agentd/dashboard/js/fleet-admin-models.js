@@ -5,6 +5,7 @@ import { GatewayDialog } from './fleet-admin-model-gateway.js';
 import { Button } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -229,9 +230,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
       <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
     </div>
     ${gws.length === 0 ? html`<div class="empty">No model gateways yet. Add one to let workers on your other nodes use this node's provider API key.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-model-gateways">
-      <thead><tr><th>Gateway</th><th>State</th><th>Models</th><th>Daily: all · per peer · per session</th><th>Per request</th><th>Blocked peers</th><th></th></tr></thead>
-      <tbody>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
+    <${FaTable} id="fleet-model-gateways" head=${['Gateway', 'State', 'Models', 'Daily: all · per peer · per session', 'Per request', 'Blocked peers', '']}>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
         <td><code>${name}</code>${p.dialect ? html` <span class="muted">${p.dialect}</span>` : ''}</td>
         <td class=${p.enabled && !control.disabled && !gatewayGaps(p).length ? '' : 'fa-warn'} title=${gatewayGaps(p).length ? `Missing: ${gatewayGaps(p).join(', ')}` : ''}>${!p.enabled ? 'disabled' : control.disabled ? 'enabled (all off)' : gatewayGaps(p).length ? 'refuses requests: policy incomplete' : 'enabled'}</td>
         <td>${(p.models || []).length ? p.models.join(', ') : html`<span class="fa-warn">none</span>`}</td>
@@ -245,33 +244,26 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td class="fa-acts"><${Button} size="sm" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…<//>
           <${Button} size="sm" variant=${p.enabled ? 'ghost danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}<//>
           <${Button} size="sm" variant="ghost danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…<//></td>
-      </tr>`)}</tbody>
-    </table>`}`}
+      </tr>`)}<//>`}`}
     <${SubscriptionCard} actions=${actions} confirm=${confirm} toast=${toast} />
     <h4 class="fa-h">Leases <span class="muted">— requester-paid workers using a gateway</span></h4>
     ${leases?.error ? html`<div class="fa-danger">${leases.error}</div>` : !leases ? html`<div class="empty">Loading…</div>` : leaseList.length === 0 ? html`<div class="empty">No leases.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-model-leases">
-      <thead><tr><th>Lease</th><th>Peer</th><th>Gateway</th><th>Worker</th><th>Last used</th><th></th></tr></thead>
-      <tbody>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
+    <${FaTable} id="fleet-model-leases" head=${['Lease', 'Peer', 'Gateway', 'Worker', 'Last used', '']}>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
         <td><code title=${l.id}>${l.id.slice(0, 12)}</code>${l.kind ? html` <span class="muted">${l.kind}</span>` : ''}</td>
         <td>${label(l.peer)}</td>
         <td><code>${l.proxy}</code></td>
         <td>${l.worker ? html`<code title=${l.worker}>${l.worker.slice(0, 14)}</code>` : '—'}</td>
         <td class="muted">${localStamp(l.touched_at, { empty: '' })}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
         <td class="fa-acts">${l.revoked ? 'revoked' : html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…<//>`}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
     ${usage?.error ? html`<div class="fa-danger">${usage.error}</div>` : !usage ? html`<div class="empty">Loading…</div>` : used.length === 0 ? html`<div class="empty">No model requests on ${day}.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-model-usage">
-      <thead><tr><th>Gateway</th><th>Peer</th><th>Model</th><th>Requests</th><th>Charged tokens</th><th>In · out</th><th>Cost</th></tr></thead>
-      <tbody>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
+    <${FaTable} id="fleet-model-usage" head=${['Gateway', 'Peer', 'Model', 'Requests', 'Charged tokens', 'In · out', 'Cost']}>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
         <td><code>${u.proxy}</code></td><td>${label(u.peer)}</td><td>${u.model || '—'}</td>
         <td>${u.requests}${u.running ? html` <span class="muted">(${u.running} in progress)</span>` : ''}${u.failed ? html` <span class="fa-danger">(${u.failed} failed)</span>` : ''}</td>
         <td>${num(u.charged)}</td><td class="muted">${num(u.input)} · ${num(u.output)}</td>
         <td data-cost=${u.microUSD}>${usdText(u.microUSD)}${u.unpriced ? html` <span class="muted" title="No price is known for this model; add one under model_policy.prices">(${u.unpriced} unpriced)</span>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${dialog && html`<${GatewayDialog} setup=${dialog.setup} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${(msg) => { setDialog(null); toast(msg, false); reload(); }} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation models status|usage --day …|leases [--revoke ID]|disable|enable [--name GW] [--peer PEER]</code>. Grant peers access with <code>models.proxy</code> (or <code>models.proxy.leased</code>) on Peer grants. In-progress requests count their reservation until they finish. Cost is the provider's reported usage at the model's API price; a request the provider refused costs nothing.</div>
   </div>`;

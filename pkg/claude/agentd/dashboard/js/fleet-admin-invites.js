@@ -8,6 +8,7 @@ import { fmtAge } from './fleet-model.js';
 import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
 import { GroupCombobox } from './group-picker.js';
 import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -313,14 +314,11 @@ export function InvitesPage({ view, groups = [], actions, confirm, toast, copy, 
         <//></label>
         <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
       </div>`}
-    ${tokens.length > 0 && html`<table class="fa-table ui-compact" id="fleet-tokens">
-      <thead><tr><th>Token</th><th>Uses</th><th>Expires</th><th>State</th><th></th></tr></thead>
-      <tbody>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
+    ${tokens.length > 0 && html`<${FaTable} id="fleet-tokens" head=${['Token', 'Uses', 'Expires', 'State', '']}>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
         <td><code>${t.id}</code></td><td>${t.used} / ${t.max_uses}</td><td>${until(t.expires_at, now)}</td>
         <td class=${st === 'active' ? '' : 'muted'}>${st}</td>
         <td class="fa-acts">${st === 'active' ? html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-token" onClick=${() => revoke(t)}>Revoke…<//>` : ''}</td>
-      </tr>`; })}</tbody>
-    </table>`}
+      </tr>`; })}<//>`}
     <h4>Join a master</h4>
     <div class="fa-grant-form">
       <${Button} size="sm" id="fleet-join-open" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…<//>
@@ -330,12 +328,9 @@ export function InvitesPage({ view, groups = [], actions, confirm, toast, copy, 
       <${Button} size="sm" variant="danger" id="fleet-become-open" disabled=${!masters.length} onClick=${() => setBecoming(true)}>Become a worker node…<//>
       <span class="muted">Enroll and give the master the permissions you pick on this machine: for a worker node of your own fleet.</span>
     </div>
-    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table ui-compact" id="fleet-enrollments">
-      <thead><tr><th>Direction</th><th>Peer</th><th>Token</th><th>State</th></tr></thead>
-      <tbody>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
+    ${enrollments.length > 0 && html`<h4>Enrollments</h4><${FaTable} id="fleet-enrollments" head=${['Direction', 'Peer', 'Token', 'State']}>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
         <td>${e.direction}</td><td>${peerName(e.peer)}</td><td><code>${e.token_id}</code></td><td class=${e.retired ? 'muted' : ''}>${e.retired ? 'retired' : 'bound'}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${created && html`<${TokenDialog} created=${created} self=${view.self} copy=${copy} toast=${toast} onClose=${() => setCreated(null)} />`}
     ${joining && html`<${JoinDialog} masters=${masters} actions=${actions} onClose=${() => setJoining(false)}
       onDone=${(msg) => { setJoining(false); toast(msg, false); setTick((x) => x + 1); }} />`}

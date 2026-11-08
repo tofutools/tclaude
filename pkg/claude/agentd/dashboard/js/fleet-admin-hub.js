@@ -7,6 +7,7 @@ import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
 import { HubBoards } from './fleet-admin-boards.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -310,9 +311,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
     const p = parseSetting(s, edits[s.key]);
     return p.error ? '' : html` <span class="muted" data-setting-typed>= ${settingPrecise(s, p.value)}</span>`;
   };
-  return html`<table class="fa-table ui-compact" id="fleet-hub-settings">
-      <thead><tr><th>Setting</th><th>Effective</th><th>Source</th><th>Serve flag / default</th><th>New value</th><th></th></tr></thead>
-      <tbody>${settings.map((s) => html`<tr key=${s.key} data-setting=${s.key}>
+  return html`<${FaTable} id="fleet-hub-settings" head=${['Setting', 'Effective', 'Source', 'Serve flag / default', 'New value', '']}>${settings.map((s) => html`<tr key=${s.key} data-setting=${s.key}>
         <td><code>${s.key}</code>${s.description ? html`<div class="muted">${s.description}</div>` : ''}</td>
         <td title=${settingExact(s)}>${settingValue(s)}${s.restart_required ? html` <span class="muted" title="Takes effect after a hub restart">⟳</span>` : ''}</td>
         <td>${s.source}${s.flag_overridden ? html` <span class="fa-warn" data-flag-overridden title="A serve flag sets this too; the remote setting wins">flag overridden</span>` : ''}</td>
@@ -324,8 +323,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
           : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''}
               title=${s.min != null || s.max != null ? `${settingValue(s, s.min)} to ${settingValue(s, s.max)}${s.unit ? `, entered in ${s.unit}` : ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />${typed(s)}`}</td>
         <td class="fa-acts">${(s.source === 'remote' || s.source === 'db') && html`<${Button} size="sm" variant="link" class="fa-link" data-revert=${s.key} onClick=${() => edit(s.key, null)}>${edits[s.key] === null ? 'reverts on save' : 'revert'}<//>`}</td>
-      </tr>`)}</tbody>
-    </table>
+      </tr>`)}<//>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="fa-ns-actions"><${Button} size="sm" id="fleet-hub-settings-save" onClick=${save}>Save settings…<//>
       <span class="muted">CLI: <code>tclaude federation hub settings [--set key=value] [--unset key]</code></span></div>`;
@@ -384,9 +382,7 @@ function AuditSection({ actions }) {
   };
   return html`<div id="fleet-hub-audit">
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    ${unavailable ? html`<div class="muted">The hub audit is not available on this build of tclaude or the hub.</div>` : entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table ui-compact">
-      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Outcome</th><th>Detail</th></tr></thead>
-      <tbody>${entries.map((e, i) => html`<tr key=${e.id || i} data-kind=${e.kind || ''}>
+    ${unavailable ? html`<div class="muted">The hub audit is not available on this build of tclaude or the hub.</div>` : entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<${FaTable} head=${['When', 'Actor', 'Action', 'Outcome', 'Detail']}>${entries.map((e, i) => html`<tr key=${e.id || i} data-kind=${e.kind || ''}>
         <td class="fa-nowrap">${when(e.at)}</td>
         <td><code>${e.actor || '—'}</code></td>
         <td>${e.kind || '—'}</td>
@@ -395,7 +391,7 @@ function AuditSection({ actions }) {
           ${e.kind === 'exec' && (e.detail?.script != null
             ? html`<details class="fa-hub-script"><summary>script (${e.detail.script.length} chars)</summary><pre class="fa-bi-text">${e.detail.script}</pre></details>`
             : html` <span class="muted" data-redacted>the script needs hub.exec${e.detail?.script_sha256 ? html` · sha256 <code>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
-      </tr>`)}</tbody></table>`}
+      </tr>`)}<//>`}
     <div class="fa-ns-actions">
       <${Button} size="sm" disabled=${busy} onClick=${() => load()}>Refresh<//>
       ${cursor && html`<${Button} size="sm" id="fleet-hub-audit-more" disabled=${busy} onClick=${() => load(cursor)}>Load more<//>`}
@@ -592,9 +588,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
       ${h4('Admissions', html` <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…<//> <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…<//>`)}
       <div class="fa-grant-form"><label>Remove instances not seen for <input aria-label="Stale admission days" inputmode="numeric" style="width:4em" value=${staleDays} onInput=${(e) => setStaleDays(e.currentTarget.value)} /> days</label>
         <${Button} size="sm" id="fleet-hub-stale-preview" disabled=${staleBusy || !status.connected} onClick=${cleanupStale}>${staleBusy ? 'Preparing…' : 'Preview cleanup…'}<//></div>
-      ${listOr(data.admissions, (rows) => html`<table class="fa-table ui-compact" id="fleet-hub-admissions">
-        <thead><tr><th>Instance</th><th>Fingerprint</th><th>Spaces</th><th>Seen</th><th></th></tr></thead>
-        <tbody>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
+      ${listOr(data.admissions, (rows) => html`<${FaTable} id="fleet-hub-admissions" head=${['Instance', 'Fingerprint', 'Spaces', 'Seen', '']}>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
           <td>${a.name || ''} <code>${a.instance}</code></td>
           <td><code>${a.fingerprint || '—'}</code></td>
           <td>${(a.spaces || []).join(', ') || '—'}</td>
@@ -606,7 +600,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
           <td class="fa-nowrap">${a.connected ? 'connected' : when(a.last_seen)}</td>
           <td class="fa-acts">${ok(data.admins) && caps.length > 0 && !admins.some((x) => x.instance === a.instance) && html`<${Button} size="sm" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…<//>`}
             ${a.instance !== self.id && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…<//>`}</td>
-        </tr>`))}</tbody></table>`)}
+        </tr>`))}<//>`)}
       ${h4('Invites')}
       <div class="fa-grant-form">
         <input id="fleet-hub-invite-space" placeholder="space (optional)" value=${invite.space} onInput=${(e) => setInvite({ ...invite, space: e.currentTarget.value })} />
@@ -621,23 +615,19 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         <div>${newToken.join_code ? 'Or the bare invite, for a node that reaches the hub at another address' : 'Invite token, shown once'}: <code data-capture-mask>${newToken.token}</code>
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => copy(newToken.token).then(() => toast('Invite token copied', false)).catch(() => toast('Copy it from the page', true))}>copy<//>
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setNewToken(null)}>hide<//></div></div>`}
-      ${listOr(data.invites, (rows) => (!rows.length ? html`<div class="muted">No open invites.</div>` : html`<table class="fa-table ui-compact" id="fleet-hub-invites">
-        <thead><tr><th>Token</th><th>Space</th><th>Created</th><th>Expires</th><th>Used</th><th></th></tr></thead>
-        <tbody>${rows.map((i) => html`<tr key=${i.token_hash} data-token=${i.token_hash}>
+      ${listOr(data.invites, (rows) => (!rows.length ? html`<div class="muted">No open invites.</div>` : html`<${FaTable} id="fleet-hub-invites" head=${['Token', 'Space', 'Created', 'Expires', 'Used', '']}>${rows.map((i) => html`<tr key=${i.token_hash} data-token=${i.token_hash}>
           <td><code>${String(i.token_hash || '').slice(0, 12)}…</code></td><td>${i.space || '—'}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td>
           <td>${i.used ? (i.used_by || 'yes') : 'no'}</td>
           <td class="fa-acts">${!i.used && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke-invite" onClick=${() => revokeInvite(i)}>Revoke…<//>`}</td>
-        </tr>`)}</tbody></table>`))}
+        </tr>`)}<//>`))}
       ${h4('Admins')}
-      ${listOr(data.admins, (rows) => html`<table class="fa-table ui-compact" id="fleet-hub-admins">
-        <thead><tr><th>Instance</th><th>Fingerprint</th><th>Capabilities</th><th>Added</th><th></th></tr></thead>
-        <tbody>${rows.map((a) => html`<tr key=${a.instance} data-instance=${a.instance}>
+      ${listOr(data.admins, (rows) => html`<${FaTable} id="fleet-hub-admins" head=${['Instance', 'Fingerprint', 'Capabilities', 'Added', '']}>${rows.map((a) => html`<tr key=${a.instance} data-instance=${a.instance}>
           <td>${a.name || ''} <code>${a.instance}</code>${a.instance === self.id ? html` <span class="muted">(this node)</span>` : ''}</td>
           <td><code>${a.fingerprint || '—'}</code></td>
           <td class="fa-wrap">${(a.capabilities || []).join(', ') || '—'}</td>
           <td class="fa-nowrap">${when(a.added_at)}${a.added_by ? html` <span class="muted">by ${a.added_by}</span>` : ''}</td>
           <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-hub="remove-admin" disabled=${status.admin_count <= 1} title=${status.admin_count <= 1 ? 'The last admin cannot be removed' : ''} onClick=${() => removeAdmin(a)}>${a.instance === self.id ? 'Give up admin…' : 'Remove…'}<//></td>
-        </tr>`)}</tbody></table>`)}
+        </tr>`)}<//>`)}
       ${h4('Settings')}
       ${listOr(data.settings, (rows) => html`<${SettingsSection} settings=${rows} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} />`)}
       ${caps.includes('hub.boards.manage') && html`${h4('Boards')}<${HubBoards} actions=${actions} confirm=${confirm} toast=${toast} />`}

@@ -5,6 +5,7 @@ import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -345,9 +346,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
     </div>
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${jobs == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !list.length ? html`<div class="empty">No remote jobs.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-jobs">
-      <thead><tr><th></th><th>Peer</th><th>Repo</th><th>Group</th><th>Command</th><th>Created</th><th>State</th><th></th></tr></thead>
-      <tbody>${list.map((j) => html`<tr key=${j.id} data-job=${j.id}>
+    <${FaTable} id="fleet-jobs" head=${['', 'Peer', 'Repo', 'Group', 'Command', 'Created', 'State', '']}>${list.map((j) => html`<tr key=${j.id} data-job=${j.id}>
         <td title=${j.incoming ? 'received: runs on this node' : 'sent: runs on the peer'}>${j.incoming ? '⇠' : '⇢'}</td>
         <td>${label(j.peer)}${j.caller ? html` <span class="muted">(${j.caller})</span>` : ''}</td>
         <td><code>${j.repo}@${j.ref}</code></td>
@@ -363,20 +362,16 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
           ${j.terminal && j.hasLogs && html`<${Button} size="sm" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output<//>`}
           ${canFollow(j) && html`<${Button} size="sm" data-fa="follow" onClick=${() => setDialog({ kind: 'logs', job: j })}>Live output<//>`}
         </td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <h4>Repositories peers may run jobs in here</h4>
     <div class="fa-grant-form"><${Button} size="sm" id="fleet-repo-add" onClick=${() => setDialog({ kind: 'repo' })}>Allow a repository…<//>
       <span class="muted">CLI: <code>tclaude federation repos ls</code></span></div>
     ${repos?.error ? html`<div class="fa-danger">${repos.error}</div>` : repos == null ? '' : !repoRows.length ? html`<div class="empty">No repositories allowed: peers cannot run jobs here.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-repos">
-      <thead><tr><th>Alias</th><th>Clone</th><th>URL</th><th>Groups</th><th>Rev</th><th></th></tr></thead>
-      <tbody>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
+    <${FaTable} id="fleet-repos" head=${['Alias', 'Clone', 'URL', 'Groups', 'Rev', '']}>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
         <td>${r.name}</td><td class="fa-wrap"><code>${r.definition?.clone || ''}</code></td><td class="fa-wrap"><code>${r.definition?.url || ''}</code></td>
         <td>${groupText(r)}</td><td>${r.revision}</td>
         <td class="fa-acts">${r.enabled ? html`<${Button} size="sm" data-fa="edit" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Edit…<//><${Button} size="sm" data-fa="disable" onClick=${() => disableRepo(r)}>Disable…<//>` : html`<span class="muted">disabled </span><${Button} size="sm" data-fa="enable" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Re-enable…<//>`}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${dialog?.kind === 'run' && html`<${RunJobDialog} peers=${view.trusted} pools=${pools} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'logs' && html`<${OutputDialog} job=${(jobs || []).find((x) => x.id === dialog.job.id) || dialog.job} label=${label} actions=${actions} timers=${timers} active=${active} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'repo' && html`<${RepoDialog} repo=${dialog.repo} groups=${groups} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}

@@ -8,6 +8,7 @@ import { sentLanding } from './fleet-admin-landing.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp, timeOf } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -151,9 +152,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
     </div>
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!moves && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No agent moves or teleports.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-moves">
-      <thead><tr><th></th><th>Kind</th><th>Agent</th><th>Peer</th><th>Group</th><th>State</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${list.map((m) => html`<tr key=${m.id} data-move=${m.id}>
+    <${FaTable} id="fleet-moves" head=${['', 'Kind', 'Agent', 'Peer', 'Group', 'State', 'Expires', '']}>${list.map((m) => html`<tr key=${m.id} data-move=${m.id}>
         <td title=${m.direction === 'out' ? 'leaving this node' : 'arriving here'}>${m.direction === 'out' ? '⇢' : '⇠'}</td>
         <td>${m.teleport ? 'teleport' : 'move'}</td>
         <td><code title=${m.source_agent}>${shortAgent(m.source_agent)}</code>${m.target_agent ? html` → <code title=${m.target_agent}>${shortAgent(m.target_agent)}</code>` : ''}</td>
@@ -162,8 +161,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
         <td class=${FAILED.has(m.state) ? 'fa-danger' : ''} title=${m.last_error || ''}>${m.state}${m.last_error ? html` <span class="muted">— ${m.last_error}</span>` : ''}</td>
         <td class="muted">${!timeOf(m.expires_at) ? '' : Date.parse(m.expires_at) < now ? 'expired' : localStamp(m.expires_at)}</td>
         <td class="fa-acts">${canAbandon(m) ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…<//>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">Moves also start from a peer's view (Move here / Teleport here). CLI: <code>tclaude federation move-agent</code>, <code>tclaude federation moves</code>, <code>tclaude federation teleport</code>.</div>
     ${moving && html`<${MoveAgentDialog} peers=${view.trusted} agents=${agents} actions=${actions} confirm=${confirm} onClose=${() => setMoving(false)}
       onDone=${(msg) => { setMoving(false); toast(msg, false); setTick((n) => n + 1); }} />`}

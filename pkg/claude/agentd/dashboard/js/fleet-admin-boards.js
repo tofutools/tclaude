@@ -6,6 +6,7 @@ import { ContentBrowser } from './fleet-admin-board-browser.js';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -149,14 +150,12 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
     <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} onChanged=${onChanged} />
     <div class="fa-row"><b>Members</b></div>
-    ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table ui-compact" id="fleet-board-members">
-      <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
-      <tbody>${members.map((m) => html`<tr key=${m.instance} data-member=${m.instance}>
+    ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<${FaTable} id="fleet-board-members" head=${['Member', 'Role', '']}>${members.map((m) => html`<tr key=${m.instance} data-member=${m.instance}>
         <td>${memberName(m.instance, view) ? html`${memberName(m.instance, view)} ` : ''}<code>${m.instance}</code></td>
         <td>${owner ? html`<${Select} size="sm" data-board="role" value=${m.role} onChange=${(e) => setRole(m, e.currentTarget.value)}>
             ${Object.entries(ROLES).map(([v, l]) => html`<option key=${v} value=${v} selected=${m.role === v}>${l}</option>`)}<//>` : roleText(m.role)}</td>
         <td class="fa-acts">${owner && m.instance !== view.self?.id && html`<${Button} size="sm" variant="ghost danger" data-board="remove" onClick=${() => remove(m)}>Remove…<//>`}</td>
-      </tr>`)}</tbody></table>`}
+      </tr>`)}<//>`}
     ${owner && html`<div class="fa-row" id="fleet-board-invite">
       Invite someone who <${Select} size="sm" id="fleet-board-invite-role" value=${invite.role} onChange=${(e) => setInvite({ ...invite, role: e.currentTarget.value })}>
         <option value="reader" selected=${invite.role === 'reader'}>can read</option><option value="publisher" selected=${invite.role === 'publisher'}>can post</option><//>
@@ -171,13 +170,11 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
       <${Button} size="sm" variant="link" class="fa-link" id="fleet-board-invite-cancel" onClick=${() => cancelInvite(token.token_id)}>cancel invite…<//>
       <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setToken(null)}>hide<//></div>`}
     ${owner && invites?.error && html`<div class="fa-danger" id="fleet-board-invites-error">Could not list invites: ${invites.error}</div>`}
-    ${owner && open.length > 0 && html`<table class="fa-table ui-compact" id="fleet-board-invites">
-      <thead><tr><th>Open invites</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
+    ${owner && open.length > 0 && html`<${FaTable} id="fleet-board-invites" head=${['Open invites', 'Expires', '']}>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
         <td>${roleText(i.role)}</td>
         <td>${localStamp(i.expires_at)}</td>
         <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…<//></td>
-      </tr>`)}</tbody></table>`}
+      </tr>`)}<//>`}
     ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Recently used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards members --board ${board.id}</code>${owner ? html`, <code>invite --board ${board.id} --role reader --ttl 1h</code>` : ''}</div>
   </div>`;
@@ -286,9 +283,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     </div>
     ${joinFail && html`<div class="fa-danger" id="fleet-board-join-error" role="alert">${joinFail}</div>`}
     <${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${setOpen} />
-    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<table class="fa-table ui-compact" id="fleet-boards-list">
-      <thead><tr><th>Board</th><th>You</th><th>Limits</th><th></th></tr></thead>
-      <tbody>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
+    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<${FaTable} id="fleet-boards-list" head=${['Board', 'You', 'Limits', '']}>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
         <td><${Button} size="sm" variant="link" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}<//>${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
         <td>${roleText(b.role)}</td>
         <td class="muted">${limits(b)}</td>
@@ -296,7 +291,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
       </tr>`,
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
-        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}</tbody></table>`}
+        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>`}
   </div>`;
 }
@@ -341,9 +336,7 @@ export function HubBoards({ actions, confirm, toast }) {
   };
   const list = Array.isArray(boards) ? boards : [];
   return html`<div class="fa-hub-boards" id="fleet-hub-boards">
-    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<table class="fa-table ui-compact">
-      <thead><tr><th>Board</th><th>ID</th><th>Limits</th><th></th></tr></thead>
-      <tbody>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
+    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<${FaTable} head=${['Board', 'ID', 'Limits', '']}>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
         <td>${b.name || '—'}${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
         <td>${edit?.board.id === b.id ? html`<span class="fa-row">
             <input class="fa-num" aria-label="members" value=${edit.members} onInput=${(e) => setEdit({ ...edit, members: e.currentTarget.value })} /> members
@@ -354,7 +347,7 @@ export function HubBoards({ actions, confirm, toast }) {
           : html`<${Button} size="sm" data-hub-board-act="limits" onClick=${() => setEdit({ board: b, members: String(b.max_members || ''), mib: String(Math.round((b.quota_bytes || 0) / (1 << 20)) || ''), versions: String(b.max_versions || '') })}>Limits…<//>
             <${Button} size="sm" data-hub-board-act="freeze" onClick=${() => freeze(b)}>${b.frozen ? 'Unfreeze…' : 'Freeze…'}<//>
             <${Button} size="sm" variant="ghost danger" data-hub-board-act="delete" onClick=${() => remove(b)}>Delete…<//>`}</td>
-      </tr>`)}</tbody></table>`}
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub boards list|set|delete --board ID</code></div>
   </div>`;
 }

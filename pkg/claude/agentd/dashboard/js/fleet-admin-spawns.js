@@ -6,6 +6,7 @@ import { Dialog } from './ui-dialog.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -262,9 +263,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
     </div>
     ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!rows && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No ${all ? '' : 'open '}spawn requests from peers.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-spawn-requests">
-      <thead><tr><th>#</th><th>From</th><th>Group</th><th>Worker</th><th>Brief</th><th>State</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${list.map((r) => html`<tr key=${r.id} data-spawn=${r.id}>
+    <${FaTable} id="fleet-spawn-requests" head=${['#', 'From', 'Group', 'Worker', 'Brief', 'State', 'Expires', '']}>${list.map((r) => html`<tr key=${r.id} data-spawn=${r.id}>
         <td>${r.id}</td>
         <td title=${r.instance}>${r.from}</td>
         <td>${r.group}</td>
@@ -276,18 +275,14 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>
         <td class="fa-acts">${r.status === 'pending' ? html`<${Button} size="sm" data-fa="approve" onClick=${() => setDialog({ kind: 'approve', req: r })}>Approve…<//> <${Button} size="sm" variant="ghost danger" data-fa="deny" onClick=${() => setDialog({ kind: 'deny', req: r })}>Deny…<//>`
           : r.status === 'launching' ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(r)}>Abandon launch…<//>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <h4 class="fa-h">Outbox <span class="muted">— delivery of spawn requests and operator mail this node sent; decisions arrive in Messages</span></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="empty">Loading…</div>` : outbox.length === 0 ? html`<div class="empty">Nothing sent yet.</div>` : html`
-    <table class="fa-table ui-compact" id="fleet-outbox">
-      <thead><tr><th>To</th><th>From</th><th>Subject</th><th>State</th><th>Attempts</th><th>Updated</th></tr></thead>
-      <tbody>${outbox.map((o) => html`<tr key=${o.envelope_id} data-envelope=${o.envelope_id}>
+    <${FaTable} id="fleet-outbox" head=${['To', 'From', 'Subject', 'State', 'Attempts', 'Updated']}>${outbox.map((o) => html`<tr key=${o.envelope_id} data-envelope=${o.envelope_id}>
         <td>${o.to}</td><td>${o.from}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.last_error ? html` <span class="muted">— ${o.last_error}</span>` : ''}</td>
         <td>${o.attempts}</td><td class="muted">${when(o.updated_at)}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests [--all]</code>, <code>requests approve|deny|abandon ID</code>, <code>tclaude federation outbox</code>.</div>
     ${dialog?.kind === 'approve' && html`<${ApproveDialog} req=${dialog.req} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); reload(); }} />`}
     ${dialog?.kind === 'deny' && html`<${DenyDialog} req=${dialog.req} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); reload(); }} />`}
