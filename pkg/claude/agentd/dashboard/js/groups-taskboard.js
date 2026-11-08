@@ -745,30 +745,60 @@ function ImportPanel({ group, actions, initial = {}, onClose }) {
 // HistoryLine is the "n done this week · ▸ history" line: a row of the list's
 // table under its tasks (the closed ones follow it, in the same columns),
 // or a line of its own under an empty list.
-// ARCHIVE_AGES are the "Archive done" choices: every done task, or those
-// closed longer ago than an age (`taskboard archive <group> --done --older-than`).
+// ARCHIVE_AGES are the "Archive closed" ages: every such task, or those
+// closed longer ago than an age (`taskboard archive <group> --done
+// --dropped --older-than`).
 export const ARCHIVE_AGES = [
-  { age: '', label: 'All done tasks' },
-  { age: '1d', label: 'Done over a day ago' },
-  { age: '7d', label: 'Done over a week ago' },
-  { age: '30d', label: 'Done over 30 days ago' },
+  { age: '', label: 'All of them' },
+  { age: '1d', label: 'Closed over a day ago' },
+  { age: '7d', label: 'Closed over a week ago' },
+  { age: '30d', label: 'Closed over 30 days ago' },
 ];
+
+// ARCHIVE_KINDS are what "Archive closed ▾" archives: the done tasks, the
+// dropped ones, or both. Done alone goes through archiveDone, which a
+// linked node of any version has.
+const ARCHIVE_KINDS = [
+  { key: 'done', label: 'Done tasks', statuses: ['done'], flags: '--done' },
+  { key: 'dropped', label: 'Dropped tasks', statuses: ['dropped'], flags: '--dropped' },
+  { key: 'both', label: 'Done and dropped', statuses: ['done', 'dropped'], flags: '--done --dropped' },
+];
+
+// archiveMenu is the "Archive closed ▾" items: a kind the board has
+// closed tasks of, then the ages. Null when there is nothing to archive or
+// no way to.
+function archiveMenu(group, actions, closed, counts) {
+  if (!group || !actions || actions.busy || typeof actions.api?.archiveDone !== 'function') return null;
+  const has = {
+    // The closed list is capped: a count says so too when it holds none.
+    done: closed.some((task) => task.status === 'done') || (counts.done_this_week || 0) > 0,
+    dropped: typeof actions.api?.archiveClosed === 'function' && (closed.some((task) => task.status === 'dropped') || (counts.dropped || 0) > 0),
+  };
+  const kinds = ARCHIVE_KINDS.filter((kind) => kind.statuses.every((status) => has[status]));
+  if (!kinds.length) return null;
+  return kinds.map((kind) => ({
+    key: kind.key, label: kind.label, attrs: { 'data-archive-kind': kind.key },
+    children: ARCHIVE_AGES.map(({ age, label }) => ({
+      key: `${kind.key}-${age || 'all'}`, label,
+      attrs: { 'data-archive-age': age || 'all', title: `taskboard archive ${group.name} ${kind.flags}${age ? ` --older-than ${age}` : ''}` },
+      run: () => actions.run(`${group.name}:archive-closed`, 'Archive closed', (api) => (kind.key === 'done'
+        ? api.archiveDone(group.name, age)
+        : api.archiveClosed(group.name, kind.statuses, age))),
+    })),
+  }));
+}
 
 function HistoryLine({ entry, group = null, actions = null, open, onToggle, wizard, row = false }) {
   const counts = entry.counts || {};
   const closed = entry.closed || [];
   const parts = [`${counts.done_this_week || 0} done this week`];
   if (counts.dropped) parts.push(`${counts.dropped} dropped`);
-  const archivable = !!group && !!actions && !actions.busy && typeof actions.api?.archiveDone === 'function' && closed.some((task) => task.status === 'done');
-  const archive = archivable && ARCHIVE_AGES.map(({ age, label }) => ({
-    key: age || 'all', label, attrs: { 'data-archive-done': age || 'all', title: `taskboard archive ${group.name} --done${age ? ` --older-than ${age}` : ''}` },
-    run: () => actions.run(`${group.name}:archive-done`, 'Archive done', (api) => api.archiveDone(group.name, age)),
-  }));
+  const archive = archiveMenu(group, actions, closed, counts);
   const body = html`${parts.join(' · ')}
     ${closed.length > 0 && html` · <${Button} size="sm" variant="link" class="tb-history-toggle" aria-expanded=${open ? 'true' : 'false'}
       onClick=${onToggle}>${open ? '▾' : '▸'} ${wizard ? 'chronicle' : 'history'}<//>`}
-    ${archive && html` · <span class="tb-archive-done"><${RowMenu} label="done tasks" items=${archive} glyph="Archive done ▾"
-      title="Archive done tasks: they leave the history, kept (ls --archived)" buttonClass="tb-archive-done-btn" /></span>`}
+    ${archive && html` · <span class="tb-archive-done"><${RowMenu} label="closed tasks" items=${archive} glyph="Archive closed ▾"
+      title="Archive done or dropped tasks: they leave the history, kept (ls --archived)" buttonClass="tb-archive-done-btn" /></span>`}
     <span class="tb-history-note"> — ${wizard
       ? 'a quest leaves the board when it is fulfilled; it stays in the chronicle'
       : 'a task leaves the list when it is done or dropped; it stays in history'}</span>`;

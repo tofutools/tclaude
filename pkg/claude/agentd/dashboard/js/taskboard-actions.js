@@ -325,6 +325,13 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     archiveDone(group, olderThan = '') {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
     },
+    // archiveClosed archives a board's tasks in statuses (['done'],
+    // ['dropped'] or both), or only those closed longer ago than olderThan:
+    // `taskboard archive <group> --done --dropped`.
+    archiveClosed(group, statuses, olderThan = '') {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-closed`,
+        olderThan ? { statuses, older_than: olderThan } : { statuses });
+    },
     // answer answers question n of a task (`taskboard answer`; n 0: its
     // only open question, as a question task's own route): picked option
     // keys and/or text.

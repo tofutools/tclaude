@@ -285,6 +285,7 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/archive", handleTaskboardTask(taskboardOwnGate, handleTaskboardArchive)},
 	{"POST /v1/taskboard/tasks/{id}/unarchive", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnarchive)},
 	{"POST /v1/groups/{name}/taskboard/archive-done", v1GroupRoute(handleTaskboardArchiveDone)},
+	{"POST /v1/groups/{name}/taskboard/archive-closed", v1GroupRoute(handleTaskboardArchiveClosed)},
 	{"POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup)},
 	{"POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway)},
 	{"POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn)},

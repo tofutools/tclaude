@@ -119,3 +119,50 @@ func TestTaskboardArchiveDone(t *testing.T) {
 	assert.Contains(t, all, dropped.ID, "a dropped task stays in the history")
 	assert.Contains(t, all, live.ID)
 }
+
+// Archive closed archives the done tasks, the dropped ones or both, with the
+// same age filter; live tasks stay. Its statuses are checked, and it takes
+// taskboard.write as archive-done does.
+func TestTaskboardArchiveClosed(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	done := h.add("done", "next")
+	oldDrop := h.add("long dropped", "")
+	newDrop := h.add("just dropped", "")
+	live := h.add("still open", "next")
+	code, body := h.post("", done.ID, "status", map[string]any{"status": "done"})
+	require.Equal(t, http.StatusOK, code, body)
+	for _, id := range []string{oldDrop.ID, newDrop.ID} {
+		code, body := h.post("", id, "status", map[string]any{"status": "dropped"})
+		require.Equal(t, http.StatusOK, code, body)
+	}
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE group_tasks SET closed_at = ? WHERE id = ?`, time.Now().Add(-10*24*time.Hour).UnixNano(), oldDrop.ID)
+	require.NoError(t, err)
+
+	archive := func(conv string, body map[string]any) (int, []string) {
+		rec := h.call(conv, http.MethodPost, "/v1/groups/crew/taskboard/archive-closed", body)
+		var out struct {
+			Archived []string `json:"archived"`
+		}
+		if rec.Code == http.StatusOK {
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		}
+		return rec.Code, out.Archived
+	}
+	code, _ = archive(h.worker, map[string]any{"statuses": []string{"dropped"}})
+	assert.Equal(t, http.StatusForbidden, code, "a member without taskboard.write")
+	for _, bad := range []map[string]any{nil, {"statuses": []string{}}, {"statuses": []string{"open"}}, {"statuses": []string{"dropped"}, "older_than": "soon"}} {
+		code, _ = archive("", bad)
+		assert.Equal(t, http.StatusBadRequest, code, "%v", bad)
+	}
+
+	code, ids := archive("", map[string]any{"statuses": []string{"dropped"}, "older_than": "7d"})
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, []string{oldDrop.ID}, ids, "the age applies to dropped tasks too")
+	code, ids = archive("", map[string]any{"statuses": []string{"dropped", "done"}})
+	require.Equal(t, http.StatusOK, code)
+	assert.ElementsMatch(t, []string{done.ID, newDrop.ID}, ids, "both together")
+	assert.ElementsMatch(t, []string{done.ID, oldDrop.ID, newDrop.ID}, h.listIDs("?archived=1"))
+	assert.Contains(t, h.listIDs("?all=1"), live.ID, "a live task stays")
+}
