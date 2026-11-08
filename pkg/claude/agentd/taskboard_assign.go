@@ -28,6 +28,7 @@ const PermTaskboardAssign = "taskboard.assign"
 func registerTaskboardAssignRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/assign", handleTaskboardTask(taskboardOwnGate, handleTaskboardAssign))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/unassign", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnassign))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/start", handleTaskboardTask(taskboardOwnGate, handleTaskboardStart))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/report", handleTaskboardTask(taskboardOwnGate, handleTaskboardReport))
 	mux.HandleFunc("GET /v1/taskboard/mine", handleTaskboardMine)
 	mux.HandleFunc("GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet))
@@ -180,11 +181,22 @@ func taskboardBrief(g *db.AgentGroup, t *db.GroupTask, by string) string {
 
 // POST /v1/taskboard/tasks/{id}/assign {"to": "<agent>"} — assign the task to
 // an active member of its group; {"to": ""} (or the caller itself) takes it.
+// The task starts (in progress) unless "start": false: then its assignee
+// holds it in "stage" (idea or next; its own stage when omitted).
 func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
-		To string `json:"to"`
+		To    string `json:"to"`
+		Start *bool  `json:"start"`
+		Stage string `json:"stage"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	hold := ""
+	if body.Start != nil && !*body.Start {
+		hold = firstNonEmpty(strings.TrimSpace(body.Stage), t.Stage)
+	} else if strings.TrimSpace(body.Stage) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a started task is in progress; stage names where a held one sits (start false)")
 		return
 	}
 	self, selfConv := callerAgentID(r)
@@ -228,7 +240,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		}
 	}
 	before := t.AssigneeID
-	out, err := db.AssignGroupTask(t.ID, target, taskboardActor(r), take, taskboardActor(r), before)
+	out, err := db.AssignGroupTaskHeld(t.ID, target, taskboardActor(r), take, hold, taskboardActor(r), before)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
@@ -241,7 +253,12 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	if !take && before != target {
 		by := taskboardCallerName(r)
-		if target != db.OperatorAssignee {
+		switch {
+		case target == db.OperatorAssignee:
+		case hold != "":
+			subject, text := taskboardHeldNote(g, out, by)
+			mailTaskboard(r, g, targetConv, subject, text)
+		default:
 			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardBrief(g, out, by))
 		}
 		if before != "" && before != self {

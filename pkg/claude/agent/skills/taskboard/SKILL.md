@@ -58,6 +58,11 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   (`comment edit|rm tk_… #id`).
 - You can take any open, unassigned task, an idea included. A task assigned to
   someone else is theirs: ask whoever leads the group to reassign it.
+- A task can be given to you without being started: `[taskboard] an idea for
+  you to triage` or `[taskboard] queued for you`. It sits in your lane, shows
+  `@you (not started)` in `ls`, and never stalls. `taskboard start tk_…` starts
+  it (in progress); `taskboard hold tk_… [--idea|--next]` puts a started one
+  back; `release` gives it back.
 
 ## Tracking your own work
 
@@ -93,6 +98,9 @@ get a `[taskboard] unblocked: tk_… is done` mail with the operator's closing
 note; read their comments with `taskboard activity tk_…`. The operator's
 comments on it come to you as mail too.
 
+- Something for the operator to look at when it can, that nothing waits on:
+  `add <group> "…" --assignee operator --idea` puts it in the operator's
+  ideas, not counted as waiting on them. `--next` queues it, still waiting.
 - Two steps work too: `add … --assignee operator`, then
   `block tk_mine --on tk_…`. A task blocked with a plain `--reason` is not
   reopened for you; you only get mail.

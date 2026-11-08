@@ -57,6 +57,8 @@ func taskboardCmd() *cobra.Command {
 			taskboardAssignCmd(),
 			taskboardUnassignCmd("unassign", "Take a task back from its assignee (needs taskboard.assign)"),
 			taskboardTakeCmd(),
+			taskboardStartCmd(),
+			taskboardHoldCmd(),
 			taskboardUnassignCmd("release", "Give back a task assigned to you"),
 			taskboardReportCmd(),
 		},
@@ -130,6 +132,7 @@ type taskboardTask struct {
 		Name    string `json:"name,omitempty"`
 	} `json:"assignee,omitempty"`
 	AssignedBy  string `json:"assigned_by,omitempty"`
+	Held        bool   `json:"held,omitempty"`
 	Outcome     string `json:"outcome,omitempty"`
 	OutcomeNote string `json:"outcome_note,omitempty"`
 	Failures    int    `json:"failures,omitempty"`
@@ -358,6 +361,9 @@ func taskboardRowText(t taskboardTask) string {
 	}
 	if a := t.assigneeText(); a != "" {
 		line += "  @" + a
+		if t.Held {
+			line += " (not started)"
+		}
 	}
 	if t.BlockReason != "" {
 		line += "  — " + t.BlockReason
@@ -594,13 +600,14 @@ type taskboardAddParams struct {
 	RefLabel string `long:"ref-label" optional:"true" help:"Display label for the ref (default: derived)"`
 	// ResolveRef is the dashboard's New task form's ref lookup.
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
-	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write)"`
+	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write); with --assignee or --mine, queued for them, not started"`
+	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
 	// Start state: the task is created in it, in one call.
-	Assignee string `long:"assignee" optional:"true" help:"Assign it as it is created (name or id of an active member, or operator for the operator of the board's node): it starts in progress, in next; with --done, who did it. Someone else needs taskboard.assign; asking the operator about your own work needs only taskboard.own"`
+	Assignee string `long:"assignee" optional:"true" help:"Assign it as it is created (name or id of an active member, or operator for the operator of the board's node): it starts in progress, in next, unless --idea or --next holds it there, not started; with --done, who did it. Someone else needs taskboard.assign; asking the operator about your own work needs only taskboard.own"`
 	Blocks   string `long:"blocks" optional:"true" help:"With --assignee operator: this task of the board (tk_…, typically yours) waits on the new one. It gains it as a dependency and is blocked on it, in the same write; closing the operator task as done reopens it"`
 	Blocked  string `long:"blocked" optional:"true" help:"Start it blocked, with this reason"`
 	Done     bool   `long:"done" help:"Log work already done: it is created done, in done this week (with --assignee, who did it; nobody is mailed)"`
@@ -697,8 +704,19 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	req := map[string]any{"title": p.Title, "body": body, "ref": p.Ref, "ref_label": p.RefLabel,
 		"after": splitTaskIDs(p.After), "position": map[string]any{"top": p.Top, "before": p.Before}}
-	if p.Next {
+	if p.Next && p.Idea {
+		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
+		return rcInvalidArg
+	}
+	assigned := p.Mine || strings.TrimSpace(p.Assignee) != ""
+	switch {
+	case p.Next:
 		req["stage"] = "next"
+	case p.Idea:
+		req["stage"] = "idea"
+	}
+	if assigned && (p.Next || p.Idea) {
+		req["start"] = false
 	}
 	if p.ResolveRef {
 		req["resolve_ref"] = true
@@ -1469,6 +1487,9 @@ func fetchTaskboardMine(stderr io.Writer) ([]taskboardTask, int) {
 type taskboardAssignParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	To       string `long:"to" help:"Agent to assign it to (name or id; an active member of the task's group), or operator for the operator of the board's node"`
+	Hold     bool   `long:"hold" help:"Assign it without starting it: it stays in its stage (an idea to triage, or queued) in the assignee's lane; they start it"`
+	Idea     bool   `long:"idea" help:"Hold it as an idea in the assignee's lane (implies --hold)"`
+	Next     bool   `long:"next" help:"Hold it queued in the assignee's lane (implies --hold)"`
 	Peer     string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -1478,8 +1499,9 @@ func taskboardAssignCmd() *cobra.Command {
 	return boa.CmdT[taskboardAssignParams]{
 		Use:   "assign",
 		Short: "Assign a task to a member of its group (they get an inbox brief)",
-		Long: "Assign a task to an active member of the task's group. An idea is promoted to the queue on assign. " +
-			"The assignee gets an inbox message from you with the brief and the report commands. Assigning another " +
+		Long: "Assign a task to an active member of the task's group. The task starts: an idea is promoted to the queue and it is in progress, " +
+			"and the assignee gets an inbox message from you with the brief and the report commands. With --hold (or --idea / --next) " +
+			"the assignee holds it without starting it, in its stage, and gets a short note instead; it starts with `taskboard start`. Assigning another " +
 			"agent needs taskboard.assign (group owners have it for their groups). The assignment never retires or " +
 			"stops the agent.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1492,7 +1514,21 @@ func taskboardAssignCmd() *cobra.Command {
 				fmt.Fprintln(cliStderr, "Error: --to is required (use `taskboard take` to take a task yourself)")
 				taskboardExit(rcInvalidArg)
 			}
-			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": p.To},
+			req := map[string]any{"to": p.To}
+			if p.Idea && p.Next {
+				fmt.Fprintln(cliStderr, "Error: give --idea or --next, not both")
+				taskboardExit(rcInvalidArg)
+			}
+			if p.Hold || p.Idea || p.Next {
+				req["start"] = false
+				switch {
+				case p.Idea:
+					req["stage"] = "idea"
+				case p.Next:
+					req["stage"] = "next"
+				}
+			}
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/assign"), req,
 				p.AskHuman, p.JSON, "assigned", cliStdout, cliStderr))
 		},
 	}.ToCobra()
@@ -1514,6 +1550,62 @@ func taskboardTakeCmd() *cobra.Command {
 			}
 			taskboardExit(taskboardWrite("", http.MethodPost, taskboardPath(p.Task, "/assign"), map[string]any{"to": ""},
 				p.AskHuman, p.JSON, "took", cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func taskboardStartCmd() *cobra.Command {
+	return boa.CmdT[taskboardTaskParams]{
+		Use:   "start",
+		Short: "Start an assigned task its assignee holds (an idea to triage, or queued): it goes in progress",
+		Long: "Start a task its assignee holds without having started it: an idea is promoted to the queue, and the task is " +
+			"in progress, with the stall clock running. The assignee starts its own task under taskboard.own; starting " +
+			"someone else's needs taskboard.assign and briefs them, as an assign does.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardTaskParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/start"), map[string]any{"start": true},
+				p.AskHuman, p.JSON, "started", cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+type taskboardHoldParams struct {
+	Task     string `pos:"true" help:"Task id (tk_…)"`
+	Idea     bool   `long:"idea" help:"Hold it as an idea, to triage"`
+	Next     bool   `long:"next" help:"Hold it queued"`
+	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.assign)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON     bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardHoldCmd() *cobra.Command {
+	return boa.CmdT[taskboardHoldParams]{
+		Use:   "hold",
+		Short: "Put a started task back, held by its assignee in its stage (or --idea / --next), not in progress",
+		Long: "Un-start an assigned task: it keeps its assignee but leaves in progress, sitting in its stage (or the one " +
+			"--idea or --next names) in the assignee's lane until it is started again. Same permissions as start.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardHoldParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardHoldParams, _ *cobra.Command, _ []string) {
+			req := map[string]any{"start": false}
+			switch {
+			case p.Idea && p.Next:
+				fmt.Fprintln(cliStderr, "Error: give --idea or --next, not both")
+				taskboardExit(rcInvalidArg)
+			case p.Idea:
+				req["stage"] = "idea"
+			case p.Next:
+				req["stage"] = "next"
+			}
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/start"), req,
+				p.AskHuman, p.JSON, "held", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -118,7 +118,7 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		}
 		if assignee == "" {
 			_, err = tx.Exec(`UPDATE group_tasks SET group_id = ?, stage = ?, status = ?, rank = ?, block_reason = '', blocked_on = '',
-				closed_at = ?, assignee_id = NULL, assignee_kind = '', assigned_by = '', assigned_at = NULL WHERE id = ?`,
+				closed_at = ?, assignee_id = NULL, assignee_kind = '', started_at = NULL, assigned_by = '', assigned_at = NULL WHERE id = ?`,
 				in.ToGroupID, stage, status, rank, closed, id)
 		} else {
 			_, err = tx.Exec(`UPDATE group_tasks SET group_id = ?, stage = ?, status = ?, rank = ?, block_reason = '', blocked_on = '',

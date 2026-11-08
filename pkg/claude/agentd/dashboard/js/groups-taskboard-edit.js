@@ -8,7 +8,9 @@
 //   title, brief, ref, deps   edit <task> --title … --body … --ref … --after/--not-after
 //   where it is               promote / demote · block --reason · unblock ·
 //                             done · drop · (reopen: status open)
-//   assignee                  assign --to · unassign
+//   assignee                  assign --to [--idea|--next] · unassign ·
+//                             start · hold (an assignee holds a task in Idea
+//                             or Next without starting it)
 //   files                     attach · detach
 //
 // Each change is its own write, so one can be refused while the rest land:
@@ -46,7 +48,7 @@ const CLOSED = new Set(['done', 'dropped']);
 // whereOf is where a task is now.
 export function whereOf(task) {
   if (task.status === 'done' || task.status === 'dropped' || task.status === 'blocked') return task.status;
-  if (task.assignee?.agent_id) return 'progress';
+  if (task.assignee?.agent_id && !task.held) return 'progress';
   return task.stage === 'idea' ? 'idea' : 'next';
 }
 
@@ -63,19 +65,19 @@ export function draftOf(task) {
   };
 }
 
-// setWhere moves the draft to `where`. Idea and Next are unassigned places:
-// picking one takes the assignee off; In progress needs one.
+// setWhere moves the draft to `where`. In Idea or Next an assignee holds
+// the task without starting it; In progress needs one.
 export function setWhere(draft, where) {
-  const next = { ...draft, where };
-  if (where === 'idea' || where === 'next') next.to = '';
-  return next;
+  return { ...draft, where };
 }
 
-// setAssignee gives the draft an assignee: an idea or a queued task that
-// gets one is in progress, and one in progress that loses it is back in Next.
+// setAssignee gives the draft an assignee: an unassigned idea or queued task
+// that gets one is in progress, as assign starts it (pick Idea or Next after
+// to have it held there instead); one in progress that loses it is back in
+// Next.
 export function setAssignee(draft, to) {
   const next = { ...draft, to };
-  if (to && (draft.where === 'idea' || draft.where === 'next')) next.where = 'progress';
+  if (to && !draft.to && (draft.where === 'idea' || draft.where === 'next')) next.where = 'progress';
   if (!to && draft.where === 'progress') next.where = 'next';
   return next;
 }
@@ -133,11 +135,22 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   if (unassigning) steps.push({ name: 'unassign', run: (api) => api.unassign(task.id) });
   // Blocked, done and dropped keep the stage the task is in.
   const stage = where === 'idea' ? 'idea' : where === 'next' || where === 'progress' ? 'next' : '';
-  // An assignment puts an idea in Next on its own.
-  if (stage && stage !== (task.stage || 'idea') && !(stage === 'next' && assigning)) {
+  // The same assignee starts a task it held, or holds a started one in its
+  // stage: either write also moves the stage.
+  const kept = !!to && to === from;
+  const starting = kept && open && where === 'progress' && !!task.held;
+  const holding = kept && open && (where === 'idea' || where === 'next') && !task.held;
+  // An assignment places the task on its own: in Next started, or held in
+  // the stage it lands in.
+  if (stage && stage !== (task.stage || 'idea') && !assigning && !starting && !holding) {
     steps.push({ name: stage === 'idea' ? 'back to the ideas' : 'into Next', run: (api) => api.stage(task.id, stage) });
   }
-  if (assigning) steps.push({ name: 'assignee', run: (api) => api.assign(task.id, to) });
+  if (starting) steps.push({ name: 'start', run: (api) => api.start(task.id) });
+  if (holding) steps.push({ name: 'not started', run: (api) => api.hold(task.id, stage) });
+  if (assigning) {
+    const hold = where === 'idea' || where === 'next' ? stage : '';
+    steps.push({ name: 'assignee', run: (api) => (hold ? api.assign(task.id, to, { hold }) : api.assign(task.id, to)) });
+  }
   const reason = draft.reason.trim();
   if (where === 'blocked' && (open || status !== 'blocked' || reason !== (task.block_reason || ''))) {
     steps.push({ name: 'block', run: (api) => api.status(task.id, 'blocked', reason) });
@@ -186,7 +199,9 @@ function whereHint(draft, task) {
     case 'dropped': return 'optional: why it is dropped (e.g. "parked in awb")';
     case 'done': return task.status === 'done' ? 'closed; pick another place to reopen it' : 'closes it';
     case 'progress': return draft.to ? '' : 'pick its assignee below';
-    default: return CLOSED.has(task.status) ? 'reopens it' : '';
+    default:
+      if (CLOSED.has(task.status)) return 'reopens it';
+      return draft.to ? `held by its assignee, not started` : '';
   }
 }
 

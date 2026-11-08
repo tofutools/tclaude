@@ -148,7 +148,7 @@ test('Write it myself sends every field, the assignee included, in one add', asy
   await click(submit());
   assert.deepEqual(api.calls, [
     ['create', 'tbn-form', { title: 'Port the sweep', body: 'see the review notes', ref: 'tcl-a1b2c3', stage: 'next', after: ['tk_00000001'], resolveRef: true,
-      status: '', to: 'agt_dev' }],
+      status: '', to: 'agt_dev', hold: true }],
   ]);
   assert.equal(dialog(), null, 'closes when the task landed');
   assert.ok(refreshes() > 0, 'the board is read again');

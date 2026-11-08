@@ -96,8 +96,9 @@ func TestTaskboardContextCountsAndRows(t *testing.T) {
 	// The assign routes are a later slice; the store's columns already exist.
 	d, err := db.Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = 'human:operator', assigned_at = ? WHERE id = ?`,
-		agentID, time.Now().UnixNano(), taken.ID)
+	now := time.Now().UnixNano()
+	_, err = d.Exec(`UPDATE group_tasks SET assignee_id = ?, assigned_by = 'human:operator', assigned_at = ?, started_at = ? WHERE id = ?`,
+		agentID, now, now, taken.ID)
 	require.NoError(t, err)
 
 	c := h.context(member)

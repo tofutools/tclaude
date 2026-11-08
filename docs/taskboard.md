@@ -130,6 +130,9 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   as with `assign`. Naming yourself (or `--mine`) takes the task. Anyone else
   needs `taskboard.assign`, and the assignee must be an active member of the
   group.
+- **In the assignee's Ideas or Next, not started**, with `--assignee <agent>
+  --idea` or `--assignee <agent> --next`. See [Holding a task without
+  starting it](#holding-a-task-without-starting-it).
 - **Blocked** with `--blocked "reason"`. The reason is required. An
   `--assignee` makes it a blocked task that agent holds.
 - **Done** with `--done`, for logging work after the fact. The task is closed
@@ -314,6 +317,34 @@ assignee](#the-operator-as-an-assignee)).
 
 Assigned tasks show `@<agent>` in `ls`, and their history records who
 assigned whom.
+
+### Holding a task without starting it
+
+Any assignee, an agent or the operator, can hold a task without starting it:
+an idea to triage, or a task queued for it in Next. A held task sits in its
+stage in the assignee's lane. It is *in progress* only once it is started, and
+only a started task can stall.
+
+- `add --assignee <agent> --idea` (or `--next`) and `assign <task> --to
+  <agent> --idea` (or `--next`, or `--hold` to keep its stage) assign without
+  starting. The assignee gets a short note, `[taskboard] an idea for you to
+  triage` or `[taskboard] queued for you`, instead of the brief.
+- With no flag, `add --assignee` and `assign` start the task, as before.
+  `take` starts it too.
+- `start <task>` starts a held task. An idea is promoted to the end of the
+  queue. Started by someone other than the assignee, the assignee gets the
+  brief, as on an assign.
+- `hold <task> [--idea|--next]` puts a started task back, held in its stage or
+  the one named. It keeps its assignee.
+- The assignee starts and holds its own task under `taskboard.own`. Doing it
+  for someone else, or for the operator, needs `taskboard.assign`.
+- In `ls`, a held task shows `@<agent> (not started)`.
+- The operator: `add --assignee operator` with no flag is active and counts as
+  *waiting on you*, as before. `--next` queues it, still waiting on you.
+  `--idea` puts it in your Ideas: it counts as an *idea for you*
+  (`ideas_for_you` in the context route), not as waiting on you, and no task
+  can wait on it (`block --on` refuses it). `--blocks` always lands the task
+  in Next.
 
 ### The operator as an assignee
 
@@ -772,8 +803,9 @@ a CLI verb:
   *In progress*, *Blocked* with its reason, *Done* or *Dropped*), the
   assignee (if you may assign), the dependencies (✕ takes one off, and
   *＋ dependency* adds one of the board's other live tasks) and the files.
-  Picking an assignee for an idea or a queued task makes it *In progress*;
-  picking *Idea* or *Next* takes the assignee off. *Save* writes only what
+  Picking an assignee for an unassigned idea or queued task makes it *In
+  progress*; picking *Idea* or *Next* for an assigned task keeps its assignee,
+  who holds it there, not started. *Save* writes only what
   changed, each through the route its CLI verb uses. If one write is refused
   (say, a close that needs `taskboard.assign`), the rest still land, and the
   form stays open and names what was not saved. A done or dropped task
@@ -848,9 +880,10 @@ pinned on the left.
 The operator's lane comes first: *You*, tinted, with how many tasks wait on
 you (on a linked node's board, *operator of <node>*). It shows while the
 operator holds a task, or when you may assign. Its tasks stand in *In
-progress*; *Ideas* is striped, as for an agent. A card dragged onto it is
-assigned to the operator, and its **+** starts a task assigned to the
-operator. In the *List*, *Who* says *you* and *State* says *waiting*.
+progress*, or in *Ideas* or *Next* while held there. A card dragged onto it
+is assigned to the operator, and its **+** starts a task assigned to the
+operator. In the *List*, *Who* says *you* and *State* says *waiting* (an idea
+you hold says *idea*).
 
 The *Unassigned* lane comes next, then one lane per agent, grouped by role
 (the owner's role first), by subgroup, or not grouped. Each lane head shows the
@@ -872,8 +905,9 @@ else sees it.
   switch, puts the default order back.
 
 A lane group whose agents are all offline folds; click *show offline lanes* to
-see it. Striped cells cannot hold a card: an agent's *Ideas* (an idea is
-unassigned) and the Unassigned lane's *In progress*.
+see it. The one striped cell, which cannot hold a card, is the Unassigned
+lane's *In progress*. An agent's *Ideas* and *Next* hold the tasks it was
+given and has not started.
 
 Dragging a card is one action, the same as its CLI verb:
 
@@ -888,7 +922,10 @@ Dragging a card is one action, the same as its CLI verb:
 | Done → another lane's Next or In progress, or the operator's lane | `reopen <task> --next --assignee <agent>` (`--unassign` onto the Unassigned lane) |
 | Done → the Unassigned lane's *Ideas* | `reopen <task> --idea --unassign` |
 | Done → *Blocked* (asks the reason) | `reopen <task>` (and the lane's assignee), then `block <task> --reason …` |
-| Onto an agent's lane (Next or In progress) | `assign <task> --to <agent>` (an idea is promoted) |
+| Onto an agent's *In progress* | `assign <task> --to <agent>` (an idea is promoted) |
+| Onto an agent's *Ideas* or *Next* | `assign <task> --to <agent> --idea` / `--next` (not started) |
+| In an agent's lane, Ideas or Next → In progress | `start <task>` |
+| In an agent's lane, onto Ideas or Next | `hold <task> --idea` / `--next` |
 | Onto the Unassigned lane's *Next* | `unassign <task>` |
 | Onto an agent's *Blocked* (asks the reason) | `assign <task> --to <agent>`, then `block <task> --reason …` |
 | From an agent's lane onto the Unassigned lane's *Ideas* | `unassign <task>`, then `demote <task>` |
@@ -911,8 +948,8 @@ assign. The **+** opens the add menu, and whichever item you pick starts from
 the cell:
 
 - *Write it myself* has the cell's column picked as where the task starts.
-  An agent's *Next* and *In progress* both start it in progress. An agent's
-  lane also picks that agent as the assignee.
+  An agent's lane also picks that agent as the assignee: its *In progress*
+  starts the task, its *Ideas* and *Next* hold it there, not started.
 - *Ask an agent* opens with a first line that says where the tasks should
   land, such as "Land the tasks in Next for builder", for you to add your
   request to.
@@ -953,6 +990,9 @@ those drags aren't accepted in the lanes.
 | `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
+| `assign --idea` / `--next` / `--hold` | `POST /v1/taskboard/tasks/{id}/assign {"to":…,"start":false,"stage"?:"idea"\|"next"}` |
+| `add --assignee X --idea` / `--next` | `POST /v1/groups/{name}/taskboard/tasks {…,"to":"X","start":false,"stage":"idea"\|"next"}` |
+| `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |
 | `ls --summary` (and the dashboard) | `GET /v1/taskboard/context` |
