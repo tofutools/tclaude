@@ -18,7 +18,7 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
-import { clearDropBox, createDndOps, dndGesture, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
+import { clearDropBox, createDndOps, dndGesture, dndMember, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { markLanded } from './drop-landing.js';
 import { bindRowDragGuard } from './row-drag.js';
 
@@ -174,6 +174,13 @@ function hideDndTrash() {
 function bindDnd() {
   const removers = [];
   dndGesture.cancelClone = () => { dndCloneHoverTarget = null; };
+  // A task on a board takes an agent row's drag itself (dndMember).
+  dndMember.payload = () => (dndDragActive ? dndSourcePayload : null);
+  dndMember.yieldTo = (e, text) => {
+    dndCloneHoverTarget = null;
+    $$('.dnd-drop-over').forEach(clearDropBox);
+    updateDndPill(e, text ? { text } : null);
+  };
   const listen = (target, type, listener, options) => {
     target.addEventListener(type, listener, options);
     removers.push(() => target.removeEventListener(type, listener, options));

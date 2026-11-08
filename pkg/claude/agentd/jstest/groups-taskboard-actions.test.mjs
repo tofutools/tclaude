@@ -457,6 +457,87 @@ test('a board whose api predates archiveClosed offers done only', async (t) => {
   assert.deepEqual([...c.querySelectorAll('[data-archive-kind]')].map((b) => b.dataset.archiveKind), ['done']);
 });
 
+// An agent row dragged onto a task (dnd.js's member drag; dnd-ops.js
+// dndMember stands for it here) assigns the task to that agent, as dragging
+// the task onto the agent does. Only a member of the group, onto an open
+// task, when the viewer may assign; anything else is left to dnd.js.
+test('an agent row dragged onto a task assigns it; a non-member or a blocked task stays the group box\'s', async (t) => {
+  const name = 'tba-agent-on-task';
+  const { harness, api, rowOf } = await mountBoard(t, name);
+  const { dndMember } = await harness.importDashboardModule('js/dnd-ops.js');
+  let dragged = null;
+  const pills = [];
+  dndMember.payload = () => dragged;
+  dndMember.yieldTo = (_e, text) => { pills.push(text); };
+  t.after(() => { dndMember.payload = () => null; dndMember.yieldTo = () => {}; });
+  const over = (id) => harness.fireEvent(rowOf(id).querySelector('td'), 'dragover', {});
+  const drop = async (id) => {
+    let event;
+    await harness.act(async () => { event = harness.fireEvent(rowOf(id).querySelector('td'), 'drop', {}); await new Promise((r) => setTimeout(r, 0)); });
+    return event;
+  };
+
+  assert.equal(over('tk_00000001').defaultPrevented, false, 'no member drag, nothing taken');
+  dragged = { agent: 'agt_tester', conv: 'conv-tester', sourceGroup: name, sourceNode: '' };
+  const event = over('tk_00000001');
+  assert.equal(event.defaultPrevented, true, 'an open task takes a member');
+  assert.ok(rowOf('tk_00000001').classList.contains('tb-agent-over'), 'and is highlighted');
+  assert.equal(pills.at(-1), '→ assign to tester', 'the pill says what the drop does');
+  over('tk_00000004');
+  assert.equal(rowOf('tk_00000001').classList.contains('tb-agent-over'), false, 'the highlight follows the pointer');
+  assert.equal(over('tk_00000003').defaultPrevented, false, 'a blocked task is refused, as the other way round');
+  assert.equal(harness.fireEvent(rowOf('tk_00000001').querySelector('td'), 'dragover', { dataTransfer: { types: ['application/x-tclaude-task'] } }).defaultPrevented, false,
+    'only a member drag: a task\'s own drag is not one');
+  assert.equal(rowOf('tk_00000003').classList.contains('tb-agent-over'), false);
+  over('tk_00000002');
+  assert.equal(pills.at(-1), '→ assign to tester', 'a task held by another agent is reassigned');
+
+  api.calls.length = 0;
+  assert.equal((await drop('tk_00000001')).defaultPrevented, true);
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_tester']], 'the drop assigns it (taskboard assign --to)');
+  assert.equal(rowOf('tk_00000001').classList.contains('tb-agent-over'), false, 'the highlight goes on drop');
+
+  dragged = { agent: 'agt_builder', conv: 'conv-builder', sourceGroup: name, sourceNode: '' };
+  over('tk_00000002');
+  assert.equal(pills.at(-1), 'already assigned to builder');
+  api.calls.length = 0;
+  await drop('tk_00000002');
+  assert.deepEqual(api.calls, [], 'its own assignee is a no-op');
+
+  dragged = { agent: 'agt_stranger', conv: 'conv-stranger', sourceGroup: 'other', sourceNode: '' };
+  assert.equal(over('tk_00000001').defaultPrevented, false, 'a non-member is the group box\'s (move or add to the group)');
+  dragged = { agent: 'agt_tester', conv: 'conv-tester', sourceGroup: name, sourceNode: 'inst_elsewhere' };
+  assert.equal(over('tk_00000001').defaultPrevented, false, 'an agent on another node');
+});
+
+test('an agent dropped on a lanes card assigns it; a board that cannot assign takes nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const { dndMember } = await harness.importDashboardModule('js/dnd-ops.js');
+  dndMember.payload = () => ({ agent: 'agt_tester', conv: 'conv-tester', sourceGroup: 'crew', sourceNode: '' });
+  t.after(() => { dndMember.payload = () => null; dndMember.yieldTo = () => {}; });
+  const mount = async (api, name) => {
+    dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+    dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
+    const source = { context: harness.signals.signal({ groups: [board(name)] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+    const group = { name, members: [{ agent_id: 'agt_tester', title: 'tester', online: true }] };
+    return (await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`)).container;
+  };
+  const api = fakeApi();
+  const c = await mount(api, 'crew');
+  const card = c.querySelector('[data-task-id="tk_00000001"].tb-card');
+  assert.ok(card, 'the card is drawn');
+  await harness.act(async () => { harness.fireEvent(card, 'drop', {}); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls, [['assign', 'tk_00000001', 'agt_tester']]);
+
+  const readOnly = fakeApi();
+  readOnly.can = { assign: false };
+  const c2 = await mount(readOnly, 'crew2');
+  const card2 = c2.querySelector('[data-task-id="tk_00000001"].tb-card');
+  assert.equal(harness.fireEvent(card2, 'dragover', {}).defaultPrevented, false, 'no assign right, no target');
+});
+
 test('a tracker ticket is added by its link, and a label never stands in for a bare id', async (t) => {
   const harness = await createPreactHarness(t);
   const { trackerTaskPlan, sameRef } = await harness.importDashboardModule('js/groups-taskboard-tracker.js');

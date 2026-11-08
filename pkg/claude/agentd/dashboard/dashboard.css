@@ -18850,6 +18850,10 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-toolbar .view-badge { margin-left: 5px; }
 .tb-unassign-drop { margin: 0 8px 6px; padding: 6px 10px; border: 1px dashed #58a6ff; border-radius: 6px; color: #58a6ff; font-size: 11.5px; text-align: center; }
 tr.tb-assign-over > td { background: rgba(88, 166, 255, 0.08); box-shadow: inset 0 1px 0 #58a6ff, inset 0 -1px 0 #58a6ff; }
+/* An agent row dragged onto a task (groups-taskboard.js useAgentOnTask): the
+   task it would be assigned; the drag pill says what the drop does. */
+tr.tb-agent-over > td { background: rgba(88, 166, 255, 0.08); box-shadow: inset 0 1px 0 #58a6ff, inset 0 -1px 0 #58a6ff; }
+.tb-card.tb-agent-over { box-shadow: 0 0 0 2px #58a6ff; background: rgba(88, 166, 255, 0.08); }
 tr.tb-assign-over > td.name-cell { position: relative; }
 tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
   content: attr(data-tb-assign); position: absolute; right: 6px; top: 50%; transform: translateY(-50%);

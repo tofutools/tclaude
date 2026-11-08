@@ -1039,7 +1039,7 @@ a CLI verb:
 | ⋯ *Reopen…* (the stage picker: where it was, *Idea*, *Next* or a custom column) | `reopen <task>` / `--idea [--unassign]` / `--next` / `--stage <column>` |
 | ⋯ *Move to…*, on a board with custom columns (the stage picker: *Idea*, *Next* or a column) | `move <task> --stage idea\|next\|<column>` |
 | Drag a task under *history* among the live tasks, onto the Ideas line, or onto an agent's row | `reopen` beside that task, in its stage, in one write (`POST …/reopen {"before"\|"after"}`), or `reopen <task> --assignee <agent>` |
-| ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
+| ⋯ *Assign ›* and a member, drag a row onto an agent's row in the Agents section, or drag an agent's row onto a task (a List row or a lanes card) | `assign <task> --to <agent>` |
 | ⋯ *Assign › You (operator)*, or drag a card onto the *You* lane | `assign <task> --to operator` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
 | Drag a task onto another group's Task board or header row (Ctrl/Cmd clones), or ⋯ *Move to group ›* / *Clone to group ›* | `move-to-group <task> <group> [--clone] [--stage next]` |

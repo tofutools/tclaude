@@ -28,9 +28,10 @@ import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { createTaskboardApi, taskboardApi } from './taskboard-actions.js';
-import { nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
+import { isPageNode, nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
+import { dndMember } from './dnd-ops.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes, laneColumn } from './groups-taskboard-lanes.js';
@@ -511,6 +512,92 @@ export function agentDropRow(target, group) {
 
 const ASSIGN_OVER = 'tb-assign-over';
 
+// assignByDrop is a drop that pairs a task with a member, either way round
+// (a task onto an agent row, an agent row onto a task): assign an open
+// task (taskboard assign --to), reopen a closed one with that agent. One
+// already assigned there is left as it is.
+function assignByDrop(actions, task, member, landing) {
+  if (isClosed(task)) {
+    return actions.run(`${task.id}:reopen`, 'Reopen', (api) => api.reopen(task.id, task.assignee?.agent_id === member.agent_id ? {} : { to: member.agent_id }));
+  }
+  if (task.assignee?.agent_id === member.agent_id) return Promise.resolve(false);
+  return actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, member.agent_id))
+    .then((ok) => { if (ok && landing) markLanded(landing); return ok; });
+}
+
+// TASK_AGENT_OVER marks the task under an agent drag (useAgentOnTask).
+const TASK_AGENT_OVER = 'tb-agent-over';
+
+// useAgentOnTask takes an agent row's drag (dnd.js, the Agents table) onto
+// a task of this board, a List row or a lanes card: the drop assigns the
+// task to that agent, as dragging the task onto the agent does. It takes
+// only a member of this group on this board's node, onto an open task (or a
+// closed one, which reopens with the agent), when the viewer may assign.
+// Anything else stays dnd.js's: a drop on the group box moves or adds the
+// agent to the group.
+function useAgentOnTask(boardRef, group, node, tasks, actions) {
+  const live = useRef(null);
+  live.current = { group, node, tasks, actions };
+  useEffect(() => {
+    const doc = globalThis.document;
+    if (!doc) return undefined;
+    let lit = null;
+    const unlight = () => {
+      lit?.classList.remove(TASK_AGENT_OVER);
+      lit?.removeAttribute('data-tb-assign');
+      lit = null;
+    };
+    const target = (event) => {
+      // Only a member drag: a task's own drag (or a stray file) is not one.
+      const types = event.dataTransfer?.types;
+      if (types && !Array.from(types).includes('application/x-tclaude-member')) return null;
+      const payload = dndMember.payload();
+      const { group: g, node: n, tasks: list, actions: a } = live.current;
+      // Nodes compare as dnd.js names them (dndNode): '' for the page's own.
+      if (!payload || !canAssign(a) || (payload.sourceNode || '') !== (isPageNode(n) ? '' : n)) return null;
+      const el = event.target?.closest?.('[data-task-id]');
+      if (!el || !boardRef.current?.contains(el)) return null;
+      const task = list.find((t) => t.id === el.getAttribute('data-task-id'));
+      if (!task || !(task.status === 'open' || isClosed(task))) return null;
+      const member = assignableMembers(g).find((m) => m.agent_id === payload.agent);
+      return member ? { el, task, member } : null;
+    };
+    const onOver = (event) => {
+      const hit = target(event);
+      if (!hit) { unlight(); return; }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const who = hit.member.title || hit.member.agent_id;
+      const closed = isClosed(hit.task);
+      const already = !closed && hit.task.assignee?.agent_id === hit.member.agent_id;
+      const text = already ? `already assigned to ${who}` : `${closed ? '↺ reopen with' : '→ assign to'} ${who}`;
+      dndMember.yieldTo(event, text);
+      if (lit !== hit.el) { unlight(); lit = hit.el; lit.classList.add(TASK_AGENT_OVER); }
+      lit.setAttribute('data-tb-assign', text);
+    };
+    const onDrop = (event) => {
+      const hit = target(event);
+      unlight();
+      if (!hit) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dndMember.yieldTo(event, '');
+      const { group: g, actions: a } = live.current;
+      void assignByDrop(a, hit.task, hit.member, { group: g.name, node: g.fleet_node?.id || '', section: 'agents', ids: [hit.member.agent_id] });
+    };
+    doc.addEventListener('dragover', onOver, true);
+    doc.addEventListener('drop', onDrop, true);
+    doc.addEventListener('dragend', unlight, true);
+    return () => {
+      doc.removeEventListener('dragover', onOver, true);
+      doc.removeEventListener('drop', onDrop, true);
+      doc.removeEventListener('dragend', unlight, true);
+      unlight();
+    };
+  }, []);
+}
+
 function clearAgentTarget(state) {
   state.row?.classList.remove(ASSIGN_OVER);
   state.row?.querySelector('td.name-cell')?.removeAttribute('data-tb-assign');
@@ -554,13 +641,7 @@ function useRowDrag(tasks, actions, group = null) {
       event.stopPropagation();
       const task = dragged.current;
       end();
-      if (isClosed(task)) {
-        void actions.run(`${task.id}:reopen`, 'Reopen', (api) => api.reopen(task.id, task.assignee?.agent_id === hit.member.agent_id ? {} : { to: hit.member.agent_id }));
-        return;
-      }
-      if (task.assignee?.agent_id === hit.member.agent_id) return;
-      void actions.run(`${task.id}:assign`, 'Assign', (api) => api.assign(task.id, hit.member.agent_id))
-        .then((ok) => { if (ok) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [hit.member.agent_id] }); });
+      void assignByDrop(actions, task, hit.member, { group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [hit.member.agent_id] });
     };
     document.addEventListener('dragover', onOver, true);
     document.addEventListener('drop', onDrop, true);
@@ -758,6 +839,10 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const drag = useRowDrag(tasks, actions, group);
+  // An agent row dragged onto a task assigns it (useAgentOnTask).
+  const boardRef = useRef(null);
+  const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
+  useAgentOnTask(boardRef, group, boardNode, [...tasks, ...(entry.closed || [])], actions);
   const queue = tasks.filter((task) => task.stage !== 'idea' && shows(task));
   const ideas = tasks.filter((task) => task.stage === 'idea' && shows(task));
   const filtered = tasks.length - queue.length - ideas.length;
@@ -879,7 +964,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const moveDialog = moveTask && html`<${TaskMoveDialog} key=${`${moveTask.id}-${moving.reopen}`} task=${moveTask} reopen=${moving.reopen}
     columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
     onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
-  return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name}>
+  return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
     ${editDialog}
     ${reasonDialog}
     ${moveDialog}
