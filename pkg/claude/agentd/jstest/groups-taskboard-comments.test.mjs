@@ -257,3 +257,26 @@ test('the asker may withdraw its own open question', async (t) => {
   assert.equal(commentEl(10).querySelector('.tb-question-withdraw'), null, 'an answered question stays');
   assert.ok(commentEl(13).querySelector('.tb-question-withdraw'), 'an open one can be withdrawn');
 });
+
+test('activity lines read as the board does: a ref change shows the new ref, a new task its lane', async (t) => {
+  const harness = await createPreactHarness(t);
+  {
+    const { changeText } = await harness.importDashboardModule('js/groups-taskboard-comments.js');
+    const refEdit = { kind: 'edited', detail: 'kind, url, label', changes: [
+      { field: 'ref_kind', after: 'github_pr' },
+      { field: 'ref_url', after: 'https://github.com/tofutools/tclaude/pull/4226' },
+      { field: 'ref_label', after: 'tofutools/tclaude#4226' }] };
+    assert.equal(changeText(refEdit), 'ref → tofutools/tclaude#4226');
+    assert.equal(changeText({ kind: 'edited', detail: 'url', changes: [{ field: 'ref_url', before: 'https://x.test/1', after: 'https://x.test/2' }] }),
+      'ref → https://x.test/2');
+    assert.equal(changeText({ kind: 'edited', detail: 'url, label', changes: [{ field: 'ref_url', before: 'u' }, { field: 'ref_label', before: 'l' }] }), 'cleared ref');
+    assert.equal(changeText({ kind: 'edited', detail: 'title, label', changes: [{ field: 'title', before: 'a', after: 'b' }, { field: 'ref_label', after: 'L' }] }),
+      'title: a → b · ref → L');
+    assert.equal(changeText({ kind: 'edited', detail: 'label', changes: [{ field: 'ref_label', before: 'L', after: '' }] }), 'cleared the ref label');
+    assert.equal(changeText({ kind: 'edited', detail: '+after tk_b', changes: [{ field: 'depends_on', before: 'tk_a', after: 'tk_a tk_b' }] }),
+      '+after tk_b', 'a dependency edit keeps its own line');
+    assert.equal(changeText({ kind: 'created', detail: 'in idea' }), 'created in Ideas');
+    assert.equal(changeText({ kind: 'created', detail: 'in next, ref tk#1, cloned' }), 'created in Next, ref tk#1, cloned');
+    assert.equal(changeText({ kind: 'created', detail: 'in Review' }), 'created in Review');
+  }
+});

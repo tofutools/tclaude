@@ -70,18 +70,50 @@ const FIELD_LABEL = { title: 'title', body: 'brief', ref_url: 'ref', ref_label: 
   status: 'status', assignee: 'assignee', group: 'group' };
 
 // changeText says what a change entry did, in one line.
+const STAGE_NAME = { idea: 'Ideas', next: 'Next' };
+
+// createdText is a created event's line: "created in Ideas, ref …", the stage
+// by the name the board shows it under.
+function createdText(detail) {
+  const text = detail.replace(/^in (idea|next)\b/, (_, stage) => `in ${STAGE_NAME[stage]}`);
+  return text.startsWith('in ') ? `created ${text}` : text;
+}
+
+// refText is a ref change's line: what the ref now reads, or that it went.
+// An entry carries only the ref fields that changed.
+function refText(changes) {
+  const of = (field) => changes.find((c) => c.field === field);
+  const url = of('ref_url');
+  const label = of('ref_label');
+  if (url && !url.after) return 'cleared ref';
+  const now = label?.after || url?.after;
+  if (now) return `ref → ${clip(now)}`;
+  return label?.before ? 'cleared the ref label' : '';
+}
+
 export function changeText(entry) {
-  if (entry.detail_text || entry.detail) return entry.detail_text || entry.detail;
   const changes = entry.changes || [];
-  const parts = changes.map((c) => {
+  // A ref edit's detail is only the changed fields' names ("kind, url,
+  // label"); its changes say more. Other details read well as they are.
+  const fromChanges = entry.kind === 'edited' && changes.some((c) => c.field.startsWith('ref_'));
+  if (!fromChanges && (entry.detail_text || entry.detail)) {
+    const detail = entry.detail_text || entry.detail;
+    return entry.kind === 'created' ? createdText(detail) : detail;
+  }
+  const refs = changes.filter((c) => c.field.startsWith('ref_'));
+  const parts = changes.filter((c) => !c.field.startsWith('ref_')).map((c) => {
     const field = FIELD_LABEL[c.field] || c.field;
     if (c.field === 'body') return 'edited the brief';
     if (!c.before) return `set ${field} to ${clip(c.after)}`;
     if (!c.after) return `cleared ${field}`;
     return `${field}: ${clip(c.before, 40)} → ${clip(c.after, 40)}`;
   });
+  if (refs.length) {
+    const ref = refText(refs);
+    if (ref) parts.push(ref);
+  }
   if (entry.action && !parts.length) return entry.action;
-  return parts.join(' · ') || entry.kind;
+  return parts.join(' · ') || entry.detail_text || entry.detail || entry.kind;
 }
 
 function authorOf(comment, nameOf) {
