@@ -152,7 +152,7 @@ test('several refs: each shows by its kind, an issue is looked up on open, and S
   assert.deepEqual(api.calls.filter(([verb]) => verb === 'lookupRef'), [['lookupRef', 'crew', 'tcl-a1b2c3']], 'only the issue is looked up');
   const status = rows[1].querySelector('.tb-ref-status');
   assert.equal(status.textContent, 'In Progress', 'the lookup is newer than the board\'s');
-  assert.ok(status.classList.contains('st-progress'));
+  assert.ok(status.classList.contains('ui-tag') && status.classList.contains('ui-tag-warn'));
   assert.match(rows[1].textContent, /Release notes v2/);
 
   await click(rows[0].querySelector('.tb-ref-rm'));
@@ -180,8 +180,8 @@ test('the board shows every ref by kind on a card and the first and +n in the Li
   assert.equal(list.querySelector('.tb-refs-more').textContent, '+2');
   assert.equal(list.querySelector('.tb-ref-issue'), null);
   assert.ok(root);
-  assert.equal(trackerStatusClass('In Review'), 'st-review');
-  assert.equal(trackerStatusClass('Done'), 'st-done');
+  assert.equal(trackerStatusClass('In Review'), 'ui-tag-accent');
+  assert.equal(trackerStatusClass('Done'), '');
   assert.equal(trackerStatusClass('Backlog'), '');
 });
 

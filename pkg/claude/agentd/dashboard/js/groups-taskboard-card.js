@@ -42,13 +42,13 @@ export function refsOf(task) {
 // refKey is what tells two refs apart: the link, or the id with none.
 export const refKey = (ref) => ref?.url || ref?.label || ref?.id || '';
 
-// trackerStatusClass colours an issue's status pill the way its tracker
-// names it: in progress, in review or done; anything else is plain.
+// trackerStatusClass is an issue status's ui-tag variant, by the words its
+// tracker uses: in progress needs attention (warn), in review is accent,
+// anything else (done, backlog, …) is the plain tag.
 export function trackerStatusClass(status) {
   const s = String(status || '').toLowerCase();
-  if (/review/.test(s)) return 'st-review';
-  if (/progress|started|doing|active/.test(s)) return 'st-progress';
-  if (/done|closed|complete|merged|resolved|fixed/.test(s)) return 'st-done';
+  if (/review/.test(s)) return 'ui-tag-accent';
+  if (/progress|started|doing|active/.test(s)) return 'ui-tag-warn';
   return '';
 }
 
@@ -76,7 +76,7 @@ export function OneRef({ of: ref }) {
       ? html`<a class="tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>${label}</a>`
       : html`<span class="tb-ref" title=${`${title} · not linked`}>${label}</span>`;
     return html`<span class="tb-ref-issue">${ref.kind !== 'url' && html`<span class="tb-ref-kind">${ref.kind}</span>`}${id}${tracker?.status
-      && html`<span class=${`tb-ref-status ${trackerStatusClass(tracker.status)}`}>${tracker.status}</span>`}</span>`;
+      && html`<span class=${`ui-tag tb-ref-status ${trackerStatusClass(tracker.status)}`.trim()}>${tracker.status}</span>`}</span>`;
   }
   if (linked) {
     return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;

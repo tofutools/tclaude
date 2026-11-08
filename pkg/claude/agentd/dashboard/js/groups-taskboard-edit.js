@@ -505,8 +505,8 @@ function RefsField({ task, draft, busy, looked, onChange, onNewRef }) {
         <span class="tb-ref-row-chip">${shown ? html`<${OneRef} of=${shown} />` : html`<span class="tb-ref tb-ref-new">${key}</span>`}</span>
         <span class="tb-ref-row-text"><span class="tb-ref-row-title" title=${title}>${shown ? title || key : 'added on Save'}</span>
           ${shown && html`<span class="tb-ref-row-sub">${refSub(shown)}</span>`}</span>
-        <button type="button" class="tb-ref-rm" aria-label=${`Remove ${key}`} title="remove on Save" disabled=${busy}
-          onClick=${() => onChange(draft.refs.filter((k) => k !== key))}>✕</button>
+        <${Button} variant="ghost" size="sm" class="tb-ref-rm" aria-label=${`Remove ${key}`} title="remove on Save" disabled=${busy}
+          onClick=${() => onChange(draft.refs.filter((k) => k !== key))}>✕<//>
       </li>`;
     })}</ul>`}
     <span class="tb-ref-add"><${Input} class="tb-edit-ref" aria-label="Add a ref" value=${draft.newRef || ''} disabled=${busy || full}
