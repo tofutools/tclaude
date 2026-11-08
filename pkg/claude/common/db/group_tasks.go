@@ -523,6 +523,7 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		if in.AssigneeID != OperatorAssignee || status != GroupTaskOpen {
 			return nil, taskConflict("invalid_arg", "a question is an open task for the operator")
 		}
+		in.Question.AskedBy = in.Actor
 		raw, err := in.Question.encode()
 		if err != nil {
 			return nil, err

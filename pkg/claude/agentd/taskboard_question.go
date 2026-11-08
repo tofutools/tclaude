@@ -58,7 +58,7 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if _, ok := requireGroupPermission(w, r, PermTaskboardAssign, g, ActionContext{Group: g.Name}); !ok {
 		return
 	}
-	if taskboardAskedByCaller(r, t) {
+	if taskboardActor(r) == t.Asker() {
 		writeError(w, http.StatusForbidden, "forbidden", "the agent that asked does not answer its own question; drop it to withdraw it")
 		return
 	}
@@ -68,6 +68,7 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeTaskboardError(w, err)
 		return
 	}
+	taskboardWaiting.Delete(t.ID)
 	q := out.Question()
 	setAuditDetail(r, "answered "+t.ID)
 	mailTaskboardAnswer(r, g, out, q)
@@ -75,10 +76,11 @@ func handleTaskboardAnswer(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 
-// mailTaskboardAnswer sends the answer to the agent that asked, when an
-// agent did: a readable line, then the answer as JSON.
+// mailTaskboardAnswer sends the answer to the agent that asked, when a
+// local agent did: a readable line, then the answer as JSON. A peer's asker
+// reads it with ask-operator --wait or taskboard show --peer.
 func mailTaskboardAnswer(r *http.Request, g *db.AgentGroup, t *db.GroupTask, q *db.GroupTaskQuestion) {
-	asker, ok := strings.CutPrefix(t.AssignedBy, "agent:")
+	asker, ok := strings.CutPrefix(t.Asker(), "agent:")
 	if !ok || q == nil || q.Answer == nil {
 		return
 	}
@@ -125,12 +127,18 @@ func handleTaskboardAnswerGet(w http.ResponseWriter, r *http.Request, t *db.Grou
 		wait = min(d, taskboardAnswerWaitMax)
 	}
 	cur := t
+	// Only the asker's own polls mark the card "waiting".
+	mark := func() {
+		if taskboardActor(r) == t.Asker() {
+			taskboardWaiting.Store(t.ID, time.Now())
+		}
+	}
 	if wait > 0 {
 		deadline := time.Now().Add(wait)
 		tick := time.NewTicker(250 * time.Millisecond)
 		defer tick.Stop()
 		for cur.Live() && time.Now().Before(deadline) {
-			taskboardWaiting.Store(t.ID, time.Now())
+			mark()
 			select {
 			case <-r.Context().Done():
 				return
@@ -143,7 +151,10 @@ func handleTaskboardAnswerGet(w http.ResponseWriter, r *http.Request, t *db.Grou
 			}
 			cur = next
 		}
-		taskboardWaiting.Store(t.ID, time.Now())
+		mark()
+	}
+	if !cur.Live() {
+		taskboardWaiting.Delete(t.ID)
 	}
 	q := cur.Question()
 	writeJSON(w, http.StatusOK, map[string]any{"task": cur.ID, "status": cur.Status,

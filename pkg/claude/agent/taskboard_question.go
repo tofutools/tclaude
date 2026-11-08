@@ -102,12 +102,12 @@ type taskboardAskOperatorParams struct {
 	Question    string   `pos:"true" help:"The question, one line (the task's title)"`
 	Body        string   `long:"body" optional:"true" help:"Context for the operator (Markdown, up to 8 KiB)"`
 	BodyFile    string   `long:"body-file" optional:"true" help:"Read the context from this file ('-' for stdin)"`
-	Option      []string `long:"option" short:"o" optional:"true" help:"A choice: \"Label\" or \"Label: description\" (repeat, 2 to 6). Without options the operator answers in words"`
+	Option      []string `long:"option" short:"o" optional:"true" help:"A choice: \"Label\" or \"Label: description\" (split at the first colon and space; repeat, 2 to 6). Without options the operator answers in words"`
 	OptionsFile string   `long:"options-file" optional:"true" help:"The options as JSON: [{\"label\",\"description\",\"preview\",\"key\"}…] (a preview is monospace text, up to 2 KiB); not with --option"`
 	Multi       bool     `long:"multi" help:"The operator may pick several options"`
 	Recommend   string   `long:"recommend" optional:"true" help:"The option you recommend: its number (from 1), key or label"`
 	Blocks      string   `long:"blocks" optional:"true" help:"A task of the board (tk_…, typically yours) that waits on the answer: blocked on the question until it is answered"`
-	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail)"`
+	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail; on a --peer board, read it with taskboard show)"`
 	Idea        bool     `long:"idea" help:"Put it in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
 	Attach      []string `long:"attach" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each)"`
 	Peer        string   `long:"peer" optional:"true" help:"Ask the operator of a linked node, on its board, under the grants it gave this node"`
@@ -156,7 +156,7 @@ func parseQuestionOptions(opts []string, file string) ([]map[string]any, error) 
 	}
 	out := []map[string]any{}
 	for _, o := range opts {
-		label, desc, _ := strings.Cut(o, ":")
+		label, desc, _ := strings.Cut(o, ": ")
 		m := map[string]any{"label": strings.TrimSpace(label)}
 		if d := strings.TrimSpace(desc); d != "" {
 			m["description"] = d
@@ -234,13 +234,23 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 		if p.JSON {
 			return writeJSONTo(stdout, t)
 		}
-		fmt.Fprintf(stdout, "asked %s: %s  [%s]; the answer comes to your inbox\n", t.ID, t.Title, t.Stage)
+		fmt.Fprintf(stdout, "asked %s: %s  [%s]; %s\n", t.ID, t.Title, t.Stage, answerWhere(p.Peer, t.ID))
 		return rcOK
 	}
 	if !p.JSON {
 		fmt.Fprintf(stdout, "asked %s: %s; waiting up to %s for the answer…\n", t.ID, t.Title, wait)
 	}
 	return waitTaskboardAnswer(p.Peer, t.ID, wait, p.JSON, stdout, stderr)
+}
+
+// answerWhere says where the answer to a question comes: the inbox for a
+// local question; a linked node's daemon cannot mail this one, so a --peer
+// question's answer is read on its board.
+func answerWhere(peer, id string) string {
+	if peer == "" {
+		return "the answer comes to your inbox"
+	}
+	return fmt.Sprintf("read the answer with `tclaude agent taskboard show %s --peer %s`", id, peer)
 }
 
 // taskboardAnswerState is GET …/answer.
@@ -258,7 +268,7 @@ func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdou
 	for {
 		left := time.Until(deadline)
 		if left <= 0 {
-			fmt.Fprintf(stderr, "no answer within %s; %s stays open, and the answer comes to your inbox\n", wait, id)
+			fmt.Fprintf(stderr, "no answer within %s; %s stays open: %s\n", wait, id, answerWhere(peer, id))
 			return rcAskTimeout
 		}
 		step := min(left, 30*time.Second).Round(time.Second)
@@ -266,7 +276,10 @@ func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdou
 			step = time.Second
 		}
 		var st taskboardAnswerState
-		if err := remoteRequest(peer, http.MethodGet, taskboardPath(id, "/answer")+"?wait="+step.String(), nil, &st); err != nil {
+		// The daemon holds the request for up to step: the client budget
+		// is step plus headroom, not the default 10s.
+		opts := DaemonOpts{Timeout: step + 15*time.Second}
+		if err := remoteRequestOpts(peer, http.MethodGet, taskboardPath(id, "/answer")+"?wait="+step.String(), nil, &st, opts); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}

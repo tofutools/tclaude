@@ -24,7 +24,7 @@ const (
 	GroupTaskQuestionLabelMax   = 80
 	GroupTaskQuestionDescMax    = 300
 	GroupTaskQuestionPreviewMax = 2 << 10
-	GroupTaskAnswerTextMax      = 4 << 10
+	GroupTaskAnswerTextMax      = 4000 // characters
 )
 
 // GroupTaskEventAnswered is a question answered.
@@ -36,7 +36,11 @@ type GroupTaskQuestion struct {
 	Multi     bool                      `json:"multi,omitempty"`
 	Options   []GroupTaskQuestionOption `json:"options,omitempty"`
 	Recommend string                    `json:"recommend,omitempty"`
-	Answer    *GroupTaskAnswer          `json:"answer,omitempty"`
+	// AskedBy is the actor that asked ("agent:<id>", "peer: <author>",
+	// "operator"), fixed at create: assign and unassign rewrite the task's
+	// assigned_by, but the answer still goes back to the asker.
+	AskedBy string           `json:"asked_by,omitempty"`
+	Answer  *GroupTaskAnswer `json:"answer,omitempty"`
 }
 
 // GroupTaskQuestionOption is one choice.
@@ -197,6 +201,15 @@ func (q *GroupTaskQuestion) AnswerText() string {
 	return strings.Join(parts, "; ")
 }
 
+// Asker is the actor that asked the question: AskedBy, or for a question
+// stored before AskedBy, the task's creator.
+func (t *GroupTask) Asker() string {
+	if q := t.Question(); q != nil && q.AskedBy != "" {
+		return q.AskedBy
+	}
+	return t.CreatedBy
+}
+
 // AnswerGroupTask answers a live question task: picked are option keys (or
 // labels), text the free answer. The answer is stored with the question and
 // the task is closed as done with it as the reason, releasing the tasks
@@ -214,8 +227,8 @@ func AnswerGroupTask(id string, picked []string, text, actor string) (*GroupTask
 			return taskConflict("not_live", "task %s is %s; reopen it to answer it", id, t.Status)
 		}
 		text = strings.TrimSpace(text)
-		if len(text) > GroupTaskAnswerTextMax || !utf8.ValidString(text) {
-			return taskConflict("invalid_arg", "the answer text is at most %d bytes of UTF-8", GroupTaskAnswerTextMax)
+		if !utf8.ValidString(text) || utf8.RuneCountInString(text) > GroupTaskAnswerTextMax {
+			return taskConflict("invalid_arg", "the answer text is at most %d characters of UTF-8", GroupTaskAnswerTextMax)
 		}
 		keys := []string{}
 		seen := map[string]bool{}

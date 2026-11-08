@@ -478,13 +478,18 @@ tclaude agent taskboard ask-operator crew "Lane highlight colour?" \
   [--text "…"]`. The task closes as done with the answer as its reason, the
   tasks waiting on it reopen, and the agent that asked gets `[taskboard]
   answered: <group> · tk_… "<question>"` with the picks, the words and the
-  answer as JSON. A question is answered once.
+  answer as JSON. A question is answered once, and an answered question is
+  not reopened: ask again instead. The asker is fixed when the question is
+  asked, so the answer goes back to it even after the task is reassigned.
 - Answering is the operator's, or a `taskboard.assign` holder's, never the
   asking agent's: it may drop its question to withdraw it.
 - `--wait <duration>` holds the command until the answer comes, prints it
   (`--json` for the answer state), and exits 6 if it does not come in time.
   The question stays open, and the answer still comes by mail. While an agent
   waits, its card says *⏳ <agent> is waiting*.
+- With `--peer <node>` the question goes on a linked node's board. That
+  node cannot mail the asker, so the answer is read with `--wait` or with
+  `show <task> --peer <node>`.
 - `--idea` puts the question in the operator's ideas, not waiting on them
   (no `--blocks` or `--wait` then).
 - `show` prints the options and, once answered, the answer. The board stays

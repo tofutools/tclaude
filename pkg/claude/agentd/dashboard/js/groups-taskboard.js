@@ -40,7 +40,7 @@ import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
-import { AnswerFor, QuestionTag, canAnswer } from './groups-taskboard-answer.js';
+import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
 import { CommentCount, myAuthor } from './groups-taskboard-comments.js';
 import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
@@ -447,7 +447,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
-      <${QuestionTag} task=${task} askedBy=${actorLabel(task.assigned_by, group, snapshot)} />
+      <${QuestionTag} task=${task} askedBy=${actorLabel(askerOf(task), group, snapshot)} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
@@ -823,7 +823,7 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   return html`<div class="tb-board" data-taskboard=${name}>
     ${editDialog}
     ${reasonDialog}
-    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(answerTask.assigned_by, group, snapshot)} onClose=${() => setAnswering('')} />`}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}

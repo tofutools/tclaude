@@ -23,7 +23,7 @@ import {
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
-import { AnswerFor } from './groups-taskboard-answer.js';
+import { AnswerFor, askerOf } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -163,7 +163,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const min = (triage ? HEAD_PX : 0) + 5 * MIN_STAGE_PX;
   const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-lanes-wrap">
-    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(answerTask.assigned_by, group, snapshot)} onClose=${() => setAnswering('')} />`}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class=${`tb-lanes tb-lanes-flat${triage ? '' : ' tb-lanes-row'}`} data-taskboard-lanes=${group.name} data-lanes-by=${mode}

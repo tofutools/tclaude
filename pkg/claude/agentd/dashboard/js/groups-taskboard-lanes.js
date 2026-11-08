@@ -38,7 +38,7 @@ import { RowMenu } from './row-menu.js';
 import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
-import { AnswerFor, QuestionTag, questionOpen } from './groups-taskboard-answer.js';
+import { AnswerFor, QuestionTag, askerOf, questionOpen } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -327,7 +327,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
-      <${QuestionTag} task=${task} askedBy=${nameOf && task.assigned_by ? nameOf(task.assigned_by) : ''} /></div>`}
+      <${QuestionTag} task=${task} askedBy=${nameOf && askerOf(task) ? nameOf(askerOf(task)) : ''} /></div>`}
     ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
       onClick=${(event) => { event.stopPropagation(); onAnswer(task.id); }}>Answer…<//></div>`}
   </div>`;
@@ -704,7 +704,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const count = (key) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${key}`) ? list.length : 0), 0);
   const answerTask = answering && tasks.find((task) => task.id === answering);
   return html`<div class="tb-lanes-wrap">
-    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(answerTask.assigned_by, group, snapshot)} onClose=${() => setAnswering('')} />`}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}

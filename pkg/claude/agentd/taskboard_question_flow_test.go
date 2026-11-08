@@ -145,3 +145,22 @@ func TestTaskboardQuestionInWords(t *testing.T) {
 	code, body = h.post("", plain.ID, "answer", map[string]any{"text": "x"})
 	assert.Equal(t, http.StatusConflict, code, body)
 }
+
+// The asker is fixed at create: a question unassigned from the operator
+// still sends its answer to the agent that asked, and an answered question
+// is not reopened (its answer would block it for good).
+func TestTaskboardQuestionAskerSurvivesUnassign(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "Ship it?", "question": map[string]any{"options": []map[string]any{{"label": "Yes"}, {"label": "No"}}}})
+	asked := tbDecodeQuestion(t, rec.Code, rec.Body.String(), http.StatusCreated)
+	code, body := h.post("", asked.ID, "unassign", nil)
+	require.Equal(t, http.StatusOK, code, body)
+
+	code, body = h.post("", asked.ID, "answer", map[string]any{"picked": []string{"yes"}})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Contains(t, strings.Join(tbInboxSubjects(t, h.worker), "\n"), "[taskboard] answered: crew · "+asked.ID)
+
+	code, body = h.post("", asked.ID, "reopen", map[string]any{})
+	assert.Equal(t, http.StatusConflict, code, body)
+}

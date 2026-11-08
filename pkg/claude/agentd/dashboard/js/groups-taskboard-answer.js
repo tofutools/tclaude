@@ -21,6 +21,12 @@ export function questionOpen(task) {
   return !!task?.question && !task.question.answer && (task.status === 'open' || task.status === 'blocked');
 }
 
+// askerOf is the actor that asked task's question: fixed at create, while
+// assigned_by follows assign and unassign.
+export function askerOf(task) {
+  return task?.question?.asked_by || task?.assigned_by || '';
+}
+
 // questionKind is the tag's words: how the question is answered.
 export function questionKind(question) {
   const n = question?.options?.length || 0;
