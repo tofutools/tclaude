@@ -36,7 +36,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsTriggersRead, PermGroupsTriggersManage,
 		PermProcessAdvance, PermTemplatesUse,
 		PermProcessRunsStart, PermGroupsMembersProcess,
-		PermTaskboardRead, PermTaskboardWrite, PermTaskboardManage, PermTaskboardAssign, PermTaskboardTransfer,
+		PermTaskboardRead, PermTaskboardWrite, PermTaskboardManage, PermTaskboardAssign, PermTaskboardTransfer, PermTaskboardColumns,
 	}
 	want := append([]string{}, wantGroupScoped...)
 	want = append(want, PermProcessRunsRead, PermHumanNotify)

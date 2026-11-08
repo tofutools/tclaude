@@ -306,6 +306,8 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		Writers     []string          `json:"writers,omitempty"`
 		WriterNames []string          `json:"writer_names,omitempty"`
 		Columns     []taskboardColumn `json:"columns,omitempty"`
+		// BuiltinColumns names the hidden built-in columns (tk_bf5d2b02).
+		BuiltinColumns map[string]string `json:"builtin_columns,omitempty"`
 	}
 	if err := remoteRequest(p.Peer, http.MethodGet, path, nil, &resp); err != nil {
 		// No group: an agent in one group lists that board; anyone else (the
@@ -344,6 +346,15 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	}
 	if len(resp.Columns) > 0 {
 		fmt.Fprintf(stdout, "(custom columns: %s)\n", taskboardColumnsText(resp.Columns))
+	}
+	var hiddenBuiltins []string
+	for _, slug := range []string{"ideas", "done"} {
+		if resp.BuiltinColumns[slug] != "" {
+			hiddenBuiltins = append(hiddenBuiltins, slug)
+		}
+	}
+	if len(hiddenBuiltins) > 0 {
+		fmt.Fprintf(stdout, "(hidden on the board: %s; their tasks are listed here)\n", strings.Join(hiddenBuiltins, ", "))
 	}
 	printTaskboardRows(stdout, resp.Tasks)
 	return rcOK
@@ -471,6 +482,8 @@ type TaskboardColumnCount struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
 	Count int    `json:"count"`
+	// State is hidden or cordoned; empty for a shown column.
+	State string `json:"state,omitempty"`
 }
 
 // TaskboardSummaryGroup is one readable group in `ls --summary`.
@@ -545,7 +558,11 @@ func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) str
 	}
 	add(c.InProgress, "in progress")
 	for _, col := range columns {
-		add(col.Count, col.Label)
+		label := col.Label
+		if col.State != "" {
+			label += " (" + col.State + ")"
+		}
+		add(col.Count, label)
 	}
 	add(c.Next, "next")
 	if c.Ideas == 1 {

@@ -46,6 +46,7 @@ import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
 import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
+import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
@@ -63,16 +64,26 @@ export const isCustomColumn = (key) => typeof key === 'string' && key.startsWith
 
 // boardColumns are a board's lanes columns: LANE_COLUMNS with the board's
 // custom columns (entry.columns, In review, In CI, …) after In progress,
-// keyed `col:<slug>`.
+// keyed `col:<slug>`. The columns in entry.hiddenColumns (the board's and the
+// viewer's hidden ones, groups-taskboard-colvis.js) are left out; a cordoned
+// custom column is marked, and takes no drop or "+".
 export function boardColumns(entry) {
   const custom = (entry?.columns || []).map((column) => ({
     key: COLUMN_STATE + column.slug, label: column.label, wizard: column.label, slug: column.slug, custom: true,
+    cordoned: column.state === 'cordoned',
   }));
-  if (!custom.length) return LANE_COLUMNS;
+  const hidden = entry?.hiddenColumns || [];
+  if (!custom.length && !hidden.length) return LANE_COLUMNS;
   const at = LANE_COLUMNS.findIndex((column) => column.key === 'progress') + 1;
-  return [...LANE_COLUMNS.slice(0, at), ...custom, ...LANE_COLUMNS.slice(at)];
+  return [...LANE_COLUMNS.slice(0, at), ...custom, ...LANE_COLUMNS.slice(at)].filter((column) => !hidden.includes(column.key));
 }
 
+// columnClass is a column's head class, and cellClass the extra class of its
+// cells.
+export const columnClass = (column) => `ui-eyebrow ${column.custom ? 'tb-col-custom' : `tb-col-${column.key}`}${column.cordoned ? ' tb-col-cordoned' : ''}`;
+export const cellClass = (column) => `${column.custom ? ' tb-cell-custom' : ''}${column.cordoned ? ' tb-cell-cordoned' : ''}`;
+
+const HIDEABLE_KEYS = HIDEABLE_BUILTINS.map((b) => b.key);
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 // CELL_SHOWN is how many cards a cell draws before "+ n more": a cell
 // holding many tasks would otherwise stretch its whole row (and push the
@@ -786,11 +797,14 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
     const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable };
     const over = drag.over?.key === key;
-    const add = actions && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${column.custom ? ' tb-cell-custom' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
+    // A cordoned column takes no new task; a card already in it may still
+    // move within it (reorder, or another lane's hands).
+    const takes = actions && (!column.cordoned || byId.get(drag.dragging)?.column === column.slug);
+    const add = actions && !column.cordoned && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${cellClass(column)}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
-        onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
-        onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
+        onDragOver=${takes ? (event) => drag.overCell(event, target) : undefined}
+        onDrop=${takes ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
@@ -825,8 +839,9 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
-        ${columns.map((column, i) => html`<div key=${column.key} class=${`ui-eyebrow ${column.custom ? 'tb-col-custom' : `tb-col-${column.key}`}`} data-col=${column.key}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          column.custom && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} onRename=${(c) => naming.open('rename', c)} />`}${
+        ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)} data-col=${column.key}
+            title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
+          (column.custom || HIDEABLE_KEYS.includes(column.key)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}${
           i < columns.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>

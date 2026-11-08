@@ -13,7 +13,8 @@ import (
 // Custom stage columns (tcl-plby5h, docs/taskboard.md): a group may name up
 // to db.GroupTaskColumnsCap columns of its own, such as "In review" or "In
 // CI". They sit between In progress and Blocked; the built-in columns are
-// fixed. Managing them is taskboard.manage (owners hold it); putting a task in
+// fixed. Managing them is taskboard.columns (taskboard.manage covers it;
+// owners hold both); putting a task in
 // one is a change of that task (POST /v1/taskboard/tasks/{id}/stage with the
 // column's slug), so a member moves its own task there under taskboard.own.
 //
@@ -21,6 +22,11 @@ import (
 //	POST   /v1/groups/{name}/taskboard/columns          {label, slug?, before?}
 //	PATCH  /v1/groups/{name}/taskboard/columns/{slug}   {label?, before?, to_end?}
 //	DELETE /v1/groups/{name}/taskboard/columns/{slug}   its tasks go back to next
+//	POST   /v1/groups/{name}/taskboard/columns/{slug}/state {state}
+//	       shown, hidden or cordoned (tk_bf5d2b02); slug ideas or done for
+//	       those built-in columns, which may be hidden. A route of its own,
+//	       not a PATCH field, so a linked node that predates it answers 404
+//	       rather than ignoring the field.
 
 const (
 	maxTaskColumnLabelBytes = 40
@@ -39,6 +45,8 @@ var taskboardReservedColumnSlugs = map[string]bool{
 type taskboardColumnView struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
+	// State is hidden or cordoned; absent for shown (tk_bf5d2b02).
+	State string `json:"state,omitempty"`
 }
 
 func registerTaskboardColumnRoutes(mux *http.ServeMux) {
@@ -55,6 +63,7 @@ var taskboardColumnRoutes = []struct {
 	{"POST /v1/groups/{name}/taskboard/columns", v1GroupRoute(handleTaskboardColumnAdd)},
 	{"PATCH /v1/groups/{name}/taskboard/columns/{slug}", v1GroupRoute(handleTaskboardColumnChange)},
 	{"DELETE /v1/groups/{name}/taskboard/columns/{slug}", v1GroupRoute(handleTaskboardColumnRemove)},
+	{"POST /v1/groups/{name}/taskboard/columns/{slug}/state", v1GroupRoute(handleTaskboardColumnState)},
 }
 
 func taskboardColumnViews(g *db.AgentGroup) ([]taskboardColumnView, error) {
@@ -62,11 +71,40 @@ func taskboardColumnViews(g *db.AgentGroup) ([]taskboardColumnView, error) {
 	if err != nil {
 		return nil, err
 	}
+	states, err := db.ListGroupTaskColumnStates(g.ID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]taskboardColumnView, 0, len(cols))
 	for _, c := range cols {
-		out = append(out, taskboardColumnView{Slug: c.Slug, Label: c.Label})
+		out = append(out, taskboardColumnView{Slug: c.Slug, Label: c.Label, State: states[c.Slug]})
 	}
 	return out, nil
+}
+
+// taskboardBuiltinColumnStates is the state of g's built-in columns that are
+// not shown (ideas, done: hidden), by slug; nil when every one is shown.
+func taskboardBuiltinColumnStates(g *db.AgentGroup) map[string]string {
+	states, err := db.ListGroupTaskColumnStates(g.ID)
+	if err != nil {
+		return nil
+	}
+	var out map[string]string
+	for _, slug := range []string{db.GroupTaskColumnIdeas, db.GroupTaskColumnDone} {
+		if s := states[slug]; s != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[slug] = s
+		}
+	}
+	return out
+}
+
+// taskboardIdeasHidden reports whether g's board hides its Ideas column: a
+// new task then starts in next unless its stage is named.
+func taskboardIdeasHidden(g *db.AgentGroup) bool {
+	return taskboardBuiltinColumnStates(g)[db.GroupTaskColumnIdeas] == db.GroupTaskColumnHidden
 }
 
 // findTaskboardColumn finds g's custom column by its slug first, then by its
@@ -165,7 +203,11 @@ func writeTaskboardColumns(w http.ResponseWriter, status int, g *db.AgentGroup) 
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
-	writeJSON(w, status, map[string]any{"group": g.Name, "columns": cols, "cap": db.GroupTaskColumnsCap})
+	out := map[string]any{"group": g.Name, "columns": cols, "cap": db.GroupTaskColumnsCap}
+	if builtins := taskboardBuiltinColumnStates(g); len(builtins) > 0 {
+		out["builtin_columns"] = builtins
+	}
+	writeJSON(w, status, out)
 }
 
 // writeTaskboardColumnError maps a column store error; a missing column
@@ -187,10 +229,56 @@ func requireTaskboardColumnsManage(w http.ResponseWriter, r *http.Request, g *db
 	if !taskboardEnabled(w) {
 		return false
 	}
-	if _, ok := requireGroupPermission(w, r, PermTaskboardManage, g); !ok {
+	if _, ok := requireGroupPermission(w, r, PermTaskboardColumns, g); !ok {
 		return false
 	}
 	return requireGroupActive(w, g)
+}
+
+// POST /v1/groups/{name}/taskboard/columns/{slug}/state {state} — show,
+// hide or cordon a column for the whole board (tk_bf5d2b02). slug is a
+// custom column's (by slug or label), or ideas / done; a cordon is for a
+// custom column only.
+func handleTaskboardColumnState(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if !requireTaskboardColumnsManage(w, r, g) {
+		return
+	}
+	var body struct {
+		State string `json:"state"`
+	}
+	if !decodeTaskboardBody(w, r, &body) {
+		return
+	}
+	state := strings.TrimSpace(body.State)
+	name := strings.TrimSpace(r.PathValue("slug"))
+	slug := name
+	switch name {
+	case db.GroupTaskColumnIdeas, "idea":
+		slug = db.GroupTaskColumnIdeas
+	case db.GroupTaskColumnDone:
+	default:
+		col, ok, err := findTaskboardColumn(g, name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		if !ok {
+			if taskboardReservedColumnSlugs[name] {
+				writeError(w, http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("%s is always shown; of the built-in columns only ideas and done can be hidden", name))
+				return
+			}
+			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("%s has no column %q", g.Name, guideText(name, 40)))
+			return
+		}
+		slug = col.Slug
+	}
+	if err := db.SetGroupTaskColumnState(g.ID, slug, state); err != nil {
+		writeTaskboardColumnError(w, err, true)
+		return
+	}
+	setAuditDetail(r, "column "+slug+" "+state)
+	writeTaskboardColumns(w, http.StatusOK, g)
 }
 
 // GET /v1/groups/{name}/taskboard/columns

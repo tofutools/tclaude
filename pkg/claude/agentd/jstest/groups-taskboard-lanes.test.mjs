@@ -401,7 +401,7 @@ test('a cell holding many tasks draws the first three and "+ n more", which open
   assert.equal(ids('unassigned', 'ideas').length, 3, 'six ideas, three drawn');
   assert.equal(more().textContent, '+ 3 more');
   assert.equal(more().getAttribute('aria-expanded'), 'false');
-  assert.match(c.querySelector('.tb-col-ideas').textContent, /6$/, 'the column head still counts every idea');
+  assert.match(c.querySelector('.tb-col-ideas .tb-col-count').textContent, /6$/, 'the column head still counts every idea');
   assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more'), null, 'a cell within the cap has no toggle');
   await harness.act(async () => { harness.fireEvent(more(), 'click'); });
   assert.equal(ids('unassigned', 'ideas').length, 6, 'opened, every card is drawn');
@@ -494,7 +494,7 @@ test('a former member keeps an unfolded lane for what it holds, and takes no ass
 
 test('a drag that is not a task drag drives no cell; the Done header counts the week', async (t) => {
   const { drag, cell, card, harness, api, c } = await mountLanes(t, 'tbl-types');
-  assert.match(c.querySelector('.tb-col-done').textContent, /1$/);
+  assert.match(c.querySelector('.tb-col-done .tb-col-count').textContent, /1$/);
   // A card drag whose dragend never came, then a text drag over a cell.
   await harness.act(async () => { harness.fireEvent(card('tk_00000004'), 'dragstart', { dataTransfer: { setData() {} } }); });
   const text = { types: ['text/plain'], dropEffect: '' };

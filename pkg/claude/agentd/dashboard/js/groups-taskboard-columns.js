@@ -10,8 +10,9 @@
 //   ⋯ Remove           taskboard columns rm <group> <slug> (its tasks go
 //                      back to next)
 //
-// Managing columns needs taskboard.manage on the group (owners hold it); a
-// refusal is the board's usual toast.
+// Managing columns needs taskboard.columns on the group (taskboard.manage
+// covers it; owners hold both); a refusal is the board's usual toast. Hiding
+// and cordoning are groups-taskboard-colvis.js.
 
 import { h } from 'preact';
 import { useRef, useState } from 'preact/hooks';
@@ -19,6 +20,7 @@ import htm from 'htm';
 import { Dialog } from './ui-dialog.js';
 import { Button, Input } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
+import { columnStateItems } from './groups-taskboard-colvis.js';
 
 const html = htm.bind(h);
 
@@ -68,7 +70,7 @@ export function ColumnNameDialog({ title, line, value = '', ok, busy = false, on
 // columnMenuItems are a custom column's ⋯ items. columns are the board's
 // custom columns in order; onRename opens the name dialog.
 export function columnMenuItems({ column, columns, group, actions, onRename }) {
-  if (!actions || actions.busy || typeof actions.api?.changeColumn !== 'function') return [];
+  if (!column.custom || !actions || actions.busy || typeof actions.api?.changeColumn !== 'function') return [];
   const i = columns.findIndex((c) => c.slug === column.slug);
   const run = (label, fn) => () => actions.run('columns', label, fn);
   const item = (key, label, title, rest) => ({ key, label, attrs: { 'data-column-menu': key, title }, ...rest });
@@ -89,12 +91,16 @@ export function columnMenuItems({ column, columns, group, actions, onRename }) {
   ];
 }
 
-// ColumnHeadMenu is a custom column head's ⋯.
-export function ColumnHeadMenu({ column, columns, group, actions, onRename }) {
-  const items = columnMenuItems({ column, columns, group, actions, onRename });
+// ColumnHeadMenu is a column head's ⋯: a custom column's rename, move and
+// remove, and any hideable column's hide and cordon items
+// (groups-taskboard-colvis.js).
+export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename }) {
+  const manage = columnMenuItems({ column, columns, group, actions, onRename });
+  const state = actions?.busy ? [] : columnStateItems(column, entry);
+  const items = [...manage, ...state];
   if (!items.length) return null;
   return html`<span class="tb-col-menu"><${RowMenu} label=${`the ${column.label} column`} items=${items} buttonClass="tb-col-more"
-    title=${`Rename, move or remove the ${column.label} column`} /></span>`;
+    title=${column.custom ? `Rename, move, hide or remove the ${column.label} column` : `Hide the ${column.label} column`} /></span>`;
 }
 
 // useColumnNaming drives the add and rename dialogs: open('add') or

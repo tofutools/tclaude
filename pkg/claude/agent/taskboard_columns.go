@@ -20,13 +20,18 @@ import (
 type taskboardColumn struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
+	// State is hidden or cordoned; empty for a shown column (tk_bf5d2b02).
+	State string `json:"state,omitempty"`
 }
 
 type taskboardColumnsResp struct {
 	Group   string            `json:"group"`
 	Columns []taskboardColumn `json:"columns"`
-	Cap     int               `json:"cap,omitempty"`
-	Moved   []string          `json:"moved,omitempty"`
+	// BuiltinColumns is the state of the hidden built-in columns (ideas,
+	// done), by slug.
+	BuiltinColumns map[string]string `json:"builtin_columns,omitempty"`
+	Cap            int               `json:"cap,omitempty"`
+	Moved          []string          `json:"moved,omitempty"`
 }
 
 // taskboardColumnsText reads a board's custom columns: "In review
@@ -34,7 +39,11 @@ type taskboardColumnsResp struct {
 func taskboardColumnsText(cols []taskboardColumn) string {
 	parts := make([]string, 0, len(cols))
 	for _, c := range cols {
-		parts = append(parts, c.Label+" ["+c.Slug+"]")
+		part := c.Label + " [" + c.Slug + "]"
+		if c.State != "" {
+			part += " (" + c.State + ")"
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -55,8 +64,10 @@ func taskboardColumnsCmd() *cobra.Command {
 			"They sit between In progress and Blocked, in the group's order; the built-in columns (Ideas, Next, " +
 			"In progress, Blocked, Done) are fixed. A task stands in a custom column with " +
 			"`taskboard move <task> --stage <column>` and keeps its assignee; a task in a custom column never stalls. " +
-			"`--stage next` takes it out again. Adding, renaming, reordering and removing columns needs " +
-			"taskboard.manage on the group (owners hold it); listing them needs taskboard.read.",
+			"`--stage next` takes it out again. `hide` and `show` take a column off the board's view and back (custom ones, ideas, done); " +
+			"`cordon` and `uncordon` stop a custom column taking new tasks and lift that. Adding, renaming, reordering, removing, " +
+			"hiding and cordoning columns needs taskboard.columns on the group (taskboard.manage covers it; owners hold both); " +
+			"listing them needs taskboard.read.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskboardColumnsLsCmd(),
@@ -64,6 +75,18 @@ func taskboardColumnsCmd() *cobra.Command {
 			taskboardColumnsRenameCmd(),
 			taskboardColumnsMoveCmd(),
 			taskboardColumnsRmCmd(),
+			taskboardColumnStateCmd("hide", nil, "hidden",
+				"Hide a column for the whole board: custom, ideas or done (needs taskboard.columns)",
+				"The column and its tasks stay; the board just does not draw it. Its tasks keep their column and "+
+					"`taskboard ls` marks them. With Ideas hidden, a new task without a stage starts in next."),
+			taskboardColumnStateCmd("show", nil, "shown",
+				"Show a hidden or cordoned column again (needs taskboard.columns)", ""),
+			taskboardColumnStateCmd("cordon", []string{"disable"}, "cordoned",
+				"Cordon a custom column: it takes no new task, its tasks may leave (needs taskboard.columns)",
+				"A cordoned column is still drawn, greyed. Moving, creating, reopening or transferring a task into it is refused; "+
+					"the tasks already in it stay and may move out."),
+			taskboardColumnStateCmd("uncordon", []string{"enable"}, "shown",
+				"Lift a cordon: the column takes tasks again (needs taskboard.columns)", ""),
 		},
 	}.ToCobra()
 }
@@ -94,15 +117,19 @@ func runTaskboardColumns(peer, method, path string, body any, askHuman string, a
 	if len(resp.Moved) > 0 {
 		fmt.Fprintf(stdout, "back to next: %s\n", strings.Join(resp.Moved, ", "))
 	}
+	builtin := func(label, slug string) string {
+		if st := resp.BuiltinColumns[slug]; st != "" {
+			return label + " (" + st + ")"
+		}
+		return label
+	}
+	ideas, done := builtin("Ideas", "ideas"), builtin("Done", "done")
 	if len(resp.Columns) == 0 {
-		fmt.Fprintf(stdout, "%s: no custom columns (Ideas, Next, In progress, Blocked, Done)\n", resp.Group)
+		fmt.Fprintf(stdout, "%s: no custom columns (%s, Next, In progress, Blocked, %s)\n", resp.Group, ideas, done)
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%s columns: Ideas, Next, In progress, ", resp.Group)
-	for _, c := range resp.Columns {
-		fmt.Fprintf(stdout, "%s [%s], ", c.Label, c.Slug)
-	}
-	fmt.Fprintln(stdout, "Blocked, Done")
+	fmt.Fprintf(stdout, "%s columns: %s, Next, In progress, %s, Blocked, %s\n", resp.Group, ideas,
+		taskboardColumnsText(resp.Columns), done)
 	return rcOK
 }
 
@@ -133,7 +160,7 @@ type taskboardColumnsAddParams struct {
 	Label    string `pos:"true" help:"The column's name, e.g. \"In review\" (at most 40 bytes)"`
 	Slug     string `long:"slug" optional:"true" help:"Its slug for --stage (default: made from the label, e.g. in-review)"`
 	Before   string `long:"before" optional:"true" help:"Place it before this custom column (slug); default: the last custom column, just before Blocked"`
-	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.manage)"`
+	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.columns)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -141,7 +168,7 @@ type taskboardColumnsAddParams struct {
 func taskboardColumnsAddCmd() *cobra.Command {
 	return boa.CmdT[taskboardColumnsAddParams]{
 		Use:         "add",
-		Short:       "Add a custom column (needs taskboard.manage)",
+		Short:       "Add a custom column (needs taskboard.columns)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardColumnsAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -160,7 +187,7 @@ type taskboardColumnsRenameParams struct {
 	Group    string `pos:"true" help:"Group whose board has the column"`
 	Column   string `pos:"true" help:"The column's slug"`
 	Label    string `pos:"true" help:"Its new name (the slug stays)"`
-	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.manage)"`
+	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.columns)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -168,7 +195,7 @@ type taskboardColumnsRenameParams struct {
 func taskboardColumnsRenameCmd() *cobra.Command {
 	return boa.CmdT[taskboardColumnsRenameParams]{
 		Use:         "rename",
-		Short:       "Rename a custom column; its slug stays (needs taskboard.manage)",
+		Short:       "Rename a custom column; its slug stays (needs taskboard.columns)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardColumnsRenameParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -187,7 +214,7 @@ type taskboardColumnsMoveParams struct {
 	Column   string `pos:"true" help:"The column's slug"`
 	Before   string `long:"before" optional:"true" help:"Just before this custom column (slug)"`
 	Last     bool   `long:"last" help:"To the end of the custom columns, just before Blocked"`
-	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.manage)"`
+	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.columns)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -195,7 +222,7 @@ type taskboardColumnsMoveParams struct {
 func taskboardColumnsMoveCmd() *cobra.Command {
 	return boa.CmdT[taskboardColumnsMoveParams]{
 		Use:         "move",
-		Short:       "Reorder a custom column among the custom ones (needs taskboard.manage)",
+		Short:       "Reorder a custom column among the custom ones (needs taskboard.columns)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardColumnsMoveParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -217,7 +244,7 @@ func taskboardColumnsMoveCmd() *cobra.Command {
 type taskboardColumnsRmParams struct {
 	Group    string `pos:"true" help:"Group whose board has the column"`
 	Column   string `pos:"true" help:"The column's slug"`
-	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.manage)"`
+	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.columns)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -225,7 +252,7 @@ type taskboardColumnsRmParams struct {
 func taskboardColumnsRmCmd() *cobra.Command {
 	return boa.CmdT[taskboardColumnsRmParams]{
 		Use:         "rm",
-		Short:       "Remove a custom column; its tasks go back to next (needs taskboard.manage)",
+		Short:       "Remove a custom column; its tasks go back to next (needs taskboard.columns)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardColumnsRmParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -235,6 +262,35 @@ func taskboardColumnsRmCmd() *cobra.Command {
 		RunFunc: func(p *taskboardColumnsRmParams, _ *cobra.Command, _ []string) {
 			taskboardExit(runTaskboardColumns(p.Peer, http.MethodDelete, taskboardColumnsPath(p.Group, p.Column), nil,
 				p.AskHuman, p.JSON, "removed "+p.Column, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+type taskboardColumnStateParams struct {
+	Group    string `pos:"true" help:"Group whose board has the column"`
+	Column   string `pos:"true" help:"The column: a custom column's slug or label, or ideas / done"`
+	Peer     string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.columns)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON     bool   `long:"json" help:"Output JSON"`
+}
+
+// taskboardColumnStateCmd sets a column's board-level state (tk_bf5d2b02):
+// POST /v1/groups/{name}/taskboard/columns/{slug}/state.
+func taskboardColumnStateCmd(use string, aliases []string, state, short, long string) *cobra.Command {
+	return boa.CmdT[taskboardColumnStateParams]{
+		Use:         use,
+		Aliases:     aliases,
+		Short:       short,
+		Long:        long,
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardColumnStateParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskboardColumnStateParams, _ *cobra.Command, _ []string) {
+			taskboardExit(runTaskboardColumns(p.Peer, http.MethodPost, taskboardColumnsPath(p.Group, p.Column)+"/state",
+				map[string]any{"state": state}, p.AskHuman, p.JSON, p.Column+" "+state, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

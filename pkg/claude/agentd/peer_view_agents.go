@@ -242,10 +242,11 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"GET /v1/groups/{name}/taskboard/writers":      {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
 	"POST /v1/groups/{name}/taskboard/writers":     {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
 	// Custom stage columns.
-	"GET /v1/groups/{name}/taskboard/columns":           {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"POST /v1/groups/{name}/taskboard/columns":          {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
-	"PATCH /v1/groups/{name}/taskboard/columns/{slug}":  {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
-	"DELETE /v1/groups/{name}/taskboard/columns/{slug}": {slugs: []string{PermTaskboardManage}, target: agentViewGroup},
+	"GET /v1/groups/{name}/taskboard/columns":               {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/columns":              {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
+	"PATCH /v1/groups/{name}/taskboard/columns/{slug}":      {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
+	"DELETE /v1/groups/{name}/taskboard/columns/{slug}":     {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
+	"POST /v1/groups/{name}/taskboard/columns/{slug}/state": {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which

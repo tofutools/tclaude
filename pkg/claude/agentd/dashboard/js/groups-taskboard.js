@@ -33,7 +33,8 @@ import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
 import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
-import { TaskboardLanes } from './groups-taskboard-lanes.js';
+import { TaskboardLanes, laneColumn } from './groups-taskboard-lanes.js';
+import { ColumnsMenu, HiddenColumnsTag, boardHidden, hiddenTally, mineHidden, setMineHidden, withColumnView } from './groups-taskboard-colvis.js';
 import { FLAT_MODES, TaskboardFlat } from './groups-taskboard-lanes-flat.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
@@ -851,16 +852,24 @@ export function listStates(columns = []) {
 export const LIST_HIDDEN_DEFAULT = ['done', 'dropped'];
 const LIST_HIDDEN_PREF = (group) => `tclaude.dash.groups.taskboard.list-hidden.${group}`;
 
+// listHiddenDefault is what the List hides before a choice: the closed
+// tasks, and the columns the board hides (tk_bf5d2b02), Ideas as the idea
+// state.
+export function listHiddenDefault(entry) {
+  const board = boardHidden(entry).map((key) => (key === 'ideas' ? 'idea' : key));
+  return [...new Set([...LIST_HIDDEN_DEFAULT, ...board])];
+}
+
 // listHidden reads the states the List hides, per group and viewer: the
 // default until a choice is made. It stores what is hidden, so a state added
 // later shows until hidden.
-export function listHidden(group) {
+export function listHidden(group, defaults = LIST_HIDDEN_DEFAULT) {
   try {
     const raw = dashPrefs.getItem(LIST_HIDDEN_PREF(group));
     const list = raw ? JSON.parse(raw) : null;
     if (Array.isArray(list)) return list.filter((state) => LIST_STATES.some(([key]) => key === state) || String(state).startsWith(COLUMN_STATE));
   } catch (_) { /* a malformed value reads as the default */ }
-  return [...LIST_HIDDEN_DEFAULT];
+  return [...defaults];
 }
 
 const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
@@ -887,13 +896,17 @@ export function taskboardLanesBy(group) {
 
 // useViewPrefs reads the section's List | Lanes choice and the lanes' "by",
 // remembered per group and per viewer in dashPrefs like the section folds.
-function useViewPrefs(group) {
+function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
   const [, bump] = useState(0);
   const set = (key, value) => { dashPrefs.setItem(key, value); bump((n) => n + 1); };
   return {
     view: taskboardView(group),
     by: taskboardLanesBy(group),
-    listHidden: listHidden(group),
+    listHidden: listHidden(group, listDefaults),
+    listDefaults,
+    // The columns this viewer hides on the board (groups-taskboard-colvis.js).
+    mineColumns: mineHidden(group),
+    setMineColumns: (keys) => { setMineHidden(group, keys); bump((n) => n + 1); },
     // null puts the default back.
     setListHidden: (value) => {
       if (value) dashPrefs.setItem(LIST_HIDDEN_PREF(group), JSON.stringify(value));
@@ -930,7 +943,8 @@ function ListFilter({ group, prefs, columns = [] }) {
   const [open, setOpen] = useState(false);
   const hidden = prefs.listHidden;
   const states = listStates(columns);
-  const changes = states.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
+  const defaults = prefs.listDefaults || LIST_HIDDEN_DEFAULT;
+  const changes = states.filter(([key]) => hidden.includes(key) !== defaults.includes(key)).length;
   // Element ids from the group's name, every other character spelled out,
   // so name@node and a local name-node never share one.
   const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9-]/g, (c) => `_${c.codePointAt(0).toString(16)}_`)}`;
@@ -960,7 +974,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);
-  const prefs = useViewPrefs(shown.name);
+  const prefs = useViewPrefs(shown.name, listHiddenDefault(entry));
   // Once the section has opened on its own (something needed the
   // operator), it stays open for this page, so clearing the last blocked
   // task never folds it under a form or the capture box in use. The
@@ -970,6 +984,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const wizard = isWizardActive();
   const counts = entry.counts || {};
   if ((counts.needs_you || 0) > 0) autoOpened.current = true;
+  // The lanes draw the columns neither the board nor this viewer hides.
+  const view = withColumnView(entry, { group: group.name, mine: prefs.mineColumns, onMine: prefs.setMineColumns, actions: api ? actions : null });
+  const lanes = prefs.view === 'lanes';
   // choose opens what the add menu picked; a lanes cell's "+" passes its
   // start state (and the lane's agent) along.
   const choose = (what, initial = {}) => {
@@ -980,7 +997,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section line.
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
   const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
-    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}</div>`;
+    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}${
+    lanes && html`<${ColumnsMenu} entry=${view} group=${shown.name} />`}${
+    lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}</div>`;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
@@ -992,7 +1011,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
       closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
-    <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
+    <${TaskboardRows} entry=${lanes ? view : entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       view=${prefs.view} lanesBy=${prefs.by}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;

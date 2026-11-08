@@ -42,7 +42,8 @@ tclaude agent taskboard release tk_1a2b3c4d   # give it back without a report
   you open its PR and are waiting on review, CI or merge:
   `tclaude agent taskboard move tk_… --stage in-review`. A task in a custom
   column never raises "went idle without reporting". Report done when it
-  merges.
+  merges. A cordoned column (`columns ls` marks it) takes no new task; a
+  hidden one still takes moves but the board does not draw it.
 - `report` names the task with `--task`. You can leave it out when exactly one
   live task is assigned to you.
 - `done` closes the task. `failed` gives it back and counts a failure; after
