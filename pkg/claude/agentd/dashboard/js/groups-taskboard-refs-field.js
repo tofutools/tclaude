@@ -48,6 +48,16 @@ function hostOf(url) {
   try { return new URL(url).host; } catch { return url; }
 }
 
+// madeFirst is refs with key first and the rest as the daemon keeps them
+// after a first_ref: the task's stored refs in their order, then the new
+// ones. Only the first is the form's to choose, so a second ↑ never shows an
+// order Save cannot write.
+export function madeFirst(task, refs, key) {
+  const stored = refsOf(task).map(refKey).filter((k) => refs.includes(k));
+  const rest = [...stored, ...refs.filter((k) => !stored.includes(k))];
+  return [key, ...rest.filter((k) => k !== key)];
+}
+
 // RefsField is the form's refs: one row per ref (its chip, its title, ↑ to
 // make it the first, and ✕ to take it off on Save) and a box to add one. A
 // new ref is a row of its text until Save links it. The New task form uses
@@ -73,7 +83,7 @@ export function RefsField({ task = { refs: [] }, draft, busy, looked = {}, pendi
           ${shown && html`<span class="tb-ref-row-sub">${refSub(shown)}</span>`}</span>
         <span class="tb-ref-row-actions">${multiRefs(task) && i > 0 && html`<${Button} variant="ghost" size="sm" class="tb-ref-first" aria-label=${`Make ${key} the first ref`}
           title="make it the first: the task's ref for --ref and the List" disabled=${busy}
-          onClick=${() => onChange([key, ...draft.refs.filter((k) => k !== key)])}>↑<//>`}
+          onClick=${() => onChange(madeFirst(task, draft.refs, key))}>↑<//>`}
         <${Button} variant="ghost" size="sm" class="tb-ref-rm" aria-label=${`Remove ${key}`} title="remove on Save" disabled=${busy}
           onClick=${() => onChange(draft.refs.filter((k) => k !== key))}>✕<//></span>
       </li>`;

@@ -45,3 +45,22 @@ test('↑ moves a ref to the front; the first has none', async (t) => {
   assert.deepEqual(refs, ['LIN-3', 'LIN-1', 'LIN-2'], 'the others keep their order');
   assert.match(view.container.textContent, /added on Save/);
 });
+
+test('a second ↑ keeps the rest in the order the daemon keeps, so the form shows what Save writes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { madeFirst } = await harness.importDashboardModule('js/groups-taskboard-refs-field.js');
+  const { refsPlan } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
+  const task = { refs: [{ kind: 'linear', label: 'x' }, { kind: 'linear', label: 'y' }, { kind: 'linear', label: 'z' }] };
+  let refs = madeFirst(task, ['x', 'y', 'z'], 'z');
+  assert.deepEqual(refs, ['z', 'x', 'y']);
+  refs = madeFirst(task, refs, 'x');
+  assert.deepEqual(refs, ['x', 'y', 'z'], 'x first again is the stored order, not x, z, y');
+  assert.equal(refsPlan(task, { refs, newRef: '' }), null);
+
+  const two = { refs: [{ kind: 'linear', label: 'x' }, { kind: 'linear', label: 'y' }] };
+  refs = madeFirst(two, ['x', 'y', 'A'], 'A');
+  assert.deepEqual(refs, ['A', 'x', 'y']);
+  refs = madeFirst(two, refs, 'x');
+  assert.deepEqual(refs, ['x', 'y', 'A'], 'a new ref goes back after the stored ones');
+  assert.deepEqual(refsPlan(two, { refs, newRef: '' }), { addRefs: ['A'], resolveRef: true });
+});
