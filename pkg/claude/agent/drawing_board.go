@@ -71,7 +71,7 @@ func drawingBoardCmd() *cobra.Command {
 			"menu with no tab open, until `drawing-board close`. `drawing-board open` restarts one when you come back to a drawing board.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			drawingBoardLsCmd(), drawingBoardShowCmd(), drawingBoardSnapshotCmd(), drawingBoardCreateCmd(), drawingBoardOpenCmd(), drawingBoardCloseCmd(),
+			drawingBoardLsCmd(), drawingBoardShowCmd(), drawingBoardSnapshotCmd(), drawingBoardExportCmd(), drawingBoardCreateCmd(), drawingBoardOpenCmd(), drawingBoardCloseCmd(),
 			drawingBoardAddCmd(), drawingBoardPatchCmd(), drawingBoardRmCmd(), drawingBoardMoveCmd(), drawingBoardTextCmd(), drawingBoardConnectCmd(), drawingBoardLayoutCmd(), drawingBoardFromProcessCmd(), drawingBoardFromFleetCmd(), drawingBoardFleetChangesCmd(),
 		},
 	}.ToCobra()

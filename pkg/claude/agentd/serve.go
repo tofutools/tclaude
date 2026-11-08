@@ -1397,6 +1397,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/drawing-boards/{id}", handleDrawingBoardRead)
 	mux.HandleFunc("PATCH /v1/drawing-boards/{id}", handleDrawingBoardPatch)
 	mux.HandleFunc("GET /v1/drawing-boards/{id}/snapshot", handleDrawingBoardSnapshot)
+	mux.HandleFunc("POST /v1/drawing-boards/{id}/export", handleDrawingBoardExport)
 	mux.HandleFunc("POST /v1/drawing-boards/{id}/session", handleDrawingBoardSessionOpen)
 	mux.HandleFunc("DELETE /v1/drawing-boards/{id}/session", handleDrawingBoardSessionClose)
 	mux.HandleFunc("POST /v1/resource-locks", handleAgentResourceLock)
