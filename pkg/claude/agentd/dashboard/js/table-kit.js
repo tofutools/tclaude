@@ -53,3 +53,14 @@ export function TableHead({
 export function ColGroup({ cols, colClass }) {
   return html`<colgroup>${cols.map((c) => html`<col key=${c.key} class=${colClass(c)} />`)}</colgroup>`;
 }
+
+// tableState is what a table area shows instead of its table while there is
+// nothing to list: the first of loading, error and empty that is set (text
+// or markup), as the house empty note or error box; null when the table
+// should render.
+export function tableState({ loading, error, empty }) {
+  if (loading) return html`<div class="empty">${loading}</div>`;
+  if (error) return html`<div role="alert" class="island-error">${error}</div>`;
+  if (empty) return html`<div class="empty">${empty}</div>`;
+  return null;
+}

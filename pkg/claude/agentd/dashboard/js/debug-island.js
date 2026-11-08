@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 import { Button } from './ui-components.js';
+import { tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 export const DEBUG_POLL_MS = 10_000;
@@ -146,16 +147,13 @@ function updatedLabel(response) {
 }
 
 function DebugContents({ current }) {
-  if (current.request.phase === 'loading') {
-    return html`<div class="empty">Loading poll timings…</div>`;
-  }
-  if (current.request.phase === 'error') {
-    const operation = current.request.operation === 'reset' ? 'reset' : 'load';
-    return html`<div class="island-error" role="alert">Failed to ${operation} poll timings: ${current.request.error}</div>`;
-  }
-  if (!current.endpoints.length) {
-    return html`<div class="empty">No poll samples recorded yet — the recorder fills as the dashboard polls (open the Groups tab for a few seconds, then return here).</div>`;
-  }
+  const operation = current.request.operation === 'reset' ? 'reset' : 'load';
+  const placeholder = tableState({
+    loading: current.request.phase === 'loading' && 'Loading poll timings…',
+    error: current.request.phase === 'error' && html`Failed to ${operation} poll timings: ${current.request.error}`,
+    empty: !current.endpoints.length && 'No poll samples recorded yet — the recorder fills as the dashboard polls (open the Groups tab for a few seconds, then return here).',
+  });
+  if (placeholder) return placeholder;
   return current.endpoints.map((endpoint) =>
     html`<${EndpointCard} key=${endpoint.endpoint} endpoint=${endpoint} />`);
 }
