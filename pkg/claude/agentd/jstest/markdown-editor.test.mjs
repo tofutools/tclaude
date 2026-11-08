@@ -209,3 +209,22 @@ test('a render carrying the text from a keystroke ago never rewinds the editor',
   assert.equal(host.doc(), '');
   await mounted.unmount();
 });
+
+// In a document with no DOM selection, the real mountCodeMirror refuses
+// before it begins a view: CodeMirror's constructor would throw half way
+// there, leaving a view whose background parse later throws "Calls to
+// EditorView.update are not allowed while an update is in progress" (the
+// jstest flake in groups-taskboard-edit). The textarea stays the editor.
+test('mountCodeMirror begins no view in a document without a DOM selection', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { canHostCodeMirror, mountCodeMirror } = await harness.importDashboardModule('js/markdown-codemirror.js');
+  const parent = harness.document.createElement('div');
+  harness.document.body.appendChild(parent);
+  assert.equal(typeof harness.document.getSelection, 'undefined', 'the DOM shim has no selection');
+  assert.equal(canHostCodeMirror(parent), false);
+  await assert.rejects(mountCodeMirror(parent, 'text'), /no DOM selection/);
+  assert.equal(parent.childNodes.length, 0, 'no editor was begun');
+  // A document with a selection (a browser) can host one.
+  const doc = { getSelection: () => null };
+  assert.equal(canHostCodeMirror({ ownerDocument: doc, getRootNode: () => doc }), true);
+});
