@@ -17,7 +17,7 @@ import (
 // ---- export ----
 
 type drawingBoardExportParams struct {
-	Output   string   `long:"output" short:"o" help:"File to write the image to (.png or .svg), or - for stdout"`
+	Output   string   `long:"output" short:"o" optional:"true" help:"File to write the image to (.png or .svg), or - for stdout (default: <drawing board>.png, or .svg with --format svg)"`
 	Format   string   `long:"format" optional:"true" alts:"png,svg" help:"png or svg (default: from the -o extension, else png)"`
 	Elements []string `long:"elements" optional:"true" help:"Only these element ids (comma-separated or repeated), with their attached text and the lines bound between them"`
 	Region   string   `long:"region" optional:"true" help:"Only what meets this box, cropped to it: x,y,width,height in drawing board units"`
@@ -77,14 +77,13 @@ func exportFormat(format, output string) (string, error) {
 }
 
 func runDrawingBoardExport(p *drawingBoardExportParams, id string, stdout, stderr io.Writer) int {
-	if strings.TrimSpace(p.Output) == "" {
-		fmt.Fprintln(stderr, "Error: -o <file.png|file.svg|-> is required")
-		return rcInvalidArg
-	}
 	format, err := exportFormat(p.Format, p.Output)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return rcInvalidArg
+	}
+	if strings.TrimSpace(p.Output) == "" {
+		p.Output = id + "." + format
 	}
 	req := map[string]any{"format": format}
 	var ids []string

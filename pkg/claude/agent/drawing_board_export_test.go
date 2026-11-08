@@ -12,6 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDrawingBoardExportWritesBoardNamedFileByDefault(t *testing.T) {
+	prev := DaemonPostRawBytesImpl
+	t.Cleanup(func() { DaemonPostRawBytesImpl = prev })
+	DaemonPostRawBytesImpl = func(string, string, []byte, http.Header, DaemonOpts) ([]byte, http.Header, error) {
+		return []byte("img"), http.Header{}, nil
+	}
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runDrawingBoardExport(&drawingBoardExportParams{Format: "svg"}, "plan", &stdout, &stderr), stderr.String())
+	data, err := os.ReadFile("plan.svg")
+	require.NoError(t, err)
+	assert.Equal(t, "img", string(data))
+}
+
 func TestDrawingBoardExportFormatFollowsTheFile(t *testing.T) {
 	for _, c := range []struct{ format, output, want string }{
 		{"", "plan.png", "png"}, {"", "plan.SVG", "svg"}, {"", "-", "png"}, {"svg", "-", "svg"}, {"", "plan.out", "png"},
@@ -59,7 +73,6 @@ func TestDrawingBoardExportSendsThePartAndWritesTheImage(t *testing.T) {
 		{Output: "a.png", Region: "0,0,0,5"},
 		{Output: "a.png", Region: "0,0,5,5", Elements: []string{"api"}},
 		{Output: "a.svg", Scale: 2},
-		{},
 	} {
 		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
 	}
