@@ -422,6 +422,35 @@ test('a cell holding many tasks draws the first three and "+ n more", which open
   assert.match(grid.getAttribute('style'), /--tb-lane-min: 620px/, 'rows are at least the grid\'s minimum width, so the sideways scroll keeps the lane column pinned');
 });
 
+test('an opened cell stays open through a remount (a task editor, a reload) until Show less closes it', async (t) => {
+  const ideas = ['tk_000000b1', 'tk_000000b2', 'tk_000000b3', 'tk_000000b4'].map((id) => row(id, `idea ${id}`, { stage: 'idea' }));
+  const name = 'tbl-cap-keep';
+  const { cell, ids, harness } = await mountLanes(t, name, { extraTasks: ideas });
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  await harness.act(async () => { harness.fireEvent(cell('unassigned', 'ideas').querySelector('.tb-cell-more'), 'click'); });
+  assert.equal(ids('unassigned', 'ideas').length, 5);
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(`tclaude.dash.groups.taskboard.cells-open.lanes-agent.${name}`)), { '|ideas': true }, 'stored by lane and column (Unassigned is the empty lane)');
+
+  // A fresh board, as after closing a task's editor: the cell is still open.
+  const remount = async () => {
+    const source = {
+      context: harness.signals.signal({ groups: [{ ...board(name), tasks: [...board(name).tasks, ...ideas] }] }), status: harness.signals.signal('ready'),
+      attach: () => () => {}, refresh: async () => {},
+    };
+    const group = { name, members: members() };
+    const again = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${fakeApi()} />`);
+    return again.container.querySelector('.tb-cell[data-lane="unassigned"][data-column="ideas"]');
+  };
+  const reopened = await remount();
+  assert.equal(reopened.querySelectorAll('.tb-card').length, 5, 'the remounted cell draws every card');
+  assert.ok(reopened.querySelector('.tb-cell-less'), 'and still offers Show less');
+
+  await harness.act(async () => { harness.fireEvent(reopened.querySelector('.tb-cell-less'), 'click'); });
+  assert.equal(dashPrefs.getItem(`tclaude.dash.groups.taskboard.cells-open.lanes-agent.${name}`), null, 'Show less forgets it');
+  assert.equal((await remount()).querySelectorAll('.tb-card').length, 3, 'so the next board draws it closed');
+});
+
 test('a task dropped into a full cell opens it, so the card does not land behind "+ n more"', async (t) => {
   const queued = ['tk_000000b1', 'tk_000000b2', 'tk_000000b3'].map((id) => row(id, `queued ${id}`));
   const { cell, drag, api } = await mountLanes(t, 'tbl-land', { extraTasks: queued });

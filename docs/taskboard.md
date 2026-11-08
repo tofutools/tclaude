@@ -1292,7 +1292,9 @@ stage or column is picked by hand (*Starts in*, *Where it is*, *Move to…* and
 A cell shows its first three cards. When it holds more, *+ n more* opens it in
 place, so one busy cell does not stretch its whole row. An open cell grows up
 to about a dozen cards, then scrolls inside. *▴ Show less*, under its cards,
-closes it again. The column heads still count every task. When the card is too
+closes it again. An open cell stays open until you close it: opening a task's
+editor, switching views or reloading the dashboard keeps it, per group and per
+lanes view, for this viewer. The column heads still count every task. When the card is too
 narrow for every column, the grid scrolls sideways and the lane names stay
 pinned on the left.
 

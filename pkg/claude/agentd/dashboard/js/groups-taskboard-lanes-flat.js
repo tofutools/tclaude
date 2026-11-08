@@ -24,6 +24,7 @@ import {
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
+import { useOpenCells } from './groups-taskboard-lanes-layout.js';
 import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
@@ -125,7 +126,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const cells = flatModel(entry, mode, now);
   const columns = boardColumns(entry);
   const drag = useLaneDrag(actions, group, tasks);
-  const [open, setOpen] = useState({});
+  const [open, setOpen] = useOpenCells(group.shownName || group.name, mode);
   useCellReveal(cells, FLAT_SHOWN, setOpen);
   const [answering, setAnswering] = useState('');
   const answerable = canAssign(actions) && typeof actions?.api?.answer === 'function';

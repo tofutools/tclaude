@@ -34,7 +34,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import {
-  applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths,
+  applyLaneOrder, gridColumns, gridMinWidth, headedGroups, laneOrder, laneWidths, moveHead, moveLane, resizeColumns, setLaneWidths, useOpenCells,
 } from './groups-taskboard-lanes-layout.js';
 import { markLanded } from './drop-landing.js';
 import { REVEAL_FRESH_MS, agentLink, taskRevealRequest } from './cross-links.js';
@@ -772,7 +772,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const resize = useColumnResize(group, relayout, columns);
   const naming = useColumnNaming(group, actions);
   const [unfolded, setUnfolded] = useState({});
-  const [open, setOpen] = useState({});
+  const [open, setOpen] = useOpenCells(layoutKey(group), `lanes-${by}`);
   useCellReveal(cells, CELL_SHOWN, setOpen);
   // laneTasks are the ids of the tasks in a lane's cells.
   const laneTasks = (lane) => columns.flatMap((column) => (cells.get(`${lane.id}|${column.key}`) || []).map((task) => task.id));
