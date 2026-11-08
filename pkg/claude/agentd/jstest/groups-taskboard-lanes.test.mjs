@@ -68,7 +68,7 @@ async function mountLanes(t, name, { api = fakeApi(), by = null, groupExtra = {}
     await harness.act(async () => { harness.fireEvent(cell(lane, column), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
     return { taken: over.defaultPrevented, label };
   };
-  return { harness, c, api, cell, ids, card, drag, dashPrefs };
+  return { harness, c, api, cell, ids, card, drag, dashPrefs, source };
 }
 
 test('laneColumn derives the five columns as the design says', async (t) => {
@@ -405,6 +405,27 @@ test('a task dropped into a full cell opens it, so the card does not land behind
   assert.equal(out.taken, true);
   assert.ok(api.calls.length > 0, 'the drop ran');
   assert.equal(more().getAttribute('aria-expanded'), 'true', 'the full cell opened for the card dropped into it');
+});
+
+test('a card dropped into a long open cell is scrolled into view once it lands', async (t) => {
+  const queued = Array.from({ length: 14 }, (_, i) => row(`tk_000000c${i.toString(16)}`, `queued ${i}`));
+  const { cell, drag, card, harness, source } = await mountLanes(t, 'tbl-reveal', { extraTasks: queued });
+  const seen = [];
+  const proto = Object.getPrototypeOf(card('tk_00000004'));
+  const had = Object.prototype.hasOwnProperty.call(proto, 'scrollIntoView');
+  const before = proto.scrollIntoView;
+  proto.scrollIntoView = function scrollIntoView() { seen.push(this.dataset?.taskId || this.className); };
+  t.after(() => { if (had) proto.scrollIntoView = before; else delete proto.scrollIntoView; });
+  await drag('tk_00000004', 'unassigned', 'next');
+  assert.equal(cell('unassigned', 'next').querySelector('.tb-cell-more').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(seen, [], 'nothing to reveal until the card lands');
+  // The board refreshes with the idea promoted, at the end of the queue.
+  const b = source.context.value.groups[0];
+  const tasks = b.tasks.filter((task) => task.id !== 'tk_00000004').concat({ ...b.tasks.find((task) => task.id === 'tk_00000004'), stage: 'next' });
+  await harness.act(async () => { source.context.value = { groups: [{ ...b, tasks }] }; });
+  assert.deepEqual(seen, ['tk_00000004'], 'the landed card is scrolled into view, once');
+  await harness.act(async () => { source.context.value = { groups: [{ ...b, tasks: [...tasks] }] }; });
+  assert.deepEqual(seen, ['tk_00000004'], 'a later refresh does not scroll to it again');
 });
 
 test('a stored lane width sets the grid\'s minimum width with its columns', async (t) => {

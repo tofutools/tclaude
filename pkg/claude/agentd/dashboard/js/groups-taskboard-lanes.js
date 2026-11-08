@@ -272,10 +272,20 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
 // all, growing up to a height cap and then scrolling inside, with "▴ Show
 // less" under the scroll area so it stays in reach. Show less scrolls the
 // cards back to the top and keeps the toggle in view, so the page does not
-// jump away from where the pointer is. card(task) draws one card.
-export function CellCards({ list, limit, open, onToggle, card }) {
+// jump away from where the pointer is. card(task) draws one card. `reveal`
+// is a task just dropped into the cell: once its card is drawn, the cell
+// scrolls to it, so it does not land below the fold.
+export function CellCards({ list, limit, open, onToggle, card, reveal = '' }) {
   const scrollRef = useRef(null);
   const lessRef = useRef(null);
+  const revealed = useRef('');
+  useLayoutEffect(() => {
+    if (!reveal || revealed.current === reveal) return;
+    const el = scrollRef.current?.querySelector?.(`[data-task-id="${reveal}"]`);
+    if (!el) return;
+    revealed.current = reveal;
+    el.scrollIntoView?.({ block: 'nearest' });
+  });
   const capped = list.length > limit;
   const visible = capped && !open ? list.slice(0, limit) : list;
   const collapse = () => {
@@ -564,7 +574,11 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
-  const landIn = (key, list) => { if (list.length >= CELL_SHOWN && !open[key]) setOpen({ ...open, [key]: true }); };
+  const [landed, setLanded] = useState(null);
+  const landIn = (key, list, id = '') => {
+    if (list.length >= CELL_SHOWN && !open[key]) setOpen({ ...open, [key]: true });
+    if (id) setLanded({ key, id });
+  };
   const cell = (lane, column) => {
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
@@ -576,8 +590,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
-        onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
-      <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} onToggle=${(on) => setOpen({ ...open, [key]: on })}
+        onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
+      <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
           onEdit=${actions ? onEdit : null} />`} />

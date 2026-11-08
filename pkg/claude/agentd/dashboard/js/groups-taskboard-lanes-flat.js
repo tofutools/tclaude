@@ -110,7 +110,11 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const drag = useLaneDrag(actions, group, tasks);
   const [open, setOpen] = useState({});
   const nameOf = (actor) => actorLabel(actor, group, snapshot);
-  const landIn = (key, list) => { if (list.length >= FLAT_SHOWN && !open[key]) setOpen({ ...open, [key]: true }); };
+  const [landed, setLanded] = useState(null);
+  const landIn = (key, list, id = '') => {
+    if (list.length >= FLAT_SHOWN && !open[key]) setOpen({ ...open, [key]: true });
+    if (id) setLanded({ key, id });
+  };
   const cell = (row, column) => {
     const key = `${row}|${column.key}`;
     const list = cells.get(key) || [];
@@ -125,8 +129,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-board-row=${row || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
-        onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
-      <${CellCards} list=${list} limit=${FLAT_SHOWN} open=${!!open[key]} onToggle=${(on) => setOpen({ ...open, [key]: on })}
+        onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
+      <${CellCards} list=${list} limit=${FLAT_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
           marker=${cardMarker(task, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
