@@ -30,7 +30,9 @@ async function mountTwo(t, { lanes = false, otherNode = '' } = {}) {
     harness.importDashboardModule('js/groups-taskboard-transfer.js'),
   ]);
   for (const name of ['tbt-a', 'tbt-b']) dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
-  if (lanes) dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbt-b', 'lanes');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbt-a', 'list');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbt-b', lanes ? 'lanes' : 'list');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.lanes-by.tbt-b', 'agent');
   const confirms = [];
   const toasts = [];
   let answer = true;

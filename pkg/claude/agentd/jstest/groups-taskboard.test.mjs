@@ -39,6 +39,9 @@ async function mountSection(harness, { group, context, status = 200, withChip = 
     harness.importDashboardModule('js/groups-taskboard.js'),
     harness.importDashboardModule('js/taskboard-context.js'),
   ]);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  // These cover the List; Lanes is the default view.
+  if (dashPrefs.getItem(`tclaude.dash.groups.taskboard.view.${group.name}`) === null) dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${group.name}`, 'list');
   const { calls, fetchImpl } = fetchWith(context, status);
   const source = createTaskboardContextSource({ fetchImpl });
   const snapshot = { groups: [group] };

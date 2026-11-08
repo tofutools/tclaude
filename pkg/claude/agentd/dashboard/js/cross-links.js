@@ -76,25 +76,46 @@ function scrollToEl(el) {
 
 // land waits for find() to yield (the unfolded parts draw on the next
 // render, a task's lanes cell opens after that), then scrolls there and
-// blips. At the deadline it settles for what the fallback finds.
-// A newer click cancels the one still waiting; past the deadline, a fallback
-// that finds nothing either ends the wait.
+// blips. It looks again on the next frame after each change to the page
+// (a MutationObserver), not on a timer, so the scroll follows the render
+// that draws the target. At the deadline it settles for what the fallback
+// finds. A newer click cancels the one still waiting; past the deadline, a
+// fallback that finds nothing either ends the wait.
 let landing = 0;
 function land(find) {
-  const started = Date.now();
   const mine = ++landing;
-  const tick = () => {
-    if (!live() || mine !== landing) return;
-    const late = Date.now() - started >= FIND_MS;
-    const hit = find(false) || (late ? find(true) : null);
-    if (!hit) {
-      if (!late) setTimeout(tick, 80);
-      return;
-    }
+  let finished = false;
+  let observer = null;
+  let deadline = 0;
+  let frame = 0;
+  const finish = (hit) => {
+    finished = true;
+    observer?.disconnect();
+    clearTimeout(deadline);
+    if (frame) cancelAnimationFrame(frame);
+    if (!hit) return;
     scrollToEl(hit.el);
     blip(hit.el);
   };
-  tick();
+  const stale = () => !live() || mine !== landing;
+  const look = () => {
+    frame = 0;
+    if (finished) return;
+    if (stale()) { finish(null); return; }
+    const hit = find(false);
+    if (hit) finish(hit);
+  };
+  look();
+  if (finished) return;
+  // Not drawn yet: look again on the frame after the page changes.
+  if (typeof MutationObserver === 'function') {
+    observer = new MutationObserver(() => { if (!frame && !finished) frame = requestAnimationFrame(look); });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'class', 'hidden', 'aria-expanded', 'style'] });
+  }
+  deadline = setTimeout(() => {
+    if (finished) return;
+    finish(stale() ? null : find(false) || find(true));
+  }, FIND_MS);
 }
 
 // jumpToAgent shows an agent's row in a group: {group, node, id}.

@@ -902,13 +902,15 @@ const LANES_BY_TITLE = {
   row: 'Every task in one row',
 };
 
+// Lanes in triage mode is the default view; a viewer's remembered choice
+// still wins.
 export function taskboardView(group) {
-  return dashPrefs.getItem(VIEW_PREF(group)) === 'lanes' ? 'lanes' : 'list';
+  return dashPrefs.getItem(VIEW_PREF(group)) === 'list' ? 'list' : 'lanes';
 }
 
 export function taskboardLanesBy(group) {
   const by = dashPrefs.getItem(LANES_BY_PREF(group));
-  return LANES_BY.includes(by) ? by : 'agent';
+  return LANES_BY.includes(by) ? by : 'triage';
 }
 
 // useViewPrefs reads the section's List | Lanes choice and the lanes' "by",

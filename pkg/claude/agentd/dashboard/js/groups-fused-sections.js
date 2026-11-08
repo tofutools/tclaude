@@ -6,6 +6,7 @@
 // (see groups-list.js), so a quiet group
 // costs one line rather than a block.
 
+import { signal } from '@preact/signals';
 import { dashPrefs } from './prefs.js';
 
 function prefKey(group, section) {
@@ -20,6 +21,17 @@ export function fusedSectionOpen(group, section, auto, prefs = dashPrefs) {
 
 export function setFusedSectionOpen(group, section, open, prefs = dashPrefs) {
   prefs.setItem(prefKey(group, section), open ? '1' : '0');
+}
+
+// fusedSectionsRevision is read by every drawn section (FusedSection), so
+// announceFusedSections redraws them all at once after a choice was set
+// from outside them (a drop landing, a cross-link jump). Without it a
+// section memoized under an unchanged snapshot kept its old fold until the
+// next poll changed its props.
+export const fusedSectionsRevision = signal(0);
+
+export function announceFusedSections() {
+  fusedSectionsRevision.value += 1;
 }
 
 // subgroupsSectionAuto is the Subgroups default: open only for a group whose

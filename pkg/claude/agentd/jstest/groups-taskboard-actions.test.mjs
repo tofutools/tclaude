@@ -31,6 +31,9 @@ function fakeApi() {
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  // These cover the List; Lanes is the default view.
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'list');
   let refreshes = 0;
   const source = {
     context: harness.signals.signal(context || { groups: [board(name)] }), status: harness.signals.signal('ready'),
