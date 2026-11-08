@@ -28,7 +28,7 @@ import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
 import { createTaskboardApi, importRefs, taskboardApi } from './taskboard-actions.js';
-import { nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
+import { isPageNode, nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
 import { dndMember } from './dnd-ops.js';
@@ -549,9 +549,13 @@ function useAgentOnTask(boardRef, group, node, tasks, actions) {
       lit = null;
     };
     const target = (event) => {
+      // Only a member drag: a task's own drag (or a stray file) is not one.
+      const types = event.dataTransfer?.types;
+      if (types && !Array.from(types).includes('application/x-tclaude-member')) return null;
       const payload = dndMember.payload();
       const { group: g, node: n, tasks: list, actions: a } = live.current;
-      if (!payload || !canAssign(a) || (payload.sourceNode || '') !== n) return null;
+      // Nodes compare as dnd.js names them (dndNode): '' for the page's own.
+      if (!payload || !canAssign(a) || (payload.sourceNode || '') !== (isPageNode(n) ? '' : n)) return null;
       const el = event.target?.closest?.('[data-task-id]');
       if (!el || !boardRef.current?.contains(el)) return null;
       const task = list.find((t) => t.id === el.getAttribute('data-task-id'));

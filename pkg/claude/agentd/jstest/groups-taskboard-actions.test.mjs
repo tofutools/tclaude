@@ -483,6 +483,8 @@ test('an agent row dragged onto a task assigns it; a non-member or a blocked tas
   over('tk_00000004');
   assert.equal(rowOf('tk_00000001').classList.contains('tb-agent-over'), false, 'the highlight follows the pointer');
   assert.equal(over('tk_00000003').defaultPrevented, false, 'a blocked task is refused, as the other way round');
+  assert.equal(harness.fireEvent(rowOf('tk_00000001').querySelector('td'), 'dragover', { dataTransfer: { types: ['application/x-tclaude-task'] } }).defaultPrevented, false,
+    'only a member drag: a task\'s own drag is not one');
   assert.equal(rowOf('tk_00000003').classList.contains('tb-agent-over'), false);
   over('tk_00000002');
   assert.equal(pills.at(-1), '→ assign to tester', 'a task held by another agent is reassigned');
