@@ -116,6 +116,8 @@ tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref UR
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
                                     [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
 tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
+tclaude agent taskboard ask-operator <task|group> "question?" [--option "A: why"]… [--block|--blocks tk_mine] [--wait 10m]
+tclaude agent taskboard answer <task> [--question n] --pick <key|label|n>[,…] [--text "…"]
 tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…   # or --prompt-file f
 tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
@@ -453,16 +455,21 @@ there changes.
 
 ### Questions for the operator
 
-An agent can ask the operator a question on the board, with choices to pick,
-and get the answer back (`ask-operator`). A question is an operator task like
-any other (lanes, counts, `--blocks`, federation), that also carries its
-choices and, once answered, the answer.
+An agent can ask the operator a question, with choices to pick, and get the
+answer back (`ask-operator`). A question is asked **on a task**: it is an
+entry of the task's activity, numbered per task (Q1, Q2…), and the answer is
+recorded right under it. Scrolling a task's activity shows every question
+asked on it and how each was answered.
 
 ```bash
-tclaude agent taskboard ask-operator crew "Lane highlight colour?" \
+# On a task (yours, or any task of your group's board):
+tclaude agent taskboard ask-operator tk_4f0a "Lane highlight colour?" \
   --body "The lane needs a tint that reads as yours." \
   --option "Amber: warm, matches the ★" --option Teal --option "No tint" \
-  --recommend 1 --blocks tk_mine --wait 10m
+  --recommend 1 --block --wait 10m
+
+# On a group: a new task in the operator's lane, made for the question.
+tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --option No --blocks tk_mine
 ```
 
 - `--option "Label"` or `--option "Label: description"`, repeated: none, or
@@ -471,32 +478,52 @@ tclaude agent taskboard ask-operator crew "Lane highlight colour?" \
   monospace text of up to 2 KiB that the answer dialog shows beside the
   options. `--multi` lets the operator pick several; `--recommend` marks
   one, by number, key or label. Without options the operator answers in
-  words.
-- Free text is always allowed: a pick, words, or both.
-- The operator answers in the dashboard (*Answer…* on the card, ⋯
-  *Answer…* in the List) or with `answer <task> --pick <key|label|n>[,…]
-  [--text "…"]`. The task closes as done with the answer as its reason, the
-  tasks waiting on it reopen, and the agent that asked gets `[taskboard]
-  answered: <group> · tk_… "<question>"` with the picks, the words and the
-  answer as JSON. A question is answered once, and an answered question is
-  not reopened: ask again instead. The asker is fixed when the question is
-  asked, so the answer goes back to it even after the task is reassigned.
+  words. Free text is always allowed: a pick, words, or both.
+- **On a task.** The task keeps its assignee and stays in its lane. The
+  question shows as a card of its own in the operator's lane (In progress)
+  until it is answered, and the task's card says `❓ n asked you`.
+  `--block` blocks the task (`waiting on operator: Q2 …`) until the
+  question is answered or withdrawn; the history then records `unblocked:
+  Q2 answered`. Asking is gated as commenting is (`taskboard.own` on your
+  own group's board, or `taskboard.write`); `--block` as a change of the
+  task.
+- **On a group.** A new task is made for the question, assigned to the
+  operator, titled with it: its first activity entry is the question.
+  Answering it closes that task as done with the answer as its reason, and
+  the tasks waiting on it (`--blocks`) reopen. A question task that is
+  answered is not reopened: ask again instead. `--idea` puts it in the
+  operator's ideas, not waiting on them (no `--blocks` or `--wait` then).
+- The operator answers in the dashboard: *Answer…* on the question's card,
+  on the task's card, in the List's ⋯ menu, or inline in the task's
+  activity. Or with `answer <task> [--question n] --pick
+  <key|label|n>[,…] [--text "…"]`; `--question` is needed only when the
+  task has several questions open. The agent that asked gets `[taskboard]
+  answered Q2: <group> · tk_… "<task>"` (`answered:` for a question task)
+  with the picks, the words and the answer as JSON. A question is answered
+  once. The asker is fixed when it is asked, so the answer goes back to it
+  whoever holds the task by then.
 - Answering is the operator's, or a `taskboard.assign` holder's, never the
-  asking agent's: it may drop its question to withdraw it.
+  asking agent's. The asker withdraws an open question by deleting its
+  entry (`comment rm <task> <#id>`); an answered question and its answer
+  stay. A task that closes (done, dropped, reported, moved away) closes its
+  open questions with it.
 - `--wait <duration>` holds the command until the answer comes, prints it
   (`--json` for the answer state), and exits 6 if it does not come in time.
-  The question stays open, and the answer still comes by mail. While an agent
-  waits, its card says *⏳ <agent> is waiting*.
+  The question stays open, and the answer still comes by mail. While an
+  agent waits, its card says *⏳ waiting*.
+- **Counts.** Each open question on a task the operator does not already
+  hold counts as *waiting on you*, in `ls --summary`, the context route and
+  `tclaude agent fleet`.
 - With `--peer <node>` the question goes on a linked node's board, and the
   answer comes back as remote mail from that node. Your node records the
   question when it is asked and lets in that one answer, from that node, for
   you, within 30 days; it needs no `message.direct` grant, and any other
-  mail from the node is refused as before. `--wait` and `show <task> --peer
-  <node>` read the answer too.
-- `--idea` puts the question in the operator's ideas, not waiting on them
-  (no `--blocks` or `--wait` then).
-- `show` prints the options and, once answered, the answer. The board stays
-  quiet: a question raises no popup and no Messages entry.
+  mail from the node is refused as before. Asking on a linked node's task
+  takes `taskboard.write` there, answering `taskboard.assign`. `--wait` and
+  `show <task> --peer <node>` read the answer too.
+- `show` prints each question, its options and, once answered, the answer;
+  `activity` shows them in the stream. The board stays quiet: a question
+  raises no popup and no Messages entry.
 
 ### Idle without report
 
@@ -1198,9 +1225,11 @@ those drags aren't accepted in the lanes.
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `assign --idea` / `--next` / `--hold` | `POST /v1/taskboard/tasks/{id}/assign {"to":…,"start":false,"stage"?:"idea"\|"next"}` |
 | `add --assignee X --idea` / `--next` | `POST /v1/groups/{name}/taskboard/tasks {…,"to":"X","start":false,"stage":"idea"\|"next"}` |
-| `ask-operator` | `POST /v1/groups/{name}/taskboard/tasks {…,"to":"operator","question":{"options":[{"label","description"?,"preview"?,"key"?}],"multi"?,"recommend"?}}` |
-| `answer` | `POST /v1/taskboard/tasks/{id}/answer {"picked":["key"\|"label"…],"text"?}` |
-| `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/answer?wait=30s` (long poll, at most 30s per request: `{"task","status","answered","question"}`) |
+| `ask-operator <task>` | `POST /v1/taskboard/tasks/{id}/questions {"title","body"?,"options"?:[{"label","description"?,"preview"?,"key"?}],"multi"?,"recommend"?,"block"?}` → `{task, question}` |
+| `ask-operator <group>` | `POST /v1/groups/{name}/taskboard/tasks {…,"to":"operator","question":{"options":[…],"multi"?,"recommend"?}}` |
+| `answer --question n` | `POST /v1/taskboard/tasks/{id}/questions/{n}/answer {"picked":["key"\|"label"…],"text"?}` |
+| `answer` | `POST /v1/taskboard/tasks/{id}/answer {…}` (the task's only open question) |
+| `ask-operator --wait` | `GET /v1/taskboard/tasks/{id}/questions/{n}?wait=30s` (or `…/answer` for a question task; long poll, at most 30s per request: `{"task","n","status","state","answered","question"}`) |
 | `start` / `hold` | `POST /v1/taskboard/tasks/{id}/start {"start":true}` / `{"start":false,"stage"?:"idea"\|"next"}` |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
 | `ls --mine` | `GET /v1/taskboard/mine` |

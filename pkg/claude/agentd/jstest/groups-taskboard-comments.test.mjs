@@ -214,3 +214,44 @@ test('the viewer\'s author follows this node\'s id arriving after the first pain
   await harness.act(() => setSelfNode('inst_mine1'));
   assert.equal(container.querySelector('.who').textContent, 'peer:inst_mine1', 'and the render follows once it is known');
 });
+
+// Questions in the activity (tk_8b2c86f7): a question is an entry with its
+// options, its answer shows right under it (not at its own place), and an
+// open one is answered inline.
+const QUESTION_OPTS = [{ key: 'amber', label: 'Amber' }, { key: 'teal', label: 'Teal' }];
+const QA_STREAM = [
+  { id: 10, at: ago(30), actor: 'agent:agt_dev', kind: 'comment', comment: comment(10, { kind: 'question', body: 'The lane needs a tint.', author: 'agent:agt_dev', author_name: 'dev',
+    question: { kind: 'question', n: 1, title: 'Lane colour?', options: QUESTION_OPTS, recommend: 'amber', asked_by: 'agent:agt_dev', state: 'answered',
+      answer: { picked: ['amber'], text: 'a touch lighter', answered_by: 'human:operator', answered_at: ago(20) } } }) },
+  { id: 11, at: ago(25), actor: 'agent:agt_dev', kind: 'comment', comment: comment(11, { body: 'thanks', author: 'agent:agt_dev', author_name: 'dev' }) },
+  { id: 12, at: ago(20), actor: 'human:operator', kind: 'comment', comment: comment(12, { kind: 'answer', body: 'Answer: Amber; a touch lighter', answers: 1 }) },
+  { id: 13, at: ago(10), actor: 'agent:agt_dev', kind: 'comment', comment: comment(13, { kind: 'question', body: '', author: 'agent:agt_dev', author_name: 'dev',
+    question: { kind: 'question', n: 2, title: 'Behind a flag?', options: [{ key: 'flag', label: 'Behind a flag' }, { key: 'on', label: 'On by default' }], asked_by: 'agent:agt_dev', state: 'open' } }) },
+];
+
+test('a question shows its answer right under it, and an open one is answered inline', async (t) => {
+  const api = fakeApi({ entries: QA_STREAM });
+  api.answer = async (...args) => { api.calls.push(['answer', ...args]); return {}; };
+  const { harness, container, click, commentEl } = await mountActivity(t, { api });
+  const q1 = commentEl(10);
+  assert.match(q1.querySelector('.tb-question-title').textContent, /Lane colour\?/);
+  assert.match(q1.querySelector('.tb-question-picked').textContent, /Amber/, 'the picked option is marked');
+  assert.match(q1.querySelector('.tb-question-answer').textContent, /answered Q1[\s\S]*Picked Amber — “a touch lighter”/);
+  assert.equal(commentEl(12), null, 'the answer entry is not shown again at its own place');
+  const order = [...container.querySelectorAll('.tb-activity-list > li')].map((li) => li.dataset.comment);
+  assert.deepEqual(order, ['10', '11', '13']);
+  assert.equal(q1.querySelector('.tb-answer-open'), null, 'an answered question offers no Answer');
+
+  const q2 = commentEl(13);
+  await click(q2.querySelector('.tb-answer-open'));
+  await harness.act(async () => { harness.fireEvent(q2.querySelector('[data-answer-option="on"] input'), 'change'); });
+  await click(q2.querySelector('.tb-question-send'));
+  assert.deepEqual(api.calls.filter((c) => c[0] === 'answer'), [['answer', 'tk_00000001', ['on'], '', 2]]);
+});
+
+test('the asker may withdraw its own open question', async (t) => {
+  const api = fakeApi({ entries: QA_STREAM });
+  const { commentEl } = await mountActivity(t, { api, me: 'agent:agt_dev' });
+  assert.equal(commentEl(10).querySelector('.tb-question-withdraw'), null, 'an answered question stays');
+  assert.ok(commentEl(13).querySelector('.tb-question-withdraw'), 'an open one can be withdrawn');
+});

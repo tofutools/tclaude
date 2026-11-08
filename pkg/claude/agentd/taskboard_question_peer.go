@@ -70,7 +70,7 @@ func mailTaskboardAnswerToPeer(t *db.GroupTask, q *db.GroupTaskQuestion, subject
 	if _, err := queueFederatedEnvelope(fedOutgoing{
 		peer: peer, kind: proto.KindMail, toAgent: agentID, toLabel: agentID + "@" + peerDisplay(peer),
 		subject: subject, preview: body, ttl: fedMailTTL,
-		payload: proto.MailPayload{Subject: subject, Body: body, TaskboardAnswer: t.ID},
+		payload: proto.MailPayload{Subject: subject, Body: body, TaskboardAnswer: taskboardQuestionMailKey(t.ID, q.N)},
 	}); err != nil {
 		slog.Warn("taskboard: could not queue the answer for a peer's agent", "task", t.ID, "peer", instance, "error", err)
 	}
@@ -102,8 +102,11 @@ func taskboardAnswerMailAuthorized(peer string, env *proto.Envelope, mp proto.Ma
 }
 
 // peerQuestionCreateRoute is the agent peer-view route that creates a task
-// on a linked node's board.
-const peerQuestionCreateRoute = "POST /v1/groups/{name}/taskboard/tasks"
+// on a linked node's board; peerQuestionAskRoute asks on one of its tasks.
+const (
+	peerQuestionCreateRoute = "POST /v1/groups/{name}/taskboard/tasks"
+	peerQuestionAskRoute    = "POST /v1/taskboard/tasks/{id}/questions"
+)
 
 // peerCreateAsksQuestion reports whether a task-create body (JSON, or the
 // multipart upload with a "task" part) carries a question.
@@ -143,17 +146,32 @@ func (c *peerQuestionCapture) Write(b []byte) (int, error) {
 	return c.ResponseWriter.Write(b)
 }
 
-// recordPeerQuestion records the question a successful create on peer
-// asked for agentID.
+// recordPeerQuestion records the question a successful create (a question
+// task, its Q1) or ask (a question on a task) on peer asked for agentID,
+// under the key its answer mail is tagged with (taskboardQuestionMailKey).
 func recordPeerQuestion(peer, agentID string, resp []byte) {
 	var out struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+		Question struct {
+			N int `json:"n"`
+		} `json:"question"`
 	}
-	if json.Unmarshal(resp, &out) != nil || !strings.HasPrefix(out.ID, "tk_") || len(out.ID) > 64 {
+	if json.Unmarshal(resp, &out) != nil {
 		return
 	}
+	id, n := out.ID, 1
+	if out.Task.ID != "" {
+		id, n = out.Task.ID, out.Question.N
+	}
+	if !strings.HasPrefix(id, "tk_") || len(id) > 64 || n < 1 {
+		return
+	}
+	key := taskboardQuestionMailKey(id, n)
 	now := time.Now()
-	if err := db.RecordFederationPeerQuestion(peer, out.ID, agentID, now, now.Add(db.FederationPeerQuestionTTL)); err != nil {
-		slog.Warn("federation: could not record a question asked on a peer", "peer", peer, "task", out.ID, "error", err)
+	if err := db.RecordFederationPeerQuestion(peer, key, agentID, now, now.Add(db.FederationPeerQuestionTTL)); err != nil {
+		slog.Warn("federation: could not record a question asked on a peer", "peer", peer, "task", key, "error", err)
 	}
 }

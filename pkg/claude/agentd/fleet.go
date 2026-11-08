@@ -58,7 +58,8 @@ type fleetTaskboard struct {
 	Blocked  int    `json:"blocked"`
 	Stalled  int    `json:"stalled"`
 	// WaitingOnYou counts the open tasks assigned to the operator, leaving
-	// out the ideas it holds to triage.
+	// out the ideas it holds to triage, and the open questions on the
+	// board's other live tasks.
 	WaitingOnYou int `json:"waiting_on_you"`
 }
 
@@ -324,6 +325,13 @@ func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Tim
 	waiting, err := db.CountOperatorGroupTasks()
 	if err != nil {
 		return err
+	}
+	questions, err := db.CountOpenGroupTaskQuestions()
+	if err != nil {
+		return err
+	}
+	for gid, n := range questions {
+		waiting[gid] += n
 	}
 	assigned, err := db.ListOpenAssignedGroupTasks()
 	if err != nil {

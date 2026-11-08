@@ -108,8 +108,9 @@ type GroupTask struct {
 	// Column is the slug of the group's custom column a live task of stage
 	// next stands in (In review, In CI, …), "" for none (tcl-plby5h).
 	Column string
-	// OperatorRequest is a question task's question and, once answered, its
-	// answer, as JSON (GroupTaskQuestion); empty for any other task.
+	// OperatorRequest marks a question task ({"kind":"question"}, see
+	// IsQuestionTask); empty for any other task. Its questions are rows of
+	// group_task_questions.
 	OperatorRequest string
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
@@ -229,8 +230,8 @@ type NewGroupTask struct {
 	Blocks       string
 	BlocksExpect string
 	// Question makes the new task a question for the operator (its
-	// assignee): stored in operator_request, answered with
-	// AnswerGroupTask.
+	// assignee): its first question (askGroupTaskQuestionTx), answered
+	// with AnswerGroupTaskQuestion.
 	Question *GroupTaskQuestion
 }
 
@@ -523,12 +524,13 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		if in.AssigneeID != OperatorAssignee || status != GroupTaskOpen {
 			return nil, taskConflict("invalid_arg", "a question is an open task for the operator")
 		}
-		in.Question.AskedBy = in.Actor
-		raw, err := in.Question.encode()
-		if err != nil {
+		// A question task: its first question is the one it asks, titled
+		// as the task is (its body is the task's).
+		if _, err := tx.Exec(`UPDATE group_tasks SET operator_request = ? WHERE id = ?`, groupTaskQuestionMarker, id); err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET operator_request = ? WHERE id = ?`, raw, id); err != nil {
+		in.Question.AskedBy, in.Question.Title, in.Question.Body, in.Question.Blocks = in.Actor, in.Title, "", false
+		if err := askGroupTaskQuestionTx(tx, &GroupTask{ID: id, GroupID: in.GroupID}, in.Question, now); err != nil {
 			return nil, err
 		}
 	}
@@ -670,7 +672,7 @@ func ListGroupTaskEvents(taskID string) ([]*GroupTaskEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return queryRows(d, scanGroupTaskEvent, `SELECT `+groupTaskEventCols+` FROM group_task_events WHERE task_id = ? ORDER BY id`, taskID)
+	return queryRows(d, scanGroupTaskEvent, `SELECT `+groupTaskEventCols+` FROM group_task_events WHERE task_id = ? ORDER BY at, id`, taskID)
 }
 
 // GroupTaskEdit changes a task's text, ref and dependencies; a nil field is
@@ -897,6 +899,8 @@ func setGroupTaskStatusTx(tx *sql.Tx, t *GroupTask, status, reason, actor, expec
 		kind, detail = GroupTaskEventBlocked, reason
 	case GroupTaskOpen:
 		kind = GroupTaskEventUnblocked
+		// An unblock may say why (a question answered).
+		detail = reason
 		if !t.Live() {
 			kind = GroupTaskEventReopened
 			detail = "was " + t.Status
