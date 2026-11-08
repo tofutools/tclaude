@@ -160,7 +160,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function SortHeader", "sortable Preact header component present")
 	must("<${SortTh}", "headers render through the shared SortTh")
 	must("function sortCostAgents", "client-side column sort implemented")
-	must("state.cycleSort(column.sort)", "header sort action wired")
+	must("colOf=${(column) => column.sort} onSort=${(key) => state.cycleSort(key)}", "header sort action wired to each column's sort key")
 	must("table th.sortable { cursor: pointer", "sortable headers styled clickable")
 
 	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
