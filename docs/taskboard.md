@@ -70,8 +70,9 @@ tclaude agent taskboard add crew "Ship it" --stage in-review    # start there
 tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
 ```
 
-- **Who.** Adding, renaming, reordering and removing columns needs
-  `taskboard.manage` on the group. Owners hold it. Listing them needs
+- **Who.** Adding, renaming, reordering, removing, hiding and cordoning
+  columns needs `taskboard.columns` on the group. `taskboard.manage` covers
+  it, and owners hold both. Listing them needs
   `taskboard.read`. Moving a task in or out is a change of that task:
   `taskboard.write`, or `taskboard.own` on a task assigned to you. A worker
   that opens its PR moves its own task to *In review*.
@@ -105,6 +106,34 @@ tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
 
 A move to another node does not carry the column; the task lands in the
 stage the move names.
+
+### Hiding and cordoning columns
+
+A board can hide a column, or cordon a custom one:
+
+```bash
+tclaude agent taskboard columns hide crew in-ci          # also: ideas, done
+tclaude agent taskboard columns show crew in-ci
+tclaude agent taskboard columns cordon crew in-review    # alias: disable
+tclaude agent taskboard columns uncordon crew in-review  # alias: enable
+```
+
+- **Hidden.** The board does not draw the column for anyone. Its tasks keep
+  their column, and the lanes count them in a *◌ N in hidden columns* tag.
+  *Ideas*, *Done this week* and the custom columns can be hidden. *Next*, *In
+  progress* and *Blocked* are always shown. In the *List*, a hidden column's
+  tasks are filtered out by default, until you change the *Filter*.
+- **Ideas hidden.** A new or imported task that does not name its stage
+  starts in next, not in the ideas. A named stage (`--idea`) still holds.
+- **Cordoned.** A custom column is still drawn, greyed and hatched, but takes
+  no new task. A move, an `add --stage`, a `reopen --stage` or a drop into it
+  is refused, and a task moved in from another group lands outside it. The
+  tasks already in it stay and may leave. The stage pickers do not offer it.
+- **Hidden for you.** In the dashboard you can also hide a column only for
+  yourself (its ⋯ *Hide for me*, or *Columns ▾*). That choice is kept in your
+  browser, per group, and does not change the board for anyone else.
+- `columns ls` and `ls` mark each column's state, and `ls --summary` counts
+  a hidden or cordoned column with its state (`1 In review (cordoned)`).
 
 ## Commands
 
@@ -603,7 +632,8 @@ The operator passes every gate. For agents:
 | `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status. Implies read. | Owners of the group. Members only through a grant. |
 | `taskboard.own` | Tracking your own work: adding tasks that are assigned to you, changing and closing your own tasks, taking any unassigned task, releasing yours, reporting, and commenting on any task of the board | Members of the group, on their own group's board only |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
-| `taskboard.manage` | The writer lock, the board's custom columns, and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.manage` | The writer lock, the board's columns (it implies `taskboard.columns`), and moving a task you do not hold to another group | Owners of the group |
+| `taskboard.columns` | Adding, renaming, reordering, removing, hiding and cordoning the board's custom columns, and hiding *Ideas* and *Done*. Grant it to let an agent shape the board's columns without the writer lock. | Owners of the group |
 | `taskboard.transfer` | Moving or cloning a task into the group from another group. Scope it with the target `group`. | Owners of the group |
 | `self.taskboard` | Deprecated alias of `taskboard.own`. An existing grant keeps working and adds nothing. An explicit deny of it still denies `taskboard.own`. | No longer default-granted |
 
@@ -727,7 +757,8 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 | `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
-| `taskboard.manage` | Set the writer lock, and add, rename, reorder and remove the board's custom columns |
+| `taskboard.manage` | Set the writer lock, and manage the board's columns |
+| `taskboard.columns` | Add, rename, reorder, remove, hide and cordon the board's columns |
 | `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
 - Any of these grants also lets the node read the board.
@@ -1105,7 +1136,11 @@ cards say *⏸ no idle alarm* while an agent holds them.
 A custom column's head has a ⋯ with *Rename…*, *Move left*, *Move right* and
 *Remove*, and the last head has *＋ column*, while the board has room for
 another. They are `taskboard columns rename`, `move`, `add` and `rm`, and need
-`taskboard.manage`. In the *List*, the *State* says the column, and a row's ⋯
+`taskboard.columns`. Every hideable column's ⋯ (custom ones, *Ideas*, *Done*)
+also has *Hide for me*, and for a viewer who manages the columns *Hide on the
+board* and, on a custom column, *Cordon* or *Lift the cordon*. The toolbar's
+*Columns ▾* lists the same choices for every column, and brings a hidden one
+back. See [Hiding and cordoning columns](#hiding-and-cordoning-columns). In the *List*, the *State* says the column, and a row's ⋯
 *Move to…* opens the stage picker, where you can move the task into a column,
 or back out to *Next* or *Idea* (`taskboard move --stage`). Every place a
 stage or column is picked by hand (*Starts in*, *Where it is*, *Move to…* and

@@ -255,7 +255,9 @@ export function operatorOptionLabel(group) {
 }
 
 export function NewTaskDialog({ group, entry, api, canAssign = false, members = [], wizard = false, initial = {}, onClose, onDone = () => {} }) {
-  const [draft, setDraft] = useState({ ...EMPTY_DRAFT, ...initial });
+  // A board that hides its Ideas starts a new task in Next (tk_bf5d2b02).
+  const ideasHidden = entry?.builtin_columns?.ideas === 'hidden';
+  const [draft, setDraft] = useState({ ...EMPTY_DRAFT, ...(ideasHidden ? { start: 'next' } : {}), ...initial });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const sending = useRef(false);

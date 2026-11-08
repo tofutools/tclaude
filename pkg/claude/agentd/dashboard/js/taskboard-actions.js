@@ -274,7 +274,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     stage(id, stage) {
       return call('POST', taskPath(id, '/stage'), { stage });
     },
-    // The board's custom columns (`taskboard columns …`, taskboard.manage):
+    // The board's custom columns (`taskboard columns …`, taskboard.columns):
     // add one before another column (slug) or at the end; rename or move
     // one (before a slug, or toEnd); remove one (its tasks go back to next).
     addColumn(group, label, { before = '' } = {}) {
@@ -289,6 +289,12 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     },
     removeColumn(group, slug) {
       return call('DELETE', columnsPath(group, slug));
+    },
+    // setColumnState shows, hides or cordons a column for the whole board
+    // (taskboard columns hide|show|cordon|uncordon, taskboard.columns): slug
+    // is a custom column's, or ideas / done.
+    setColumnState(group, slug, state) {
+      return call('POST', `${columnsPath(group, slug)}/state`, { state });
     },
     status(id, status, reason = '') {
       return call('POST', taskPath(id, '/status'), reason ? { status, reason } : { status });
