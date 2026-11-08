@@ -1,7 +1,8 @@
 // groups-taskboard-lanes-flat.js -- two of the lanes view's "lanes" modes
 // (docs/taskboard.md) that do not give each agent a lane. Each card says who
 // holds it with a corner marker: a yellow "!" when nobody does, a red "!"
-// when the operator does, else the agent's avatar.
+// when the operator does, else the agent's avatar. In Triage the You and
+// Unassigned rows say it already, so their cards carry none (lanesSay).
 //
 //   triage   three rows: You (the operator's tasks), Unassigned, and Agents
 //            (every agent's tasks in one row). A drag onto You assigns the
@@ -90,6 +91,15 @@ export function cardMarker(task, group, snapshot) {
   return { class: '', badge: html`<span class=${`tb-card-marker tb-avatar${member ? ' tb-xlink' : ''}`} ...${link} title=${name} aria-label=${`Assigned to ${name}`}>${String(name).slice(0, 1).toUpperCase()}</span>` };
 }
 
+// lanesSay reports a card whose Triage row already says who holds it (You,
+// Unassigned): it carries no marker, nor the marker's coloured edge. The
+// Agents row's cards keep their avatars, and one row keeps every marker.
+export function lanesSay(mode, task) {
+  if (mode === ALL) return false;
+  const lane = taskLane(task);
+  return lane === UNASSIGNED || lane === OPERATOR;
+}
+
 // rowTarget is what a drop on a row's cell means: resolve(fromLane) is the
 // lanes' lane it lands in, or null where it is not taken.
 function rowTarget(row, col, group, columns = []) {
@@ -144,7 +154,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onDrop=${actions ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
       <${CellCards} list=${list} limit=${FLAT_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
-          marker=${cardMarker(task, group, snapshot)}
+          marker=${lanesSay(mode, task) ? null : cardMarker(task, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
           menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null} />`} />
       ${row === OPERATOR && column.key === 'progress' && questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}

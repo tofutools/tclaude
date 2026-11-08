@@ -29,9 +29,13 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if !decodeTaskboardBody(w, r, &body) {
 		return
 	}
-	stage := strings.TrimSpace(body.Stage)
-	if stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
+	stage, column, bad, err := taskboardStageColumn(g, strings.TrimSpace(body.Stage))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	if bad != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", bad.Error())
 		return
 	}
 	pos := db.GroupTaskPosition{Before: strings.TrimSpace(body.Before), After: strings.TrimSpace(body.After)}
@@ -91,7 +95,7 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		}
 	}
 	actor := taskboardActor(r)
-	out, err := db.ReopenGroupTask(t.ID, db.GroupTaskReopen{Stage: stage, Assignee: assignee, AssignedBy: actor, Actor: actor,
+	out, err := db.ReopenGroupTask(t.ID, db.GroupTaskReopen{Stage: stage, Column: column, Assignee: assignee, AssignedBy: actor, Actor: actor,
 		ExpectAssignee: t.AssigneeID, Position: pos})
 	if err != nil {
 		writeTaskboardError(w, err)

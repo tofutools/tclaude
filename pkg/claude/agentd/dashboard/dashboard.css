@@ -18817,10 +18817,12 @@ a.tb-ref:hover { color: #79c0ff; }
 /* The reason dialog (groups-taskboard-reason.js): Block… / Drop… and a
    Lanes drag onto Blocked. */
 .taskboard-reason-modal { min-width: 0; width: min(520px, calc(100vw - 32px)); }
-.tb-import { margin: 0 8px 8px; padding: 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
 /* "+ New task" (groups-taskboard-new.js): the Resources ＋ menu's
    icon-only button, and the New task / Ask an agent dialogs. */
-#taskboard-new-modal > .ui-dialog, #taskboard-ask-modal > .ui-dialog { width: min(640px, calc(100vw - 32px)); }
+#taskboard-ask-modal > .ui-dialog { width: min(640px, calc(100vw - 32px)); }
+/* New task and Edit task carry the Markdown editor: wider, so a brief reads
+   like a ticket and Split has room. */
+#taskboard-new-modal > .ui-dialog, #taskboard-edit-modal > .ui-dialog { width: min(920px, calc(100vw - 32px)); }
 .tb-new-row { margin-top: 8px; }
 .tb-new-row .cron-create-label { flex-basis: 72px; }
 .tb-new-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -18830,8 +18832,6 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-edit-ref-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tb-edit-ref-line > .ui-input { flex: 1; min-width: 0; box-sizing: border-box; }
 .tb-edit-ref-line > .tb-ref { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tb-new-stage { display: inline-flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 5px; }
-.tb-new-stage-opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 /* A task's dependencies (groups-taskboard-deps.js): the chosen ones as
    chips, over the type-to-filter list, which scrolls at a capped height. */
 .tb-deps-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -18841,12 +18841,7 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-deps-picker .add-member-row .rowname { font-weight: 400; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-new-single { align-self: flex-start; }
 .tb-new-cli code { font-size: 11px; }
-.tb-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.tb-import-row { margin-top: 6px; }
 .tb-import-ids { width: 100%; box-sizing: border-box; resize: vertical; }
-.tb-capture-note { color: #3fb950; font-size: 11.5px; }
-.tb-import-row .tb-import-ids { flex: 1; width: auto; }
-.tb-spacer { flex: 1; }
 .tb-view { margin-right: 6px; }
 /* The List's Filter (view-menu.js), anchored at its button. */
 .tb-toolbar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
@@ -19007,6 +19002,7 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-marker-operator { color: #fff; background: #da3633; border: 1px solid #f85149; }
 .tb-card.tb-card-unassigned { border-left: 3px solid #d29922; }
 .tb-card.tb-card-operator { border-left: 3px solid #f85149; }
+.tb-who-mark { flex: none; box-sizing: border-box; width: 20px; height: 20px; }
 /* One row with every task: no lane column, so the first stage has no edge. */
 .tb-lanes-row .tb-lane > .tb-cell:first-child { border-left: none; }
 
@@ -19056,6 +19052,17 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-comment-kind { font-size: 11px; color: #d29922; border: 1px solid #d2992255; border-radius: 4px; padding: 0 5px; }
 .tb-comment-acts { margin-left: auto; display: inline-flex; gap: 2px; }
 .tb-comment-body { margin-top: 4px; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+/* A brief or comment is a ticket's text, not a document: its headings
+   stay close to the body size, so a hover card's few lines are not one
+   heading. The editor's Preview uses the same rules. */
+.tb-comment-md { font-size: 13px; line-height: 1.55; }
+.tb-comment-md h1, .tb-comment-md h2, .tb-comment-md h3,
+.tb-comment-md h4, .tb-comment-md h5, .tb-comment-md h6 { margin: 10px 0 4px; padding-bottom: 0; border-bottom: 0; }
+.tb-comment-md h1 { font-size: 15px; }
+.tb-comment-md h2 { font-size: 14px; }
+.tb-comment-md h3, .tb-comment-md h4, .tb-comment-md h5, .tb-comment-md h6 { font-size: 13px; }
+.tb-comment-md p, .tb-comment-md ul, .tb-comment-md ol, .tb-comment-md pre, .tb-comment-md blockquote, .tb-comment-md table { margin-top: 4px; margin-bottom: 6px; }
+.tb-comment-md img { max-width: 100%; max-height: 260px; }
 .tb-comment-md > :first-child { margin-top: 0; }
 .tb-comment-md > :last-child { margin-bottom: 0; }
 .tb-comment-deleted .tb-comment-body { font-style: italic; }
@@ -19066,6 +19073,7 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-comment-send-row { display: flex; align-items: flex-start; gap: 8px; }
 .tb-comment-send-row .tb-files-field { flex: 1; min-width: 0; }
 .tb-comment-count { margin-left: 6px; white-space: nowrap; }
+.tb-comment-composer .md-ed, .tb-comment-editor .md-ed { height: 150px; }
 span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 
 /* Question tasks (tk_aa049a67): the ❓ tag, Answer… on a card, and the
@@ -19103,3 +19111,78 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .tb-answer-desc { display: block; color: var(--ui-muted, #7d8590); font-size: 12px; margin-top: 2px; }
 .tb-answer-rec { margin-left: 6px; color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
 .tb-answer-preview { border: 1px solid var(--ui-line, #2a3340); border-radius: 6px; padding: 8px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; min-height: 120px; }
+
+/* The Markdown editor (markdown-editor.js): toolbar, Write / Preview / Split,
+   CodeMirror (or its textarea fallback) and a status line. The box is
+   resizable by its corner; the panes take what is left of it. */
+.md-ed {
+  display: flex; flex-direction: column; height: 320px; min-height: 140px; resize: vertical; overflow: hidden;
+  border: 1px solid var(--ui-line, #2a3340); border-radius: var(--ui-radius, 4px); background: var(--ui-field-bg, #0d1117);
+  box-sizing: border-box; width: 100%;
+}
+.md-ed:focus-within { border-color: var(--ui-focus, #58a6ff); }
+.md-ed [hidden] { display: none !important; }
+.md-ed-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 3px 4px;
+  border-bottom: 1px solid var(--ui-line, #2a3340); background: var(--ui-dialog-bg, #161b22);
+}
+.md-ed-modes { display: inline-flex; margin-right: 6px; }
+.md-ed-bar .md-ed-heading {
+  font: inherit; font-size: 12px; height: 24px; min-height: 0; width: auto; padding: 0 4px; margin: 0 4px 0 0; color: var(--ui-text, #c9d1d9);
+  background: var(--ui-bg, #21262d); border: 1px solid var(--ui-line, #2a3340); border-radius: var(--ui-radius, 4px);
+}
+.md-ed-tool {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0;
+  color: var(--ui-text, #c9d1d9); background: none; border: 0; border-radius: var(--ui-radius, 4px); cursor: pointer;
+}
+.md-ed-tool:hover:not(:disabled), .md-ed-tool.on { background: var(--ui-bg-hover, #2d333b); }
+.md-ed-tool:disabled { opacity: 0.4; cursor: default; }
+.md-ed-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.md-ed-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--ui-line, #2a3340); }
+.md-ed-spacer { flex: 1; }
+.md-ed-help {
+  padding: 6px 10px; border-bottom: 1px solid var(--ui-line, #2a3340);
+  background: var(--ui-dialog-bg, #161b22); max-height: 45%; overflow: auto;
+}
+.md-ed-help dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; }
+.md-ed-help dt code { white-space: pre; font-size: 11.5px; }
+.md-ed-help dd { margin: 0; color: var(--ui-muted, #7d8590); }
+.md-ed-help p { margin: 6px 0 0; color: var(--ui-muted, #7d8590); }
+.md-ed-panes { flex: 1; min-height: 0; display: flex; }
+.md-ed-edit, .md-ed-preview { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.md-ed-split .md-ed-edit { border-right: 1px solid var(--ui-line, #2a3340); }
+.md-ed-preview { overflow: auto; padding: 8px 14px; }
+.md-ed .md-ed-textarea {
+  flex: 1; width: 100%; min-height: 0; box-sizing: border-box; resize: none; border: 0; border-radius: 0; background: transparent;
+  font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px 10px;
+}
+.md-ed .md-ed-textarea:focus { outline: none; box-shadow: none; }
+.md-ed-cm-mount { flex: 1; min-height: 0; display: flex; }
+.md-ed .cm-editor { flex: 1; min-width: 0; height: 100%; background: transparent; color: var(--ui-text, #c9d1d9); }
+.md-ed .cm-editor.cm-focused { outline: none; }
+.md-ed .cm-scroller { overflow: auto; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.md-ed .cm-content { padding: 8px 0; caret-color: var(--ui-text-strong, #e6edf3); }
+.md-ed .cm-line { padding: 0 10px; }
+.md-ed .cm-cursor { border-left-color: var(--ui-text-strong, #e6edf3); }
+.md-ed .cm-selectionBackground, .md-ed .cm-focused .cm-selectionBackground { background: #1f6feb55 !important; }
+.md-ed .cm-placeholder { color: var(--ui-placeholder, #6e7681); }
+.md-ed .tok-heading { color: #79c0ff; font-weight: 600; }
+.md-ed .tok-meta, .md-ed .tok-processingInstruction, .md-ed .tok-punctuation { color: #6e7681; }
+.md-ed .tok-strong { color: var(--ui-text-strong, #e6edf3); font-weight: 600; }
+.md-ed .tok-emphasis { font-style: italic; }
+.md-ed .tok-strikethrough { text-decoration: line-through; }
+.md-ed .tok-monospace { color: #ffa657; }
+.md-ed .tok-link, .md-ed .tok-url { color: #a5d6ff; }
+.md-ed .tok-url { text-decoration: underline; }
+.md-ed .tok-quote { color: #8b949e; font-style: italic; }
+.md-ed .tok-contentSeparator { color: #d2a8ff; }
+.md-ed-status {
+  display: flex; justify-content: space-between; gap: 10px; padding: 2px 10px; font-size: 11px;
+  color: var(--ui-muted, #7d8590); border-top: 1px solid var(--ui-line, #2a3340); background: var(--ui-dialog-bg, #161b22);
+}
+.md-ed-compact .md-ed-status { display: none; }
+body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
+/* A task list's checkbox (markdown-model.js taskLists). */
+.markdown-document li.markdown-task-item { list-style: none; }
+.markdown-document li.markdown-task-item > .markdown-task-box,
+.markdown-document li.markdown-task-item > p > .markdown-task-box { margin: 0 4px 0 -18px; vertical-align: -1px; }

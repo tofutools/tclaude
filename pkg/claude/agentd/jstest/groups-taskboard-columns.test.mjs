@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose, comboKeys } from './combobox-helpers.mjs';
 
 // A board's custom columns (tcl-plby5h): In review, In CI, … between In
 // progress and Blocked, in the lanes, the List and the counts.
@@ -181,16 +182,22 @@ test('the List says the column, filters by it, and moves a task in or out from �
   box.checked = true;
   await harness.act(() => harness.fireEvent(box, 'change'));
 
-  // ⋯ Move to column › In CI, and Back to In progress.
+  // ⋯ Move to… opens the stage picker: Idea, Next, then the board's columns,
+  // the one it is in off; Enter moves it.
   const menu = async (id) => harness.act(() => harness.fireEvent(rowOf(id).querySelector('.tb-act-more'), 'click'));
   const pick = async (id, key) => harness.act(async () => { harness.fireEvent(rowOf(id).querySelector(`[data-task-menu="${key}"]`), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   await menu('tk_00000003');
-  await pick('tk_00000003', 'column');
-  const choices = [...rowOf('tk_00000003').querySelectorAll('[data-task-menu="to-column"], [data-task-menu="out-of-column"]')].map((n) => n.textContent);
-  assert.deepEqual(choices, ['In review ✓', 'In CI', 'Back to In progress']);
-  const ci = [...rowOf('tk_00000003').querySelectorAll('[data-task-menu="to-column"]')].find((n) => n.textContent === 'In CI');
-  await harness.act(async () => { harness.fireEvent(ci, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  await pick('tk_00000003', 'move-to');
+  const modal = c.querySelector('#taskboard-move-modal');
+  assert.ok(modal, 'Move to… opens its dialog');
+  const pickBox = modal.querySelector('[data-stage-pick="taskboard-move-pick"]');
+  assert.deepEqual(await comboKeys(harness, pickBox), ['idea', 'next', 'col:in-review', 'col:in-ci']);
+  assert.equal(pickBox.querySelector('[data-key="col:in-review"]').getAttribute('aria-disabled'), 'true', 'where it is now is off');
+  await comboChoose(harness, pickBox, 'col:in-ci');
+  assert.match(modal.textContent, /taskboard move tk_00000003 --stage in-ci/);
+  await harness.act(async () => { harness.fireEvent(modal.querySelector('#taskboard-move-submit'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(api.calls.at(-1), ['stage', 'tk_00000003', 'in-ci']);
+  assert.equal(c.querySelector('#taskboard-move-modal'), null, 'it closes once moved');
 });
 
 test('the counts name each custom column; the layout keeps widths per number of columns', async (t) => {

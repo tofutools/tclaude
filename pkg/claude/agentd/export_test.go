@@ -149,3 +149,23 @@ func AddPendingApprovalForTest(id, perm, agentID, convID, scopeJSON string) func
 		}
 	}
 }
+
+// RaiseApprovalForTest raises an agent's ask-human request as a gate site
+// does and waits on it in the background, as the gate site's request does;
+// the channel gets whether it was approved.
+func RaiseApprovalForTest(id, perm, agentID, convID, title, targetGroup string, timeout time.Duration) <-chan bool {
+	req := &approvalRequest{id: id, perm: perm, agentID: agentID, convID: convID, convTitle: title, targetGroup: targetGroup,
+		method: http.MethodPost, path: "/v1/test", createdAt: time.Now(), timeout: timeout,
+		decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1)}
+	done := make(chan bool, 1)
+	go func() { done <- realRequestHumanApproval(req, "") }()
+	return done
+}
+
+// SweepMirroredApprovalsForTest runs the daemon start's sweep of the board
+// questions of the last run's ask-human requests.
+var SweepMirroredApprovalsForTest = sweepMirroredApprovals
+
+// RedactMirroredForTest redacts a decoded taskboard response as a linked
+// node with restricted trust gets it.
+var RedactMirroredForTest = redactMirrored

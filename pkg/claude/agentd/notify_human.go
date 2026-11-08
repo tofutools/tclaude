@@ -232,6 +232,7 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, body.Subject, body.Body)
+	mirrorHumanMessage(id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
 }
 
@@ -377,6 +378,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
+	mirrorHumanMessage(id)
 	names := make([]string, 0, len(attachments))
 	for _, a := range attachments {
 		names = append(names, a.Filename)
@@ -1508,6 +1510,7 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		removeHumanMessageAttachmentPaths(paths)
+		humanMessagesEnded(body.IDs, "Deleted in Messages", mirrorActorOperator)
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 		return
 	}
@@ -1521,6 +1524,7 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	removeHumanMessageAttachmentPaths(paths)
+	humanMessagesEnded([]int64{body.ID}, "Deleted in Messages", mirrorActorOperator)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
@@ -1583,76 +1587,103 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	// The reply body is capped exactly like a notify-human message — same
 	// inbox, same reason to bound it. Cap the wire bytes before decode.
 	r.Body = http.MaxBytesReader(w, r.Body, maxNotifyHumanRequestBytes)
-	var body struct {
-		ID              int64  `json:"id"`
-		Body            string `json:"body"`
-		AttachmentToken string `json:"attachment_token"`
-		// Choice answers a decision: the 1-based option the operator
-		// picked. Body is then an optional note to go with it.
-		Choice int `json:"choice"`
-	}
+	var body humanMessageReply
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	out, fail := replyHumanMessage(r.Context(), body)
+	if fail != nil {
+		fail.write(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// humanMessageReply is an operator reply to a notify-human message: id is
+// the human_messages row, and the optional token names a daemon-staged
+// browser upload batch.
+type humanMessageReply struct {
+	ID              int64  `json:"id"`
+	Body            string `json:"body"`
+	AttachmentToken string `json:"attachment_token"`
+	// Choice answers a decision: the 1-based option the operator
+	// picked. Body is then an optional note to go with it.
+	Choice int `json:"choice"`
+}
+
+// humanReplyFailure is why a reply was refused; write sends it.
+type humanReplyFailure struct {
+	status    int
+	code, msg string
+	// queueFull, when set, is the agent's full inbox (writeQueueFull).
+	queueFull *db.AgentMessageQueueFullError
+	target    string
+}
+
+func (f *humanReplyFailure) write(w http.ResponseWriter) {
+	if f.queueFull != nil {
+		writeQueueFull(w, f.target, f.queueFull)
+		return
+	}
+	writeError(w, f.status, f.code, f.msg)
+}
+
+func replyFail(status int, code, msg string) *humanReplyFailure {
+	return &humanReplyFailure{status: status, code: code, msg: msg}
+}
+
+// replyHumanMessage sends the operator's reply (or decision) to the agent
+// that raised a notify-human message, and records it on the board when the
+// message is mirrored there (taskboard_mirror.go). The Messages tab, a
+// peer's human inbox and the board's Answer all reply through it.
+func replyHumanMessage(ctx context.Context, body humanMessageReply) (map[string]any, *humanReplyFailure) {
 	body.Body = strings.TrimSpace(body.Body)
 	if body.ID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required")
-		return
+		return nil, replyFail(http.StatusBadRequest, "invalid_arg", "id is required")
 	}
 	if body.Body == "" && body.AttachmentToken == "" && body.Choice == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
-		return
+		return nil, replyFail(http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 	}
 	if len(body.Body) > maxNotifyHumanBodyLen {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
+		return nil, replyFail(http.StatusBadRequest, "invalid_arg",
 			fmt.Sprintf("body too long: %d bytes, max %d", len(body.Body), maxNotifyHumanBodyLen))
-		return
 	}
 	orig, err := db.GetHumanMessage(body.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "load message: "+err.Error())
-		return
+		return nil, replyFail(http.StatusInternalServerError, "io", "load message: "+err.Error())
 	}
 	if orig == nil {
-		writeError(w, http.StatusNotFound, "not_found",
+		return nil, replyFail(http.StatusNotFound, "not_found",
 			fmt.Sprintf("no human message #%d to reply to", body.ID))
-		return
 	}
 	decision := ""
 	if body.Choice != 0 {
 		switch {
 		case len(orig.Options) == 0:
-			writeError(w, http.StatusBadRequest, "invalid_arg", "this notification is not a decision")
-			return
+			return nil, replyFail(http.StatusBadRequest, "invalid_arg", "this notification is not a decision")
 		case body.Choice < 1 || body.Choice > len(orig.Options):
-			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("choice must be between 1 and %d", len(orig.Options)))
-			return
+			return nil, replyFail(http.StatusBadRequest, "invalid_arg", fmt.Sprintf("choice must be between 1 and %d", len(orig.Options)))
 		case orig.Decision != "":
-			writeError(w, http.StatusConflict, "decided", "already decided: "+orig.Decision)
-			return
+			return nil, replyFail(http.StatusConflict, "decided", "already decided: "+orig.Decision)
 		case !orig.DismissedAt.IsZero():
-			writeError(w, http.StatusConflict, "dismissed", "this decision was dismissed")
-			return
+			return nil, replyFail(http.StatusConflict, "dismissed", "this decision was dismissed")
 		}
 		decision = orig.Options[body.Choice-1]
 	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")
-			return
+			return nil, replyFail(http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")
 		}
 		// The replacement-engine seam is deliberately nil-capable even though
 		// its temporary no-engine stub below always returns an error.
-		if err := resolveProcessHumanMessage(r.Context(), orig, body.Body); err != nil { //nolint:staticcheck
-			writeError(w, http.StatusConflict, "process_resolve", err.Error())
-			return
+		if err := resolveProcessHumanMessage(ctx, orig, body.Body); err != nil { //nolint:staticcheck
+			return nil, replyFail(http.StatusConflict, "process_resolve", err.Error())
 		}
 		if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
 			slog.Warn("reply: mark process obligation message read failed", "id", body.ID, "error", err)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"resolved": true, "run_id": orig.ProcessRunID, "node_id": orig.ProcessNodeID})
-		return
+		return map[string]any{"resolved": true, "run_id": orig.ProcessRunID, "node_id": orig.ProcessNodeID}, nil
 	}
 	// Resolve who to reply to. Lead with the stable agent_id (rotation-immune
 	// across reincarnation), falling back to the raw from_conv for old rows /
@@ -1663,13 +1694,11 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		selector = orig.FromConv
 	}
 	if selector == "" {
-		writeError(w, http.StatusConflict, "no_sender", "this notification has no sender to reply to")
-		return
+		return nil, replyFail(http.StatusConflict, "no_sender", "this notification has no sender to reply to")
 	}
 	res, _, err := agent.ResolveSelector(selector)
 	if err != nil || res == nil || res.ConvID == "" {
-		writeError(w, http.StatusConflict, "unresolved", "cannot resolve the sending agent — it may have been deleted")
-		return
+		return nil, replyFail(http.StatusConflict, "unresolved", "cannot resolve the sending agent — it may have been deleted")
 	}
 	target := res.ConvID
 	// Online gate — the reply is blocked when the target has no live tmux
@@ -1684,13 +1713,11 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	// A decision is durable: the pick is queued for an offline agent and
 	// delivered when it resumes, so the operator can answer at any time.
 	if decision == "" && !isConvOnlineIn(target, aliveSessions) {
-		writeError(w, http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
-		return
+		return nil, replyFail(http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
 	}
 	attachments, durableDir, err := consumeOperatorAttachmentBatch(body.AttachmentToken)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "attachments", err.Error())
-		return
+		return nil, replyFail(http.StatusBadRequest, "attachments", err.Error())
 	}
 	replyBody := body.Body
 	if decision != "" {
@@ -1700,8 +1727,7 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		if durableDir != "" {
 			_ = os.RemoveAll(durableDir)
 		}
-		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
-		return
+		return nil, replyFail(http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 	}
 	// A decision is claimed before its mail is queued: only the first pick
 	// counts, so two clicks racing from two views cannot both reach the agent.
@@ -1712,11 +1738,9 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 				_ = os.RemoveAll(durableDir)
 			}
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", "record decision: "+err.Error())
-			} else {
-				writeError(w, http.StatusConflict, "decided", "this decision has already been answered or dismissed")
+				return nil, replyFail(http.StatusInternalServerError, "io", "record decision: "+err.Error())
 			}
-			return
+			return nil, replyFail(http.StatusConflict, "decided", "this decision has already been answered or dismissed")
 		}
 	}
 	// Deliver as a sender-less operator message on the universal inbox.
@@ -1746,11 +1770,9 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if full, ok := agentMessageQueueFull(err); ok {
-			writeQueueFull(w, target, full)
-			return
+			return nil, &humanReplyFailure{queueFull: full, target: target}
 		}
-		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())
-		return
+		return nil, replyFail(http.StatusInternalServerError, "io", "queue reply: "+err.Error())
 	}
 	if body.AttachmentToken != "" {
 		_ = removeDaemonStagedAttachmentBatch(
@@ -1765,13 +1787,14 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
 		slog.Warn("reply: mark original human message read failed", "id", body.ID, "error", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	humanMessageAnswered(orig, body.Choice, body.Body)
+	return map[string]any{
 		"message_id":  id,
 		"conv_id":     target,
 		"queued":      true,
 		"pending":     pending,
 		"attachments": attachments,
-	})
+	}, nil
 }
 
 // decisionReplyBody is the mail an agent gets when the operator answers its

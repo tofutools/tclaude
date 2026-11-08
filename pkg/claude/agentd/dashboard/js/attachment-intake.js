@@ -55,11 +55,15 @@ export function clipboardFiles(transfer) {
 //                   (default); a dialog that does it itself passes false
 //   ignore(event)   true for a paste or drop that a part of the dialog with
 //                   its own files takes (the edit form's comment box)
+//   onAdded(added, event)  runs after a paste or a drop took files, with the
+//                   entries taken and the event (a Markdown editor links them
+//                   where they were pasted or dropped)
+//   nameFile(file, n)  names a pasted file that has no name (pastedName)
 //
-// It returns add(files), remove(id), dragOver (a drag of files is over the
+// It returns add(files) (which returns the entries it took), remove(id), dragOver (a drag of files is over the
 // dialog) and handlers ({ onPaste, onDragEnter, onDragOver, onDragLeave,
 // onDrop }) for the dialog's root.
-export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {}, revoke = true, ignore = () => false }) {
+export function useAttachmentIntake({ setAttachments, attachments = [], busy = () => false, onChange = () => {}, limits = null, onReject = () => {}, revoke = true, ignore = () => false, onAdded = () => {}, nameFile = pastedName }) {
   const sequence = useRef(0);
   const pasteState = useRef({ at: 0, keys: new Set() });
   const dragDepth = useRef(0);
@@ -73,13 +77,13 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
   }, []);
 
   const add = (files) => {
-    if (busy()) return;
+    if (busy()) return [];
     const additions = [];
     const refused = [];
     let count = attachments.length;
     for (const file of files || []) {
       if (!file) continue;
-      const name = file.name || pastedName(file, ++sequence.current);
+      const name = file.name || nameFile(file, ++sequence.current);
       const why = checkAttachment(file, name, count, limits);
       if (why) { refused.push(`${name} (${why})`); continue; }
       count += 1;
@@ -89,9 +93,10 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
       });
     }
     if (refused.length) onReject(`Not attached: ${refused.join(', ')}`);
-    if (!additions.length) return;
+    if (!additions.length) return additions;
     onChange();
     setAttachments((before) => [...before, ...additions]);
+    return additions;
   };
 
   const remove = (id) => {
@@ -113,7 +118,8 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
     const repeating = now - pasteState.current.at < PASTE_REPEAT_MS;
     const fresh = repeating ? collected.filter((file) => !pasteState.current.keys.has(attachKey(file))) : collected;
     pasteState.current = { at: now, keys: new Set(collected.map(attachKey)) };
-    add(fresh);
+    const added = add(fresh);
+    if (added.length) onAdded(added, event);
   };
   const onDragEnter = (event) => {
     if (!hasDraggedFiles(event)) return;
@@ -141,7 +147,8 @@ export function useAttachmentIntake({ setAttachments, attachments = [], busy = (
     dragDepth.current = 0;
     setDragOver(false);
     if (ignore(event)) return;
-    add(event.dataTransfer.files);
+    const added = add(event.dataTransfer.files);
+    if (added.length) onAdded(added, event);
   };
 
   return { add, remove, dragOver, handlers: { onPaste, onDragEnter, onDragOver, onDragLeave, onDrop } };

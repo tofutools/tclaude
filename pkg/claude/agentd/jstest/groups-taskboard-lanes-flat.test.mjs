@@ -71,7 +71,7 @@ async function mountFlat(t, name, { api = fakeApi(), mode = 'triage', extra = []
   return { harness, c, api, cell, ids, card, rows, drag, click, dashPrefs };
 }
 
-test('lanes: triage draws You, Unassigned and Agents, each card marked with who holds it', async (t) => {
+test('lanes: triage draws You, Unassigned and Agents; only the Agents row marks who holds a card', async (t) => {
   const { c, ids, card, rows } = await mountFlat(t, 'tlf-triage');
   assert.equal(c.querySelector('[data-taskboard-lanes]').dataset.lanesBy, 'triage');
   assert.deepEqual(rows(), ['operator', 'unassigned', 'agents']);
@@ -82,19 +82,16 @@ test('lanes: triage draws You, Unassigned and Agents, each card marked with who 
   assert.deepEqual(ids('agents', 'done'), ['tk_00000005']);
   assert.ok(c.querySelector('[data-board-row-head="operator"]').classList.contains('tb-lane-operator'), 'You is tinted as the operator lane is');
 
+  // The You and Unassigned rows say who holds their cards: no "!", and no
+  // coloured edge with it.
   const marker = (id) => card(id).querySelector('.tb-card-marker');
-  assert.ok(marker('tk_00000001').classList.contains('tb-marker-unassigned'), 'unassigned: the yellow !');
-  assert.equal(marker('tk_00000001').textContent, '!');
-  assert.ok(card('tk_00000001').classList.contains('tb-card-unassigned'));
-  assert.ok(marker('tk_00000003').classList.contains('tb-marker-operator'), 'the operator\'s: the red !');
-  assert.equal(marker('tk_00000003').getAttribute('title'), 'Assigned to you');
-  assert.ok(card('tk_00000003').classList.contains('tb-card-operator'));
-  assert.ok(marker('tk_00000002').classList.contains('tb-avatar'), 'an agent\'s: its avatar');
+  for (const id of ['tk_00000001', 'tk_00000003', 'tk_00000006', 'tk_00000007']) {
+    assert.equal(marker(id), null, `${id}: its row says it`);
+    assert.ok(!card(id).classList.contains('tb-card-unassigned') && !card(id).classList.contains('tb-card-operator'), `${id}: no coloured edge`);
+  }
+  assert.ok(marker('tk_00000002').classList.contains('tb-avatar'), 'an agent\'s, in Agents: its avatar');
   assert.equal(marker('tk_00000002').textContent, 'B');
   assert.equal(marker('tk_00000002').getAttribute('title'), 'builder');
-  assert.equal(marker('tk_00000006'), null, 'a done task needs nobody: no !');
-  assert.ok(marker('tk_00000007').classList.contains('tb-avatar-operator'), 'the operator\'s done task: their avatar, no !');
-  assert.equal(marker('tk_00000007').textContent, '★');
 });
 
 test('the lanes switch offers triage and one row, remembered per group; one row holds every task', async (t) => {
@@ -108,6 +105,20 @@ test('the lanes switch offers triage and one row, remembered per group; one row 
   assert.deepEqual(ids('row', 'progress'), ['tk_00000002', 'tk_00000003'], 'agents\' and the operator\'s tasks share the row, in board order');
   assert.deepEqual(ids('row', 'done'), ['tk_00000005', 'tk_00000006', 'tk_00000007']);
   assert.equal(c.querySelector('.tb-col-lane'), null, 'no row heads in one row');
+
+  // One row has no lane to say who holds a card: every card is marked.
+  const card = (id) => c.querySelector(`.tb-card[data-task-id="${id}"]`);
+  const marker = (id) => card(id).querySelector('.tb-card-marker');
+  assert.ok(marker('tk_00000001').classList.contains('tb-marker-unassigned'), 'unassigned: the yellow !');
+  assert.equal(marker('tk_00000001').textContent, '!');
+  assert.ok(card('tk_00000001').classList.contains('tb-card-unassigned'));
+  assert.ok(marker('tk_00000003').classList.contains('tb-marker-operator'), 'the operator\'s: the red !');
+  assert.equal(marker('tk_00000003').getAttribute('title'), 'Assigned to you');
+  assert.ok(card('tk_00000003').classList.contains('tb-card-operator'));
+  assert.ok(marker('tk_00000002').classList.contains('tb-avatar'), 'an agent\'s: its avatar');
+  assert.equal(marker('tk_00000006'), null, 'a done task needs nobody: no !');
+  assert.ok(marker('tk_00000007').classList.contains('tb-avatar-operator'), 'the operator\'s done task: their avatar, no !');
+  assert.equal(marker('tk_00000007').textContent, '★');
 });
 
 test('Triage drags: onto You assigns to the operator, onto Unassigned unassigns, Agents takes only an agent\'s own card', async (t) => {

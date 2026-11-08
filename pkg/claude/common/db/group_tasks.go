@@ -229,6 +229,10 @@ type NewGroupTask struct {
 	// the holder the caller was authorised against for it.
 	Blocks       string
 	BlocksExpect string
+	// Column, when set, is the custom column (its slug) the task starts in,
+	// set in the same transaction: a column stands in next, so the task is
+	// queued there, and only a live task sits in one.
+	Column string
 	// Question makes the new task a question for the operator (its
 	// assignee): its first question (askGroupTaskQuestionTx), answered
 	// with AnswerGroupTaskQuestion.
@@ -463,6 +467,25 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if stage == "" {
 		stage = GroupTaskStageIdea
 	}
+	columnLabel := ""
+	if in.Column != "" {
+		switch {
+		case status == GroupTaskDone:
+			return nil, taskConflict("invalid_arg", "a task logged as done sits in no column")
+		case in.Hold == GroupTaskStageIdea || in.Stage == GroupTaskStageIdea:
+			return nil, taskConflict("invalid_arg", "a column stands in next, not the ideas")
+		}
+		cols, err := listGroupTaskColumnsTx(tx, in.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		i := columnIndex(cols, in.Column)
+		if i < 0 {
+			return nil, taskConflict("invalid_arg", "the board has no column %s", in.Column)
+		}
+		columnLabel = cols[i].Label
+		stage = GroupTaskStageNext
+	}
 	// An assigned task is queued, done or not: assign promotes an idea, and
 	// a done task reopened comes back assigned. A held one sits in the stage
 	// it is held in.
@@ -502,11 +525,21 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 		dbTime(now), dbTime(now)); err != nil {
 		return nil, err
 	}
+	if in.Column != "" {
+		// An anchor (before/after) names its own stage: one among the ideas
+		// cannot place a task that starts in a column.
+		if stage != GroupTaskStageNext {
+			return nil, taskConflict("invalid_arg", "a column stands in next; place the task beside a queued task, not an idea")
+		}
+		if _, err := tx.Exec(`UPDATE group_tasks SET column_slug = ? WHERE id = ?`, in.Column, id); err != nil {
+			return nil, err
+		}
+	}
 	t := &GroupTask{ID: id, GroupID: in.GroupID}
 	if err := setGroupTaskDepsTx(tx, t, in.DependsOn, nil); err != nil {
 		return nil, err
 	}
-	detail := "in " + stage
+	detail := "in " + firstNonEmptyString(columnLabel, stage)
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
 	}
