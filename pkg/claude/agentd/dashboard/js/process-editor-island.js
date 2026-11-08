@@ -16,7 +16,8 @@ import { PROCESS_SCRIBE_SLUGS } from './process-scribe.js';
 import { DiffReviewBar } from './process-diff-review.js';
 import { ScopeBar, ScopeMinimap, ScopeOutline, ScopePorts } from './process-scope-ui.js';
 import { ParamsDialog } from './process-params-dialog.js';
-import { WorkflowExportButton } from './process-workflow-share.js';
+import { exportWorkflow } from './process-workflow-share.js';
+import { ResourceEditorHeader } from './resource-editor-header.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
   PROCESS_SNIPPET_NAME_MAX_BYTES, PROCESS_SNIPPET_NAME_MAX_RUNES, validateProcessSnippetName,
@@ -159,43 +160,71 @@ function EditorGetHelp({ controller, view, disabled }) {
     onNew=${() => controller.requestScribe('template')} onAsk=${(agent) => controller.requestScribe('template', { to: agent })} />`;
 }
 
+// Header is the shared resource editor header (resource-editor-header.js):
+// identity; File (save, workflow file), Edit (undo, redo, auto layout and its
+// direction), View (palette, commands, and the host's moves:
+// controller.hostMoves); Get help and Save stay at hand beside the menus.
 function Header({ controller, view }) {
   const { model, pending } = view;
   const externalPending = pending.externalDecision || pending.externalReload;
-  return html`<div class="process-editor-header">
-    <span class="process-editor-identity">
-      <${EditableTitle} controller=${controller} view=${view} />
-    </span>
-    <span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
-      ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}
-    </span>
-    ${model.id && model.semanticHash && html`<${LockChip} kind="process" id=${model.id} name=${model.name || model.id} locked=${!!view.agentsLocked}
-      onChanged=${(locked) => controller.setAgentsLocked(locked)} />`}
-    <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
-    <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
-    <span class="spacer"></span>
-    <${Button} class="process-action" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…<//>
-    <${Button} class="process-action" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…<//>
-    <${Button} class="process-action" disabled=${externalPending || !model.canUndo} title=${withShortcut('Undo', 'process-undo')} onClick=${() => controller.applyHistory('undo')}>↶ undo<//>
-    <${Button} class="process-action" disabled=${externalPending || !model.canRedo} title=${withShortcut('Redo', 'process-redo')} onClick=${() => controller.applyHistory('redo')}>↷ redo<//>
-    <span class="process-auto-layout-group" role="group" aria-label="Auto layout">
-      <${Button} class="process-action" data-process-auto-layout disabled=${externalPending} title=${`Auto layout: tidy the graph, or just the selected nodes (${shortcutText('process-auto-layout')}). Undo restores hand-placed positions.`} onClick=${() => controller.autoLayout()}>▦ auto layout<//>
-      ${LAYOUT_DIRECTIONS.map(([direction, arrow, label]) => html`
-        <${Button} class=${`process-action process-layout-direction${model.layoutDirection === direction ? ' is-active' : ''}`}
-          data-process-layout-direction=${direction} pressed=${model.layoutDirection === direction}
-          disabled=${externalPending || (view.scope?.depth > 0 && model.layoutDirection !== direction)}
-          title=${view.scope?.depth > 0 ? 'The layout direction belongs to the root process; exit the subgraph first'
-            : model.layoutDirection === direction ? `The graph flows ${label}; click to tidy it` : `Auto layout flowing ${label} (whole graph; undo restores)`}
-          aria-label=${`Auto layout flowing ${label}`}
-          onClick=${() => controller.autoLayout(direction)}>${arrow}<//>`)}
-    </span>
-    <${Button} class="process-action" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette<//>
-    <${Button} class="process-action" title=${withShortcut('Process commands', 'process-commands')} aria-label=${withShortcut('Open process commands', 'process-commands')} onClick=${() => controller.openCommands()}>${shortcutText('process-commands')} commands<//>
-    <${EditorGetHelp} controller=${controller} view=${view} disabled=${externalPending || pending.save} />
-    <${WorkflowExportButton} id=${model.id} disabled=${externalPending || model.dirty || !model.semanticHash}
-      title=${model.dirty || !model.semanticHash ? 'Save first: a workflow file carries the saved version' : ''} />
-    <${Button} variant="primary" class="process-action" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}<//>
-  </div>`;
+  const [menu, setMenu] = useState('');
+  const sub = view.scope?.depth > 0;
+  const saveable = !(pending.save || externalPending || (!model.dirty && !view.blank));
+  const exportable = !externalPending && !model.dirty && !!model.semanticHash;
+  const exportFile = async () => {
+    try {
+      const error = await exportWorkflow(model.id);
+      if (error) controller.status(`Could not export: ${error}`, true);
+    } catch (err) {
+      controller.status(`Could not export: ${err?.message || err}`, true);
+    }
+  };
+  const menus = [
+    { key: 'file', label: 'File', items: () => [
+      { key: 'save', label: 'Save', shortcut: shortcutText('process-save'), disabled: !saveable, title: 'Save a new version', run: () => controller.save() },
+      { sep: true },
+      { heading: 'Export' },
+      { key: 'export', label: 'Workflow file (.pwf)…', disabled: !exportable,
+        title: exportable ? 'Download as a .pwf workflow file to share; it carries the templates this one uses' : 'Save first: a workflow file carries the saved version', run: exportFile },
+      { sep: true },
+      { key: 'settings', label: 'Template settings…', disabled: externalPending || sub,
+        title: sub ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description', run: () => controller.setSelection({ type: 'template' }) },
+      { key: 'params', label: 'Params…', disabled: externalPending || pending.save, title: 'Declare template parameters', run: () => controller.openParamsSettings() },
+    ] },
+    { key: 'edit', label: 'Edit', items: () => [
+      { key: 'undo', label: 'Undo', shortcut: shortcutText('process-undo'), disabled: externalPending || !model.canUndo, run: () => controller.applyHistory('undo') },
+      { key: 'redo', label: 'Redo', shortcut: shortcutText('process-redo'), disabled: externalPending || !model.canRedo, run: () => controller.applyHistory('redo') },
+      { sep: true },
+      { heading: 'Auto layout' },
+      { key: 'auto-layout', label: 'Tidy the graph', shortcut: shortcutText('process-auto-layout'), disabled: externalPending,
+        title: 'Tidy the graph, or just the selected nodes. Undo restores hand-placed positions.', run: () => controller.autoLayout() },
+      ...LAYOUT_DIRECTIONS.map(([direction, arrow, label]) => ({
+        key: `flow-${direction}`, label: `${arrow} Flow ${label}`, checked: model.layoutDirection === direction,
+        disabled: externalPending || (sub && model.layoutDirection !== direction),
+        title: sub ? 'The layout direction belongs to the root process; exit the subgraph first'
+          : model.layoutDirection === direction ? `The graph flows ${label}; pick it to tidy it` : `Auto layout flowing ${label} (whole graph; undo restores)`,
+        run: () => controller.autoLayout(direction),
+      })),
+    ] },
+    { key: 'view', label: 'View', items: () => [
+      { key: 'palette', label: 'Node palette', checked: !view.paletteHidden, disabled: externalPending, run: () => controller.togglePalette() },
+      { key: 'commands', label: 'Commands…', shortcut: shortcutText('process-commands'), run: () => controller.openCommands() },
+      { sep: true },
+      ...(controller.hostMoves || []),
+    ] },
+  ];
+  return html`<${ResourceEditorHeader} class="process-editor-header" label="Process editor menu" openMenu=${menu} onOpenMenu=${setMenu}
+    title=${html`<span class="process-editor-identity"><${EditableTitle} controller=${controller} view=${view} /></span>`}
+    identity=${html`<span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
+        ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}
+      </span>
+      ${model.id && model.semanticHash && html`<${LockChip} kind="process" id=${model.id} name=${model.name || model.id} locked=${!!view.agentsLocked}
+        onChanged=${(locked) => controller.setAgentsLocked(locked)} />`}
+      <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
+      <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>`}
+    menus=${menus}
+    actions=${html`<${EditorGetHelp} controller=${controller} view=${view} disabled=${externalPending || pending.save} />
+      <${Button} variant="primary" class="process-action" data-process-save disabled=${!saveable} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}<//>`} />`;
 }
 
 function externalSummary(change) {
