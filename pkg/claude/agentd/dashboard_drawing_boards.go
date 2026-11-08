@@ -773,6 +773,7 @@ func registerDashboardDrawingBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/drawing-boards/{id}", handleDashboardDrawingBoardDelete)
 	mux.HandleFunc("PUT /api/drawing-boards/{id}/snapshot", handleDashboardDrawingBoardSnapshotPut)
 	mux.HandleFunc("GET /api/drawing-boards/{id}/snapshot", handleDashboardDrawingBoardSnapshotGet)
+	mux.HandleFunc("POST /api/drawing-boards/{id}/export", handleDashboardDrawingBoardExport)
 	mux.HandleFunc("POST /api/drawing-boards/{id}/participants", handleDashboardDrawingBoardParticipants)
 	mux.HandleFunc("POST /api/drawing-boards/{id}/events", handleDashboardDrawingBoardEvent)
 	mux.HandleFunc("POST /api/drawing-boards/{id}/view", handleDashboardDrawingBoardView)

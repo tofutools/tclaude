@@ -60,12 +60,16 @@ tclaude agent drawing-board show plan --view     # only what the operator has on
 tclaude agent drawing-board show plan --json     # raw Excalidraw elements
 tclaude agent drawing-board snapshot plan -o plan.png            # last PNG the dashboard rendered
 tclaude agent drawing-board snapshot plan --region 3 -o chg.png  # the change a [drawing-board plan] mail numbered
+tclaude agent drawing-board export plan -o plan.png              # render it now (no dashboard needed); .svg for SVG
+tclaude agent drawing-board export plan --elements api,db -o part.png  # just those, their text and the lines between
+tclaude agent drawing-board export plan --region 0,0,400,300 -o area.png  # what meets the box, cropped to it
 ```
 
 Remember the version `show` prints and pass it as `--since` next time.
 `show` lists line ends as `api:right -> db:left` and attached text as
 `on <element>`. `snapshot` needs an open dashboard and may lag your own edits
-(it says by how much); working alone, read with `show`. Look at a PNG with an
+(it says by how much); working alone, read with `show`, and look with `export`,
+which the daemon renders from the elements as they are now. Look at a PNG with an
 image-capable tool.
 
 ## Draw

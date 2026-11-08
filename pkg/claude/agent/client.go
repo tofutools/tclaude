@@ -599,9 +599,30 @@ func DaemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 var DaemonPostRawWithOptionsImpl = daemonPostRawWithOptions
 
 func daemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
-	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
+	raw, _, err := daemonPostRawBytes(path, contentType, body, headers, opts)
 	if err != nil {
 		return err
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// DaemonPostRawBytes is a raw POST whose reply is passed through unparsed,
+// with its headers: a request for a rendered image (drawing-board export).
+// Like DaemonPostRawWithOptions it honours AskHuman and RetryOutput only.
+func DaemonPostRawBytes(path, contentType string, body []byte, opts DaemonOpts) ([]byte, http.Header, error) {
+	return DaemonPostRawBytesImpl(path, contentType, body, nil, opts)
+}
+
+// DaemonPostRawBytesImpl is the seam for DaemonPostRawBytes.
+var DaemonPostRawBytesImpl = daemonPostRawBytes
+
+func daemonPostRawBytes(path, contentType string, body []byte, headers http.Header, opts DaemonOpts) ([]byte, http.Header, error) {
+	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, err
 	}
 	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", contentType)
@@ -617,24 +638,21 @@ func daemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 	}
 	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), policy)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, readErr := daemonResponseBytes(resp)
 	if readErr != nil {
-		return fmt.Errorf("read response body: %w", readErr)
+		return nil, nil, fmt.Errorf("read response body: %w", readErr)
 	}
 	if resp.StatusCode >= 400 {
-		return decodeDaemonError(resp.StatusCode, raw)
+		return nil, nil, decodeDaemonError(resp.StatusCode, raw)
 	}
-	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
+	return raw, resp.Header, nil
 }
 
 func retryOutput(out io.Writer) io.Writer {
