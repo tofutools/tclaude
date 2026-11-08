@@ -2489,3 +2489,12 @@ CREATE TABLE group_task_columns (
 CREATE TRIGGER group_task_columns_removed
 			AFTER DELETE ON group_task_columns
 			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
+
+CREATE TABLE federation_peer_questions (
+			peer       TEXT NOT NULL,
+			task       TEXT NOT NULL,
+			agent      TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			PRIMARY KEY (peer, task, agent)
+		) STRICT;

@@ -487,9 +487,12 @@ tclaude agent taskboard ask-operator crew "Lane highlight colour?" \
   (`--json` for the answer state), and exits 6 if it does not come in time.
   The question stays open, and the answer still comes by mail. While an agent
   waits, its card says *⏳ <agent> is waiting*.
-- With `--peer <node>` the question goes on a linked node's board. That
-  node cannot mail the asker, so the answer is read with `--wait` or with
-  `show <task> --peer <node>`.
+- With `--peer <node>` the question goes on a linked node's board, and the
+  answer comes back as remote mail from that node. Your node records the
+  question when it is asked and lets in that one answer, from that node, for
+  you, within 30 days; it needs no `message.direct` grant, and any other
+  mail from the node is refused as before. `--wait` and `show <task> --peer
+  <node>` read the answer too.
 - `--idea` puts the question in the operator's ideas, not waiting on them
   (no `--blocks` or `--wait` then).
 - `show` prints the options and, once answered, the answer. The board stays

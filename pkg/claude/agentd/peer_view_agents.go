@@ -572,8 +572,19 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 	// What a peer returns is untrusted content for the agent reading it.
 	w.Header().Set("X-Tclaude-Remote-Content", "untrusted")
 	rec := &statusRecorder{ResponseWriter: w}
-	servePeerViewProxyWith(rec, r.WithContext(withPeerViewPrincipal(r.Context(), principal)), false)
+	var out http.ResponseWriter = rec
+	// A question asked on the peer's board is recorded, so its answer mail
+	// is let in (taskboard_question_peer.go).
+	var asked *peerQuestionCapture
+	if pattern == peerQuestionCreateRoute && peerCreateAsksQuestion(r.Header.Get("Content-Type"), body) {
+		asked = &peerQuestionCapture{ResponseWriter: rec}
+		out = asked
+	}
+	servePeerViewProxyWith(out, r.WithContext(withPeerViewPrincipal(r.Context(), principal)), false)
 	status = rec.code()
+	if asked != nil && status == http.StatusCreated {
+		recordPeerQuestion(peer.InstanceID, agentID, asked.body.Bytes())
+	}
 }
 
 // agentPeerViewFootprint is the remote groups a route acts in, as the

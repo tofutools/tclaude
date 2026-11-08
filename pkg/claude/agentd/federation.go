@@ -993,6 +993,11 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	groupID, ok := federationInboundAuthorized(peer.InstanceID, env, conv)
+	if !ok && origin == nil {
+		// The answer to a question this agent asked the peer's operator
+		// (taskboard_question_peer.go): let in once, as a reply.
+		ok = taskboardAnswerMailAuthorized(peer.InstanceID, env, mp)
+	}
 	if !ok {
 		refuse(fedCodeNotExported, "recipient is not in a group exported to this instance with mail")
 		return
