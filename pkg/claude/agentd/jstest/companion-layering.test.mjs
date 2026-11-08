@@ -14,9 +14,10 @@ const LAYERS = ['content', 'window', 'chrome', 'panel', 'dialog', 'popover', 'co
 // Popovers that sit inside something else's stacking context, so their own
 // value says nothing about the page: the window hides the chips, the others
 // are clipped to or carried by their host. A dialog's resize grip is part of it,
-// and so are an overlay window's own controls and snapped edges, a dock section
+// and so are an overlay window's own controls, snapped edges and the frame that
+// covers its content while it comes up (overlay-window-motion.js), a dock section
 // head and the process editor's issues panel (inside its full-screen dialog).
-const nested = /process-issues-panel|dock-section-head|dialog-resizer|overlay-window-(edge|controls)|companion-(menu|decide-queue)|fleet-link-pop|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
+const nested = /process-issues-panel|dock-section-head|dialog-resizer|overlay-window-(edge|controls)|overlay-live-frame|companion-(menu|decide-queue)|fleet-link-pop|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
 const opened = /menu|pop|modal|overlay|drawer|panel|dialog/i;
 
 // rank orders a z-index value on the scale: a layer plus its step, or a raw

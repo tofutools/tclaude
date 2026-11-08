@@ -1,7 +1,7 @@
 // overlay-window.js -- the one window every floating dashboard window sits in.
 // The companion and the drawing board overlay bring their content; this owns the rest:
 // where the window is (placement and persistence), dragging, resizing from any
-// edge or corner, edge snapping and maximize, minimize and open animations, the
+// edge or corner, edge snapping and maximize, minimize (overlay-window-motion.js), the
 // native-look controls, which window is in front, and handing focus back after
 // a click on its chrome.
 //
@@ -28,6 +28,7 @@ import {
   detachSpot, dragHit, dropTargets, edgeMeets, edgeTargets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, normalized, parseSplit, rectZone, roomTree, splitEdges, splitLayout, targetAt, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
+import { LiveCover, overlayLiveCovers, overlayWindowLeaving, overlayWindowWaiting, reducedMotion } from './overlay-window-motion.js';
 
 const html = htm.bind(h);
 
@@ -296,13 +297,7 @@ export function snapPlan(id, raw, targets, win, snapped = (zone) => zoneRect(zon
   return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
 }
 
-export function reducedMotion(win) {
-  try {
-    return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-  } catch {
-    return false;
-  }
-}
+export { reducedMotion };
 
 export function readPref(prefs, key) {
   try {
@@ -328,8 +323,6 @@ export function writePref(prefs, key, value) {
 // join, from tabJoin, lets a drag of the window end by joining another's tabs.
 export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacement, snaps = false, open = true, spotted = null, onPlaced = null, onRefocus = null, join = null }) {
   const windowRef = useRef(null);
-  // The rectangle the window grows out of when it next opens.
-  const openFrom = useRef(null);
   // The cleanup of an in-flight drag or resize, run if the window unmounts.
   const gesture = useRef(null);
   const saved = () => parsePlacement(readPref(prefs, prefKey));
@@ -398,23 +391,6 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   // Reopen where the operator left it, if that still fits.
   useLayoutEffect(() => {
     if (open) setPlacement((p) => (p.snap ? p : floatingPlacement()));
-  }, [open]);
-
-  // Grow the window out of the rectangle it was opened from.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const from = openFrom.current;
-    openFrom.current = null;
-    const node = windowRef.current;
-    if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
-    // The effect above only queued the move, so the node isn't there yet.
-    const target = placement.snap ? placement : floatingPlacement();
-    const to = { left: target.x, top: target.y, width: target.w, height: target.h };
-    if (!to.width || !to.height) return;
-    node.animate([
-      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
-      { transform: 'none', opacity: 1, borderRadius: '10px' },
-    ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }, [open]);
 
   // Keep a floating window on screen when the browser resizes, working from the
@@ -731,27 +707,11 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     releaseFocus(event);
   }
 
-  // shrinkTo plays the window down into a rectangle, then calls done. With
-  // nowhere to go, or no animation wanted, it just calls done.
-  function shrinkTo(rect, done) {
-    const node = windowRef.current;
-    if (!node || !rect || reducedMotion(win) || typeof node.animate !== 'function') {
-      done();
-      return;
-    }
-    const from = node.getBoundingClientRect();
-    const animation = node.animate([
-      { transform: 'none', opacity: 1 },
-      { transform: `translate(${rect.left - from.left}px, ${rect.top - from.top}px) scale(${rect.width / from.width}, ${rect.height / from.height})`, opacity: 0.4 },
-    ], { duration: 160, easing: 'cubic-bezier(.4,0,.8,.4)', fill: 'forwards' });
-    animation.onfinish = () => { done(); animation.cancel(); };
-  }
-
   const splitLines = cell && leavesOf(liveSplit.value)[0] === id ? layout : null;
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
-  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onTitleDoubleClick, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
+  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, onTitlePointerDown, onTitleDoubleClick, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, dragWindow, cancelGesture: () => gesture.current?.() };
 }
 
 // Drops asked for by window id, each at a pointer, until the window takes it.
@@ -853,9 +813,12 @@ function SplitLines({ overlay }) {
 // adds the title bar's buttons, which the classic look leaves to the content. A
 // window with nowhere to minimize to leaves out onMinimize, and one that cannot
 // go to the Collab tab now leaves out onCollab. A double click on the bar's
-// empty space maximizes or restores, whatever the look.
+// empty space maximizes or restores, whatever the look. A window flying to the
+// dock (overlay-window-motion.js) shows, but takes no input.
 export function OverlayWindow({ id, window: overlay, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
   const { placement, guide } = overlay;
+  const leaving = overlayWindowLeaving(id);
+  const waiting = overlayWindowWaiting(id);
   const front = frontOverlayWindow.value === id ? ' overlay-window-front' : '';
   const level = `--overlay-level:${overlay.level}`;
   const raise = () => raiseOverlayWindow(id);
@@ -865,8 +828,8 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
   return html`
     ${overlay.targets && html`<${SnapTargets} targets=${overlay.targets} />`}
     ${guide && html`<div class="overlay-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
-    ${mounted && html`<section ref=${overlay.windowRef} data-overlay-window=${id}
-      class=${`overlay-window ${className}${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${overlay.floating ? ' overlay-window-floating' : ''}${front}`}
+    ${(mounted || leaving) && html`<section ref=${overlay.windowRef} data-overlay-window=${id}
+      class=${`overlay-window ${className}${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${overlay.floating ? ' overlay-window-floating' : ''}${leaving ? ' overlay-window-leaving' : ''}${waiting ? ' overlay-window-waiting' : ''}${front}`}
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
       role="dialog" tabindex="-1" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
@@ -876,10 +839,11 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
         ${look !== 'macos' && windowControls}
       </header>
       ${children}
+      <${LiveCover} cover=${overlayLiveCovers.value.get(id)} />
       ${overlay.edges.map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
         onPointerDown=${(event) => overlay.onResizePointerDown(event, edge)}></div>`)}
     </section>`}
-    ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} level=${level} className=${`${frameClass}${front}`}
+    ${open && !leaving && !placement.snap && html`<${ResizeFrame} placement=${placement} level=${level} className=${`${frameClass}${front}`}
       onResizeStart=${overlay.onResizePointerDown} onPointerDownCapture=${raise} />`}
     ${overlay.splitLines && html`<${SplitLines} overlay=${overlay} />`}`;
 }

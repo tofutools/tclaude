@@ -91,9 +91,9 @@ const peeksOf = (tab) => (tab.kind === CHAT_WINDOW_KIND ? {
 
 // DockPill is a minimized window: its active tab, and how many it holds. A tab
 // comes back from here to the window it left.
-function DockPill({ entry: { tab, tabs }, needs, onChip }) {
+function DockPill({ entry: { key, tab, tabs }, needs, onChip }) {
   const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
-  return html`<span class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
+  return html`<span class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`} data-dock-window=${key}>
     <button type="button" class="ui-btn ui-btn-ghost ui-sm overlay-dock-item" title=${`Bring back ${tab.label}`} ...${peeksOf(tab)}
       onClick=${() => bringBack(tab)}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count ui-badge" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
     ${removes && html`<button type="button" class="ui-btn ui-btn-ghost ui-sm overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => (tabMoves(tab).close || (() => closeOverlayTab(tab.id)))()}>×</button>`}

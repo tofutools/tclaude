@@ -24,6 +24,7 @@ import { tabMoves } from './overlay-tab-moves.js';
 import { OverlayTabMore, OverlayTabStrip } from './overlay-tab-strip.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
+import { overlayWindowLeaving } from './overlay-window-motion.js';
 import { TerminalWindow } from './terminal-window.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 
@@ -67,7 +68,10 @@ const closeTitle = (window, stewardInside) => {
   return window.tabs.length > 1 ? 'Close: every tab leaves and keeps running in the background' : 'Close: it leaves and keeps running in the background';
 };
 
-export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = null, add = null }) {
+export function OverlayTabWindow({ window: given, snapshot, prefs, win, kinds, home = null, add = null }) {
+  // A window flying to the dock is minimized already, but shows as it was, its
+  // content and its cell kept, until it lands (overlay-window-motion.js).
+  const window = overlayWindowLeaving(given.id) ? { ...given, minimized: false } : given;
   const tab = activeTabOf(window);
   const start = tab.kind === DRAWING_BOARD_WINDOW_KIND
     ? drawingBoardStartPlacement(prefs, drawingBoardOverlays.value.findIndex((drawingBoard) => drawingBoard.id === tab.id))
@@ -103,7 +107,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   // The ⋯ a body puts beside its − ⇄ ×: the active tab's menu, moves and all.
   const more = html`<${OverlayTabMore} tab=${tab} label=${viewOf(tab).label} />`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
-  const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {
     const look = windowControlsLook(snapshot.value?.window_controls);
     return html`<${OverlayWindow} id=${window.id} window=${overlay} open=${!window.minimized} className="companion-window chat-window" frameClass="companion-resize-frame"
@@ -114,6 +117,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
-    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} more=${more} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
+    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} more=${more} close=${close} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
   <//>`;
 }

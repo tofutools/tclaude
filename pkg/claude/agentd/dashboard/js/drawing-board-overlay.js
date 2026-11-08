@@ -25,12 +25,13 @@ import { windowControlsLook } from './overlay-window-controls.js';
 import { closeOverlayTab, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
-import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js';
+import { OverlayWindow, overlayStackReset, overlayWindowsByStack, readPref } from './overlay-window.js';
 import { DRAWING_BOARD_OVERLAY_PLACEMENT_PREF } from './overlay-tab-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
 import { buildOverlayBulkCommands, installOverlayHideKey } from './overlay-window-bulk.js';
+import { installOverlayWindowMotion } from './overlay-window-motion.js';
 import { OverlayExpose, installOverlayExposeKey } from './overlay-expose.js';
 import { FooterDock, OverlayDock, OverlayDockPopup } from './overlay-dock.js';
 import { registerCommandProvider } from './command-registry.js';
@@ -133,6 +134,7 @@ export function mountDrawingBoardOverlayIsland({ host, registerCleanup, snapshot
   const stopCommands = registerCommandProvider('overlay-windows', buildOverlayBulkCommands);
   const stopExposeKey = installOverlayExposeKey(win);
   const stopHideKey = installOverlayHideKey(win);
+  const stopMotion = installOverlayWindowMotion(win, { windows: overlayWindows, stack: overlayWindowsByStack });
   // The dock rests in the footer where the page has one (tcl-9qsgqs).
   const dockHost = win?.document?.getElementById?.('overlay-dock-root');
   render(html`<${DrawingBoardOverlay} snapshot=${snapshot} win=${win} inFooter=${!!dockHost} />`, host);
@@ -143,6 +145,7 @@ export function mountDrawingBoardOverlayIsland({ host, registerCleanup, snapshot
     stopCommands();
     stopExposeKey();
     stopHideKey();
+    stopMotion();
     stopKeeping();
     overlayStackReset();
   });

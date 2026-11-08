@@ -11,6 +11,7 @@ import { AgentCog } from './companion-cog.js';
 import { minimizeOverlayWindow, overlayCloseHeard } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
+import { useLiveTerminal } from './overlay-window-motion.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
@@ -124,6 +125,11 @@ export function ChatWindow({
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${onMinimize}>–</button>`}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="drawing-board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   const shown = agent?.online && (open || warm);
+  // Its terminal is what a minimize or restore shows, live or its last frame.
+  const onStatus = useLiveTerminal({
+    windowId: shown && !away ? instance.windowId : '', tabId: instance.id, widgetRef, win, setStatus,
+    host: () => overlay.windowRef.current?.querySelector?.('.companion-term-host') || null,
+  });
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`drawing-board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
@@ -151,7 +157,7 @@ export function ChatWindow({
           : status}</div></div>`}
         ${!away && html`<${Terminal} key=${agentId} agent=${agent} generation=${generation} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
           focusToken=${focusToken} widgetRef=${widgetRef} fontSize=${() => readTerminalFont('companion', agentId, prefs)} onFontChange=${onFontChange}
-          onStatus=${setStatus} onReconnectChange=${setCanReconnect} />`}`}
+          onStatus=${onStatus} onReconnectChange=${setCanReconnect} />`}`}
     </div>
   <//>`;
 }

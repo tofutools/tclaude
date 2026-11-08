@@ -229,6 +229,17 @@ works from a focused terminal too, and can be rebound in **Config › Keyboard**
 
 While any window is open, the dock shows its ☰ menu even with nothing minimized.
 
+Minimizing and restoring are animated, the same way whichever control did it: the
+window's –, its pill, **Ctrl ;**, Minimize all and Restore all, and the Steward's
+**Ctrl .** and pill. The window itself, live content and all, shrinks into its pill
+(the Steward's into its pill beside Open PRs, a window folded into **+N** or ☰ into
+that button) and grows back out of it, in about a fifth of a second. Several windows
+at once follow one another closely, the front one leaving first. Pressing again
+mid-way turns the window round from where it is. A terminal that is still attaching
+never shows black: the window moves at once and shows the last screen it had, or
+"Connecting…" when it never had one, until the live terminal is up. With your
+system's reduced-motion setting on, windows go and come at once.
+
 ### The dock
 
 The dock rests at the right of the footer. From the right: **Open PRs**, the Steward's
