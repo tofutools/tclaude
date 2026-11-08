@@ -193,11 +193,13 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // (in progress, or who did it).
     // hold assigns `to` without starting the task: it waits in its stage in
     // their lane (tk_3826822a).
-    create(group, { title, body = '', ref = '', refLabel = '', stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
+    // addRefs are its refs after the first (ref).
+    create(group, { title, body = '', ref = '', refLabel = '', addRefs = [], stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
       const payload = { title };
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
       if (ref && refLabel) payload.ref_label = refLabel;
+      if (ref && addRefs.length) payload.add_refs = addRefs;
       if (ref && resolveRef) payload.resolve_ref = true;
       if (stage === 'next') payload.stage = 'next';
       if (after.length) payload.after = after;
@@ -257,10 +259,12 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // create's does (`edit --resolve-ref`).
     // addRefs and rmRefs add refs after the first and take refs off (by
     // URL or label); a node from before tasks had several refs ignores them.
-    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs }) {
+    // firstRef moves a ref (one of the task's, or of addRefs) to the front.
+    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs, firstRef }) {
       const payload = {};
       if (rmRefs?.length) payload.rm_refs = rmRefs;
       if (addRefs?.length) payload.add_refs = addRefs;
+      if (firstRef) payload.first_ref = firstRef;
       if (title !== undefined) payload.title = title;
       if (body !== undefined) payload.body = body;
       if (addDeps !== undefined) payload.add_deps = addDeps;

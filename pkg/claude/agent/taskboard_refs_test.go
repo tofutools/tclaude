@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,10 +38,29 @@ func TestTaskboardRefsText(t *testing.T) {
 	assert.Equal(t, rcOK, refsKept(map[string]any{"title": "x"}, old, &stderr))
 	// A removal an older node ignored leaves its ref and sends no refs.
 	assert.Equal(t, rcInvalidArg, refsKept(map[string]any{"rm_refs": []string{"#2"}}, old, &stderr))
+	assert.Equal(t, rcInvalidArg, refsKept(map[string]any{"first_ref": "#2"}, old, &stderr), "so does a reorder")
 
 	// Another node takes a ref linked on this node's awb server by its id.
 	ref, label := taskboardRef{Kind: "awb", URL: "http://localhost:7777/#/issues/tcl-a1b2c3", Label: "tcl-a1b2c3", Local: true, ID: "tcl-a1b2c3"}.transfer()
 	assert.Equal(t, [2]string{"awb:tcl-a1b2c3", ""}, [2]string{ref, label})
 	ref, label = refs[0].transfer()
 	assert.Equal(t, [2]string{"https://github.com/o/r/pull/7", "#7"}, [2]string{ref, label})
+}
+
+// --first-ref sends first_ref, after the other ref changes.
+func TestTaskboardEditFirstRef(t *testing.T) {
+	var got map[string]any
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
+		raw, _ := json.Marshal(in)
+		got = nil
+		require.NoError(t, json.Unmarshal(raw, &got))
+		return json.Unmarshal([]byte(`{"id":"tk_00000001","title":"x","ref":{"kind":"linear","label":"LIN-2"},"refs":[{"kind":"linear","label":"LIN-2"},{"kind":"linear","label":"LIN-1"}]}`), out)
+	}
+	var stdout, stderr bytes.Buffer
+	rc := runTaskboardEdit(&taskboardEditParams{Task: "tk_00000001", FirstRef: " LIN-2 ", AddRef: []string{"LIN-2"}}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, map[string]any{"first_ref": "LIN-2", "add_refs": []any{"LIN-2"}}, got)
+	assert.Equal(t, rcInvalidArg, runTaskboardEdit(&taskboardEditParams{Task: "tk_00000001", FirstRef: "#2", ClearRef: true}, strings.NewReader(""), &stdout, &stderr))
 }
