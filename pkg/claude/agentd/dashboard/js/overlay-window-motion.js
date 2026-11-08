@@ -175,7 +175,9 @@ export async function terminalReady(widgetRef, statusRef, { win, pollMs = 30, ti
     await sleep(win, pollMs);
   }
   const widget = widgetRef.current;
-  return typeof widget.settled === 'function' ? widget.settled({ quietMs: 30, maxAfterOutputMs: 150, timeoutMs }) : true;
+  // Connected, its first output comes quickly or not at all: a stale frame
+  // should not stand over a live terminal for long.
+  return typeof widget.settled === 'function' ? widget.settled({ quietMs: 30, maxAfterOutputMs: 150, timeoutMs: 1500 }) : true;
 }
 
 // captureTerminal copies the screen of the terminal in host, drawn by xterm's
@@ -200,7 +202,7 @@ export function useLiveTerminal({ windowId, tabId, widgetRef, host, win, setStat
     return registerLiveContent(windowId, {
       tabId,
       host,
-      live: () => statusRef.current === 'connected' && !!captureTerminal(host()),
+      live: () => statusRef.current === 'connected' && !!host()?.querySelector?.('.xterm-rows')?.textContent?.trim(),
       ready: () => terminalReady(widgetRef, statusRef, { win }),
       capture: () => (statusRef.current === 'connected' ? captureTerminal(host()) : null),
     });
@@ -301,7 +303,9 @@ export function installOverlayWindowMotion(win, { windows, stack = () => [] }) {
   let known = new Map(windows.peek().map((window) => [window.id, !!window.minimized]));
   // id -> { dir, animation, delay }
   const flights = new Map();
-  const frame = (run) => (typeof win?.requestAnimationFrame === 'function' ? win.requestAnimationFrame(run) : (win?.setTimeout || globalThis.setTimeout)(run, 0));
+  // A hidden browser tab runs no animation frames: there, the next tick.
+  const frame = (run) => (typeof win?.requestAnimationFrame === 'function' && !win.document?.hidden
+    ? win.requestAnimationFrame(run) : (win?.setTimeout || globalThis.setTimeout)(run, 0));
 
   function land(id, flight) {
     if (flights.get(id) !== flight) return;
@@ -377,8 +381,9 @@ export function installOverlayWindowMotion(win, { windows, stack = () => [] }) {
         if (was !== undefined && was !== !!window.minimized) moves.push({ id: window.id, dir: window.minimized ? 'minimize' : 'restore', window });
       }
       known = new Map(now.map((window) => [window.id, !!window.minimized]));
-      // A window gone mid-flight just stops.
+      // A window gone mid-flight just stops, and its last frame goes with it.
       for (const [id, flight] of flights) if (!known.has(id)) land(id, flight);
+      for (const id of lastFrames.keys()) if (!known.has(id)) lastFrames.delete(id);
       if (!moves.length) return;
       if (reducedMotion(win)) {
         // Instant, as before; a flight under way stops where it would end.
