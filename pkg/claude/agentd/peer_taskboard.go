@@ -279,7 +279,9 @@ func servePeerTaskboardTask(w http.ResponseWriter, r *http.Request, v *peerView,
 		a.gates[slug] = true
 	}
 	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerGrantKey{}, a)
-	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
+	rw := newRedactMirroredWriter(w)
+	peerDashboardMux().ServeHTTP(rw, r.Clone(ctx))
+	rw.finish()
 }
 
 // servePeerTaskboardFile serves a task's file to a peer as base64 JSON.
@@ -343,7 +345,9 @@ func servePeerTaskboardContext(w http.ResponseWriter, r *http.Request, v *peerVi
 		}
 		view.Groups = append(view.Groups, entry)
 	}
-	writeJSON(w, http.StatusOK, view)
+	rw := newRedactMirroredWriter(w)
+	writeJSON(rw, http.StatusOK, view)
+	rw.finish()
 }
 
 // peerSummaryTaskboardCounts sums the counts of the boards the node summary's

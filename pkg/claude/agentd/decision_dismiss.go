@@ -85,6 +85,13 @@ func dismissDecisions(ids []int64, by, reason string, mine func(*db.HumanMessage
 		}
 		results = append(results, res)
 	}
+	for _, m := range dismissed {
+		why, actor := "Dismissed in Messages", mirrorActorOperator
+		if by == db.HumanDismissedByAgent {
+			why, actor = "Withdrawn by its asker", "agent:"+m.FromAgent
+		}
+		humanMessagesEnded([]int64{m.ID}, why, actor)
+	}
 	return results, dismissed
 }
 
