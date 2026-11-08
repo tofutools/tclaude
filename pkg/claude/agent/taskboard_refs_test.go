@@ -49,9 +49,13 @@ func TestTaskboardRefsText(t *testing.T) {
 
 // --first-ref sends first_ref, after the other ref changes.
 func TestTaskboardEditFirstRef(t *testing.T) {
+	// No daemon is dialed: both the reachability probe and the requests are
+	// stubbed, under a HOME of the test's own.
+	t.Setenv("HOME", t.TempDir())
 	var got map[string]any
-	prev := DaemonRequestImpl
-	t.Cleanup(func() { DaemonRequestImpl = prev })
+	prevAvail, prev := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prev })
+	DaemonAvailableImpl = func() bool { return true }
 	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
 		raw, _ := json.Marshal(in)
 		got = nil
