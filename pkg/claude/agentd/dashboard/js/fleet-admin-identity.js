@@ -4,13 +4,11 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { recoverCommands } from './fleet-model.js';
+import { localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 // keyBadge is the Peers-row marker for a peer's active key transition.
 export function keyBadge(t) {

@@ -11,6 +11,7 @@ import { keepParams } from './paf-model.js';
 import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLanding } from './fleet-admin-landing.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { binarySize, errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -19,17 +20,9 @@ export const CONFIG_SECTIONS = Object.freeze(['roles', 'saved-prompts', 'sandbox
 
 const OPEN = new Set(['pending', 'ready']);
 
-function errText(error) { return error?.message || String(error); }
+const when = (iso) => localStamp(iso);
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
-}
-
-function size(n) {
-  if (!(n > 0)) return '—';
-  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
-}
+const size = (n) => (n > 0 ? binarySize(n) : '—');
 
 // offerKind names what an offer brings: a config bundle, an agent, or an
 // agent that moves or teleports here (its source stops on the peer).

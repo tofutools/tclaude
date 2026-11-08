@@ -5,10 +5,9 @@ import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, UNGRANTABLE_SLUGS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 function where(g) {
   return g.gateway ? `on gateway ${g.gateway}` : g.group ? `in group ${g.group}` : slugInfo(g.slug).kind === 'node' ? 'node-wide' : slugInfo(g.slug).gateway ? 'on every gateway' : 'in every group';

@@ -8,6 +8,7 @@
 // the dependency-free theme helper used by shared presentation-copy builders.
 import { dashPrefs } from './prefs.js';
 import { wizWord } from './slop.js';
+import { isZeroTime } from './cell-format.js';
 
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -378,11 +379,13 @@ function harnessCanCompact(snapshot, name) {
 
 const SLOP_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '🔔', '⭐', '💎', '7️⃣'];
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
-// Mirrors the session ls UPDATED column. Empty input → "" (no chip).
+// Mirrors the session ls UPDATED column. Empty input → "" (no chip), and so
+// is Go's zero time (year 1, a time that was never set), which would
+// otherwise read as hundreds of thousands of days ago.
 function relTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  if (isNaN(d)) return '';
+  if (isNaN(d) || isZeroTime(d)) return '';
   const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
   if (sec < 60) return sec + 's ago';
   if (sec < 3600) return Math.floor(sec / 60) + 'm ago';

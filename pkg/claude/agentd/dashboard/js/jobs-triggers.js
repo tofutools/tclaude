@@ -6,6 +6,7 @@ import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
+import { groupScopeLabel, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 const TRIGGER_SOURCES = Object.freeze([
@@ -86,7 +87,7 @@ function actionSummary(action) {
 }
 
 function scopeSummary(rule) {
-  return rule.scope === 'group' ? `group:${rule.group || ('#' + rule.group_id)}` : 'global';
+  return rule.scope === 'group' ? groupScopeLabel(rule.group, rule.group_id) : 'global';
 }
 
 function ownerSummary(rule) {
@@ -188,15 +189,15 @@ function TriggerInspector({ rule, actions, onEdit }) {
               const outcomes = firingField(firing, 'actions', 'Actions') || [];
               return html`<div class="trigger-firing" key=${id}>
                 <div><strong class=${outcome === 'ok' ? 'trigger-ok' : 'trigger-warn'}>${outcome}</strong>
-                  <span>${started ? new Date(started).toLocaleString() : ''}</span>
+                  <span>${localStamp(started, { empty: '' })}</span>
                   <span class="muted">${eventRef || ''}</span></div>
                 ${(source || previousState || currentState || agentID || factResult || factObservedAt || dwellStartedAt) && html`<div class="trigger-firing-context">
                   ${source && html`<span><span class="muted">source</span> <code>${source}</code></span>`}
                   ${(previousState || currentState) && html`<span><span class="muted">transition</span> ${previousState || 'unknown'} → ${currentState || 'unknown'}</span>`}
                   ${agentID && html`<span><span class="muted">agent</span> <code title=${agentID}>${shortAgentId(agentID, '')}</code>${agentHarness ? ` · ${agentHarness}` : ''}</span>`}
                   ${factResult && html`<span><span class="muted">fact</span> <strong class=${`trigger-fact-result ${factResult}`}>${factResult}</strong></span>`}
-                  ${factObservedAt && html`<span><span class="muted">observed</span> ${new Date(factObservedAt).toLocaleString()}</span>`}
-                  ${dwellStartedAt && html`<span><span class="muted">dwell began</span> ${new Date(dwellStartedAt).toLocaleString()}</span>`}
+                  ${factObservedAt && html`<span><span class="muted">observed</span> ${localStamp(factObservedAt, { empty: '' })}</span>`}
+                  ${dwellStartedAt && html`<span><span class="muted">dwell began</span> ${localStamp(dwellStartedAt, { empty: '' })}</span>`}
                 </div>`}
                 ${detail && html`<div class="muted">${detail}</div>`}
                 ${outcomes.map((action) => {

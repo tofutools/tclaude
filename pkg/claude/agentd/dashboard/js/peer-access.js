@@ -6,6 +6,7 @@ import { Dialog, DialogClose } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { requestJSON } from './request-json.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -39,8 +40,6 @@ export function ttlText(s) {
 export function requestScope(perm) {
   return slugInfo(perm)?.kind || 'node';
 }
-
-function errText(error) { return error?.message || String(error); }
 
 // createPeerAccessActions sends the requester side. On a peer view
 // remote-node.js forwards /api/* to /api/peer/{id}/*, so these reach the

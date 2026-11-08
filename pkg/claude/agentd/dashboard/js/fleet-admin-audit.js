@@ -4,13 +4,12 @@ import htm from 'htm';
 import { AUDIT_WINDOWS, auditSince, shortID } from './fleet-admin-model.js';
 import { Button, Select } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const PAGE = 200;
 const MAX = 1000;
-
-function errText(error) { return error?.message || String(error); }
 
 // FAILED_STATES mark a row as an error for sources that carry a state but
 // no HTTP status (outbox mail, spawn requests, jobs, offers, teleports).
@@ -20,10 +19,7 @@ function failed(r) {
   return r.status >= 400 || FAILED_STATES.has(String(r.state || '').toLowerCase());
 }
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 // AuditPage reads this node's federation activity log (metadata only: who,
 // which peer, what kind, outcome), newest first, filtered by peer and time.

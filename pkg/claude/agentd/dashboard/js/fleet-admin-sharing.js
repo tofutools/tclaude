@@ -10,11 +10,10 @@ import htm from 'htm';
 import { RequestAccessDialog, USAGE_PERM, createPeerAccessActions, parseUSD } from './peer-access.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { Button } from './ui-components.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 const DAY_MS = 86400000;
-
-function errText(error) { return error?.message || String(error); }
 
 export function dollars(n) {
   return `$${(Number(n) || 0).toFixed(2)}`;

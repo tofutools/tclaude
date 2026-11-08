@@ -6,6 +6,7 @@ import { Dialog } from './ui-dialog.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
 import { HubBoards } from './fleet-admin-boards.js';
 import { NodeUpdateDialog } from './node-update.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -21,18 +22,13 @@ const INSTANCE_RE = /^inst_[a-z2-7]{26}$/;
 const SPACE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const LOG_PAGE = 200;
 
-function errText(error) { return error?.message || String(error); }
-
 // absent is a hub route this daemon does not have (404) or an older hub does
 // not know (400 "operation"): the feature is missing, not failing.
 function absent(error) {
   return error?.status === 404 || (error?.status === 400 && error?.code === 'operation');
 }
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 function bytes(n) {
   if (!(n >= 0)) return '—';

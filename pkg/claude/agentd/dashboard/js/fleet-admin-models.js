@@ -4,10 +4,9 @@ import htm from 'htm';
 import { GatewayDialog } from './fleet-admin-model-gateway.js';
 import { Button } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 function num(n) {
   if (!n) return '—';
@@ -258,7 +257,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td>${label(l.peer)}</td>
         <td><code>${l.proxy}</code></td>
         <td>${l.worker ? html`<code title=${l.worker}>${l.worker.slice(0, 14)}</code>` : '—'}</td>
-        <td class="muted">${l.touched_at && !String(l.touched_at).startsWith('0001-') ? new Date(l.touched_at).toLocaleString() : ''}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
+        <td class="muted">${localStamp(l.touched_at, { empty: '' })}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
         <td class="fa-acts">${l.revoked ? 'revoked' : html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…<//>`}</td>
       </tr>`)}</tbody>
     </table>`}

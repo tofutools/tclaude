@@ -5,13 +5,12 @@ import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { HealthPolicySection } from './fleet-admin-health.js';
 import { IdentityRotationSection } from './fleet-admin-identity.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const LABEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const HUB_RE = /^wss?:\/\/[^\s/?#]+(\/[^\s]*)?$/;
-
-function errText(error) { return error?.message || String(error); }
 
 export function splitLabels(text) {
   return [...new Set(String(text || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];

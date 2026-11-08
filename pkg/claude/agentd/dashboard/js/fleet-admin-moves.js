@@ -7,10 +7,9 @@ import { GroupCombobox } from './group-picker.js';
 import { sentLanding } from './fleet-admin-landing.js';
 import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp, timeOf } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // ABANDONABLE are the outgoing move states the daemon lets the operator stop:
 // retirement of the source has not started yet.
@@ -161,7 +160,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
         <td>${label(m.peer)}</td>
         <td>${m.group || ''}</td>
         <td class=${FAILED.has(m.state) ? 'fa-danger' : ''} title=${m.last_error || ''}>${m.state}${m.last_error ? html` <span class="muted">— ${m.last_error}</span>` : ''}</td>
-        <td class="muted">${m.expires_at && !String(m.expires_at).startsWith('0001-') ? (Date.parse(m.expires_at) < now ? 'expired' : new Date(m.expires_at).toLocaleString()) : ''}</td>
+        <td class="muted">${!timeOf(m.expires_at) ? '' : Date.parse(m.expires_at) < now ? 'expired' : localStamp(m.expires_at)}</td>
         <td class="fa-acts">${canAbandon(m) ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…<//>` : ''}</td>
       </tr>`)}</tbody>
     </table>`}

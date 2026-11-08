@@ -8,6 +8,7 @@ import { GroupCombobox } from './group-picker.js';
 import { ImportDialog, PublishDialog, canPost, postedBy, short } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
 import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
+import { binarySize, errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -54,12 +55,8 @@ export const TRUST = Object.freeze({
   unknown: { label: '? unknown publisher', cls: 'fa-cb-t-unk', title: 'Signed by a node this node has not trusted' },
 });
 
-function errText(error) { return error?.message || String(error); }
-const when = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '—'; };
-function size(n) {
-  if (!(n >= 0)) return '—';
-  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
-}
+const when = (iso) => localStamp(iso, { dateOnly: true });
+const size = (n) => binarySize(n);
 
 // trustOf classifies an item's signer against this node's peers.
 export function trustOf(publisher, view) {

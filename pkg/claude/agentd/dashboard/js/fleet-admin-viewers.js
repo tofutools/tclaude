@@ -3,12 +3,11 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { viewersFocus } from './remote-viewers.js';
 import { Button } from './ui-components.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
 const POLL_MS = 5000;
-
-function errText(error) { return error?.message || String(error); }
 
 function since(t, now) {
   const s = Math.max(0, Math.round((now - Date.parse(t)) / 1000));

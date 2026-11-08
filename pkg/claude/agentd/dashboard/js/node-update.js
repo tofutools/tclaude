@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { RequestError, requestJSON } from './request-json.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -12,8 +13,6 @@ const html = htm.bind(h);
 const UPDATE_POLL_MS = 1000;
 // The hub is read every 2 s: its admin calls share a per-connection budget.
 const HUB_UPDATE_POLL_MS = 2000;
-
-function errText(error) { return error?.message || String(error); }
 
 // updateBase addresses a node's self-update routes: this node directly, a peer
 // through the peer proxy (which needs the node.update grant there).

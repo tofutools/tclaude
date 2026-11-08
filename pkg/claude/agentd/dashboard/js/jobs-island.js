@@ -21,6 +21,7 @@ import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
 import { Button, Input, SortTh } from './ui-components.js';
 import { triggersAvailable } from './feature-availability.js';
+import { groupScopeLabel, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -42,7 +43,7 @@ function ExportStepper({ status }) {
 
 function CronTarget({ job }) {
   if (job.target_kind === 'group') {
-    return html`<span class="tag">group:${job.group_name || ('#' + job.group_id)}</span>`;
+    return html`<span class="tag">${groupScopeLabel(job.group_name, job.group_id)}</span>`;
   }
   if (job.target_conv) {
     return html`<${Fragment}>
@@ -99,7 +100,7 @@ function CronRunInspector({ id, runs, loading, error, onRefresh }) {
     ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
       ? html`<div class="muted">No runs recorded.</div>`
       : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
-          <span>${run.fired_at ? new Date(run.fired_at).toLocaleString() : 'unknown time'}</span>
+          <span>${localStamp(run.fired_at, { empty: 'unknown time' })}</span>
           <${CronStatus} status=${run.status || 'unknown'} />
           <span class="muted cron-run-detail" title=${run.error_msg || ''}>${run.error_msg || ''}</span>
           <span class="cron-run-worker">${run.worker_agent
@@ -179,16 +180,16 @@ function StandingOrderTarget({ order }) {
     return html`<${Fragment}>
       <span class="tag">global</span>
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }
   if (target.kind === 'group') {
     return html`<${Fragment}>
-      <span class="tag">group:${target.group_name || ('#' + target.group_id)}</span>
+      <span class="tag">${groupScopeLabel(target.group_name, target.group_id)}</span>
       ${target.role && html`<div class="muted">role:${target.role}</div>`}
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }
@@ -198,7 +199,7 @@ function StandingOrderTarget({ order }) {
         ${shortAgentId(target.agent, target.conv)}
       </span>
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }

@@ -3,10 +3,9 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // HEALTH_SIGNALS are the notice kinds (tclaude federation nodes health).
 const HEALTH_SIGNALS = [

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { binarySize, errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -10,12 +11,7 @@ const html = htm.bind(h);
 // it and pages larger entries (transcripts) with byte offsets.
 export const ENTRY_BYTES = 256 * 1024;
 
-function errText(error) { return error?.message || String(error); }
-
-function size(n) {
-  if (!(n >= 0)) return '—';
-  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
-}
+const size = (n) => binarySize(n);
 
 // entryText renders one read for display, always as plain text: a complete
 // JSON entry is pretty-printed, JSON lines one pretty value per line, anything
