@@ -347,15 +347,21 @@ Chrome's crashpad aborts when `~/.config` is unwritable. `ui.sh smoke` and
 `ui.sh tour` already do this.
 
 **Show it to the operator** with `tclaude agent show :PORT`, which needs
-`self.page`. The stage only shows a server in your own process tree, so start
-the sandbox in the foreground as a background job of your shell:
+`self.page`. On a host-network agent, the stage shows only a server inside
+your own process tree. A plain `ui.sh up` detaches its server, so serve it in
+the foreground instead, kept alive by your harness's own background run
+(Claude Code's `run_in_background`, for example):
 
 ```bash
-scripts/sandbox/ui.sh up --foreground --port 7790 &   # or your harness's background run
+scripts/sandbox/ui.sh up --foreground --port 7790 > sandbox-out/fg.log 2>&1   # as a background run
 tclaude agent show :7790 --name sandbox
 ```
 
-The operator then sees the seeded dashboard, live, in their own. `tclaude
+A bare `&` works only in a shell that stays alive. A tool call's shell exits
+when the command returns, and its orphaned jobs leave your process tree.
+
+The operator then sees the seeded dashboard, live, in their own. This works
+for the `full` fixture and the other docshots fixtures, but not `page`. `tclaude
 agent page snapshot` renders the page only 300ms after it loads, before the
 dashboard has painted. To see it yourself, use Playwright on the URL.
 

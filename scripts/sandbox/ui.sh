@@ -116,6 +116,8 @@ stop() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   fi
+  # Keep the server's log: it says why a sandbox failed or what it refused.
+  [[ -f "$state/server.log" ]] && cp "$state/server.log" "$state_root/$1-last.log"
   # Only ever delete the directory this script made.
   if [[ -n "$work" && "$work" == */tclaude-sandbox.* && -d "$work" ]]; then
     rm -rf "$work"
@@ -161,15 +163,17 @@ case "$cmd" in
       shift
     done
     [[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
-    if [[ -n "$foreground" ]]; then
-      trap 'stop ui' EXIT
-      trap 'exit 130' INT TERM
-    fi
     start ui "$fixture" "$port"
     cat "$state_root/ui/url"; echo
     if [[ -n "$foreground" ]]; then
+      # Only now: a start that failed (one already up, say) must not stop it.
+      trap 'stop ui' EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
       # Serve until the server ends: ui.sh down, or this script is stopped.
-      wait "$(cat "$state_root/ui/pid")" || true
+      status=0
+      wait "$(cat "$state_root/ui/pid")" || status=$?
+      exit "$status"
     fi
     ;;
   url)

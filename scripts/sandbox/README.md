@@ -23,14 +23,19 @@ drawing and sending messages all work and persist until `down`.
 ## Showing it to the operator
 
 `tclaude agent show :PORT` (needs `self.page`) puts the sandbox in the
-operator's dashboard, live. The stage accepts only a server in your own
-process tree, and a plain `up` detaches its server, so run
-`ui.sh up --foreground --port N` as a background job of your shell instead.
-It serves until `ui.sh down`, or until the job is stopped.
+operator's dashboard, live. On a host-network agent the stage accepts only a
+server in your own process tree, and a plain `up` detaches its server. Run
+`ui.sh up --foreground --port N` through your harness's background run
+instead, with its output redirected to a file. A bare `&` in a tool call's
+short-lived shell leaves your process tree. The foreground run serves until
+`ui.sh down`, or until the run is stopped. It works for every fixture but
+`page`.
 
 The stage sends no Referer and rewrites Origin. The sandbox, and only the
 sandbox, reads a missing Referer as its own, so the dashboard loads there.
 Requests answered 400 or above are logged to `sandbox-out/ui/server.log`.
+When a sandbox stops, its log is kept as `sandbox-out/<name>-last.log`
+(`ui-last.log` for `up`).
 
 ## What the `full` fixture shows
 
