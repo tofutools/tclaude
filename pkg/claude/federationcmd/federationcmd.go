@@ -780,7 +780,7 @@ type sendParams struct {
 	Body    string   `pos:"true" help:"Message body"`
 	Subject string   `long:"subject" optional:"true" help:"Subject"`
 	Role    string   `long:"role" optional:"true" help:"With group:<group>@peer, only members holding this role (needs the group's roster grant)"`
-	Attach  []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable; the remote group must accept attachments)"`
+	Attach  []string `long:"attach" collection:"array" short:"a" optional:"true" help:"Attach a file (repeatable; the remote group must accept attachments)"`
 }
 
 func sendCmd() *cobra.Command {
