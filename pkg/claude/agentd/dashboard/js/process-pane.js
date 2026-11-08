@@ -8,7 +8,8 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { editorMoveItems } from './resource-editor-header.js';
+import { TO_DASHBOARD_LABEL } from './process-editor-window.js';
 import {
   dockProcessEditor, floatingProcessEditor, observeFloatingHeads, openFloatingEditor, processEditorHost,
 } from './process-editor-place.js';
@@ -18,10 +19,14 @@ const html = htm.bind(h);
 // useFloatingEditor shows the template's editor in slot: the live one, or, once
 // enabled, one it opens when there is none. It answers { error, ready }: what
 // went wrong, if anything did, and whether the editor is in slot.
-export function useFloatingEditor(slot, id, label, enabled = true) {
+// moves are this place's ways to move the editor on, which its View lists
+// while it is here (an overlay window's are on its title bar: none).
+export function useFloatingEditor(slot, id, label, enabled = true, moves = []) {
   const host = processEditorHost.value;
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
+  const movesRef = useRef(moves);
+  movesRef.current = moves;
   useLayoutEffect(() => {
     let gone = false;
     let shown = null;
@@ -29,6 +34,7 @@ export function useFloatingEditor(slot, id, label, enabled = true) {
       if (gone || !live) return;
       slot.current?.appendChild(live.mount);
       shown = live.mount;
+      live.editor?.setHostMoves?.(movesRef.current);
       setReady(true);
     };
     const live = floatingProcessEditor(id);
@@ -51,7 +57,13 @@ export function ProcessPane({ pane, active, actions, fetchImpl = globalThis.fetc
   const slot = useRef(null);
   const seen = useRef(false);
   if (active) seen.current = true;
-  const { error, ready } = useFloatingEditor(slot, id, label, seen.current);
+  const moves = editorMoveItems({
+    what: 'this editor, unsaved edits and all',
+    toDock: { label: TO_DASHBOARD_LABEL, title: 'Move this editor to the Processes tab, unsaved edits and all', run: () => void dockProcessEditor(id, label) },
+    toOverlay: () => void actions.openPaneInOverlay(pane.key),
+    toWindow: () => void actions.popOutPane(pane.key),
+  });
+  const { error, ready } = useFloatingEditor(slot, id, label, seen.current, moves);
   // A tab opened from its URL knows only the id until its editor reads the name.
   const name = ready ? floatingProcessEditor(id)?.editor?.model?.template?.name || '' : '';
   useEffect(() => {
@@ -68,10 +80,6 @@ export function ProcessPane({ pane, active, actions, fetchImpl = globalThis.fetc
     <div class="mux-process-head">
       <span class="ui-eyebrow">Process</span>
       <span class="mux-process-name" title=${id}>${label}</span>
-      <span class="spacer"></span>
-      <${Button} size="sm" class="mux-btn" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
-      <${Button} size="sm" class="mux-btn" title="Move this editor to the Processes tab, unsaved edits and all" onClick=${() => void dockProcessEditor(id, label)}>Open in the Processes tab<//>
-      <${Button} size="sm" class="mux-btn" title="Move this editor to a browser window of its own, unsaved edits and all" onClick=${() => void actions.popOutPane(pane.key)}>Open in separate window<//>
     </div>
     <div class="process-overlay-body">
       ${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}

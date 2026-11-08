@@ -564,6 +564,19 @@ export class ProcessTemplateEditor {
   setJoin(id, join) { return this.mutate(() => this.model.setJoin(id, join)); }
   setStart(id) { return this.mutate(() => this.model.setStart(id)); }
   togglePalette() { if (this.destroyed) return; this.paletteHidden = !this.paletteHidden; this.publish?.(); }
+
+  // setHostMoves takes where the editor's host can move it (Open in overlay,
+  // separate window, back to a tab: editorMoveItems), which the header's View
+  // lists. The editor moves between hosts live, so each host sets its own on
+  // taking it. Not in the snapshot: the items carry functions.
+  setHostMoves(items = []) {
+    if (this.destroyed) return;
+    const key = (items || []).map((item) => item.key).join(' ');
+    this.hostMoves = items || [];
+    if (key === this.hostMovesKey) return;
+    this.hostMovesKey = key;
+    this.publish?.();
+  }
   openCommands() { if (this.destroyed) return; requestCommandPalette(); }
   openExternalActor() { if (this.destroyed) return; this.options.onOpenActor?.(this.externalChange.actor); }
   setIssuesOpen(open) { this.validation?.setPanelOpen(open); }
@@ -2275,6 +2288,10 @@ export class ProcessTemplateEditor {
 
   onEditorKeyDown(event) {
     if (event.defaultPrevented) return;
+    // The header's menus keep their own keys: Escape closes a menu rather
+    // than leaving a subgraph, and Delete on a menu item deletes nothing.
+    // Ctrl/⌘ shortcuts (save, undo) still reach the editor.
+    if (event.target?.closest?.('.reh-menubar') && !event.ctrlKey && !event.metaKey) return;
     const inInput = isProcessEditorFormControl(event.target);
     if (this.diffReview && !inInput && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const review = {

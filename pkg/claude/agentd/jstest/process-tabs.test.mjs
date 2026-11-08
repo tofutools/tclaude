@@ -176,7 +176,10 @@ test('the editor moves between the strip, an overlay window and the Processes ta
   const { harness, host, place, processes, processTabs, state } = env;
   // Docked in the Processes tab with unsaved edits, it moves to the strip as it is.
   const mount = place.processEditorMount(harness.document);
-  const docked = { mount, model: { dirty: true, template: { id: 'release-train' } }, destroyed: 0, destroy() { this.destroyed += 1; } };
+  const docked = { mount, model: { dirty: true, template: { id: 'release-train' } }, destroyed: 0, destroy() { this.destroyed += 1; },
+    moves: [], setHostMoves(items) { this.moves = items; } };
+  // The strip's moves are the editor's View items (resource-editor-header.js).
+  const move = (label) => harness.act(async () => { docked.moves.find((item) => item.label === label).run(); await wait(); });
   processes.held = { mount, editor: docked, label: 'Release train' };
   await harness.act(async () => { await place.openProcessTab('release-train'); await wait(); });
   assert.deepEqual(tabLabels(host), ['Release train']);
@@ -184,7 +187,8 @@ test('the editor moves between the strip, an overlay window and the Processes ta
   assert.equal(processes.opened.length, 0, 'no second editor opens');
 
   // To an overlay window, and back: one place at a time, the same editor.
-  await harness.act(async () => { harness.fireEvent([...host.querySelectorAll('.mux-process-head button')].find((b) => b.textContent === 'Open in overlay'), 'click'); await wait(); });
+  assert.deepEqual(docked.moves.map((item) => item.label), ['Open in the Processes tab', 'Open in overlay', 'Open in separate window'], 'the strip gives the editor its moves');
+  await move('Open in overlay');
   assert.deepEqual(tabLabels(host), [], 'the strip lets it go');
   assert.deepEqual(processTabs().map((tab) => tab.template), ['release-train']);
   assert.equal(place.floatingProcessEditor('release-train').editor, docked);
@@ -199,7 +203,7 @@ test('the editor moves between the strip, an overlay window and the Processes ta
   assert.equal(docked.destroyed, 0);
 
   // To the Processes tab: it docks there, unsaved edits and all.
-  await harness.act(async () => { harness.fireEvent([...host.querySelectorAll('.mux-process-head button')].find((b) => b.textContent === 'Open in the Processes tab'), 'click'); await wait(); });
+  await move('Open in the Processes tab');
   assert.deepEqual(tabLabels(host), []);
   assert.equal(processes.docked.length, 1);
   assert.equal(processes.docked[0].live.editor, docked);

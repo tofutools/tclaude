@@ -37,6 +37,25 @@ test('Delete remains native while editing form fields', () => {
   assert.equal(deleted, false);
 });
 
+test('keys in the header\'s menus stay the menus\': Escape leaves no subgraph, Delete deletes nothing', () => {
+  let exited = 0;
+  let deleted = 0;
+  const editor = {
+    model: { inScope: true }, selection: null,
+    exitSubprocess() { exited += 1; }, deleteSelection() { deleted += 1; },
+  };
+  const inMenu = { tagName: 'BUTTON', closest: (sel) => (sel === '.reh-menubar' ? {} : null) };
+  const press = (key) => ProcessTemplateEditor.prototype.onEditorKeyDown.call(editor, {
+    key, target: inMenu, ctrlKey: false, metaKey: false, altKey: false,
+    preventDefault() { throw new Error(`${key} in a menu must stay the menu's`); },
+  });
+  press('Escape');
+  editor.selection = { type: 'node', id: 'a' };
+  press('Delete');
+  assert.equal(exited, 0);
+  assert.equal(deleted, 0);
+});
+
 test('Ctrl/Cmd+S claims browser Save, flushes focused fields, and matches toolbar availability', () => {
   let prevented = 0;
   let blurred = 0;

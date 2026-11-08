@@ -10152,13 +10152,6 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
 }
 .process-subnav .jobs-subnav { margin: 0; }
-/* Auto layout + its flow-direction picker read as one segmented control. */
-.process-auto-layout-group { display: inline-flex; align-items: stretch; }
-.process-auto-layout-group > .process-action { border-radius: 0; margin-left: -1px; }
-.process-auto-layout-group > .process-action:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
-.process-auto-layout-group > .process-action:last-child { border-radius: 0 6px 6px 0; }
-.process-auto-layout-group > .process-layout-direction { padding: 6px 7px; min-width: 26px; }
-.process-auto-layout-group > .process-layout-direction:is(.is-active, [aria-pressed="true"]) { position: relative; }
 .process-panel { display: none; }
 .process-panel.active { display: block; }
 .process-toolbar { min-height: 34px; }
