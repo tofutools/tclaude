@@ -47,10 +47,11 @@ type taskboardAttachment struct {
 	AddedAt     string `json:"added_at"`
 	// Drawing names the drawing board a drawing-board export shows.
 	Drawing *struct {
-		Board    string          `json:"board"`
-		Version  int64           `json:"version"`
-		Elements []string        `json:"elements"`
-		Region   json.RawMessage `json:"region"`
+		Board        string          `json:"board"`
+		Version      int64           `json:"version"`
+		Elements     []string        `json:"elements"`
+		ElementCount int             `json:"element_count"`
+		Region       json.RawMessage `json:"region"`
 	} `json:"drawing,omitempty"`
 }
 
@@ -266,8 +267,8 @@ func printTaskboardAttachments(stdout io.Writer, indent string, atts []taskboard
 		if d := a.Drawing; d != nil {
 			part := "all of"
 			switch {
-			case len(d.Elements) > 0:
-				part = fmt.Sprintf("%d element(s) of", len(d.Elements))
+			case d.ElementCount > 0 || len(d.Elements) > 0:
+				part = fmt.Sprintf("%d element(s) of", max(d.ElementCount, len(d.Elements)))
 			case len(d.Region) > 0 && string(d.Region) != "null":
 				part = "a region of"
 			}

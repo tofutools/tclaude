@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,24 +33,51 @@ const taskboardDrawingBodyLimit = drawingBoardExportBodyLimit + 64<<10
 // taskboardDrawingRef is a drawing file's reference back to its board, as
 // stored (db GroupTaskAttachment.Drawing) and on the wire.
 type taskboardDrawingRef struct {
-	Board    string            `json:"board"`
-	Version  int64             `json:"version"`
-	Elements []string          `json:"elements,omitempty"`
-	Region   *drawingboard.Box `json:"region,omitempty"`
+	Board   string `json:"board"`
+	Version int64  `json:"version"`
+	// Elements is the ids the export picked, when there are at most
+	// taskboardDrawingRefMaxElements of them; a bigger pick keeps only its
+	// count and digest, since the reference rides on every board view.
+	Elements     []string `json:"elements,omitempty"`
+	ElementCount int      `json:"element_count,omitempty"`
+	// Selection is a digest of the picked ids, sorted: what tells two
+	// exports of the same part apart from others.
+	Selection string            `json:"selection,omitempty"`
+	Region    *drawingboard.Box `json:"region,omitempty"`
 	// Crop is the part of the board the image shows, for opening the board
 	// there.
 	Crop drawingboard.Box `json:"crop"`
 }
 
+// taskboardDrawingRefMaxElements bounds the ids a stored reference lists.
+const taskboardDrawingRefMaxElements = 200
+
+// selectionDigest is a digest of a pick of element ids, in any order.
+func selectionDigest(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	sorted := slices.Clone(ids)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return hex.EncodeToString(sum[:16])
+}
+
+// newTaskboardDrawingRef is the reference stored for an export of elements
+// (or region) of board at version, showing crop.
+func newTaskboardDrawingRef(board string, version int64, elements []string, region *drawingboard.Box, crop drawingboard.Box) taskboardDrawingRef {
+	d := taskboardDrawingRef{Board: board, Version: version, Region: region, Crop: crop,
+		ElementCount: len(elements), Selection: selectionDigest(elements)}
+	if len(elements) <= taskboardDrawingRefMaxElements {
+		d.Elements = elements
+	}
+	return d
+}
+
 // sameSelection says two references export the same part of the same board.
 func (d taskboardDrawingRef) sameSelection(o taskboardDrawingRef) bool {
-	if d.Board != o.Board || len(d.Elements) != len(o.Elements) {
-		return false
-	}
-	a, b := slices.Clone(d.Elements), slices.Clone(o.Elements)
-	slices.Sort(a)
-	slices.Sort(b)
-	if !slices.Equal(a, b) {
+	if d.Board != o.Board || d.Selection != o.Selection {
 		return false
 	}
 	switch {
@@ -145,7 +174,7 @@ func handleTaskboardDrawing(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			fmt.Sprintf("the drawing is larger than %d MiB as a PNG; export a part of it, or at a smaller --scale", taskAttachmentMaxBytes>>20))
 		return
 	}
-	ref := taskboardDrawingRef{Board: req.Board, Version: version, Elements: req.Elements, Region: req.Region, Crop: img.Crop}
+	ref := newTaskboardDrawingRef(req.Board, version, req.Elements, req.Region, img.Crop)
 	refJSON, _ := json.Marshal(ref)
 	actor := taskboardActor(r)
 	if comment != "" {

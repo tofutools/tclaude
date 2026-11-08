@@ -1378,11 +1378,15 @@ export function DrawingBoardEditor({
   // A tab that is not laid out yet is tried again for a few seconds.
   const focus = drawingBoardFocus.value;
   const [focusTry, setFocusTry] = useState(0);
+  // The tries are counted per request, so one that ran out leaves the next
+  // its own.
+  const focusTries = useRef({ focus: null, n: 0 });
   useEffect(() => {
     if (!focus || focus.drawingBoard !== drawingBoardId || status !== 'ready') return undefined;
     const picked = focus.elements.map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
     const box = (picked.length && contentBounds(picked)) || focus.box;
-    if (!box || fitBox(box) || focusTry >= 50) {
+    if (focusTries.current.focus !== focus) focusTries.current = { focus, n: 0 };
+    if (!box || fitBox(box) || focusTries.current.n++ >= 50) {
       drawingBoardFocus.value = null;
       if (picked.length) setSelected(picked.map((el) => el.id));
       return undefined;
