@@ -96,7 +96,7 @@ func taskboardWaitersBefore(t *db.GroupTask) []string {
 // an operator task's other blocked dependents stay blocked and are told
 // too. On a drop the waiters stay blocked. note is the closing reason.
 func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, status, note string, waiters []string, wasOperator bool) {
-	if len(waiters) == 0 && !(wasOperator && status == db.GroupTaskDone) {
+	if len(waiters) == 0 && (!wasOperator || status != db.GroupTaskDone) {
 		return
 	}
 	released := map[string]bool{}
