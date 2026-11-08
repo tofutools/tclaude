@@ -36,10 +36,15 @@ import (
 // prove the CLI honours that JSON while saying nothing about what tclaude
 // writes.
 
-// dirTrustDeadline bounds a seeded run. A cleared launch reaches the mock in
-// ~2s; the budget is generous because the arm that matters here is the
-// positive one, and SettledWhen ends the run as soon as its evidence lands.
-const dirTrustDeadline = 60 * time.Second
+// dirTrustDeadline is a liveness guard, not the verdict. Both outcomes are
+// observed directly: SettledWhen ends the run when the provider is contacted
+// (the gate cleared), and BlockedWhen ends it the moment the trust modal is
+// on screen (the gate held). Neither waits on this
+// budget, so it can sit far outside normal operation. A cleared launch
+// reaches the mock in ~2s alone, but the smoke job runs eight CLIs at once,
+// and on a starved runner one took ~60s to send its first request with no
+// modal in sight (tk_ca70bf44).
+const dirTrustDeadline = 2 * time.Minute
 
 // seedTrustLikeProduction calls the production seeder with the launch's own
 // environment — the same call session.New makes for a --trust-dir spawn, whose
@@ -81,7 +86,27 @@ func dirTrustRun(
 		},
 		Deadline:    dirTrustDeadline,
 		SettledWhen: func() bool { return len(mock.Requests()) >= 1 },
+		// The failure these scenarios exist to catch is the modal: a seeded
+		// launch must never show it, so its first appearance ends the run and
+		// the scenario fails in seconds, instead of on the deadline. (Waiting
+		// for the pane to go quiet would not: the modal screen keeps redrawing
+		// for well over a minute.)
+		BlockedWhen: func(text string) bool { return strings.Contains(text, copilotfixture.TrustPromptMarker) },
 	})
+}
+
+// requireDirTrustCleared fails a seeded run that did not reach the provider,
+// saying which way it went: the modal (the seed was not honoured), or neither
+// evidence before the liveness guard (a hang), or an early exit.
+func requireDirTrustCleared(t *testing.T, res copilotfixture.PTYResult, what string) {
+	t.Helper()
+	require.False(t, res.Contains(copilotfixture.TrustPromptMarker),
+		"%s: the trust modal is on screen, so the seeded folder was not trusted; transcript:\n%s", what, res.TranscriptText())
+	require.False(t, res.Exited && !res.Settled,
+		"%s: the CLI exited (code %d) before contacting the provider; transcript:\n%s", what, res.ExitCode, res.TranscriptText())
+	require.True(t, res.Settled,
+		"%s: no provider request and no modal within %s (a hang, not a verdict); elapsed %s, max output gap %s; transcript:\n%s",
+		what, dirTrustDeadline, res.Elapsed, res.MaxOutputGap, res.TranscriptText())
 }
 
 // readManagedJSON parses one of Copilot's two settings files, tolerating the
@@ -128,11 +153,8 @@ func TestCopilotDirTrustProductionSeedingClearsTheModal(t *testing.T) {
 	seedTrustLikeProduction(t, dirs, dirs.WorkDir)
 
 	res := dirTrustRun(t, dirs, mock, dirs.WorkDir)
-	require.True(t, res.Settled,
-		"a seeded launch must reach the provider; transcript:\n%s", res.TranscriptText())
+	requireDirTrustCleared(t, res, "a seeded launch must reach the provider")
 	assert.NotEmpty(t, mock.Requests())
-	assert.False(t, res.Contains(copilotfixture.TrustPromptMarker),
-		"the seeded launch must not show the modal at all")
 }
 
 // TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore is the INSTALLED
@@ -196,10 +218,7 @@ func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
 		{Text: "MOCK STREAMED ANSWER"},
 	})
 	res := dirTrustRun(t, dirs, mock, dirs.WorkDir)
-	require.True(t, res.Settled,
-		"the seeded launch must clear the modal on an installed home too; transcript:\n%s",
-		res.TranscriptText())
-	assert.False(t, res.Contains(copilotfixture.TrustPromptMarker))
+	requireDirTrustCleared(t, res, "the seeded launch must clear the modal on an installed home too")
 
 	// And the operator's own folder is still trusted after that launch: the CLI
 	// accepted the rewritten file rather than resetting it.
@@ -245,8 +264,5 @@ func TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling(t *testing.T) {
 		"seeding an unresolved spelling must also seed the resolved one")
 
 	res := dirTrustRun(t, dirs, mock, dirs.UnresolvedWorkDir)
-	require.True(t, res.Settled,
-		"a launch in the unresolved spelling must clear the modal; transcript:\n%s",
-		res.TranscriptText())
-	assert.False(t, res.Contains(copilotfixture.TrustPromptMarker))
+	requireDirTrustCleared(t, res, "a launch in the unresolved spelling must clear the modal")
 }
