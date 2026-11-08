@@ -19,6 +19,7 @@ import { taskFileLimits } from './taskboard-actions.js';
 import { FilesField, StoredFiles, taskPastedName, useMarkdownFiles } from './groups-taskboard-files.js';
 import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { shellConfirm, shellToast } from './shell-state.js';
+import { SOURCE_MARK, questionSource } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -154,6 +155,10 @@ function CommentEntry({ api, taskId, entry, me, nameOf, onChanged, onEditing = (
 // QUESTION_STATE says what became of a question that is not open.
 const QUESTION_STATE = { answered: 'answered', withdrawn: 'withdrawn by its asker', closed: 'closed with the task' };
 
+// The words of a mirrored question's entry, by where it was asked
+// (questionSource).
+const SOURCE_KIND = { '': 'asked the operator', approval: 'asked the operator for access', notify: 'asked the operator in Messages' };
+
 // answerWords is an answer as the activity shows it: the picked labels,
 // then the words.
 export function answerWords(question) {
@@ -167,6 +172,8 @@ export function answerWords(question) {
 // or any for a multi-select question) and words, as the Answer dialog does.
 function QuestionAnswerForm({ question, busy, onSubmit, onCancel }) {
   const options = question.options || [];
+  // An access request takes a pick only.
+  const words = questionSource(question) !== 'approval';
   const [picked, setPicked] = useState([]);
   const [text, setText] = useState('');
   const empty = !picked.length && !text.trim();
@@ -184,13 +191,13 @@ function QuestionAnswerForm({ question, busy, onSubmit, onCancel }) {
           ${o.description && html`<span class="tb-answer-desc">${o.description}</span>`}</span>
       </label>`)}
     </div>`}
-    <${Textarea} class="tb-answer-text" rows=${2} aria-label="Answer in your own words" value=${text} maxLength=${4000} disabled=${busy}
+    ${words && html`<${Textarea} class="tb-answer-text" rows=${2} aria-label="Answer in your own words" value=${text} maxLength=${4000} disabled=${busy}
       placeholder=${options.length ? 'optional: with your pick, or instead of one' : 'your answer'}
       onInput=${(event) => setText(event.currentTarget.value)}
       onKeyDown=${(event) => {
         if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); submit(); }
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); }
-      }} />
+      }} />`}
     <span class="tb-comment-editor-acts">
       <${Button} size="sm" variant="primary" class="tb-question-send" busy=${busy} disabled=${busy || empty} onClick=${submit}>Send answer<//>
       <${Button} size="sm" variant="ghost" disabled=${busy} onClick=${onCancel}>Cancel<//>
@@ -209,7 +216,11 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
   const [busy, setBusy] = useState(false);
   const deleted = !!comment.deleted_at;
   const open = q.state === 'open' && (task.status === 'open' || task.status === 'blocked');
-  const mine = !!me && comment.author === me && open && !deleted;
+  const source = questionSource(q);
+  // A mirrored question closes with its original; its asker does not withdraw it here.
+  const mine = !!me && comment.author === me && open && !deleted && !source;
+  // A mirrored question that ended unanswered keeps why as its answer's words.
+  const ended = q.state === 'closed' && !!q.answer;
   const picked = new Set(q.answer?.picked || []);
   const run = async (what, fn) => {
     setBusy(true);
@@ -233,8 +244,8 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
   return html`<li class=${`tb-activity-comment tb-activity-question tb-question-${q.state || 'open'}`} data-comment=${comment.id} data-question-n=${q.n}>
     <div class="tb-comment-head">
       <span class="tb-comment-author">${authorOf(comment, nameOf)}</span>
-      <span class="tb-comment-kind">❓ asked the operator · Q${q.n}</span>
-      ${q.state !== 'open' && q.state !== 'answered' && html`<span class="tb-comment-kind tb-question-ended">${QUESTION_STATE[q.state] || q.state}</span>`}
+      <span class="tb-comment-kind" title=${SOURCE_MARK[source].also || null}>${SOURCE_MARK[source].icon} ${SOURCE_KIND[source]} · Q${q.n}</span>
+      ${q.state !== 'open' && q.state !== 'answered' && !ended && html`<span class="tb-comment-kind tb-question-ended">${QUESTION_STATE[q.state] || q.state}</span>`}
       ${q.waiting && html`<span class="ui-tag ui-tag-warn tb-question-waiting">⏳ waiting</span>`}
       <span class="tb-activity-at" title=${comment.at}>${relTime(comment.at)}</span>
       ${mine && html`<span class="tb-comment-acts">
@@ -250,9 +261,9 @@ function QuestionEntry({ api, task, entry, me, nameOf, canAnswerIt, onChanged })
     </ul>`}
     ${q.answer && html`<div class="tb-question-answer" data-answer-of=${q.n}>
       <div class="tb-comment-head"><span class="tb-comment-author">${nameOf ? nameOf(q.answer.answered_by) : q.answer.answered_by}</span>
-        <span class="tb-comment-kind">answered Q${q.n}</span>
+        <span class="tb-comment-kind">${ended ? 'closed' : 'answered'} Q${q.n}</span>
         <span class="tb-activity-at" title=${q.answer.answered_at}>${relTime(q.answer.answered_at)}</span></div>
-      <div class="tb-comment-body">${answerWords(q)}</div>
+      <div class="tb-comment-body">${ended ? q.answer.text : answerWords(q)}</div>
     </div>`}
     ${open && canAnswerIt && !answering && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
       onClick=${() => setAnswering(true)}>Answer…<//></div>`}

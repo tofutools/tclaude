@@ -363,47 +363,16 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch decision {
-	case "approve":
-		select {
-		case req.decision <- outcomeApprove:
-		default:
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"decision": "approve"})
-	case "always":
-		if !req.autoGrantable {
-			writeError(w, http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+	case approvalPickApprove, approvalPickAlways, approvalPickAlwaysScoped, approvalPickDeny:
+		if _, fail := decideApproval(req, decision); fail != nil {
+			fail.write(w)
 			return
 		}
-		select {
-		case req.decision <- outcomeApproveAlways:
-		default:
+		out := map[string]any{"decision": decision}
+		if decision == approvalPickAlwaysScoped {
+			out["scope"] = req.scopeDisplay
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"decision": "always"})
-	case "always_scoped":
-		// Both gates are re-checked here, not trusted from the frontend: the
-		// slug must be eligible, AND the pending request must carry a scope
-		// the gate derived when it was raised. The scope itself is never taken
-		// from the request body — there is no body field for it — so a
-		// hand-crafted POST can widen nothing.
-		if !req.autoGrantable || !isScopedAutoGrantableSlug(req.perm) {
-			writeError(w, http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
-			return
-		}
-		if req.scopeJSON == "" {
-			writeError(w, http.StatusBadRequest, "invalid_arg", errScopedAlwaysUnavailable.Error())
-			return
-		}
-		select {
-		case req.decision <- outcomeApproveAlwaysScoped:
-		default:
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"decision": "always_scoped", "scope": req.scopeDisplay})
-	case "deny":
-		select {
-		case req.decision <- outcomeDeny:
-		default:
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"decision": "deny"})
+		writeJSON(w, http.StatusOK, out)
 	case "extend":
 		// Bounded so an unattended request still eventually auto-denies.
 		// Default +5m; secs caps at 300 to match the daemon's AskHuman ceiling.
@@ -422,5 +391,51 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"decision": "extend", "extended_by_secs": int(extendBy / time.Second)})
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped, deny, or extend")
+	}
+}
+
+// decideApproval sends the operator's decision on an agent's pending
+// request (approve, always, always_scoped or deny) to its waiter, which
+// applies it once. The Access-requests route and the board's mirrored
+// question (taskboard_mirror.go) decide through it. "always" is gated on the
+// request's AutoGrantable flag so a hand-crafted POST can't self-grant an
+// ineligible slug even though the frontend hides the button.
+// "always_scoped" is the narrow twin — same eligibility gate, plus the
+// pending request must carry the scope its gate site derived; the scope is
+// read from the pending request, never from the caller, so no caller can
+// write a wider grant than the action the human is looking at. The send onto
+// req.decision is non-blocking (the channel is buffered cap 1 and the waiter
+// consumes exactly one); the waiter runs applyApprovalOutcome so audit +
+// always-allow persistence happen exactly once for the decision that took
+// effect. sent says the decision was queued: false when another was
+// already.
+func decideApproval(req *approvalRequest, decision string) (sent bool, fail *humanReplyFailure) {
+	var outcome approvalOutcome
+	switch decision {
+	case approvalPickApprove:
+		outcome = outcomeApprove
+	case approvalPickAlways:
+		if !req.autoGrantable {
+			return false, replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+		}
+		outcome = outcomeApproveAlways
+	case approvalPickAlwaysScoped:
+		if !req.autoGrantable || !isScopedAutoGrantableSlug(req.perm) {
+			return false, replyFail(http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+		}
+		if req.scopeJSON == "" {
+			return false, replyFail(http.StatusBadRequest, "invalid_arg", errScopedAlwaysUnavailable.Error())
+		}
+		outcome = outcomeApproveAlwaysScoped
+	case approvalPickDeny:
+		outcome = outcomeDeny
+	default:
+		return false, replyFail(http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped or deny")
+	}
+	select {
+	case req.decision <- outcome:
+		return true, nil
+	default:
+		return false, nil
 	}
 }

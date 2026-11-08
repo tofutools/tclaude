@@ -2521,8 +2521,10 @@ CREATE TABLE group_task_questions (
 			blocks          INTEGER NOT NULL DEFAULT 0,
 			answer          TEXT NOT NULL DEFAULT '',
 			answer_event_id INTEGER,
-			closed_at       INTEGER,
+			closed_at       INTEGER, source TEXT NOT NULL DEFAULT '',
 			UNIQUE (task_id, n)
 		) STRICT;
 
 CREATE INDEX idx_group_task_questions_open ON group_task_questions(task_id) WHERE state = 'open';
+
+CREATE UNIQUE INDEX idx_group_task_questions_source ON group_task_questions(source) WHERE source <> '';
