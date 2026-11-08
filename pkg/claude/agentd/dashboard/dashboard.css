@@ -19000,6 +19000,7 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-marker-operator { color: #fff; background: #da3633; border: 1px solid #f85149; }
 .tb-card.tb-card-unassigned { border-left: 3px solid #d29922; }
 .tb-card.tb-card-operator { border-left: 3px solid #f85149; }
+.tb-who-mark { flex: none; box-sizing: border-box; width: 20px; height: 20px; }
 /* One row with every task: no lane column, so the first stage has no edge. */
 .tb-lanes-row .tb-lane > .tb-cell:first-child { border-left: none; }
 

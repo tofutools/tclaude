@@ -191,9 +191,15 @@ export function DepChips({ task, byId }) {
   });
 }
 
+// Who is the List's Who cell. A live task nobody holds has the lanes' yellow
+// "!", and one the operator holds the red "!", as a card in one row has
+// them: the List has no lane to say it.
 function Who({ task, group, snapshot }) {
   const agent = task.assignee?.agent_id;
-  if (!agent) return html`<span class="tb-unassigned">unassigned</span>`;
+  const live = task.status === 'open' || task.status === 'blocked';
+  if (!agent) {
+    return html`<span class="tb-who">${live && html`<span class="tb-who-mark tb-marker-unassigned" aria-hidden="true">!</span>`}<span class="tb-unassigned">unassigned</span></span>`;
+  }
   const operator = !!task.assignee?.operator;
   const name = operator ? operatorName(group) : task.assignee?.name || agentLabel(agent, group, snapshot);
   const by = actorLabel(task.assigned_by, group, snapshot);
@@ -205,7 +211,8 @@ function Who({ task, group, snapshot }) {
   const member = !operator && (group?.members || []).some((m) => m.agent_id === agent);
   const link = member ? { ...agentLink({ group: group.name, node: group.fleet_node?.id || '', id: agent, name }), title: undefined } : {};
   return html`<span class=${`tb-who${operator ? ' tb-who-operator' : ''}`} title=${detail ? `${name} · ${detail}` : `${name} · ${agent}`}>
-    <span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>
+    ${operator && live ? html`<span class="tb-who-mark tb-marker-operator" aria-hidden="true">!</span>`
+      : html`<span class="tb-avatar" aria-hidden="true">${operator ? '★' : name.slice(0, 1).toUpperCase()}</span>`}
     <span class=${`tb-who-name${member ? ' tb-xlink' : ''}`} ...${link}>${name}</span>
   </span>`;
 }
