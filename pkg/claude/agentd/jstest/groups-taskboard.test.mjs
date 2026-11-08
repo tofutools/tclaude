@@ -95,6 +95,8 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.equal(rows[0].querySelector('.tb-state-wrap').dataset.fullStatus, tip(rows[0]));
   assert.match(rows[0].querySelector('.tb-state-wrap').getAttribute('aria-label'), /^state: in progress · with builder/);
   assert.equal(rows[1].querySelector('.tb-unassigned').textContent, 'unassigned');
+  assert.ok(rows[1].querySelector('.tb-who-mark.tb-marker-unassigned'), 'the List has no Unassigned lane: the yellow ! says it');
+  assert.equal(rows[0].querySelector('.tb-who-mark'), null, 'an agent\'s task: its avatar, no !');
   assert.equal(rows[1].querySelector('.tb-state').textContent, 'open');
   // Rows carry no number: a dependency is named by its title (clipped), and
   // its whole title and id are the tooltip.

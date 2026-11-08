@@ -903,7 +903,8 @@ the **Quest board**), below its Agents and Resources sections.
   *Name* (the task's title), *State*,
   *Last* (its last change) and *Age*, in line with the Agents table's
   columns of the same names. After those come *Who* holds it (the tooltip
-  says who assigned it, and when), *Ref* (a chip that links to the tracker),
+  says who assigned it, and when; a live task nobody holds has a yellow **!**,
+  and one you hold a red **!**, as cards in *one row* do), *Ref* (a chip that links to the tracker),
   *Deps* (`after` and the task's title, amber until that task is done; the
   tooltip has its whole title and id) and *Files* (📎 and the count; a
   click opens the task's first viewable file in the attachment viewer). A blocked
@@ -1200,10 +1201,12 @@ want to see what nobody holds and what waits on you:
   together.
 - **one row** puts every task in a single row.
 
-In these modes each card says who holds it in its top-right corner: a yellow
+In *one row* each card says who holds it in its top-right corner: a yellow
 **!** when nobody does, a red **!** when you (the operator) do, otherwise the
 agent's avatar. The two **!** cards also get an edge in their colour. A done
-card carries no **!**. A cell shows its first five cards, then *+ n more*.
+card carries no **!**. In *triage* the *You* and *Unassigned* lanes already
+say who holds their cards, so those carry no marker and no coloured edge;
+only the *Agents* lane's cards show their agent's avatar. A cell shows its first five cards, then *+ n more*.
 
 Drags work as in the lanes. In *triage*, a card dropped onto *You* is
 assigned to you, and one dropped onto *Unassigned* is unassigned. *Agents*
