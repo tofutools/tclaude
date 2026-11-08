@@ -1,9 +1,11 @@
 // groups-taskboard-lanes-layout.js -- the lanes view's own layout, kept per
 // group and per viewer in dashPrefs (docs/taskboard.md): the column widths
-// (drag a column head's edge; double-click it to reset) and the order of the
-// lanes and of their headings (drag a lane head or a heading). It is a view
-// preference, not board state: no write reaches the board.
+// (drag a column head's edge; double-click it to reset), the order of the
+// lanes and of their headings (drag a lane head or a heading), and which
+// cells are open past "+ n more". It is a view preference, not board state:
+// no write reaches the board.
 
+import { useState } from 'preact/hooks';
 import { dashPrefs } from './prefs.js';
 
 // The grid's six columns: the lane heads, then the five stages. A board
@@ -17,6 +19,7 @@ export const MIN_PX = { lane: 110, stage: 90 };
 
 const WIDTHS_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-widths.${group}`;
 const ORDER_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-order.${group}`;
+const OPEN_PREF = (group, view) => `tclaude.dash.groups.taskboard.cells-open.${view}.${group}`;
 
 function readJSON(key) {
   try {
@@ -177,4 +180,36 @@ export function moveHead(group, groups, by, moving, target, after = false) {
 
 export function resetLaneOrder(group) {
   setLaneOrder(group, null);
+}
+
+// --- open cells ---
+
+// openCells reads the cells opened past "+ n more" in one view of a group:
+// { "<lane>|<column>": true }. A malformed value reads as none open.
+export function openCells(group, view) {
+  const stored = readJSON(OPEN_PREF(group, view));
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  return Object.fromEntries(Object.entries(stored).filter(([, on]) => on === true));
+}
+
+export function setOpenCells(group, view, open) {
+  const on = Object.keys(open || {}).filter((key) => open[key]);
+  if (!on.length) dashPrefs.removeItem(OPEN_PREF(group, view));
+  else dashPrefs.setItem(OPEN_PREF(group, view), JSON.stringify(Object.fromEntries(on.map((key) => [key, true]))));
+}
+
+// useOpenCells is a view's open cells as [open, setOpen], stored per group
+// and view, so a cell stays open until "Show less" closes it: opening a
+// task's editor, which unmounts the board, or a reload keeps it. setOpen
+// takes a value or an updater, as useState's does.
+export function useOpenCells(group, view) {
+  const [state, setState] = useState(() => ({ group, view, open: openCells(group, view) }));
+  const current = (s) => (s.group === group && s.view === view ? s.open : openCells(group, view));
+  const setOpen = (next) => setState((s) => {
+    const now = current(s);
+    const open = typeof next === 'function' ? next(now) : next;
+    if (open !== now) setOpenCells(group, view, open);
+    return { group, view, open };
+  });
+  return [current(state), setOpen];
 }
