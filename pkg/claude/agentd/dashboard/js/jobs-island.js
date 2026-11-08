@@ -19,9 +19,10 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
-import { Button, Input, SortTh } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import { triggersAvailable } from './feature-availability.js';
 import { groupScopeLabel, localStamp } from './cell-format.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -327,10 +328,7 @@ function ExportRow({ job, actions }) {
 }
 
 function SortHead({ active, onSort }) {
-  return html`<thead><tr>${JOBS_COLS.map((column) => (column.col
-    ? html`<${SortTh} active=${active?.col === column.col} dir=${active?.dir} sortLabel=${column.label}
-        onSort=${() => onSort(column.col)}>${column.label}<//>`
-    : html`<th>${column.label || ''}</th>`))}</tr></thead>`;
+  return html`<${TableHead} cols=${JOBS_COLS} activeCol=${active?.col} dir=${active?.dir} onSort=${onSort} />`;
 }
 
 function JobsPager({ state, paging, refresh, disabled = false }) {

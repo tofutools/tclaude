@@ -1,14 +1,15 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select, SortTh } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { Dialog } from './ui-dialog.js';
 import { GroupCombobox } from './group-picker.js';
 import { ImportDialog, PublishDialog, canPost, postedBy, short } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
-import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
+import { applySortState, nextSort, persistedTableSort, persistTableSort, timestampSortValue } from './sort.js';
 import { binarySize, errText, localStamp } from './cell-format.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -42,11 +43,9 @@ export const SORT_ACCESSORS = Object.freeze({
   updated: (r) => timestampSortValue(r.updated_at),
 });
 
-// nextSort is the dashboard tables' header cycle: asc, desc, then unsorted.
-export function nextSort(cur, col) {
-  if (!cur || cur.col !== col) return { col, dir: 'asc' };
-  return cur.dir === 'asc' ? { col, dir: 'desc' } : null;
-}
+// nextSort is the dashboard tables' header cycle (sort.js); re-exported for
+// this browser's callers and tests.
+export { nextSort };
 
 export const KINDS = Object.freeze([{ id: 'skill', label: 'Skills' }, { id: 'config', label: 'Config' }]);
 export const TRUST = Object.freeze({
@@ -431,10 +430,8 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
               items=${[{ id: '', label: 'All' }, ...KINDS].map((k) => ({ key: k.id || 'all', attrs: { 'data-kind-tab': k.id || 'all' },
                 label: html`${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span>` }))} />
             <table class="fa-table ui-compact" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
-              <thead><tr>${SORT_COLS.map((c) => {
-                return html`<${SortTh} key=${c.col} active=${sort?.col === c.col} dir=${sort?.dir} data-sort-col=${c.col} sortLabel=${c.label}
-                  onSort=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<//>`;
-              })}</tr></thead>
+              <${TableHead} cols=${SORT_COLS} activeCol=${sort?.col} dir=${sort?.dir} sortColAttr=${true}
+                onSort=${(col) => setSort((cur) => nextSort(cur, col))} />
               <tbody>${shown.map((r) => html`<tr key=${r.key} data-row=${r.key} class=${r.key === selected ? 'on' : ''} onClick=${() => setSelected(r.key)}>
                 <td>${r.name || 'Invalid item'}</td><td>${r.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${r.kind} />`}</td>
                 <td>${!r.invalid && html`<${TrustBadge} trust=${r.trust} compact=${true} />`} ${r.by}</td><td class="muted">${r.board.name}</td><td class="muted"><code>${short(r.version)}</code></td><td class="muted">${when(r.updated_at)}</td></tr>`)}</tbody></table>

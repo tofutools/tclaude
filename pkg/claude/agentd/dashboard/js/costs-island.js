@@ -13,7 +13,8 @@ import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
 import { shellToast } from './shell-state.js';
 import { watchPopover } from './hover-popover.js';
-import { Button, Input, SortTh } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -329,8 +330,9 @@ function CostFilters({ state, current }) {
 }
 
 function SortHeader({ state, current }) {
-  return html`<thead><tr>${COST_COLUMNS.map((column) => html`<${SortTh} active=${current.sort.key === column.sort}
-    dir=${current.sort.dir} sortLabel=${column.label} onSort=${() => state.cycleSort(column.sort)}>${column.label}<//>`)}<th class="cost-ignore-col" aria-label="Ignore"></th></tr></thead>`;
+  return html`<${TableHead} cols=${COST_COLUMNS} activeCol=${current.sort.key} dir=${current.sort.dir}
+    isSortable=${() => true} colOf=${(column) => column.sort} onSort=${(key) => state.cycleSort(key)}
+    trailing=${html`<th class="cost-ignore-col" aria-label="Ignore"></th>`} />`;
 }
 
 // useCostIgnore runs the Ignore / Restore requests: one at a time per

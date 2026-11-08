@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Input, Select, SortTh } from './ui-components.js';
+import { Button, Input, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
@@ -12,6 +12,7 @@ import { LINK_COLS } from './sort.js';
 import { LINK_MODES, composeItems, composerSummary, modeText } from './proposals-model.js';
 import { GroupCombobox } from './group-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -24,14 +25,6 @@ function errorMessage(error) { return error?.message || String(error); }
 function ErrorBanner({ error }) {
   if (!error) return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert"></div>`;
   return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert">${error}</div>`;
-}
-
-function SortHeader({ column, state }) {
-  if (!column.col) return html`<th>${column.label || ''}</th>`;
-  const current = state.sort.value;
-  return html`<${SortTh} active=${current?.col === column.col} dir=${current?.dir} sortLabel=${column.label}
-    data-sort-table="links" data-sort-col=${column.col}
-    onSort=${() => state.cycleSort(column.col)}>${column.label}<//>`;
 }
 
 export function LinksControls({ state, actions }) {
@@ -133,9 +126,8 @@ export function LinksList({ state, actions }) {
   const columns = cross ? [...LINK_COLS.slice(0, 5), ...CROSS_COLS, ...LINK_COLS.slice(5)] : LINK_COLS;
   return html`
     <table aria-busy=${!!deleting}>
-      <thead><tr>${columns.map((column, index) => html`
-        <${SortHeader} key=${column.col || `plain-${index}`} column=${column} state=${state} />
-      `)}</tr></thead>
+      <${TableHead} cols=${columns} activeCol=${state.sort.value?.col} dir=${state.sort.value?.dir}
+        sortTable="links" onSort=${(col) => state.cycleSort(col)} />
       <tbody>${current.rows.map((link) => {
         const rowBusy = deleting === String(link.id);
         const remote = !!link.peer;
