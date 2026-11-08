@@ -402,12 +402,20 @@ after moving an area onto the standard classes, lower it with
 
 ### Table columns
 
-Dashboard tables size their columns by one rule: every column is as wide as
-its content, between a minimum and a maximum, and text wraps past the
-maximum (no ellipsis on content a reader needs). The columns pack to the
-left, and the spare width of a wide screen goes to one trailing column or a
-filler, never to a content column such as Name. No table sizes its columns
-from another table's.
+For a new dashboard table, the default is bounded auto-width: every column
+is as wide as its content, between a minimum and a maximum, and text wraps
+past the maximum (no ellipsis on content a reader needs). The columns pack to
+the left, and the spare width of a wide screen goes to one trailing column or
+a filler, never to a content column such as Name. No table sizes its columns
+from another table's. The task list and Resources use it.
+
+This is a default, not a mandate: do not migrate existing tables to it. A
+table may deliberately do otherwise, and these are valid choices:
+
+- breaking a name mid-word when the name has no spaces to wrap at;
+- a fixed-width or right-aligned value column, such as the costs on the
+  Usage tab;
+- columns that hide when space is tight.
 
 `ui.css` carries the convention. Give the table `ui-table-auto`, each content
 column `<col class="ui-col-fit">`, and the trailing one `ui-col-rest`. Bound a
