@@ -1,6 +1,10 @@
 package db
 
-import "time"
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
 
 // FederationPeerQuestionTTL bounds how long the answer to a question asked
 // on a linked node's board is let in (tk_976fe76c).
@@ -23,18 +27,23 @@ func RecordFederationPeerQuestion(peer, task, agent string, now, expires time.Ti
 	return err
 }
 
-// ConsumeFederationPeerQuestion reports whether a live question matches
-// (peer, task, agent), and removes it: the match is single-use.
-func ConsumeFederationPeerQuestion(peer, task, agent string, now time.Time) (bool, error) {
+// ConsumeFederationPeerQuestion takes the live question matching (peer,
+// task, agent), if any: the match is single-use. It returns the record's
+// expiry, for RecordFederationPeerQuestion to put it back when the mail it
+// let in is refused after all (a full inbox the sender retries).
+func ConsumeFederationPeerQuestion(peer, task, agent string, now time.Time) (time.Time, bool, error) {
 	d, err := Open()
 	if err != nil {
-		return false, err
+		return time.Time{}, false, err
 	}
-	res, err := d.Exec(`DELETE FROM federation_peer_questions WHERE peer = ? AND task = ? AND agent = ? AND expires_at > ?`,
-		peer, task, agent, dbTime(now))
+	var expires dbTimestamp
+	err = d.QueryRow(`DELETE FROM federation_peer_questions WHERE peer = ? AND task = ? AND agent = ? AND expires_at > ?
+		RETURNING expires_at`, peer, task, agent, dbTime(now)).Scan(&expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
 	if err != nil {
-		return false, err
+		return time.Time{}, false, err
 	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+	return expires.Time(), true, nil
 }

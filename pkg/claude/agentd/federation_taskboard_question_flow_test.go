@@ -2,14 +2,17 @@ package agentd_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // An agent here asked a linked node's operator a question: the answer mail
@@ -58,9 +61,29 @@ func TestFederation_TaskboardAnswerToPeerAsker(t *testing.T) {
 	refused(answer(carolAgent, "tk_0000aaaa"), "the answer to another agent")
 	refused(answer(aliceAgent, "tk_0000cccc"), "an expired record")
 
-	// The recorded answer is let in.
+	// A full inbox refuses the recorded answer for now (the sender
+	// retries), and keeps the record: the retry, once there is room, is let
+	// in.
+	require.NoError(t, db.GrantAgentPermissionWithScope(carol, agentd.PermMessageDirect, "", "test"))
+	for i := range agentd.RegularAgentMessageQueueLimitForTest {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages",
+			map[string]any{"to": "alice-agent", "body": "filler"}), carol))
+		require.Equalf(t, http.StatusOK, rec.Code, "filler %d: %s", i, rec.Body.String())
+	}
 	ok := answer(aliceAgent, "tk_0000aaaa")
-	assert.Equal(t, proto.AckAccepted, fedAckFor(t, p, ok.ID).Status)
+	full := fedAckFor(t, p, ok.ID)
+	require.Equal(t, proto.AckRefused, full.Status)
+	require.Equal(t, "queue_full", full.Code)
+	queued, err := db.ListInboxForActor(alice, aliceAgent, 50)
+	require.NoError(t, err)
+	for _, m := range queued {
+		require.NoError(t, db.MarkAgentMessageRead(m.ID))
+	}
+	p.mu.Lock()
+	p.got = nil
+	p.mu.Unlock()
+	p.send(ok)
+	assert.Equal(t, proto.AckAccepted, fedAckFor(t, p, ok.ID).Status, "the retry finds the record")
 	msgs, err := db.ListInboxForActor(alice, aliceAgent, 50)
 	require.NoError(t, err)
 	var got string
@@ -108,4 +131,48 @@ func TestFederation_TaskboardAnswerMailedToPeerAsker(t *testing.T) {
 	assert.Contains(t, mail.Subject, "answered: crew · "+task.ID)
 	assert.Contains(t, mail.Body, "Picked: Teal")
 	assert.Contains(t, mail.Body, "Said: dimmer")
+}
+
+// An agent's question on a linked node's board, through its peer view, is
+// recorded for the answer to come back: only a create that asks a question
+// and that the peer accepted, for that agent.
+func TestFederation_TaskboardPeerQuestionRecorded(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	agentd.ResetAgentPeerViewLimitsForTest()
+	t.Cleanup(agentd.ResetAgentPeerViewLimitsForTest)
+	inst := p.id.ID()
+	const caller = "019fe740-43a4-7023-b8ae-0000000a7e01"
+	f.HaveEnrolledAgent(caller)
+	callerAgent, err := db.AgentIDForConv(caller)
+	require.NoError(t, err)
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{PeerViewAgents: true, Groups: []proto.CatalogGroup{{Name: "lab"}}}))
+	fedEventually(t, "catalog stored", func() bool { c, _, _ := db.GetFederationCatalog(inst); return c != "" })
+	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermTaskboardWrite, `{"peer":["`+inst+`/lab"]}`, "test"))
+
+	opened := 0
+	create := func(body map[string]any, status int, reply string) {
+		t.Helper()
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			done <- testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+				"/v1/federation/peer/bob/v1/groups/lab/taskboard/tasks", body), caller))
+		}()
+		conn := acceptOutboundPeerView(t, p, opened)
+		opened++
+		readPeerViewWire(t, conn)
+		writePeerViewWire(t, conn, peerViewWire{Status: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(reply)})
+		rec := <-done
+		require.Equal(t, status, rec.Code, rec.Body.String())
+		_ = conn.Close()
+	}
+	create(map[string]any{"title": "Lane colour?", "question": map[string]any{}}, http.StatusCreated, `{"id":"tk_0000eeee","title":"Lane colour?"}`)
+	create(map[string]any{"title": "plain"}, http.StatusCreated, `{"id":"tk_0000ffff","title":"plain"}`)
+	create(map[string]any{"title": "refused?", "question": map[string]any{}}, http.StatusBadRequest, `{"id":"tk_00001111","error":"no"}`)
+
+	for task, want := range map[string]string{"tk_0000eeee": proto.AckAccepted, "tk_0000ffff": proto.AckRefused, "tk_00001111": proto.AckRefused} {
+		env := p.envelope(proto.KindMail, proto.Endpoint{Agent: callerAgent}, proto.MailPayload{Body: "answer", TaskboardAnswer: task})
+		p.send(env)
+		assert.Equal(t, want, fedAckFor(t, p, env.ID).Status, task)
+	}
 }

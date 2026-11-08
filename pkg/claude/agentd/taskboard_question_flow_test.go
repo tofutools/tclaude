@@ -164,3 +164,18 @@ func TestTaskboardQuestionAskerSurvivesUnassign(t *testing.T) {
 	code, body = h.post("", asked.ID, "reopen", map[string]any{})
 	assert.Equal(t, http.StatusConflict, code, body)
 }
+
+// Who asked is the daemon's to say: a body that names an asker, here a
+// linked node's agent, is ignored.
+func TestTaskboardQuestionAskerNotFromBody(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Forged?",
+		"question": map[string]any{"asked_by": "agent:agt_someoneelse000000000000", "asked_via": "peer:node1/agent:agt_bobremote0000000000000000"}})
+	asked := tbDecodeQuestion(t, rec.Code, rec.Body.String(), http.StatusCreated)
+	got, err := db.GetGroupTask(asked.ID)
+	require.NoError(t, err)
+	q := got.Question()
+	require.NotNil(t, q)
+	assert.Empty(t, q.AskedVia)
+	assert.Equal(t, "agent:"+tbAgentID(t, h.worker), q.AskedBy)
+}

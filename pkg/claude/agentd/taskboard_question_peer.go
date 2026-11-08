@@ -78,17 +78,27 @@ func mailTaskboardAnswerToPeer(t *db.GroupTask, q *db.GroupTaskQuestion, subject
 
 // taskboardAnswerMailAuthorized lets in mail that answers a question this
 // node's agent asked peer's operator: the mail names the task, and a live
-// record matches (peer, task, recipient). The match is consumed.
-func taskboardAnswerMailAuthorized(peer string, env *proto.Envelope, mp proto.MailPayload) bool {
+// record matches (peer, task, recipient). The match is consumed; undo puts
+// it back, for a refusal after this point that the sender retries (a full
+// inbox), so the retry still finds it.
+func taskboardAnswerMailAuthorized(peer string, env *proto.Envelope, mp proto.MailPayload) (ok bool, undo func()) {
 	if mp.TaskboardAnswer == "" || env.Kind != proto.KindMail || !proto.ValidAgentRef(env.To.Agent) {
-		return false
+		return false, nil
 	}
-	ok, err := db.ConsumeFederationPeerQuestion(peer, mp.TaskboardAnswer, env.To.Agent, time.Now())
+	task, agentID := mp.TaskboardAnswer, env.To.Agent
+	expires, ok, err := db.ConsumeFederationPeerQuestion(peer, task, agentID, time.Now())
 	if err != nil {
 		slog.Warn("federation: reading recorded peer questions failed", "error", err)
-		return false
+		return false, nil
 	}
-	return ok
+	if !ok {
+		return false, nil
+	}
+	return true, func() {
+		if err := db.RecordFederationPeerQuestion(peer, task, agentID, time.Now(), expires); err != nil {
+			slog.Warn("federation: could not restore a recorded peer question", "task", task, "error", err)
+		}
+	}
 }
 
 // peerQuestionCreateRoute is the agent peer-view route that creates a task
