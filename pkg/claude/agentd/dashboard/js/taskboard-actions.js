@@ -157,6 +157,9 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     return merged;
   };
   return {
+    // local says the board is this page's node's own (no upload of its own):
+    // its tasks' drawings name drawing boards this page can open.
+    local: !upload,
     // capture adds the lines of a capture box: one plain line is one task;
     // several lines, or a line that is only a tracker id, go through the
     // import (`add --lines-file`), which resolves ids to titles. Returns

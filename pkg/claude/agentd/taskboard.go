@@ -88,6 +88,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	registerTaskboardAssignRoutes(mux)
 	registerTaskboardQuestionRoutes(mux)
 	registerTaskboardAttachmentRoutes(mux)
+	registerTaskboardDrawingRoutes(mux)
 	registerTaskboardCommentRoutes(mux)
 }
 
@@ -747,7 +748,13 @@ func awbIssueURL(id string) string {
 }
 
 func decodeTaskboardBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	return decodeTaskboardBodyLimit(w, r, v, 64<<10)
+}
+
+// decodeTaskboardBodyLimit is decodeTaskboardBody for a body of up to limit
+// bytes.
+func decodeTaskboardBodyLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body: "+err.Error())
 		return false

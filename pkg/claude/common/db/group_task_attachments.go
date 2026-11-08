@@ -35,14 +35,17 @@ type GroupTaskAttachment struct {
 	AddedAt     time.Time
 	// CommentID is the comment the file came with; 0 for the task's own.
 	CommentID int64
+	// Drawing is a drawing-board export's reference back to its board, as
+	// JSON (agentd's taskboardDrawingRef); "" for any other file.
+	Drawing string
 }
 
-const groupTaskAttachmentCols = `id, task_id, name, sha256, size_bytes, content_type, added_by, added_at, COALESCE(comment_id, 0)`
+const groupTaskAttachmentCols = `id, task_id, name, sha256, size_bytes, content_type, added_by, added_at, COALESCE(comment_id, 0), COALESCE(drawing, '')`
 
 func scanGroupTaskAttachment(s rowScanner) (GroupTaskAttachment, error) {
 	var a GroupTaskAttachment
 	var at dbTimestamp
-	err := s.Scan(&a.ID, &a.TaskID, &a.Name, &a.SHA256, &a.SizeBytes, &a.ContentType, &a.AddedBy, &at, &a.CommentID)
+	err := s.Scan(&a.ID, &a.TaskID, &a.Name, &a.SHA256, &a.SizeBytes, &a.ContentType, &a.AddedBy, &at, &a.CommentID, &a.Drawing)
 	a.AddedAt = at.Time()
 	return a, err
 }
@@ -101,8 +104,12 @@ func insertGroupTaskAttachmentsTx(tx taskTx, id string, commentID int64, atts []
 		if a.AddedBy == "" {
 			a.AddedBy = actor
 		}
-		res, err := tx.Exec(`INSERT INTO group_task_attachments (task_id, name, sha256, size_bytes, content_type, added_by, added_at, comment_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, a.Name, a.SHA256, a.SizeBytes, a.ContentType, a.AddedBy, dbTime(now), comment)
+		var drawing any
+		if a.Drawing != "" {
+			drawing = a.Drawing
+		}
+		res, err := tx.Exec(`INSERT INTO group_task_attachments (task_id, name, sha256, size_bytes, content_type, added_by, added_at, comment_id, drawing)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, a.Name, a.SHA256, a.SizeBytes, a.ContentType, a.AddedBy, dbTime(now), comment, drawing)
 		if err != nil {
 			return err
 		}
@@ -129,6 +136,43 @@ func AddGroupTaskAttachments(id string, atts []GroupTaskAttachment, actor string
 		return nil, nil, err
 	}
 	return t, rows, nil
+}
+
+// ReplaceGroupTaskAttachmentFile swaps the bytes of task id's file
+// attachmentID for repl's (SHA256, SizeBytes, ContentType, Drawing), keeping
+// its id and name: a drawing-board export brought up to date. The task's own
+// file gets an attached entry saying so; a comment's file is the comment's.
+// The old blob stays until the collector finds nothing names it.
+func ReplaceGroupTaskAttachmentFile(id string, attachmentID int64, repl GroupTaskAttachment, actor string) (*GroupTask, *GroupTaskAttachment, error) {
+	var out GroupTaskAttachment
+	t, err := withGroupTask(id, func(tx *sql.Tx, _ *GroupTask, now time.Time) error {
+		a, err := scanGroupTaskAttachment(tx.QueryRow(`SELECT `+groupTaskAttachmentCols+`
+			FROM group_task_attachments WHERE task_id = ? AND id = ?`, id, attachmentID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrGroupTaskAttachmentNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var drawing any
+		if repl.Drawing != "" {
+			drawing = repl.Drawing
+		}
+		if _, err := tx.Exec(`UPDATE group_task_attachments SET sha256 = ?, size_bytes = ?, content_type = ?, drawing = ?, added_by = ?, added_at = ?
+			WHERE id = ?`, repl.SHA256, repl.SizeBytes, repl.ContentType, drawing, actor, dbTime(now), attachmentID); err != nil {
+			return err
+		}
+		a.SHA256, a.SizeBytes, a.ContentType, a.Drawing, a.AddedBy, a.AddedAt = repl.SHA256, repl.SizeBytes, repl.ContentType, repl.Drawing, actor, now
+		out = a
+		if a.CommentID != 0 {
+			return nil
+		}
+		return addGroupTaskEventTx(tx, id, actor, GroupTaskEventAttached, a.Name+" (updated)", now)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return t, &out, nil
 }
 
 // RemoveGroupTaskAttachment detaches one file from task id. The blob stays

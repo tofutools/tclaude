@@ -264,6 +264,10 @@ with the command to fetch them.
   `taskboard.own` on a task assigned to you. Reading the files needs
   `taskboard.read`. Both are recorded in the task's history
   (`attached`, `detached`).
+- A drawing-board export can be put on a task as a PNG with `drawing-board
+  export <board> --attach-to <task>` (see [Drawing boards](drawing-boards.md)).
+  It links back to the board: the file's tile has *✎ Edit in drawing board*,
+  and exporting the same part again updates the file in place.
 - `ask --attach` sends the files with the request, as attachments of the
   mail. The asked member is told to put them on the tasks it creates.
 - A clone or a move to another group, on this node or another, takes the
@@ -1414,6 +1418,7 @@ those drags aren't accepted in the lanes.
 | `attachments` | `GET /v1/taskboard/tasks/{id}/attachments` → `{id, group, attachments}` |
 | `attachments --save` | `GET /v1/taskboard/tasks/{id}/attachments/{aid}` (the bytes; `?format=json` → base64 `data`) |
 | `detach` | `DELETE /v1/taskboard/tasks/{id}/attachments/{aid}` → the task |
+| `drawing-board export --attach-to` | `POST /v1/taskboard/tasks/{id}/drawings {"board","elements"?,"region"?,"scale"?,"name"?,"comment"?,"replace"?}` → `{id, group, attachment, replaced?, comment?}` |
 
 `add --attach`, `ask --attach` and a move to another node with files send
 their usual JSON as the `task` part of a multipart request, with one `file`

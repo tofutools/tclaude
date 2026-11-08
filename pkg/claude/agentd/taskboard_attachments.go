@@ -319,6 +319,8 @@ type taskboardAttachmentView struct {
 	Video       bool   `json:"video,omitempty"`
 	AddedBy     string `json:"added_by"`
 	AddedAt     string `json:"added_at"`
+	// Drawing is a drawing-board export's reference back to its board.
+	Drawing *taskboardDrawingRef `json:"drawing,omitempty"`
 }
 
 func taskboardAttachmentViews(atts []db.GroupTaskAttachment) []taskboardAttachmentView {
@@ -326,6 +328,9 @@ func taskboardAttachmentViews(atts []db.GroupTaskAttachment) []taskboardAttachme
 	for _, a := range atts {
 		v := taskboardAttachmentView{ID: a.ID, Name: a.Name, Size: a.SizeBytes, ContentType: a.ContentType,
 			SHA256: a.SHA256, Image: strings.HasPrefix(a.ContentType, "image/"), AddedBy: a.AddedBy, AddedAt: rfc3339(a.AddedAt)}
+		if d, ok := drawingRefOf(a); ok {
+			v.Drawing = &d
+		}
 		// A blob is content-addressed and never rewritten, so the probes'
 		// caches, keyed by its path, hold for every later snapshot.
 		if path, err := taskBlobPath(a.SHA256); err == nil {

@@ -63,6 +63,7 @@ tclaude agent drawing-board snapshot plan --region 3 -o chg.png  # the change a 
 tclaude agent drawing-board export plan -o plan.png              # render it now (no dashboard needed); .svg for SVG
 tclaude agent drawing-board export plan --elements api,db -o part.png  # just those, their text and the lines between
 tclaude agent drawing-board export plan --region 0,0,400,300 -o area.png  # what meets the box, cropped to it
+tclaude agent drawing-board export plan --attach-to tk_4f0a [--comment "…"]  # put it on a task as a PNG; the same part again updates it
 ```
 
 Remember the version `show` prints and pass it as `--since` next time.
