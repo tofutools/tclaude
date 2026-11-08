@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -84,7 +85,7 @@ test('Preview renders what readers will see, task lists included', async (t) => 
   const mounted = await harness.mount(harness.html`<${Host} />`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-md-mode="preview"]'), 'click'));
   await settle(harness);
-  const preview = mounted.container.querySelector('.md-ed-preview');
+  const preview = mounted.container.querySelector('.md-ed-view');
   assert.ok(preview, 'the preview shows');
   assert.equal(mounted.container.querySelector('.md-ed-edit').hidden, true, 'and the text is hidden behind it');
   assert.equal(preview.querySelector('h2')?.textContent, 'Scope');
@@ -92,7 +93,31 @@ test('Preview renders what readers will see, task lists included', async (t) => 
   assert.deepEqual(boxes.map((box) => box.hasAttribute('checked')), [true, false]);
   assert.ok(boxes.every((box) => box.hasAttribute('disabled')), 'a rendered task box cannot be ticked');
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-md-mode="split"]'), 'click'));
-  assert.ok(mounted.container.querySelector('.md-ed-preview') && !mounted.container.querySelector('.md-ed-edit').hidden, 'Split shows both');
+  assert.ok(mounted.container.querySelector('.md-ed-view') && !mounted.container.querySelector('.md-ed-edit').hidden, 'Split shows both');
+  await mounted.unmount();
+});
+
+// tk_b6c22fcc: the root's mode class (md-ed-preview) once named the preview
+// pane too, so Preview gave the whole box the pane's flex: 1 1 0 and
+// min-height: 0 and it collapsed to a few pixels. The box keeps its height
+// (and its resize grip its hold) only while no mode class is also a part's.
+test('Preview keeps the Write height: the box never takes a pane\'s class', async (t) => {
+  const { harness, MarkdownEditor } = await setup(t);
+  const { Host } = controlled(harness, MarkdownEditor, {}, '## Scope');
+  const mounted = await harness.mount(harness.html`<${Host} />`);
+  const root = mounted.container.querySelector('.md-ed');
+  const css = readFileSync(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  for (const mode of ['write', 'preview', 'split']) {
+    await harness.act(() => harness.fireEvent(mounted.container.querySelector(`[data-md-mode="${mode}"]`), 'click'));
+    await settle(harness);
+    assert.ok(root.classList.contains(`md-ed-${mode}`), mode);
+    const inner = new Set([...root.querySelectorAll('[class]')].flatMap((el) => [...el.classList]));
+    const shared = [...root.classList].filter((name) => inner.has(name));
+    assert.deepEqual(shared, [], `in ${mode} the box shares no class with its parts`);
+    // Nor does a rule for the mode class alone size the box.
+    const own = new RegExp(`(^|[},])\\s*\\.md-ed-${mode}\\s*[,{]`, 'm');
+    assert.equal(own.test(css), false, `no rule sizes .md-ed-${mode} by itself`);
+  }
   await mounted.unmount();
 });
 

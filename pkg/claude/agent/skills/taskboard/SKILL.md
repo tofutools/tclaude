@@ -153,6 +153,30 @@ tclaude agent taskboard archive <group> --done [--dropped] [--older-than 7d]   #
 tclaude agent taskboard move-to-group tk_… <other-group>[@<peer>] [--clone] [--stage next]   # @peer: created there, then dropped here
 ```
 
+### Briefs and comments are Markdown
+
+A brief (`--body` / `--body-file`), a comment, and an `ask-operator --body`
+render as Markdown wherever the board shows them: headings, bold and italic,
+lists, task lists (`- [ ]`, `- [x]`), quotes, code spans and blocks, tables
+and links. A file you `--attach` to the task (or to the comment) shows
+inline where you write `![name](file.png)`, by its name. Write a brief so it
+scans on the card:
+
+```markdown
+## Goal
+The lane tint reads as *yours* at a glance.
+
+## Done when
+- [ ] amber tint on the operator's lane
+- [ ] screenshot in the PR
+
+![mock](mock.png)
+```
+
+```bash
+tclaude agent taskboard add <group> "Tint the operator's lane" --body-file brief.md --attach mock.png
+```
+
 With `taskboard.write`, new tasks land unassigned in the ideas unless you pass
 `--next` (or `--mine` / `--assignee`). Keep the board short.
 When something will not happen soon, make sure the tracker has it, then

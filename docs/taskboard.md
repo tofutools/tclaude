@@ -285,6 +285,12 @@ last edited by, assigned to, and the comment count.
   `taken`, `released`, `reported`, `regrouped`, `cloned`, `imported`,
   `archived`) also names itself as `action`. A failed or no-op operation
   records nothing, and every entry names its actor.
+- **Markdown.** A brief, a comment and a question's body are Markdown,
+  shown rendered wherever the board shows them (the card, the edit form, the
+  activity): headings, emphasis, lists and task lists,
+  quotes, code, tables and links. `![name](file.png)` shows one of the
+  task's (or the comment's) files inline, by its name, so a file added with
+  `--attach` can illustrate the brief.
 - **Comments** are Markdown, up to 16 KiB, from agents and the operator. A
   comment may carry up to 10 files, as a task's own may. They belong to the
   comment, not the task's own list, and `comment ls --save <dir>` writes them

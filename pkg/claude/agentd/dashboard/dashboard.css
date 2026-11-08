@@ -19145,9 +19145,9 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .md-ed-help dd { margin: 0; color: var(--ui-muted, #7d8590); }
 .md-ed-help p { margin: 6px 0 0; color: var(--ui-muted, #7d8590); }
 .md-ed-panes { flex: 1; min-height: 0; display: flex; }
-.md-ed-edit, .md-ed-preview { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.md-ed-edit, .md-ed-view { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .md-ed-split .md-ed-edit { border-right: 1px solid var(--ui-line, #2a3340); }
-.md-ed-preview { overflow: auto; padding: 8px 14px; }
+.md-ed-view { overflow: auto; padding: 8px 14px; }
 .md-ed .md-ed-textarea {
   flex: 1; width: 100%; min-height: 0; box-sizing: border-box; resize: none; border: 0; border-radius: 0; background: transparent;
   font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px 10px;
