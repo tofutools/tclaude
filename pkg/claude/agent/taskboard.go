@@ -216,7 +216,7 @@ type taskboardLsParams struct {
 	All   bool   `long:"all" help:"Also list done and dropped tasks not yet archived"`
 	// Archived lists the archive instead (archive, archive --done, the sweep).
 	Archived bool `long:"archived" help:"List only the archived tasks, most recently closed first (unarchive or reopen brings one back)"`
-	Mine  bool   `long:"mine" help:"Only the live tasks assigned to you, in every group"`
+	Mine     bool `long:"mine" help:"Only the live tasks assigned to you, in every group"`
 	// Summary is the dashboard's counts for every board you can read, one
 	// line per group (GET /v1/taskboard/context).
 	Summary bool   `long:"summary" help:"Counts for every group board you can read, one line per group"`
@@ -1899,9 +1899,9 @@ type taskboardArchiveParams struct {
 	Reason    string `long:"reason" optional:"true" help:"Why; a live task is dropped with it on the way"`
 	Done      bool   `long:"done" help:"Archive the group's done tasks (needs taskboard.write); dropped and live tasks stay"`
 	OlderThan string `long:"older-than" optional:"true" help:"With --done: only the tasks closed longer ago than this age, such as 1d, 7d or 36h"`
-	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write)"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardArchiveCmd() *cobra.Command {
