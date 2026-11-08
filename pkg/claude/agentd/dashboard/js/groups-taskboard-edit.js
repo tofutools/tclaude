@@ -35,7 +35,7 @@ import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
 import { DepsPicker } from './groups-taskboard-deps.js';
 import { writeClipboard } from './insecure-origin.js';
 import { operatorOptionLabel } from './groups-taskboard-new.js';
-import { RefChip } from './groups-taskboard-card.js';
+import { OneRef, refKey, refsOf } from './groups-taskboard-card.js';
 import { AnswerWith, TaskQuestions, askerOf, taskQuestions } from './groups-taskboard-answer.js';
 
 import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
@@ -67,7 +67,8 @@ export function draftOf(task) {
   return {
     title: task.title || '',
     body: task.body || '',
-    ref: task.ref?.url || task.ref?.label || '',
+    refs: refsOf(task).map(refKey),
+    newRef: '',
     where: whereOf(task),
     reason: task.status === 'blocked' || task.status === 'dropped' ? task.block_reason || '' : '',
     to: task.assignee?.agent_id || '',
@@ -113,11 +114,8 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   // The brief is compared only once the task has been read in full (the
   // board's context leaves it out): never overwrite one the form has not seen.
   if (bodyKnown && draft.body.trim() !== (task.body || '').trim()) { change.body = draft.body.trim(); names.push('brief'); }
-  const ref = draft.ref.trim();
-  if (ref !== (task.ref?.url || task.ref?.label || '')) {
-    if (ref) { change.ref = ref; change.resolveRef = true; } else change.clearRef = true;
-    names.push('ref');
-  }
+  const refs = refsPlan(task, draft);
+  if (refs) { Object.assign(change, refs); names.push(refs.addRefs || refs.rmRefs ? 'refs' : 'ref'); }
   const before = task.depends_on || [];
   const addDeps = draft.deps.filter((id) => !before.includes(id));
   const rmDeps = before.filter((id) => !draft.deps.includes(id));
@@ -195,6 +193,42 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   return steps;
 }
 
+// draftRefs is the refs the draft ends with: its list, and the add box's
+// text as if Add was pressed.
+export function draftRefs(draft) {
+  const out = [];
+  for (const raw of [...draft.refs, draft.newRef || '']) {
+    const ref = String(raw).trim();
+    if (ref && !out.includes(ref)) out.push(ref);
+  }
+  return out;
+}
+
+// multiRefs is whether the task's node takes several refs: a node from
+// before that sends no `refs`, and would drop add_refs unsaid.
+export const multiRefs = (task) => Array.isArray(task?.refs);
+
+// refsPlan is the edit fields that take the task's refs to the draft's, or
+// null with no change: refs taken off (rm_refs) and new ones added
+// (add_refs, each linked through its tracker). A node with one ref per task
+// gets the first one through ref / clear_ref.
+export function refsPlan(task, draft) {
+  const before = refsOf(task).map(refKey);
+  const after = draftRefs(draft);
+  if (!multiRefs(task)) {
+    const ref = after[0] || '';
+    if (ref === (before[0] || '')) return null;
+    return ref ? { ref, resolveRef: true } : { clearRef: true };
+  }
+  const rmRefs = before.filter((key) => !after.includes(key));
+  const addRefs = after.filter((key) => !before.includes(key));
+  if (!rmRefs.length && !addRefs.length) return null;
+  const out = {};
+  if (rmRefs.length) out.rmRefs = rmRefs;
+  if (addRefs.length) { out.addRefs = addRefs; out.resolveRef = true; }
+  return out;
+}
+
 // runPlan runs the steps in order. A refusal does not stop the rest: each is
 // its own change. Resolves to { saved: [names], refused: [{ name, message }] }.
 export async function runPlan(api, steps) {
@@ -267,6 +301,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     }).catch(() => { if (live) setBrief({ state: 'failed', body: '' }); });
     return () => { live = false; };
   }, [task.id]);
+  const looked = useTrackerLookups(api, group?.name, task);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState([]);
@@ -370,10 +405,8 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       editorRef=${briefEditor} attachments=${briefFiles} onPickFiles=${(picked) => intake.add(picked).map((a) => a.name)}
       modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} saves`} />`,
       brief.state === 'failed' ? 'the brief could not be read, so Save leaves it as it is' : null)}
-    ${row('Ref', html`<span class="tb-edit-ref-line"><${Input} class="tb-edit-ref" aria-label="Ref" value=${draft.ref} disabled=${busy}
-      placeholder="URL, owner/repo#12, tcl-a1b2c3 or LIN-123" onInput=${(event) => set('ref')(event.currentTarget.value)} />
-      ${task.ref && draft.ref.trim() === start.ref && html`<${RefChip} task=${task} />`}</span>`,
-      draft.ref.trim() && draft.ref.trim() !== start.ref ? 'a bare awb or Linear id is linked through its tracker' : null)}
+    ${row('Refs', html`<${RefsField} task=${base} draft=${draft} busy=${busy} looked=${looked}
+      onChange=${(refs) => set('refs')(refs)} onNewRef=${set('newRef')} />`, refsHint(base, draft))}
     ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />
       ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
@@ -396,4 +429,90 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} onAnswer=${onAnswer} />`,
       'a comment is sent at once, not with Save')}
   <//>${answerDialog}<//>`;
+}
+
+// MAX_REFS is the most refs a task has (db.MaxGroupTaskRefs).
+export const MAX_REFS = 10;
+
+// useTrackerLookups reads each awb or Linear ref's issue once when the form
+// opens, as `ref-lookup` does (which also keeps it for the board's chips):
+// { [refKey]: { title, status } }. Only a human opening the form asks the
+// tracker; the board shows what the last lookup found.
+function useTrackerLookups(api, groupName, task) {
+  const [found, setFound] = useState({});
+  useEffect(() => {
+    if (!groupName || typeof api?.lookupRef !== 'function') return undefined;
+    let live = true;
+    for (const ref of refsOf(task)) {
+      if (ref.pr || (ref.kind !== 'awb' && ref.kind !== 'linear')) continue;
+      const key = refKey(ref);
+      api.lookupRef(groupName, ref.id || ref.label || ref.url).then((out) => {
+        if (!live || out?.note || !(out?.title || out?.status)) return;
+        setFound((current) => ({ ...current, [key]: { title: out.title || '', status: out.status || '' } }));
+      }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, [task.id]);
+  return found;
+}
+
+// refSub is a ref's kind and where it lives, under its title in the form.
+function refSub(ref) {
+  if (ref.pr) return `${/gitlab/i.test(ref.url || '') ? 'GitLab merge request' : 'GitHub pull request'}${repoOf(ref.url)}`;
+  switch (ref.kind) {
+    case 'awb': return 'awb issue';
+    case 'linear': return 'Linear issue';
+    case 'github': return `GitHub issue${repoOf(ref.url)}`;
+    default: return ref.url ? hostOf(ref.url) : ref.kind;
+  }
+}
+
+function repoOf(url) {
+  const m = /^https?:\/\/[^/]+\/(.+?)\/(?:-\/)?(?:pull|issues|merge_requests)\//.exec(url || '');
+  return m ? ` · ${m[1]}` : '';
+}
+
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return url; }
+}
+
+function refsHint(task, draft) {
+  const added = draftRefs(draft).filter((key) => !refsOf(task).map(refKey).includes(key));
+  if (!multiRefs(task) && draftRefs(draft).length > 1) return 'this board\'s node keeps one ref per task: only the first is saved';
+  if (added.length) return 'a bare awb or Linear id is linked through its tracker on Save';
+  return 'the first ref is the task\'s ref for --ref and the List; a PR shows its CI and review as on the agent rows';
+}
+
+// RefsField is the form's refs: one row per ref (its chip, its title, and
+// ✕ to take it off on Save) and a box to add one. A new ref is a row of its
+// text until Save links it.
+function RefsField({ task, draft, busy, looked, onChange, onNewRef }) {
+  const known = new Map(refsOf(task).map((ref) => [refKey(ref), ref]));
+  const full = draftRefs({ refs: draft.refs, newRef: '' }).length >= (multiRefs(task) ? MAX_REFS : 1);
+  const add = () => {
+    const ref = (draft.newRef || '').trim();
+    if (!ref || full) return;
+    if (!draft.refs.includes(ref)) onChange([...draft.refs, ref]);
+    onNewRef('');
+  };
+  return html`<div class="tb-edit-refs">
+    ${draft.refs.length > 0 && html`<ul class="tb-refs-list">${draft.refs.map((key) => {
+      const ref = known.get(key);
+      const seen = ref && looked[key];
+      const shown = seen ? { ...ref, tracker: { ...(ref.tracker || {}), ...seen } } : ref;
+      const title = shown ? (shown.pr?.title || shown.tracker?.title || '') : '';
+      return html`<li class="tb-ref-row" key=${key}>
+        <span class="tb-ref-row-chip">${shown ? html`<${OneRef} of=${shown} />` : html`<span class="tb-ref tb-ref-new">${key}</span>`}</span>
+        <span class="tb-ref-row-text"><span class="tb-ref-row-title" title=${title}>${shown ? title || key : 'added on Save'}</span>
+          ${shown && html`<span class="tb-ref-row-sub">${refSub(shown)}</span>`}</span>
+        <button type="button" class="tb-ref-rm" aria-label=${`Remove ${key}`} title="remove on Save" disabled=${busy}
+          onClick=${() => onChange(draft.refs.filter((k) => k !== key))}>✕</button>
+      </li>`;
+    })}</ul>`}
+    <span class="tb-ref-add"><${Input} class="tb-edit-ref" aria-label="Add a ref" value=${draft.newRef || ''} disabled=${busy || full}
+      placeholder=${full ? 'no more refs' : 'add a ref: URL, owner/repo#12, tcl-a1b2c3 or LIN-123'}
+      onInput=${(event) => onNewRef(event.currentTarget.value)}
+      onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); add(); } }} />
+      <${Button} size="sm" class="tb-ref-add-btn" disabled=${busy || full || !(draft.newRef || '').trim()} onClick=${add}>+ Add<//></span>
+  </div>`;
 }

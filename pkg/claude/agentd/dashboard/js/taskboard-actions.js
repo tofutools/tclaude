@@ -175,7 +175,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       return importBatches(group, 'lines', lines, stage);
     },
     // lookupRef says what a pasted ticket would be on the board, adding
-    // nothing: { kind, url, label, title, resolved, note }, its title from
+    // nothing: { kind, url, label, title, status, resolved, note }, its title from
     // the tracker as an import takes it (the id, and a note, when the lookup
     // did not resolve). The "from a tracker" form fills its title with it.
     lookupRef(group, ref) {
@@ -255,8 +255,12 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     },
     // resolveRef links a bare awb or Linear id through its tracker, as
     // create's does (`edit --resolve-ref`).
-    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps }) {
+    // addRefs and rmRefs add refs after the first and take refs off (by
+    // URL or label); a node from before tasks had several refs ignores them.
+    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs }) {
       const payload = {};
+      if (rmRefs?.length) payload.rm_refs = rmRefs;
+      if (addRefs?.length) payload.add_refs = addRefs;
       if (title !== undefined) payload.title = title;
       if (body !== undefined) payload.body = body;
       if (addDeps !== undefined) payload.add_deps = addDeps;
@@ -264,7 +268,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (clearRef) payload.clear_ref = true;
       else if (ref !== undefined) payload.ref = ref;
       if (!clearRef && refLabel !== undefined) payload.ref_label = refLabel;
-      if (resolveRef && !clearRef) payload.resolve_ref = true;
+      if (resolveRef && (!clearRef || addRefs?.length)) payload.resolve_ref = true;
       return call('PATCH', taskPath(id), payload);
     },
     // move places a task before or after another (crossing the Ideas band

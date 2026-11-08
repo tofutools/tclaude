@@ -29,7 +29,7 @@ test('the save plan writes only what changed, in an order the routes accept', as
   const names = (steps) => steps.map((s) => s.name);
   const open = task();
   assert.deepEqual(editPlan(open, draftOf(open)), [], 'an untouched form writes nothing');
-  assert.deepEqual(names(editPlan(open, { ...draftOf(open), title: 'Release 2.4 notes', ref: 'SHOP-1', deps: ['tk_00000002'] })),
+  assert.deepEqual(names(editPlan(open, { ...draftOf(open), title: 'Release 2.4 notes', newRef: 'SHOP-1', deps: ['tk_00000002'] })),
     ['title, ref, dependencies']);
 
   // Blocked, with its reason, and given to someone: assign while open, then block.
@@ -114,19 +114,70 @@ async function mountEdit(t, the, { api = fakeApi(), canAssign = true, canClose =
     save: () => click(dialog.querySelector('#taskboard-edit-save')) };
 }
 
-test('the ref shows as a link while unchanged; a new one is linked through its tracker on Save', async (t) => {
+test('a node with one ref per task: the ref is replaced through ref, linked through its tracker on Save', async (t) => {
   const the = task({ ref: { kind: 'awb', url: 'https://awb.example/#/issues/tcl-a1b2c3', label: 'tcl-a1b2c3' } });
-  const { harness, dialog, api, save } = await mountEdit(t, the);
-  const link = dialog.querySelector('.tb-edit-ref-line a.tb-ref');
+  const { harness, dialog, api, click, save } = await mountEdit(t, the);
+  const link = dialog.querySelector('.tb-ref-row a.tb-ref');
   assert.equal(link.getAttribute('href'), 'https://awb.example/#/issues/tcl-a1b2c3');
   assert.match(link.textContent, /tcl-a1b2c3/);
-  const input = dialog.querySelector('.tb-edit-ref');
-  assert.equal(input.value, 'https://awb.example/#/issues/tcl-a1b2c3', 'the URL is the ref');
-  input.value = 'LIN-12';
-  await harness.act(() => harness.fireEvent(input, 'input'));
-  assert.equal(dialog.querySelector('.tb-edit-ref-line .tb-ref'), null, 'a changed ref is not the old link');
+  assert.equal(dialog.querySelector('.tb-edit-ref').disabled, true, 'one ref is all such a node keeps');
+  await click(dialog.querySelector('.tb-ref-rm'));
+  assert.equal(dialog.querySelector('.tb-ref-row'), null, 'the ref is off');
+  await harness.input(dialog.querySelector('.tb-edit-ref'), 'LIN-12');
   await save();
   assert.deepEqual(api.calls.find(([verb]) => verb === 'edit'), ['edit', 'tk_00000001', { ref: 'LIN-12', resolveRef: true }]);
+});
+
+const prRef = { kind: 'url', url: 'https://github.com/acme/shop/pull/42', label: 'acme/shop#42',
+  pr: { number: 42, state: 'open', title: 'Ship the notes', checks: { total: 3, passed: 3, failed: 0, pending: 0, skipped: 0, state: 'passing' } } };
+const awbRef = { kind: 'awb', url: 'https://awb.example/#/issues/tcl-a1b2c3', label: 'tcl-a1b2c3', tracker: { title: 'Notes', status: 'open' } };
+
+test('several refs: each shows by its kind, an issue is looked up on open, and Save takes refs off and adds new ones', async (t) => {
+  const the = task({ ref: prRef, refs: [prRef, awbRef] });
+  const api = fakeApi();
+  api.lookupRef = async (group, ref) => { api.calls.push(['lookupRef', group, ref]); return { title: 'Release notes v2', status: 'In Progress' }; };
+  const { harness, dialog, click, save, flush } = await mountEdit(t, the, { api });
+  await flush();
+  const rows = [...dialog.querySelectorAll('.tb-ref-row')];
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].querySelector('.pr-chain'), 'a PR is the agent rows\' chain');
+  assert.match(rows[0].textContent, /#42/);
+  assert.match(rows[0].textContent, /Ship the notes/);
+  assert.match(rows[0].textContent, /GitHub pull request · acme\/shop/);
+  assert.deepEqual(api.calls.filter(([verb]) => verb === 'lookupRef'), [['lookupRef', 'crew', 'tcl-a1b2c3']], 'only the issue is looked up');
+  const status = rows[1].querySelector('.tb-ref-status');
+  assert.equal(status.textContent, 'In Progress', 'the lookup is newer than the board\'s');
+  assert.ok(status.classList.contains('st-progress'));
+  assert.match(rows[1].textContent, /Release notes v2/);
+
+  await click(rows[0].querySelector('.tb-ref-rm'));
+  const input = dialog.querySelector('.tb-edit-ref');
+  await harness.input(input, 'LIN-12');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.equal(input.value, '', 'Enter adds it to the list');
+  assert.match(dialog.querySelector('.tb-refs-list').textContent, /LIN-12.*added on Save/);
+  await save();
+  assert.deepEqual(api.calls.find(([verb]) => verb === 'edit'),
+    ['edit', 'tk_00000001', { rmRefs: ['https://github.com/acme/shop/pull/42'], addRefs: ['LIN-12'], resolveRef: true }]);
+});
+
+test('the board shows every ref by kind on a card and the first and +n in the List', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RefChip, trackerStatusClass } = await harness.importDashboardModule('js/groups-taskboard-card.js');
+  const the = task({ ref: prRef, refs: [prRef, awbRef, { kind: 'url', url: 'https://docs.example/x', label: 'docs.example' }] });
+  const root = await harness.mount(harness.html`<div><span id="card"><${RefChip} task=${the} /></span><span id="list"><${RefChip} task=${the} max=${1} /></span></div>`);
+  const card = harness.document.querySelector('#card');
+  assert.ok(card.querySelector('.pr-chain'));
+  assert.equal(card.querySelector('.tb-ref-issue .tb-ref-status').textContent, 'open');
+  assert.equal(card.querySelector('a.ui-tag.tb-ref').getAttribute('href'), 'https://docs.example/x');
+  const list = harness.document.querySelector('#list');
+  assert.ok(list.querySelector('.pr-chain'));
+  assert.equal(list.querySelector('.tb-refs-more').textContent, '+2');
+  assert.equal(list.querySelector('.tb-ref-issue'), null);
+  assert.ok(root);
+  assert.equal(trackerStatusClass('In Review'), 'st-review');
+  assert.equal(trackerStatusClass('Done'), 'st-done');
+  assert.equal(trackerStatusClass('Backlog'), '');
 });
 
 test('Where it is, the assignee and a file change land as their own writes', async (t) => {
