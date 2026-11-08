@@ -525,6 +525,10 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const resize = useColumnResize(group, relayout);
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useState({});
+  // landIn opens a full cell a task is dropped or added into: the task lands
+  // at its place in the order, which may be past the cap, and would vanish
+  // behind "+ n more".
+  const landIn = (key, list) => { if (list.length >= CELL_SHOWN && !open[key]) setOpen({ ...open, [key]: true }); };
   const cell = (lane, column) => {
     const key = `${lane.id}|${column.key}`;
     const list = cells.get(key) || [];
@@ -538,13 +542,14 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
-        onDrop=${actions ? (event) => void drag.dropCell(event, target) : undefined}>
+        onDrop=${actions ? (event) => { if (over) landIn(key, list); void drag.dropCell(event, target); } : undefined}>
       ${shown.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
         drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
         onEdit=${actions ? onEdit : null} />`)}
       ${capped && html`<${Button} size="sm" variant="link" class="tb-cell-more" aria-expanded=${open[key] ? 'true' : 'false'}
         onClick=${() => setOpen({ ...open, [key]: !open[key] })}>${open[key] ? 'Show fewer' : `+ ${list.length - shown.length} more`}<//>`}
-      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} onNewTask=${onNewTask} wizard=${wizard} group=${group} entry=${entry} />`}
+      ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
+        onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
   };
   const row = (lane) => html`<div key=${lane.id || 'unassigned'} class=${`tb-lane${lane.id === OPERATOR ? ' tb-lane-operator' : ''}`} data-lane-row=${lane.id || 'unassigned'}>
@@ -577,8 +582,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         const marker = order.over?.kind === 'head' && order.over.key === lg.key ? (order.over.after ? ' tb-order-after' : ' tb-order-before') : '';
         return [
           head && html`<div key=${`${lg.key}-head`} class=${`tb-lane-group${marker}`} data-lane-group=${lg.key} ...${movable ? order.headProps(lg) : {}}>
-            <span class="ui-eyebrow">${lg.label}</span>
-            <span class="tb-lane-sub">${lg.lanes.length} agent${lg.lanes.length === 1 ? '' : 's'}${lg.offline ? ' · offline' : ''}</span>
+            <span class="tb-lane-group-name"><span class="ui-eyebrow">${lg.label}</span>
+            <span class="tb-lane-sub">${lg.lanes.length} agent${lg.lanes.length === 1 ? '' : 's'}${lg.offline ? ' · offline' : ''}</span></span>
             ${lg.offline && html`<${Button} size="sm" variant="link" class="tb-lane-fold" aria-expanded=${folded ? 'false' : 'true'}
               onClick=${() => setUnfolded({ ...unfolded, [lg.key]: folded })}>${folded ? '▸ show offline lanes' : '▾ fold offline lanes'}<//>`}
           </div>`,
