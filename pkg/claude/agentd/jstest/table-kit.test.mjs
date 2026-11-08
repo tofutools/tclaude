@@ -65,3 +65,15 @@ test('nextSort cycles ascending, descending, then unsorted', async (t) => {
   assert.equal(nextSort({ col: 'a', dir: 'desc' }, 'a'), null);
   assert.deepEqual(nextSort({ col: 'a', dir: 'desc' }, 'b'), { col: 'b', dir: 'asc' });
 });
+
+test('ColGroup renders one classed col per column, as the task board wrote by hand', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { html } = harness;
+  const { ColGroup } = await harness.importDashboardModule('js/table-kit.js');
+  const keys = ['ctl', 'name', 'state', 'last', 'age', 'who', 'ref', 'deps'];
+  const old = html`<colgroup>${keys.map((key) => html`<col key=${key} class=${`ui-col-fit tb-col-${key}`} />`)}<col class="ui-col-rest tb-col-files" /></colgroup>`;
+  const cols = [...keys, 'files'].map((key) => ({ key }));
+  const now = html`<${ColGroup} cols=${cols} colClass=${(c) => `${c.key === 'files' ? 'ui-col-rest' : 'ui-col-fit'} tb-col-${c.key}`} />`;
+  const markup = async (vnode) => (await harness.mount(html`<table>${vnode}</table>`)).container.innerHTML;
+  assert.equal(await markup(now), await markup(old));
+});
