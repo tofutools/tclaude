@@ -35,4 +35,12 @@ func TestTaskboardRefsText(t *testing.T) {
 	assert.Contains(t, stderr.String(), "predates tasks with several refs")
 	assert.Equal(t, rcOK, refsKept(map[string]any{"add_refs": []string{"LIN-2"}}, task, &stderr))
 	assert.Equal(t, rcOK, refsKept(map[string]any{"title": "x"}, old, &stderr))
+	// A removal an older node ignored leaves its ref and sends no refs.
+	assert.Equal(t, rcInvalidArg, refsKept(map[string]any{"rm_refs": []string{"#2"}}, old, &stderr))
+
+	// Another node takes a ref linked on this node's awb server by its id.
+	ref, label := taskboardRef{Kind: "awb", URL: "http://localhost:7777/#/issues/tcl-a1b2c3", Label: "tcl-a1b2c3", Local: true, ID: "tcl-a1b2c3"}.transfer()
+	assert.Equal(t, [2]string{"awb:tcl-a1b2c3", ""}, [2]string{ref, label})
+	ref, label = refs[0].transfer()
+	assert.Equal(t, [2]string{"https://github.com/o/r/pull/7", "#7"}, [2]string{ref, label})
 }

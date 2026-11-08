@@ -213,8 +213,10 @@ func handleTaskboardImport(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	seen := map[string]string{}
 	for _, t := range live {
-		if k := taskboardRefKey(t.RefKind, t.RefURL, t.RefLabel); k != "" {
-			seen[k] = t.ID
+		for _, ref := range t.Refs() {
+			if k := taskboardRefKey(ref.Kind, ref.URL, ref.Label); k != "" {
+				seen[k] = t.ID
+			}
 		}
 	}
 	actor := taskboardActor(r)

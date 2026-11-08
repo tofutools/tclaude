@@ -217,8 +217,13 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     (the same link, issue or pull request however it is written).
     `edit --rm-ref` removes refs, each named by `#position` (`#2`), link or
     label. Removing the first ref makes the next one first.
-  - `edit --ref` replaces the first ref and keeps the rest. `--clear-ref`
-    removes them all. `--resolve-ref` links the added refs too.
+  - `edit --ref` replaces the first ref and keeps the rest; one the task
+    already has is not kept twice. `--clear-ref` removes them all.
+    `--resolve-ref` links the added refs too.
+  - Through the API, `clear_ref` (or `"ref":""`) removes only the first ref,
+    and the next one becomes first. So a form that shows one ref never drops
+    refs it does not show. `clear_refs` removes them all; `--clear-ref` sends
+    both.
   - `show` lists every ref; `ls` shows the first and how many more (`#12 +1`).
   - A GitHub pull request or GitLab merge request ref carries its status:
     state, title, CI and reviews, as the agent rows show them. It is read
@@ -226,7 +231,9 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     request to the forge. A pull request no agent shows has whatever the
     hover cards last read for it, and at least its number.
   - A linked node from before several refs keeps only the first: `add` and
-    `edit` with `--add-ref` on it fail, saying so.
+    `edit` with `--add-ref` or `--rm-ref` on it fail, saying so. A move to
+    such a node leaves the original where it is, with all its refs, and says so.
+    The dashboard's move does the same.
 - `ask` mails a member of the group a request in your own words. The member
   is told to turn it into tasks with `taskboard add`, to reply when it is
   done, and not to start the work. The request is inbox mail, never keys sent
@@ -1401,7 +1408,7 @@ those drags aren't accepted in the lanes.
 | `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`; `--stage <column>` sends `"stage":"<column slug or label>"`; `--add-ref` sends `"add_refs":[…]`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
-| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--clear-ref` sends `"clear_ref":true`) |
+| `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","add_refs","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |

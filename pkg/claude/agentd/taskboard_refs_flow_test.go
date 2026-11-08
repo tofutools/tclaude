@@ -104,10 +104,43 @@ func TestTaskboardTaskHasSeveralRefs(t *testing.T) {
 	require.Equal(t, http.StatusOK, act.Code)
 	assert.Contains(t, act.Body.String(), "refs")
 
-	// clear_ref takes them all off.
+	// The first ref set to one the task has already is not there twice.
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"add_refs": []string{"LIN-7", "https://example.com/a"}}, http.StatusOK)
+	assert.Equal(t, []string{"tcl-a1b2c3", "LIN-7", "example.com"}, refLabels(edited.Refs))
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"ref": "linear:LIN-7"}, http.StatusOK)
+	assert.Equal(t, []string{"LIN-7", "example.com"}, refLabels(edited.Refs))
+
+	// clear_ref, and ref "", take the first ref off, as a form showing one
+	// ref means it: the next one becomes first, none is lost unseen.
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"add_refs": []string{"tcl-a1b2c3"}}, http.StatusOK)
 	edited = h.refsTask(http.MethodPatch, path, map[string]any{"clear_ref": true}, http.StatusOK)
+	assert.Equal(t, []string{"example.com", "tcl-a1b2c3"}, refLabels(edited.Refs))
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"ref": ""}, http.StatusOK)
+	assert.Equal(t, []string{"tcl-a1b2c3"}, refLabels(edited.Refs))
+	require.NotNil(t, edited.Ref)
+	assert.Equal(t, "tcl-a1b2c3", edited.Ref.Label)
+
+	// clear_refs takes them all off.
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"add_refs": []string{"LIN-8"}}, http.StatusOK)
+	edited = h.refsTask(http.MethodPatch, path, map[string]any{"clear_refs": true}, http.StatusOK)
 	assert.Nil(t, edited.Ref)
 	assert.Empty(t, edited.Refs)
+}
+
+// An import leaves out a ticket a task already has as any of its refs.
+func TestTaskboardImportSeesEveryRef(t *testing.T) {
+	h := newTaskboardFlow(t)
+	h.f.HaveGroup("crew")
+	h.refsTask(http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "has it second", "ref": "LIN-1", "add_refs": []string{"https://example.com/z"}}, http.StatusCreated)
+	rec := h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"refs": []string{"https://example.com/z"}})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out struct {
+		Created int `json:"created"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 0, out.Created, "the ticket is on the board already: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "already on the board")
 }
 
 // A pull request ref shows what the agent rows show for it, read from the

@@ -1188,8 +1188,9 @@ func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 // resolve_ref looks a bare awb or Linear id up through its tracker proxy to
 // fill its link, as an add does: the new ref's (and add_refs'), or with no
 // ref given the task's own link-less one. ref and ref_label are the task's
-// first ref; clear_ref takes all its refs off; rm_refs takes refs off by
-// #position, link or label, and add_refs appends refs (tk_01ad0884).
+// first ref, and clear_ref takes it off (the next one becomes first);
+// clear_refs takes them all off; rm_refs takes refs off by #position, link
+// or label, and add_refs appends refs (tk_01ad0884).
 func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Title      *string  `json:"title"`
@@ -1197,6 +1198,7 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		Ref        *string  `json:"ref"`
 		RefLabel   *string  `json:"ref_label"`
 		ClearRef   bool     `json:"clear_ref"`
+		ClearRefs  bool     `json:"clear_refs"`
 		ResolveRef bool     `json:"resolve_ref"`
 		AddRefs    []string `json:"add_refs"`
 		RmRefs     []string `json:"rm_refs"`
@@ -1277,9 +1279,13 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 			}
 		}
 	}
-	if err == nil && (body.ClearRef || len(body.AddRefs) > 0 || len(body.RmRefs) > 0) {
+	// Every ref change is made on the whole list, so a first ref taken off
+	// (clear_ref, ref "") makes the next one first, and one set to a ref the
+	// task already has is not there twice.
+	if err == nil && (body.ClearRef || body.ClearRefs || body.Ref != nil || body.RefLabel != nil || body.ResolveRef ||
+		len(body.AddRefs) > 0 || len(body.RmRefs) > 0) {
 		list := editRefsOf(t, edit)
-		if body.ClearRef {
+		if body.ClearRefs {
 			list = nil
 		}
 		var add []db.GroupTaskRef
@@ -1287,7 +1293,7 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 			add, err = parseTaskRefs(r, body.AddRefs, body.ResolveRef)
 		}
 		if err == nil {
-			list, err = addTaskRefs(list, add)
+			list, err = addTaskRefs(nil, append(list, add...))
 		}
 		if err == nil {
 			setTaskRefs(&edit, list)

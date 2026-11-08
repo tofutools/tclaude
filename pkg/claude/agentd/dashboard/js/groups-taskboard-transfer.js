@@ -381,6 +381,14 @@ export function transferRef(ref) {
   return { ref: ref.url || ref.label || '', refLabel: ref.url ? (ref.label || '') : '' };
 }
 
+// transferRefs are all of a task's refs as another node takes them: the
+// first as ref and refLabel, the rest as addRefs (tk_01ad0884). A node from
+// before several refs sends only ref.
+export function transferRefs(task) {
+  const refs = task?.refs?.length ? task.refs : task?.ref ? [task.ref] : [];
+  return { ...transferRef(refs[0]), addRefs: refs.slice(1).map((r) => transferRef(r).ref).filter(Boolean), count: refs.length };
+}
+
 // runCrossTransfer asks, then moves or clones the task to group `to` on
 // node `node`: create there first, then drop the original here.
 export async function runCrossTransfer({ task, group, actions, to, node, nodeName, fromNodeName = '', stage, clone }) {
@@ -400,10 +408,18 @@ export async function runCrossTransfer({ task, group, actions, to, node, nodeNam
     // A move asks the drop's gates first: a refusal known up front never
     // leaves the task on both nodes.
     if (!clone) await api.movedAway(task.id, null, { check: true });
+    const { count, ...refs } = transferRefs(task);
     const created = await target.transferIn(to, {
-      title: task.title, body: task.body || '', ...transferRef(task.ref), stage, clone,
+      title: task.title, body: task.body || '', ...refs, stage, clone,
       origin: { node: fromNodeName, group: group.name, task: task.id },
     });
+    // A node from before several refs keeps only the first: the original
+    // stays, so its other refs are not lost.
+    if (refs.addRefs.length && (created?.refs?.length || 0) < count) {
+      warning = `${toNode}/${to} kept only the first ref of "${task.title}" (it predates tasks with several refs): `
+        + `it is there as ${created?.id || 'a new task'}, and the original stays here with all its refs.`;
+      return { created };
+    }
     if (clone) return { created };
     const away = { node: toNode, group: to, task: created?.id || '' };
     let last;

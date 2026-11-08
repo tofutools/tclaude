@@ -240,6 +240,23 @@ func (r taskboardRef) line() string {
 	return strings.Join(parts, " ")
 }
 
+// transfer is the ref as another node takes it: one linked on this node's
+// awb server goes as its id, which that node links on its own server; the
+// label goes with it when it is not the one the ref derives.
+func (r taskboardRef) transfer() (ref, label string) {
+	switch {
+	case r.Local && r.ID != "":
+		if r.Label != r.ID {
+			return "awb:" + r.ID, r.Label
+		}
+		return "awb:" + r.ID, ""
+	case r.URL != "":
+		return r.URL, r.Label
+	default:
+		return r.Label, ""
+	}
+}
+
 // refsKept checks that a write that added refs landed them: a node from
 // before several refs ignores add_refs and returns no refs.
 func refsKept(body any, t taskboardTask, stderr io.Writer) int {
@@ -247,8 +264,13 @@ func refsKept(body any, t taskboardTask, stderr io.Writer) int {
 	if !ok {
 		return rcOK
 	}
-	if add, _ := req["add_refs"].([]string); len(add) > 0 && len(t.Refs) == 0 {
-		fmt.Fprintf(stderr, "Error: the board's node kept no added ref: it predates tasks with several refs (task %s is written otherwise; its ref is the first only)\n", t.ID)
+	add, _ := req["add_refs"].([]string)
+	rm, _ := req["rm_refs"].([]string)
+	clearAll, _ := req["clear_refs"].(bool)
+	// A node that knows several refs sends refs whenever the task has one;
+	// one that sends only ref ignored the change.
+	if (len(add) > 0 || ((len(rm) > 0 || clearAll) && t.Ref != nil)) && len(t.Refs) == 0 {
+		fmt.Fprintf(stderr, "Error: the board's node did not take the ref change: it predates tasks with several refs (task %s is written otherwise; its ref is the first only)\n", t.ID)
 		return rcInvalidArg
 	}
 	return rcOK
@@ -1249,7 +1271,10 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 		req["ref_label"] = p.RefLabel
 	}
 	if p.ClearRef {
+		// clear_refs takes every ref off; clear_ref, the first, is what a
+		// node from before several refs knows.
 		req["clear_ref"] = true
+		req["clear_refs"] = true
 	}
 	if p.ResolveRef {
 		if p.ClearRef {
@@ -1436,19 +1461,20 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 	}
 	in := map[string]any{"title": t.Title, "body": t.Body, "stage": stage, "clone": p.Clone,
 		"origin": map[string]any{"group": t.Group, "task": t.ID}}
-	if t.Ref != nil {
-		switch {
-		case t.Ref.Local && t.Ref.ID != "":
-			// Linked on this node's awb server: the peer links the id on its own.
-			in["ref"] = "awb:" + t.Ref.ID
-			if t.Ref.Label != t.Ref.ID {
-				in["ref_label"] = t.Ref.Label
-			}
-		case t.Ref.URL != "":
-			in["ref"], in["ref_label"] = t.Ref.URL, t.Ref.Label
-		default:
-			in["ref"] = t.Ref.Label
+	refs := t.allRefs()
+	if len(refs) > 0 {
+		in["ref"], in["ref_label"] = refs[0].transfer()
+		if in["ref_label"] == "" {
+			delete(in, "ref_label")
 		}
+	}
+	var extra []string
+	for _, ref := range refs[min(1, len(refs)):] {
+		raw, _ := ref.transfer()
+		extra = append(extra, raw)
+	}
+	if len(extra) > 0 {
+		in["add_refs"] = extra
 	}
 	awayPath := taskboardPath(t.ID, "/moved-away")
 	if !p.Clone {
@@ -1486,6 +1512,13 @@ func runTaskboardMoveToPeer(p *taskboardMoveToGroupParams, group, peer string, a
 			fmt.Fprintln(stderr, "Nothing changed.")
 		}
 		return MapDaemonErrorToRC(err)
+	}
+	if len(extra) > 0 && len(created.Refs) < len(refs) {
+		// A node from before several refs keeps only the first: the task
+		// is there now, but dropping it here would lose the other refs.
+		fmt.Fprintf(stderr, "Error: %s on %s kept only %s's first ref: it predates tasks with several refs. The task is on %s as %s; %s stays here, with all its refs\n",
+			group, peer, t.ID, peer, created.ID, t.ID)
+		return rcInvalidArg
 	}
 	out := map[string]any{"task": t.ID, "created": created, "group": group, "peer": peer, "clone": p.Clone}
 	if p.Clone {
