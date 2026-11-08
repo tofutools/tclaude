@@ -157,7 +157,7 @@ type taskboardAskOperatorParams struct {
 	Question    string   `pos:"true" help:"The question, one line"`
 	Body        string   `long:"body" optional:"true" help:"Context for the operator (Markdown, up to 8 KiB)"`
 	BodyFile    string   `long:"body-file" optional:"true" help:"Read the context from this file ('-' for stdin)"`
-	Option      []string `long:"option" short:"o" optional:"true" help:"A choice: \"Label\" or \"Label: description\" (split at the first colon and space; repeat, 2 to 6). Without options the operator answers in words"`
+	Option      []string `long:"option" collection:"array" short:"o" optional:"true" help:"A choice: \"Label\" or \"Label: description\" (split at the first colon and space; repeat, 2 to 6). Without options the operator answers in words"`
 	OptionsFile string   `long:"options-file" optional:"true" help:"The options as JSON: [{\"label\",\"description\",\"preview\",\"key\"}…] (a preview is monospace text, up to 2 KiB); not with --option"`
 	Multi       bool     `long:"multi" help:"The operator may pick several options"`
 	Recommend   string   `long:"recommend" optional:"true" help:"The option you recommend: its number (from 1), key or label"`
@@ -165,7 +165,7 @@ type taskboardAskOperatorParams struct {
 	Blocks      string   `long:"blocks" optional:"true" help:"For a group: a task of the board (tk_…, typically yours) that waits on the new question task, blocked until it is answered"`
 	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail)"`
 	Idea        bool     `long:"idea" help:"For a group: put the question task in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
-	Attach      []string `long:"attach" optional:"true" help:"For a group: attach a file you can read to the new task (repeatable; at most 10, 4 MiB each)"`
+	Attach      []string `long:"attach" collection:"array" optional:"true" help:"For a group: attach a file you can read to the new task (repeatable; at most 10, 4 MiB each)"`
 	Peer        string   `long:"peer" optional:"true" help:"Ask the operator of a linked node, on its board, under the grants it gave this node"`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON        bool     `long:"json" help:"Output JSON"`

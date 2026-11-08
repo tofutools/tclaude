@@ -245,7 +245,7 @@ type taskboardCommentAddParams struct {
 	BodyFlag string   `long:"body" optional:"true" help:"The comment, as a flag (as agent message takes it)"`
 	Stdin    bool     `long:"stdin" help:"Read the comment from stdin (same as --file -)"`
 	Key      string   `long:"key" optional:"true" help:"An idempotency key: the same key and body again returns the first comment, not a second (default: a fresh one)"`
-	Attach   []string `long:"attach" optional:"true" help:"Files to add to the comment (at most 10, 4 MiB each)"`
+	Attach   []string `long:"attach" collection:"array" optional:"true" help:"Files to add to the comment (at most 10, 4 MiB each)"`
 	Peer     string   `long:"peer" optional:"true" help:"A task on a linked node's board, under the grants it gave this node (taskboard.write)"`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool     `long:"json" help:"Output JSON"`
