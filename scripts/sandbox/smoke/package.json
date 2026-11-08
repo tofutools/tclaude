@@ -1,0 +1,9 @@
+{
+  "name": "tclaude-sandbox-smoke",
+  "private": true,
+  "description": "Browser checks against the dashboard sandbox (scripts/sandbox/ui.sh). Uses the system Chrome (channel: 'chrome'), so no browser download is needed. Kept out of go.mod; run on demand only, never in default CI.",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
