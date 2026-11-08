@@ -31,7 +31,9 @@ test('shared form textareas keep flex-basis auto so the resize grip works', () =
     const flex = lastFlex(selector);
     assert.ok(flex, `${selector} sets flex`);
     const parts = flex.split(/\s+/);
-    // `flex: <n>` alone means basis 0%; three parts must end in auto.
-    assert.ok(parts.length === 3 && parts[2] === 'auto', `${selector} ends with flex: ${flex}, whose basis is not auto`);
+    // `flex: <n>` alone means basis 0%; `auto`, `none` or a three-part value
+    // ending in auto keep the grip's height as the basis.
+    const basisAuto = flex === 'auto' || flex === 'none' || (parts.length === 3 && parts[2] === 'auto');
+    assert.ok(basisAuto, `${selector} ends with flex: ${flex}, whose basis is not auto`);
   }
 });
