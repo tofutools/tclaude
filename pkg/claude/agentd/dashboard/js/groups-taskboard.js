@@ -198,7 +198,7 @@ function Who({ task, group, snapshot }) {
   const agent = task.assignee?.agent_id;
   const live = task.status === 'open' || task.status === 'blocked';
   if (!agent) {
-    return html`<span class="tb-who tb-who-unassigned">${live && html`<span class="tb-who-mark tb-marker-unassigned" aria-hidden="true">!</span>`}<span class="tb-unassigned">unassigned</span></span>`;
+    return html`<span class="tb-who">${live && html`<span class="tb-who-mark tb-marker-unassigned" aria-hidden="true">!</span>`}<span class="tb-unassigned">unassigned</span></span>`;
   }
   const operator = !!task.assignee?.operator;
   const name = operator ? operatorName(group) : task.assignee?.name || agentLabel(agent, group, snapshot);
