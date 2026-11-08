@@ -168,6 +168,9 @@ func renderDrawingBoardExport(w http.ResponseWriter, r *http.Request, id string,
 	case drawingBoardExportSlots <- struct{}{}:
 		defer func() { <-drawingBoardExportSlots }()
 	case <-r.Context().Done():
+		// Gone, or (a peer's export) out of time waiting for a slot.
+		writeError(w, http.StatusServiceUnavailable, "export_timeout",
+			"other exports are drawing; try again in a moment, or export a part of the drawing board")
 		return nil, 0, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), drawingBoardExportDeadline)

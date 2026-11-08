@@ -188,6 +188,9 @@ func fetchDrawingBoardExport(id, node string, req map[string]any) (data []byte, 
 	if err := DaemonRequest(http.MethodPost, path, req, &out, DaemonOpts{Timeout: 30 * time.Second, NoRetry: true}); err != nil {
 		return nil, "", "", err
 	}
+	if len(out.Data) == 0 {
+		return nil, "", "", fmt.Errorf("%s answered with no image", node)
+	}
 	return out.Data, strconv.FormatInt(out.Version, 10), strconv.Itoa(out.Elements), nil
 }
 
