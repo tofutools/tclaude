@@ -35,6 +35,7 @@ import { isWizardActive } from './slop.js';
 import { FusedSection } from './groups-processes.js';
 import { TaskboardLanes } from './groups-taskboard-lanes.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
+import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
@@ -671,13 +672,18 @@ function HistoryLine({ entry, open, onToggle, wizard, row = false }) {
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', onNewTask = null, onLayout = null }) {
-  const [history, setHistory] = useState(false);
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
+  // The List's Filter (ListFilter) hides task states; done and dropped are
+  // the history, which the history line's toggle shows or hides together.
+  const shows = (task) => !hidden.includes(taskRowState(task));
+  const history = !hidden.includes('done') || !hidden.includes('dropped');
+  const setHistory = (on) => onHidden(on ? hidden.filter((s) => s !== 'done' && s !== 'dropped') : [...new Set([...hidden, 'done', 'dropped'])]);
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const drag = useRowDrag(tasks, actions, group);
-  const queue = tasks.filter((task) => task.stage !== 'idea');
-  const ideas = tasks.filter((task) => task.stage === 'idea');
+  const queue = tasks.filter((task) => task.stage !== 'idea' && shows(task));
+  const ideas = tasks.filter((task) => task.stage === 'idea' && shows(task));
+  const filtered = tasks.length - queue.length - ideas.length;
   const more = (entry.counts?.live || 0) - tasks.length;
   const name = group.name;
   // ✎ opens the edit form; the row's ⋯ Block… and Drop… ask their reason
@@ -687,10 +693,10 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
   const onForm = (id, mode) => (mode === 'edit' ? setEditing(id) : setReasoning(mode ? { id, kind: mode } : null));
   const edited = editing && [...tasks, ...(entry.closed || [])].find((task) => task.id === editing);
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm };
-  const ideasBand = (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
+  const ideasBand = !hidden.includes('idea') && (ideas.length > 0 || (actions && queue.length > 0)) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
       onDragOver=${actions ? drag.overIdeas : undefined} onDrop=${actions ? drag.dropOnIdeas : undefined}><td colspan=${TABLE_COLS}>
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
-  const closed = history ? (entry.closed || []) : [];
+  const closed = (entry.closed || []).filter(shows);
   const historyLine = html`<${HistoryLine} entry=${entry} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
@@ -723,6 +729,8 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
       onEdit=${(id) => setEditing(id)} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
+    ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
+      <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(null)}>show all<//></div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
     ${(view === 'lanes' || !tasks.length) && historyLine}
     ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
@@ -732,6 +740,30 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
 }
 
 const VIEW_PREF = (group) => `tclaude.dash.groups.taskboard.view.${group}`;
+
+// LIST_STATES are the task states the List's Filter offers, in the order a
+// task goes through them; a state added later (in review, in CI) joins here.
+export const LIST_STATES = [
+  ['open', 'open', 'next in the queue'], ['queued', 'queued', 'waits on other tasks'], ['idea', 'ideas', 'captured, not yet in the queue'],
+  ['in-progress', 'in progress', 'an agent holds it'], ['waiting', 'waiting', 'the operator holds it: an agent waits on them'],
+  ['stalled', 'stalled', 'its agent went idle without reporting'], ['blocked', 'blocked', 'waits on something outside the board'],
+  ['done', 'done', 'finished this week'], ['dropped', 'dropped', 'dropped without being done'],
+];
+// The list hides what is closed unless asked, as before the Filter.
+export const LIST_HIDDEN_DEFAULT = ['done', 'dropped'];
+const LIST_HIDDEN_PREF = (group) => `tclaude.dash.groups.taskboard.list-hidden.${group}`;
+
+// listHidden reads the states the List hides, per group and viewer: the
+// default until a choice is made. It stores what is hidden, so a state added
+// later shows until hidden.
+export function listHidden(group) {
+  try {
+    const raw = dashPrefs.getItem(LIST_HIDDEN_PREF(group));
+    const list = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(list)) return list.filter((state) => LIST_STATES.some(([key]) => key === state));
+  } catch (_) { /* a malformed value reads as the default */ }
+  return [...LIST_HIDDEN_DEFAULT];
+}
 
 const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
 const LANES_BY = ['agent', 'role', 'subgroup'];
@@ -753,6 +785,13 @@ function useViewPrefs(group) {
   return {
     view: taskboardView(group),
     by: taskboardLanesBy(group),
+    listHidden: listHidden(group),
+    // null puts the default back.
+    setListHidden: (value) => {
+      if (value) dashPrefs.setItem(LIST_HIDDEN_PREF(group), JSON.stringify(value));
+      else dashPrefs.removeItem(LIST_HIDDEN_PREF(group));
+      bump((n) => n + 1);
+    },
     setView: (value) => set(VIEW_PREF(group), value),
     setBy: (value) => set(LANES_BY_PREF(group), value),
     // The lanes' own order (groups-taskboard-lanes-layout.js): whether one
@@ -774,6 +813,25 @@ function ViewSelector({ prefs }) {
     ${LANES_BY.map((by) => html`<${Button} key=${by} size="sm" pressed=${prefs.by === by} onClick=${() => prefs.setBy(by)}>${by}<//>`)}
   <//>${prefs.customOrder && html`<${Button} size="sm" variant="link" class="tb-lanes-reset" title="Put the lanes and their headings back in the default order"
     onClick=${prefs.resetOrder}>reset order<//>`}`}`;
+}
+
+// ListFilter is the List's Filter dropdown (view-menu.js, as the Groups
+// tab's view and the Collab panel's Filter): which task states the list
+// shows, with Reset. Its count is the states that differ from the default.
+function ListFilter({ group, prefs }) {
+  const [open, setOpen] = useState(false);
+  const hidden = prefs.listHidden;
+  const changes = LIST_STATES.filter(([key]) => hidden.includes(key) !== LIST_HIDDEN_DEFAULT.includes(key)).length;
+  const id = `tb-filter-${String(group).replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
+  return html`<${ViewMenu} open=${open} onOpenChange=${setOpen} label="Filter ▾" badge=${changes} buttonClass="tb-list-filter"
+      ids=${{ button: `${id}-btn`, menu: `${id}-menu`, badge: `${id}-badge` }} title="Choose which task states the list shows">
+    <${ViewMenuHeading}>State<//>
+    ${LIST_STATES.map(([key, text, title]) => html`<${ViewToggle} key=${key} id=${`${id}-${key}`} title=${title} checked=${!hidden.includes(key)}
+      onChange=${(on) => prefs.setListHidden(on ? hidden.filter((state) => state !== key) : [...hidden, key])}>${text}<//>`)}
+    <${ViewMenuSep} />
+    <button data-ui-exempt type="button" class="view-menu-reset" data-tb-filter-reset="" disabled=${changes === 0}
+      onClick=${() => prefs.setListHidden(null)}>Reset</button>
+  <//>`;
 }
 
 // TaskboardSection is the group card's Task board: folded, one line of
@@ -812,7 +870,8 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // the section (＋▾, then the view switch); folded, the ＋▾ rides the
   // section line.
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
-  const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} /></div>`;
+  const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
+    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} />`}</div>`;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
@@ -824,7 +883,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       importing=${importing} importInitial=${importInitial} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
-      onNewTask=${choose} onLayout=${prefs.refresh} />
+      hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;
 }
 

@@ -262,3 +262,61 @@ test('history drawn as its own table (no live tasks) is a bounded auto-width tab
   assert.ok(table.classList.contains('ui-table-auto'));
   assert.deepEqual([...table.querySelectorAll('colgroup col')].filter((c) => !c.classList.contains('ui-col-fit')).map((c) => c.className), ['ui-col-rest tb-col-files']);
 });
+
+test('the List\'s Filter shows done on demand and hides states, remembered per group', async (t) => {
+  const group = crew('tb-filter');
+  const harness = await createPreactHarness(t);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const { container } = await mountSection(harness, { group, context: { groups: [board('tb-filter')] } });
+  const section = container.querySelector('[data-fused-taskboard="tb-filter"]');
+  const titles = () => [...section.querySelectorAll('tr.tb-row .tb-title')].map((n) => n.textContent);
+  const button = section.querySelector('.tb-toolbar .tb-list-filter');
+  assert.ok(button, 'the List has a Filter in its toolbar');
+  assert.match(button.textContent, /Filter/);
+  const badge = () => section.querySelector('#tb-filter-tb-filter-badge');
+  assert.equal(badge().hidden, true, 'the default: no count');
+  await harness.act(() => harness.fireEvent(button, 'click'));
+  const box = (state) => section.querySelector(`#tb-filter-tb-filter-${state}`);
+  const ticked = (state) => box(state).hasAttribute('checked');
+  const toggle = async (state) => {
+    box(state).checked = !ticked(state);
+    await harness.act(() => harness.fireEvent(box(state), 'change'));
+  };
+  assert.equal(ticked('done'), false, 'done is hidden by default, as before');
+  assert.equal(ticked('open'), true);
+  assert.equal(section.querySelector('.tb-closed'), null);
+
+  await toggle('done');
+  assert.deepEqual([...section.querySelectorAll('.tb-closed .tb-title')].map((n) => n.textContent), ['Docs first draft'], 'show done');
+  assert.equal(section.querySelector('.tb-history-toggle').getAttribute('aria-expanded'), 'true', 'the history line follows');
+  assert.equal(badge().textContent, '1');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.list-hidden.tb-filter')), ['dropped'], 'remembered per group');
+
+  await toggle('idea');
+  await toggle('blocked');
+  assert.deepEqual(titles(), ['Steward input row', 'Engine: dynamic nodes', 'Wait-for-work node', 'Docs first draft']);
+  assert.equal(section.querySelector('tr.tb-ideas-divider'), null, 'no Ideas band while ideas are hidden');
+  assert.equal(section.querySelector('[data-tb-filtered]').dataset.tbFiltered, '2', 'the list says what the filter hides');
+  assert.equal(badge().textContent, '3');
+
+  await harness.act(() => harness.fireEvent(section.querySelector('[data-tb-filter-reset]'), 'click'));
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.taskboard.list-hidden.tb-filter'), null, 'Reset puts the default back');
+  assert.equal(titles().length, 5);
+  assert.equal(section.querySelector('.tb-closed'), null);
+  assert.equal(badge().hidden, true);
+});
+
+test('the history line\'s toggle shows and hides done and dropped in the Filter', async (t) => {
+  const group = crew('tb-filter-history');
+  const harness = await createPreactHarness(t);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.list-hidden.tb-filter-history', JSON.stringify(['done', 'dropped', 'idea', 'bogus']));
+  const { container } = await mountSection(harness, { group, context: { groups: [board('tb-filter-history')] } });
+  const section = container.querySelector('[data-fused-taskboard="tb-filter-history"]');
+  assert.equal([...section.querySelectorAll('tr.tb-row')].some((r) => r.dataset.taskId === 'tk_00000005'), false, 'a stored hidden state holds');
+  await harness.act(() => harness.fireEvent(section.querySelector('.tb-history-toggle'), 'click'));
+  assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.list-hidden.tb-filter-history')), ['idea'],
+    'history opens done and dropped together; an unknown stored state is dropped');
+  await harness.act(() => harness.fireEvent(section.querySelector('.tb-history-toggle'), 'click'));
+  assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.list-hidden.tb-filter-history')), ['idea', 'done', 'dropped']);
+});

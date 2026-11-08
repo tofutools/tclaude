@@ -685,6 +685,15 @@ the **Quest board**), below its Agents and Resources sections.
   task shows its reason under its title. The *history* line counts the tasks
   done this week and the dropped ones. Click *history* to list the recently
   closed tasks in the same table.
+- **Filter ▾**, next to the view switch in the *List* view, picks which task
+  states the list shows: *open*, *queued*, *ideas*, *in progress*, *waiting*
+  (on you, the operator), *stalled*, *blocked*, *done* and *dropped*. By
+  default it hides *done* and *dropped*, as before. Tick *done* to see this week's
+  finished tasks in the list. The *history* toggle shows or hides *done* and
+  *dropped* together. The button counts how many states differ from the
+  default, and a line under the list says how many tasks the filter hides,
+  with *show all*. *Reset* puts the default back. The dashboard remembers the
+  filter per group, for you only.
 - The section opens on its own when something needs you. If you fold or open
   it yourself, the dashboard remembers that per group.
 
