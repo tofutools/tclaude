@@ -17,7 +17,9 @@ test('Export PNG and SVG ask the daemon for the selection, or the whole board, a
   const notes = [];
   const items = island.drawingBoardFileItems({ drawingBoardId: 'plan', selection: () => ['a', 'b'], fetchImpl, notify: (m) => notes.push(m) });
   const keys = items.filter((i) => i.key).map((i) => i.key);
-  assert.deepEqual(keys.slice(0, 3), ['export-png', 'export-svg', 'download'], 'the images lead the Export section');
+  assert.deepEqual(keys.slice(0, 4), ['export-png', 'export-svg', 'attach', 'download'], 'the images lead the Export section');
+  const peerKeys = island.drawingBoardFileItems({ drawingBoardId: 'plan', peer: true }).filter((i) => i.key).map((i) => i.key);
+  assert.deepEqual(peerKeys, ['export-png', 'export-svg', 'download'], "a peer's board attaches through its node, not from here");
   assert.match(items.find((i) => i.key === 'export-png').title, /2 selected elements/);
 
   const saved = [];

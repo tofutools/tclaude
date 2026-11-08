@@ -243,7 +243,7 @@ export async function exportDrawingBoardImage({ drawingBoardId, format, selectio
 // section: the board as an .excalidraw file, and as an image the daemon
 // draws (tk_413bdf5d), of the selection when there is one. elements() reads
 // the board as drawn now, selection() the selected ids.
-export function drawingBoardFileItems({ drawingBoardId, title = '', peer = false, elements = () => [], selection = () => [],
+export function drawingBoardFileItems({ drawingBoardId, title = '', group = '', peer = false, elements = () => [], selection = () => [],
   fetchImpl = globalThis.fetch, notify = () => {} }) {
   const picked = selection();
   const what = picked.length ? `the ${picked.length === 1 ? 'selected element' : `${picked.length} selected elements`}` : 'the whole drawing board';
@@ -254,6 +254,9 @@ export function drawingBoardFileItems({ drawingBoardId, title = '', peer = false
     { heading: 'Export' },
     image('png'),
     image('svg'),
+    // A peer's board attaches through its node (tk_8d5c1f6e), not from here.
+    ...(peer ? [] : [{ key: 'attach', label: 'Attach to a task…', title: `Attach ${what} to a task as a PNG, with a preview first`,
+      run: () => import('./drawing-board-attach-dialog.js').then((m) => m.askAttachDrawing({ drawingBoardId, title, group, selection: picked, fetchImpl, notify })) }]),
     { key: 'download', label: 'Download .excalidraw', title: 'Save the drawing board as an .excalidraw file, which excalidraw.com opens',
       run: () => import('./download.js').then((m) => m.downloadText(`${drawingBoardId}.excalidraw`, toExcalidraw(elements()))) },
     ...(peer ? [] : [
@@ -1881,7 +1884,7 @@ export function DrawingBoardEditor({
         onChanged=${(agentsLocked) => setMeta((m) => ({ ...m, agentsLocked }))} />
       <span class=${`drawing-board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>`}
       menus=${[
-        { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, peer, elements: () => drawnElements(elements.current),
+        { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, group: meta.group, peer, elements: () => drawnElements(elements.current),
           selection: () => selected.filter((id) => elements.current.get(id) && !elements.current.get(id).isDeleted), fetchImpl, notify }) },
         { key: 'view', label: 'View', items: () => [
           { key: 'fit', label: 'Zoom to fit', shortcut: '⇧1', disabled: !live.length, run: fitView },

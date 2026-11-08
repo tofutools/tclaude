@@ -134,4 +134,9 @@ func TestTaskboardDrawingsAttachAnExportWithItsBoard(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, op.Code, "an empty board has nothing to draw: %s", op.Body.String())
 	assert.Equal(t, http.StatusCreated, h.call("", http.MethodPost, drawings, map[string]any{"board": "arch"}).Code,
 		"the whole-board file now shows only db (replace above), so the whole board is a new file")
+
+	// The dashboard's own server serves the route too: the editor's File ›
+	// Export › Attach to a task… posts there.
+	rec = testharness.Serve(dash, dashReq(t, http.MethodPost, drawings, map[string]any{"board": "arch", "elements": []string{"api"}}))
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }

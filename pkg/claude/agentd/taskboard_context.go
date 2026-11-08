@@ -313,6 +313,8 @@ var dashboardTaskboardRoutes = []struct {
 	{"GET /v1/taskboard/tasks/{id}/attachments", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachments)},
 	{"GET /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAttachmentGet)},
 	{"DELETE /v1/taskboard/tasks/{id}/attachments/{aid}", handleTaskboardTask(taskboardOwnGate, handleTaskboardDetach)},
+	// A drawing board's File › Export › Attach to a task… (tk_413bdf5d).
+	{"POST /v1/taskboard/tasks/{id}/drawings", handleTaskboardTask(taskboardOwnGate, handleTaskboardDrawing)},
 }
 
 func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
