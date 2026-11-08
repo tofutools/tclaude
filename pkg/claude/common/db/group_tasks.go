@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -85,9 +86,12 @@ type GroupTask struct {
 	Status      string
 	Rank        string
 	BlockReason string
+	// RefKind, RefURL and RefLabel are the task's first ref; MoreRefs are
+	// the rest, in order (tk_01ad0884).
 	RefKind     string
 	RefURL      string
 	RefLabel    string
+	MoreRefs    []GroupTaskRef
 	AssigneeID  string
 	AssignedBy  string
 	AssignedAt  time.Time
@@ -114,6 +118,50 @@ type GroupTask struct {
 	OperatorRequest string
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
+}
+
+// GroupTaskRef is one of a task's external refs: what it is (awb, linear,
+// github, gitlab, url), its link and its shown label.
+type GroupTaskRef struct {
+	Kind  string `json:"kind"`
+	URL   string `json:"url,omitempty"`
+	Label string `json:"label,omitempty"`
+}
+
+// MaxGroupTaskRefs is how many refs a task may have.
+const MaxGroupTaskRefs = 10
+
+// Refs are all of the task's refs, the first one first; none without one.
+func (t *GroupTask) Refs() []GroupTaskRef {
+	var out []GroupTaskRef
+	if t.RefKind != "" || t.RefURL != "" || t.RefLabel != "" {
+		out = append(out, GroupTaskRef{Kind: t.RefKind, URL: t.RefURL, Label: t.RefLabel})
+	}
+	return append(out, t.MoreRefs...)
+}
+
+// encodeMoreRefs is more_refs as stored: empty for none.
+func encodeMoreRefs(refs []GroupTaskRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(refs)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// decodeMoreRefs reads more_refs; a value it cannot read is no refs.
+func decodeMoreRefs(raw string) []GroupTaskRef {
+	if raw == "" {
+		return nil
+	}
+	var refs []GroupTaskRef
+	if json.Unmarshal([]byte(raw), &refs) != nil {
+		return nil
+	}
+	return refs
 }
 
 // Started reports whether the task is assigned and started: in progress.
@@ -148,16 +196,19 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at, column_slug, operator_request`
+	started_at, column_slug, operator_request, more_refs`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
 	var assigned, created, updated, closed, archived, started dbTimestamp
+	var moreRefs string
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
-		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest); err != nil {
+		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest,
+		&moreRefs); err != nil {
 		return nil, err
 	}
+	t.MoreRefs = decodeMoreRefs(moreRefs)
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
 	t.ClosedAt, t.ArchivedAt, t.StartedAt = closed.Time(), archived.Time(), started.Time()
 	return &t, nil
@@ -192,13 +243,15 @@ type GroupTaskPosition struct {
 
 // NewGroupTask is a create.
 type NewGroupTask struct {
-	GroupID   int64
-	Title     string
-	Body      string
-	Stage     string
-	RefKind   string
-	RefURL    string
-	RefLabel  string
+	GroupID  int64
+	Title    string
+	Body     string
+	Stage    string
+	RefKind  string
+	RefURL   string
+	RefLabel string
+	// MoreRefs are the refs after the first (RefKind, RefURL, RefLabel).
+	MoreRefs  []GroupTaskRef
 	DependsOn []string
 	Position  GroupTaskPosition
 	Actor     string
@@ -519,9 +572,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	}
 	now := time.Now()
 	if _, err := tx.Exec(`INSERT INTO group_tasks (id, group_id, title, body, stage, status, rank, ref_kind, ref_url,
-			ref_label, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
-		id, in.GroupID, in.Title, in.Body, stage, rank, in.RefKind, in.RefURL, in.RefLabel, in.Actor,
+			ref_label, more_refs, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.GroupID, in.Title, in.Body, stage, rank, in.RefKind, in.RefURL, in.RefLabel, encodeMoreRefs(in.MoreRefs), in.Actor,
 		dbTime(now), dbTime(now)); err != nil {
 		return nil, err
 	}
@@ -545,6 +598,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	detail := "in " + firstNonEmptyString(columnLabel, stage)
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
+	}
+	for _, ref := range in.MoreRefs {
+		detail += ", ref " + firstNonEmptyString(ref.Label, ref.URL)
 	}
 	if in.Origin != "" {
 		detail += ", " + in.Origin
@@ -719,6 +775,8 @@ type GroupTaskEdit struct {
 	RefKind  *string
 	RefURL   *string
 	RefLabel *string
+	// MoreRefs, when set, replaces the refs after the first.
+	MoreRefs *[]GroupTaskRef
 	AddDeps  []string
 	RmDeps   []string
 	Actor    string
@@ -778,6 +836,16 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 		} {
 			if err := set(f.col, f.cur, f.v); err != nil {
 				return err
+			}
+		}
+		if e.MoreRefs != nil {
+			before, after := encodeMoreRefs(t.MoreRefs), encodeMoreRefs(*e.MoreRefs)
+			if before != after {
+				changed = append(changed, "refs")
+				changes = append(changes, GroupTaskChange{Field: "more_refs", Before: before, After: after})
+				if _, err := tx.Exec(`UPDATE group_tasks SET more_refs = ? WHERE id = ?`, after, id); err != nil {
+					return err
+				}
 			}
 		}
 		if len(e.AddDeps) > 0 || len(e.RmDeps) > 0 {

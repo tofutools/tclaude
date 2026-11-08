@@ -311,6 +311,9 @@ type taskboardRef struct {
 	// its own awb server.
 	Local bool   `json:"local,omitempty"`
 	ID    string `json:"id,omitempty"`
+	// PR is a GitHub pull request's or GitLab merge request's status, as
+	// the agent rows show it, from the same caches (taskboard_refs.go).
+	PR *taskboardRefPR `json:"pr,omitempty"`
 }
 
 type taskboardTaskView struct {
@@ -325,8 +328,11 @@ type taskboardTaskView struct {
 	// BlockedOn is the task a blocked task waits on (block --on, add
 	// --blocks): closing it as done reopens this one.
 	BlockedOn string        `json:"blocked_on,omitempty"`
-	Ref       *taskboardRef `json:"ref,omitempty"`
-	DependsOn []string      `json:"depends_on"`
+	Ref *taskboardRef `json:"ref,omitempty"`
+	// Refs are all of the task's refs, Ref first (tk_01ad0884); absent
+	// without one. A node from before sends only Ref.
+	Refs      []*taskboardRef `json:"refs,omitempty"`
+	DependsOn []string        `json:"depends_on"`
 	// Unmet lists the dependencies not yet done; an open task with any is
 	// queued.
 	Unmet  []string `json:"unmet,omitempty"`
@@ -485,17 +491,24 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		if v.DependsOn == nil {
 			v.DependsOn = []string{}
 		}
-		if t.RefKind != "" {
-			v.Ref = &taskboardRef{Kind: t.RefKind, URL: t.RefURL, Label: t.RefLabel}
+		for i, stored := range t.Refs() {
+			if stored.Kind == "" {
+				continue
+			}
+			ref := &taskboardRef{Kind: stored.Kind, URL: stored.URL, Label: stored.Label}
 			// An awb ref stored before refs were linked on write (its label
 			// the id) is linked as it is read, so every awb chip can be followed.
-			if v.Ref.Kind == "awb" {
+			if ref.Kind == "awb" {
 				if awbBase == nil {
 					b := awbBaseURL()
 					awbBase = &b
 				}
-				linkLocalAWBRef(v.Ref, *awbBase)
+				linkLocalAWBRef(ref, *awbBase)
 			}
+			if i == 0 {
+				v.Ref = ref
+			}
+			v.Refs = append(v.Refs, ref)
 		}
 		for _, dep := range t.DependsOn {
 			if s, ok := statuses[dep]; ok && s != db.GroupTaskDone {
@@ -539,6 +552,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		v.LastEditedByName, v.CreatedByName = actorName(a.LastEditedBy), actorName(t.CreatedBy)
 		out = append(out, v)
 	}
+	stampTaskRefPRs(out)
 	return out, nil
 }
 
@@ -910,6 +924,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// ResolveRef looks a bare awb or Linear id up, as the caller, to fill
 		// its link (`taskboard add --resolve-ref`).
 		ResolveRef bool `json:"resolve_ref"`
+		// AddRefs are the task's refs after ref, or all of them without
+		// one (tk_01ad0884).
+		AddRefs []string `json:"add_refs"`
 		// Refs and Lines make the request an import (taskboard_import.go):
 		// one task per ref or line, refused per item.
 		Refs  []string `json:"refs"`
@@ -959,7 +976,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		return
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
-		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.After) > 0 ||
+		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.AddRefs) > 0 || len(body.After) > 0 ||
 			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || body.Question != nil || len(files) > 0 {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
@@ -1113,13 +1130,18 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if body.ResolveRef {
 		refURL = resolveTaskboardRefLink(r, kind, refURL, refLabel)
 	}
+	kind, refURL, refLabel, moreRefs, err := withAddedTaskRefs(r, kind, refURL, refLabel, body.AddRefs, body.ResolveRef)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 	actor := taskboardActor(r)
 	atts, ok := storeTaskUploadsOrFail(w, files, actor)
 	if !ok {
 		return
 	}
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
-		RefKind: kind, RefURL: refURL, RefLabel: refLabel, DependsOn: deps, Position: pos, Actor: actor,
+		RefKind: kind, RefURL: refURL, RefLabel: refLabel, MoreRefs: moreRefs, DependsOn: deps, Position: pos, Actor: actor,
 		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts,
 		Question: body.Question, Column: column}
 	if blocks != nil {
@@ -1162,9 +1184,12 @@ func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 }
 
 // PATCH /v1/taskboard/tasks/{id} {title?, body?, ref?, ref_label?,
-// clear_ref?, resolve_ref?, add_deps?, rm_deps?} — resolve_ref looks a bare
-// awb or Linear id up through its tracker proxy to fill its link, as an add
-// does: the new ref's, or with no ref given the task's own link-less one.
+// clear_ref?, resolve_ref?, add_refs?, rm_refs?, add_deps?, rm_deps?} —
+// resolve_ref looks a bare awb or Linear id up through its tracker proxy to
+// fill its link, as an add does: the new ref's (and add_refs'), or with no
+// ref given the task's own link-less one. ref and ref_label are the task's
+// first ref; clear_ref takes all its refs off; rm_refs takes refs off by
+// #position, link or label, and add_refs appends refs (tk_01ad0884).
 func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Title      *string  `json:"title"`
@@ -1173,6 +1198,8 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		RefLabel   *string  `json:"ref_label"`
 		ClearRef   bool     `json:"clear_ref"`
 		ResolveRef bool     `json:"resolve_ref"`
+		AddRefs    []string `json:"add_refs"`
+		RmRefs     []string `json:"rm_refs"`
 		AddDeps    []string `json:"add_deps"`
 		RmDeps     []string `json:"rm_deps"`
 	}
@@ -1224,6 +1251,8 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 			}
 		case body.ResolveRef && body.RefLabel != nil:
 			err = errors.New("resolve_ref links a ref: give it with ref, or alone for the task's own")
+		case body.ResolveRef && len(body.AddRefs) > 0:
+			// It links the refs being added.
 		case body.ResolveRef:
 			// The task's own ref, linked now if it has no link yet: the id
 			// is its label (an awb or Linear ref stored without a link).
@@ -1246,6 +1275,22 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 				label := strings.TrimSpace(*body.RefLabel)
 				edit.RefLabel = &label
 			}
+		}
+	}
+	if err == nil && (body.ClearRef || len(body.AddRefs) > 0 || len(body.RmRefs) > 0) {
+		list := editRefsOf(t, edit)
+		if body.ClearRef {
+			list = nil
+		}
+		var add []db.GroupTaskRef
+		if list, err = removeTaskRefs(list, body.RmRefs); err == nil {
+			add, err = parseTaskRefs(r, body.AddRefs, body.ResolveRef)
+		}
+		if err == nil {
+			list, err = addTaskRefs(list, add)
+		}
+		if err == nil {
+			setTaskRefs(&edit, list)
 		}
 	}
 	if err == nil {

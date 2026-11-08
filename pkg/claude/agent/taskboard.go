@@ -152,24 +152,106 @@ type taskboardTask struct {
 	Failures      int                  `json:"failures,omitempty"`
 	Stalled       bool                 `json:"stalled,omitempty"`
 	IdleSince     string               `json:"idle_since,omitempty"`
-	Ref           *struct {
-		Kind  string `json:"kind"`
-		URL   string `json:"url,omitempty"`
-		Label string `json:"label,omitempty"`
-		Local bool   `json:"local,omitempty"`
-		ID    string `json:"id,omitempty"`
-	} `json:"ref,omitempty"`
+	Ref           *taskboardRef        `json:"ref,omitempty"`
+	// Refs are all of its refs, Ref first; a node from before several
+	// refs sends only Ref.
+	Refs        []taskboardRef        `json:"refs,omitempty"`
 	Attachments []taskboardAttachment `json:"attachments,omitempty"`
 }
 
+// taskboardRef is one of a task's refs; PR is a pull request's status as
+// the agent rows show it, from the board's node's caches.
+type taskboardRef struct {
+	Kind  string `json:"kind"`
+	URL   string `json:"url,omitempty"`
+	Label string `json:"label,omitempty"`
+	Local bool   `json:"local,omitempty"`
+	ID    string `json:"id,omitempty"`
+	PR    *struct {
+		Number int    `json:"number,omitempty"`
+		State  string `json:"state,omitempty"`
+		Title  string `json:"title,omitempty"`
+		Checks *struct {
+			Total   int    `json:"total"`
+			Passed  int    `json:"passed"`
+			Failed  int    `json:"failed"`
+			Pending int    `json:"pending"`
+			State   string `json:"state"`
+		} `json:"checks,omitempty"`
+		Reviews *struct {
+			Decision         string `json:"decision,omitempty"`
+			Approved         int    `json:"approved"`
+			ChangesRequested int    `json:"changes_requested"`
+		} `json:"reviews,omitempty"`
+	} `json:"pr,omitempty"`
+}
+
+// allRefs are the task's refs: Refs, or Ref alone from an older node.
+func (t taskboardTask) allRefs() []taskboardRef {
+	if len(t.Refs) > 0 {
+		return t.Refs
+	}
+	if t.Ref != nil {
+		return []taskboardRef{*t.Ref}
+	}
+	return nil
+}
+
+// refText is the List's ref: the first ref's label, and how many more.
 func (t taskboardTask) refText() string {
-	if t.Ref == nil {
+	refs := t.allRefs()
+	if len(refs) == 0 {
 		return ""
 	}
-	if t.Ref.Label != "" {
-		return t.Ref.Label
+	text := refs[0].Label
+	if text == "" {
+		text = refs[0].URL
 	}
-	return t.Ref.URL
+	if len(refs) > 1 {
+		text += fmt.Sprintf(" +%d", len(refs)-1)
+	}
+	return text
+}
+
+// line is a ref as show prints it: its kind, label and link, and a pull
+// request's state, CI and review as the board's node last saw them.
+func (r taskboardRef) line() string {
+	parts := nonEmpty(r.Kind, r.Label, r.URL)
+	if pr := r.PR; pr != nil {
+		var status []string
+		if pr.State != "" {
+			status = append(status, pr.State)
+		}
+		if c := pr.Checks; c != nil && c.Total > 0 {
+			status = append(status, fmt.Sprintf("CI %d/%d %s", c.Passed, c.Total, c.State))
+		}
+		if rv := pr.Reviews; rv != nil {
+			switch {
+			case rv.Decision != "":
+				status = append(status, strings.ReplaceAll(rv.Decision, "_", " "))
+			case rv.Approved > 0:
+				status = append(status, fmt.Sprintf("%d approved", rv.Approved))
+			}
+		}
+		if len(status) > 0 {
+			parts = append(parts, "("+strings.Join(status, " · ")+")")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// refsKept checks that a write that added refs landed them: a node from
+// before several refs ignores add_refs and returns no refs.
+func refsKept(body any, t taskboardTask, stderr io.Writer) int {
+	req, ok := body.(map[string]any)
+	if !ok {
+		return rcOK
+	}
+	if add, _ := req["add_refs"].([]string); len(add) > 0 && len(t.Refs) == 0 {
+		fmt.Fprintf(stderr, "Error: the board's node kept no added ref: it predates tasks with several refs (task %s is written otherwise; its ref is the first only)\n", t.ID)
+		return rcInvalidArg
+	}
+	return rcOK
 }
 
 func taskboardPath(id string, suffix string) string {
@@ -198,6 +280,9 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 	if err := remoteRequestOpts(peer, method, path, body, &t, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if rc := refsKept(body, t, stderr); rc != rcOK {
+		return rc
 	}
 	if asJSON {
 		return writeJSONTo(stdout, t)
@@ -633,8 +718,12 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if t.Stalled {
 		fmt.Fprintf(stdout, "  stalled: its assignee has been idle since %s without reporting\n", t.IdleSince)
 	}
-	if t.Ref != nil {
-		fmt.Fprintf(stdout, "  ref:     %s\n", strings.Join(nonEmpty(t.Ref.Kind, t.Ref.Label, t.Ref.URL), " "))
+	for i, ref := range t.allRefs() {
+		head := "  ref:     "
+		if i > 0 {
+			head = "           "
+		}
+		fmt.Fprintf(stdout, "%s%s\n", head, ref.line())
 	}
 	if a := t.assigneeText(); a != "" {
 		fmt.Fprintf(stdout, "  assigned: %s (by %s)\n", a, t.AssignedBy)
@@ -689,6 +778,8 @@ type taskboardAddParams struct {
 	BodyFile string `long:"body-file" optional:"true" help:"Read the brief from this file ('-' for stdin)"`
 	Ref      string `long:"ref" optional:"true" help:"External ref: an http(s) URL, owner/repo#n, or a tracker id (tcl-a1b2c3 for awb, LIN-123 for Linear; prefix awb: or linear: to say which)"`
 	RefLabel string `long:"ref-label" optional:"true" help:"Display label for the ref (default: derived)"`
+	// AddRef gives the task more refs than --ref (tk_01ad0884).
+	AddRef []string `long:"add-ref" collection:"array" optional:"true" help:"Another ref, after --ref (repeatable; a task has at most 10): a PR and its tracker issue, say"`
 	// ResolveRef is the dashboard's New task form's ref lookup.
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
 	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write); with --assignee or --mine, queued for them, not started"`
@@ -796,6 +887,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	req := map[string]any{"title": p.Title, "body": body, "ref": p.Ref, "ref_label": p.RefLabel,
 		"after": splitTaskIDs(p.After), "position": map[string]any{"top": p.Top, "before": p.Before}}
+	if len(p.AddRef) > 0 {
+		req["add_refs"] = p.AddRef
+	}
 	if p.Next && p.Idea {
 		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
 		return rcInvalidArg
@@ -856,6 +950,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if err := taskboardUploadFiles(p.Peer, path, req, p.Attach, &t, ask); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if rc := refsKept(req, t, stderr); rc != rcOK {
+		return rc
 	}
 	if p.JSON {
 		return writeJSONTo(stdout, t)
@@ -1010,10 +1107,10 @@ func readImportLines(file string, stdin io.Reader) ([]string, error) {
 }
 
 func runTaskboardImport(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	if p.Title != "" || p.Body != "" || p.BodyFile != "" || p.Ref != "" || p.RefLabel != "" || p.After != "" ||
+	if p.Title != "" || p.Body != "" || p.BodyFile != "" || p.Ref != "" || p.RefLabel != "" || len(p.AddRef) > 0 || p.After != "" ||
 		p.Top || p.Before != "" {
 		fmt.Fprintln(stderr, "Error: an import (--from-*, --lines-file) takes no title, --body, --body-file, --ref, "+
-			"--ref-label, --after, --top or --before; only --next")
+			"--ref-label, --add-ref, --after, --top or --before; only --next")
 		return rcInvalidArg
 	}
 	refs := importRefs(p.FromAWB, "awb:")
@@ -1094,9 +1191,12 @@ type taskboardEditParams struct {
 	Body      string `long:"body" optional:"true" help:"New brief"`
 	ClearBody bool   `long:"clear-body" help:"Remove the brief"`
 	BodyFile  string `long:"body-file" optional:"true" help:"Read the new brief from this file ('-' for stdin)"`
-	Ref       string `long:"ref" optional:"true" help:"New external ref (URL, owner/repo#n, or tracker id)"`
-	RefLabel  string `long:"ref-label" optional:"true" help:"New display label for the ref"`
-	ClearRef  bool   `long:"clear-ref" help:"Remove the ref"`
+	Ref       string `long:"ref" optional:"true" help:"New external ref (URL, owner/repo#n, or tracker id): replaces the task's first ref"`
+	RefLabel  string `long:"ref-label" optional:"true" help:"New display label for the first ref"`
+	ClearRef  bool   `long:"clear-ref" help:"Remove all of the task's refs"`
+	// AddRef and RmRef change the task's other refs (tk_01ad0884).
+	AddRef []string `long:"add-ref" collection:"array" optional:"true" help:"Add a ref after the task's others (repeatable; a task has at most 10)"`
+	RmRef  []string `long:"rm-ref" collection:"array" optional:"true" help:"Remove a ref, named by #position (#2), link or label (repeatable); removing the first makes the next one first"`
 	// ResolveRef is add's --resolve-ref, for a new ref or the task's own.
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear ref up through its tracker proxy to fill in its link: the new --ref, or without --ref the task's own link-less one"`
 	AddDep     string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
@@ -1157,6 +1257,12 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 			return rcInvalidArg
 		}
 		req["resolve_ref"] = true
+	}
+	if len(p.AddRef) > 0 {
+		req["add_refs"] = p.AddRef
+	}
+	if len(p.RmRef) > 0 {
+		req["rm_refs"] = p.RmRef
 	}
 	if deps := splitTaskIDs(p.AddDep); len(deps) > 0 {
 		req["add_deps"] = deps
