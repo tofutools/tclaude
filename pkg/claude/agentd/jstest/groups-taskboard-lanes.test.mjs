@@ -372,8 +372,8 @@ test('a cell + carries its start state into Ask an agent and the import', async 
   await harness.act(async () => { harness.fireEvent(cell('unassigned', 'next').querySelector('[data-taskboard-new-import]'), 'click'); });
   const form = harness.document.querySelector('#taskboard-tracker-modal');
   assert.ok(form, 'the tracker form opens');
-  const nextRadio = form.querySelector('input[name="tb-tracker-stage"][value="next"]');
-  assert.ok(nextRadio.checked || nextRadio.hasAttribute('checked'), 'a Next cell starts the ticket in the queue');
+  assert.equal(form.querySelector('[data-stage-pick="taskboard-tracker-stage"]').getAttribute('data-value'), 'next',
+    'a Next cell starts the ticket in the queue');
 });
 
 test('without the assign grant, agent lanes have no +', async (t) => {

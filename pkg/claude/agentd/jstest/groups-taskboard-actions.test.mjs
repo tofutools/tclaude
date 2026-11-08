@@ -470,3 +470,23 @@ test('a tracker ticket is added by its link, and a label never stands in for a b
   const live = [{ id: 'tk_1', title: 'x', status: 'open', ref: { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7' } }];
   assert.equal(sameRef(live, { kind: 'linear', label: 'LIN-7', url: 'https://linear.app/acme/issue/LIN-7/' })?.id, 'tk_1');
 });
+
+test('the tracker form\'s brief is the Markdown editor, and its text goes with the add', async (t) => {
+  const api = fakeApi();
+  api.create = async (...args) => { api.calls.push(['create', ...args]); return { id: 'tk_new' }; };
+  const { harness, c, click } = await mountBoard(t, 'tba-tracker-brief', { api });
+  await click(c.querySelector('[data-taskboard-new]'));
+  await click(c.querySelector('[data-taskboard-new-import]'));
+  const dialog = () => harness.document.querySelector('#taskboard-tracker-modal');
+  const brief = dialog().querySelector('.tb-tracker-body');
+  assert.ok(brief.matches('.md-ed'), 'the Brief is the Markdown editor');
+  await harness.input(dialog().querySelector('.tb-tracker-ref'), 'https://example.com/issues/7');
+  await harness.input(dialog().querySelector('.tb-tracker-title'), 'Fix the checkout');
+  await harness.input(brief.querySelector('textarea'), '## Why\n\n- **carts** vanish');
+  await click(dialog().querySelector('#taskboard-tracker-submit'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const create = api.calls.find((call) => call[0] === 'create');
+  assert.ok(create, 'one add');
+  assert.equal(create[2].body, '## Why\n\n- **carts** vanish');
+  assert.equal(create[2].stage, 'idea');
+});

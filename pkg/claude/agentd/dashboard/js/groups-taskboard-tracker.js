@@ -20,6 +20,8 @@ import { Button, Input, Seg, Select, Textarea } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { importRefs, isTrackerLine } from './taskboard-actions.js';
+import { MarkdownEditor, submitKeyLabel } from './markdown-editor.js';
+import { StagePicker } from './groups-taskboard-stage.js';
 
 const html = htm.bind(h);
 
@@ -139,6 +141,11 @@ function refHint(draft, lookup, existing) {
   }
 }
 
+const TRACKER_PLACES = [
+  { key: 'idea', label: 'Idea', wizard: 'Vision' },
+  { key: 'next', label: 'Next', wizard: 'Next' },
+];
+
 const EMPTY = { ref: '', title: '', label: '', body: '', start: 'idea' };
 
 // TrackerTaskDialog is the form. `initial` is a lanes cell's start state:
@@ -215,11 +222,9 @@ export function TrackerTaskDialog({ group, entry, api, wizard = false, initial =
   const row = (label, field, hint = null) => html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${label}</span>
     <span class="tb-new-field">${field}${hint && html`<span class="ui-hint tb-new-hint">${hint}</span>`}</span></div>`;
   const enter = (event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void submit(); } };
-  const startPick = html`<span class="tb-new-stage" role="radiogroup" aria-label="Starts in">
-    ${[['idea', wizard ? 'Vision' : 'Idea'], ['next', 'Next']].map(([key, label]) => html`<label key=${key} class="tb-new-stage-opt">
-      <input type="radio" name="tb-tracker-stage" value=${key} checked=${draft.start === key} disabled=${busy} onChange=${() => set('start')(key)} />
-      <span>${label}</span></label>`)}
-  </span>`;
+  // An import lands in Ideas or Next only, so the picker offers those two.
+  const startPick = html`<${StagePicker} id="taskboard-tracker-stage" value=${draft.start} onChange=${(key) => set('start')(key || 'idea')}
+    places=${TRACKER_PLACES} wizard=${wizard} disabled=${busy} ariaLabel="Starts in" />`;
   const plan = mode === 'one' ? trackerTaskPlan(draft) : null;
   const cli = mode === 'one'
     ? plan.kind === 'add' ? `tclaude agent taskboard add ${group.name} "…" --ref … --resolve-ref` : `tclaude agent taskboard add ${group.name} --from-… <id>`
@@ -252,8 +257,9 @@ export function TrackerTaskDialog({ group, entry, api, wizard = false, initial =
       ${row('Label', html`<${Input} class="tb-tracker-label" aria-label="Label" maxLength=${80} value=${draft.label} disabled=${busy || unlinked}
         placeholder=${unlinked ? `none: with no link, the ref shows as its id “${found.label}”` : found?.label ? `optional; shown instead of “${found.label}”` : 'optional: the name the ref shows as'}
         onInput=${(event) => set('label')(event.currentTarget.value)} onKeyDown=${enter} />`)}
-      ${row('Brief', html`<${Textarea} class="tb-tracker-body" rows="4" aria-label="Brief" value=${draft.body} disabled=${busy}
-        placeholder="optional: what the assignee needs to know beyond the ticket" onInput=${(event) => set('body')(event.currentTarget.value)} />`)}`
+      ${row('Brief', html`<${MarkdownEditor} class="tb-tracker-body" label="Brief" value=${draft.body} disabled=${busy}
+        placeholder="optional: what the assignee needs to know beyond the ticket (Markdown)" onInput=${set('body')}
+        modeKey="tclaude.dash.mdEditor.brief" hint=${`${submitKeyLabel()} adds`} />`)}`
     : html`
       ${row('Tracker', html`<${Select} class="tb-tracker-kind" aria-label="Tracker" value=${kind} disabled=${busy} onChange=${(event) => setKind(event.currentTarget.value)}>
         <option value="awb">awb</option><option value="linear">Linear</option><option value="github">GitHub</option>

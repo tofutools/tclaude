@@ -980,7 +980,8 @@ a CLI verb:
   - *From a tracker…* opens a form for a ticket. Paste its full URL (awb,
     Linear, GitHub…) first; the title is looked up through the tracker and
     stays yours to change. A label for the link (the text the Task column
-    would show) and a brief are optional, and *Starts in* picks Idea or Next.
+    would show) and a brief (Markdown, in the same editor as the other forms) are
+    optional, and *Starts in* picks Idea or Next in the stage picker.
     *Several ids* switches the form to the bulk import: one task per tracker
     id.
 - **✎ *Edit*** on a row, or a click on a task's title (in the list or on a
