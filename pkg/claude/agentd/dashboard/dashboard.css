@@ -18328,8 +18328,10 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-fleet-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; }
 .usage-fleet-tab .usage-rule-card .usage-fleet-members { margin-top: 6px; }
 .usage-fleet-nodes-wrap { overflow-x: auto; }
+/* Hidden by class, not position: an unshared node's row spans these columns
+   with its "shares no usage" note, and its grant chips follow at column 3. */
 @media (max-width: 640px) {
-  .usage-fleet-nodes th:nth-child(2), .usage-fleet-nodes td:nth-child(2), .usage-fleet-nodes th:nth-child(3), .usage-fleet-nodes td:nth-child(3) { display: none; }
+  .usage-fleet-nodes .usage-fleet-wide { display: none; }
 }
 .usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select:where(:not(.ui-select)) {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;

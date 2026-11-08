@@ -16,6 +16,7 @@ import { Dialog, DialogClose } from './ui-dialog.js';
 import { openTerminalPane } from './terminals-tab.js';
 import { remoteShellPath, remoteTerminalPath } from './terminals-core.js';
 import { shellToast } from './shell-state.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 const SESSIONS_TTL_MS = 10000;
@@ -130,7 +131,7 @@ export async function openRemoteShell({ instance, group, shell, agent = '', peer
 
 // RemoteSessionsDialog lists a peer's sessions (the map's "Terminals…") with
 // how each opens here; the CLI attach command is the native-terminal option.
-export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openRemotePane, copy = (t) => globalThis.navigator.clipboard.writeText(t) }) {
+export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openRemotePane, copy = writeClipboard }) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let off = false;
@@ -145,7 +146,7 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
     onClose();
     open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, ...(row.harness ? { harness: row.harness } : {}), remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
   };
-  const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then(() => toast('Command copied', false)).catch(() => toast(`Run in a terminal: ${cmd}`, false));
+  const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then((ok) => { if (ok === false) throw new Error('copy failed'); toast('Command copied', false); }).catch(() => toast(`Run in a terminal: ${cmd}`, false));
   return html`<${Dialog} id="remote-sessions-modal" title=${`Terminals on ${node.name}`} onClose=${onClose}
     footer=${html`<${DialogClose}>Close<//>`}>
     ${rows?.error ? html`<div class="fa-danger" role="alert">${rows.error}</div>`

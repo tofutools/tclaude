@@ -1709,6 +1709,13 @@ test('queued spawns ride the member table as rows, even in an empty group', asyn
   assert.equal(row.getAttribute('data-dnd-queued-group'), 'crew');
   assert.equal(row.getAttribute('data-dnd-label'), 'db-migration-2');
   assert.equal(row.querySelector('.queued-name').textContent, 'db-migration-2');
+  const { registerAgentSpawnController } = await harness.importDashboardModule('js/agent-spawn-controller.js');
+  const opened = [];
+  t.after(registerAgentSpawnController({ open: (o) => opened.push(o) }));
+  const key = (k) => harness.fireEvent(row.querySelector('.queued-name'), 'keydown', { key: k }).defaultPrevented;
+  assert.equal(key('a'), false, 'other keys pass through');
+  assert.equal(key(' '), true, 'Space on the queued name activates it without scrolling the page');
+  assert.equal(opened.length, 1, 'Space opens the queued spawn for editing');
   assert.equal(host.querySelector('.group-queued-block'), null, 'no separate queued block above the table');
   assert.equal(host.textContent.includes('(no members yet)'), false, 'the queued row stands in for the empty note');
   await mounted.unmount();
