@@ -23,11 +23,11 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
-import { Button, Check, Input, Seg, Select, Textarea } from './ui-components.js';
+import { Button, Seg } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
 import { shellToast } from './shell-state.js';
-import { createTaskboardApi, importRefs, taskboardApi } from './taskboard-actions.js';
+import { createTaskboardApi, taskboardApi } from './taskboard-actions.js';
 import { nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
@@ -38,6 +38,7 @@ import { FLAT_MODES, TaskboardFlat } from './groups-taskboard-lanes-flat.js';
 import { hasCustomOrder, resetLaneOrder } from './groups-taskboard-lanes-layout.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { AskAgentDialog, NewTaskDialog, NewTaskMenu } from './groups-taskboard-new.js';
+import { TrackerTaskDialog } from './groups-taskboard-tracker.js';
 import { EditTaskDialog } from './groups-taskboard-edit.js';
 import { TaskReasonDialog } from './groups-taskboard-reason.js';
 import { AnswerFor, QuestionTag, askerOf, canAnswer } from './groups-taskboard-answer.js';
@@ -682,66 +683,6 @@ function isClosed(task) {
   return task?.status === 'done' || task?.status === 'dropped';
 }
 
-// importSummary says what an import did beyond the count: the items that
-// kept their id as the title (with the server's note, e.g. a GitHub ref read
-// from the dashboard) and the refused ones.
-function importSummary(out) {
-  const results = out?.results || [];
-  const notes = results.filter((result) => result.task && result.note);
-  const refused = results.filter((result) => result.error);
-  const parts = [];
-  if (notes.length) parts.push(`${notes.length} kept the id as the title (${notes.map((result) => `${result.input}: ${result.note}`).join('; ')})`);
-  if (refused.length) parts.push(`${refused.length} refused (${refused.map((result) => `${result.input}: ${result.code || result.error}`).join('; ')})`);
-  return parts.join(' · ');
-}
-
-// ImportPanel is "+ New task › From awb/Linear/GitHub…": paste tracker ids, one task per id,
-// titled from the tracker (taskboard add --from-awb / --from-linear /
-// --from-github).
-function ImportPanel({ group, actions, initial = {}, onClose }) {
-  const [kind, setKind] = useState('awb');
-  const [ids, setIds] = useState('');
-  // An import lands in Ideas or Next: a cell's Next (or an agent's lane)
-  // starts it queued; its assignee or block is set on the board afterwards.
-  const [next, setNext] = useState(!!initial.start && initial.start !== 'idea' && initial.start !== 'done');
-  const later = initial.to || initial.start === 'blocked' || initial.start === 'done';
-  const [note, setNote] = useState('');
-  const refs = importRefs(kind, ids);
-  const submit = async () => {
-    if (!refs.length || actions.busy) return;
-    setNote(`looking up ${refs.length} title${refs.length === 1 ? '' : 's'}…`);
-    const out = await actions.run('import', 'Import', (api) => api.importRefs(group.name, refs, { next }));
-    if (!out) { setNote(''); return; }
-    const more = importSummary(out);
-    if (!more && !out.failed) { onClose(); return; }
-    // Only the refs that were not sent stay in the box, so Import again
-    // never adds the landed ones twice.
-    setIds(out.failed ? out.failed.remaining.join(', ') : '');
-    setNote(`${out.created || 0} added${more ? ` · ${more}` : ''}${out.failed
-      ? ` · stopped: ${out.failed.message}; ${out.failed.remaining.length} not sent, left in the box` : ''}`);
-  };
-  return html`<div class="tb-import" data-taskboard-import=${group.name}>
-    <span class="ui-eyebrow">Import from a tracker · one task per id, titled from the tracker</span>
-    <div class="tb-import-row">
-      <${Select} size="sm" aria-label="Tracker" value=${kind} onChange=${(event) => setKind(event.currentTarget.value)}>
-        <option value="awb">awb</option><option value="linear">Linear</option><option value="github">GitHub</option>
-      <//>
-      <${Textarea} size="sm" class="tb-import-ids" rows="2" aria-label="Tracker ids" value=${ids} autoFocus
-        placeholder=${kind === 'github' ? 'owner/repo#12, or issue / PR URLs' : kind === 'linear' ? 'LIN-12, LIN-34' : 'tcl-a1b2c3, tcl-d4e5f6'}
-        onInput=${(event) => setIds(event.currentTarget.value)} />
-    </div>
-    <div class="tb-import-row">
-      <${Check} checked=${next} onChange=${(event) => setNext(event.currentTarget.checked)}>add to the queue (next)<//>
-      ${note && html`<span class="tb-capture-note" role="status">${note}</span>`}
-      ${!note && later && html`<span class="ui-hint tb-import-later">an import lands in Ideas or Next; assign, block or close the tasks on the board afterwards</span>`}
-      <span class="tb-spacer"></span>
-      <${Button} size="sm" variant="primary" busy=${actions.busy === 'import'} disabled=${!refs.length || !!actions.busy}
-        onClick=${() => void submit()}>Import ${refs.length || ''}<//>
-      <${Button} size="sm" variant="ghost" onClick=${onClose}>Close<//>
-    </div>
-  </div>`;
-}
-
 // HistoryLine is the "n done this week · ▸ history" line: a row of the list's
 // table under its tasks (the closed ones follow it, in the same columns),
 // or a line of its own under an empty list.
@@ -810,7 +751,7 @@ function HistoryLine({ entry, group = null, actions = null, open, onToggle, wiza
 // TaskboardRows is the open section's list: the queue, the Ideas band, the
 // capture box, the history line and, unfolded, the recently closed tasks.
 // Without `actions` it is the read-only list.
-export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, importing = false, importInitial = {}, onImportClose = () => {}, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
+export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
   // The List's Filter (ListFilter) hides task states; done and dropped are
   // the history, which the history line's toggle shows or hides together.
   const shows = (task) => !hidden.includes(taskRowState(task));
@@ -872,7 +813,6 @@ export function TaskboardRows({ entry, group, snapshot, wizard = isWizardActive(
     ${editDialog}
     ${reasonDialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
-    ${importing && actions && html`<${ImportPanel} key=${JSON.stringify(importInitial || {})} group=${group} actions=${actions} initial=${importInitial} onClose=${onImportClose} />`}
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
@@ -1016,9 +956,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const { source, api, readApi } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
-  const [importing, setImporting] = useState(false);
-  const [importInitial, setImportInitial] = useState({});
-  // adding is the open "+ New task" dialog: { kind: 'form' | 'ask',
+  // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);
   const prefs = useViewPrefs(shown.name);
@@ -1034,7 +972,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // choose opens what the add menu picked; a lanes cell's "+" passes its
   // start state (and the lane's agent) along.
   const choose = (what, initial = {}) => {
-    if (what === 'import') { setImportInitial(initial); setImporting(true); } else setAdding({ kind: what, initial });
+    setAdding({ kind: what, initial });
   };
   // As Agents and Resources: open, the controls are a toolbar row heading
   // the section (＋▾, then the view switch); folded, the ＋▾ rides the
@@ -1046,13 +984,15 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const dialog = !api || !adding ? null : adding.kind === 'form'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)} initial=${adding.initial}
         members=${assignableMembers(group)} onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />`
-    : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />` : null;
+    : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />`
+    : adding.kind === 'import' ? html`<${TrackerTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial}
+        onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />` : null;
   return html`${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
       summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
-      closedActions=${addMenu || null} force=${importing} attrs=${{ 'data-fused-taskboard': shown.name }}>
+      closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
-      importing=${importing} importInitial=${importInitial} onImportClose=${() => setImporting(false)} view=${prefs.view} lanesBy=${prefs.by}
+      view=${prefs.view} lanesBy=${prefs.by}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//>`;
 }

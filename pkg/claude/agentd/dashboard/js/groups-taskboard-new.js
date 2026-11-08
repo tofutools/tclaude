@@ -12,7 +12,9 @@
 //   Ask an agent        a prose request mailed to a member who may change the
 //                       board, files with it (`taskboard ask <group> --to
 //                       <agent> "…" --attach …`).
-//   From awb/Linear/…   the import panel (`add --from-awb` and kin).
+//   From a tracker…     a form for one ticket's URL, or several ids
+//                       (groups-taskboard-tracker.js: `add --ref`, and
+//                       `add --from-awb` and kin).
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -219,7 +221,8 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
       ${item('data-taskboard-new-ask', choose('ask'), wizard ? 'Ask a hero' : 'Ask an agent',
         off || (wizard ? 'Tell it in your words; a hero scribes the quests' : 'Describe it; an agent writes the tasks'), !!off, off || undefined)}
       <${MenuSep} />
-      ${item('data-taskboard-new-import', choose('import'), 'From awb/Linear/GitHub…', wizard ? 'One quest per tracker id, named from the tracker' : 'One task per tracker id, titled from the tracker')}
+      ${item('data-taskboard-new-import', choose('import'), 'From a tracker…',
+        wizard ? 'Paste a ticket URL (awb, Linear, GitHub…); the quest is named from it' : 'Paste a ticket URL (awb, Linear, GitHub…); the task is titled from it')}
     <//>`}
   </span>`;
 }

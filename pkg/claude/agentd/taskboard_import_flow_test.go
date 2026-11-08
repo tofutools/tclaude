@@ -223,3 +223,68 @@ func TestTaskboardImportLines(t *testing.T) {
 		map[string]any{"lines": []string{"x"}, "title": "y"})
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+type tbRefLookup struct {
+	Kind     string `json:"kind"`
+	URL      string `json:"url"`
+	Label    string `json:"label"`
+	Title    string `json:"title"`
+	Resolved bool   `json:"resolved"`
+	Note     string `json:"note"`
+}
+
+func (h *taskboardHarness) lookupRef(conv string, body map[string]any, want int) tbRefLookup {
+	h.t.Helper()
+	rec := h.call(conv, http.MethodPost, "/v1/groups/crew/taskboard/ref-lookup", body)
+	require.Equal(h.t, want, rec.Code, "body=%s", rec.Body.String())
+	var out tbRefLookup
+	if want == http.StatusOK {
+		require.NoError(h.t, json.Unmarshal(rec.Body.Bytes(), &out))
+	}
+	return out
+}
+
+// The "from a tracker" form asks what a pasted ticket would be before it adds
+// anything: the ref as `add --ref` stores it, and its title from the tracker
+// as an import takes it. Nothing lands on the board; a ref the caller cannot
+// look up still answers, with its id as the title and a note.
+func TestTaskboardRefLookupTitlesATicketWithoutAddingIt(t *testing.T) {
+	const member = "tb-lookup-4444"
+	h := newTaskboardImportFlow(t, member)
+	require.NoError(t, db.GrantAgentPermission(member, agentd.PermAWBRead, "test"))
+
+	got := h.lookupRef(member, map[string]any{"ref": "https://awb.example/#/issues/tcl-abc123"}, http.StatusOK)
+	assert.Equal(t, "awb", got.Kind)
+	assert.Equal(t, "tcl-abc123", got.Label)
+	assert.Equal(t, "https://awb.example/#/issues/tcl-abc123", got.URL)
+	assert.Equal(t, "Title of tcl-abc123", got.Title)
+	assert.True(t, got.Resolved)
+
+	got = h.lookupRef(member, map[string]any{"ref": "tcl-abc123", "ref_label": "Checkout"}, http.StatusOK)
+	assert.Equal(t, "Checkout", got.Label, "a given label is kept, as --ref-label does")
+	assert.Equal(t, "https://awb.example/#/issues/tcl-abc123", got.URL, "a bare id gets its link")
+
+	// No proxy.linear.read: the id is the title, and the note says why.
+	got = h.lookupRef(member, map[string]any{"ref": "LIN-7"}, http.StatusOK)
+	assert.Equal(t, "linear", got.Kind)
+	assert.Equal(t, "LIN-7", got.Title)
+	assert.False(t, got.Resolved)
+	assert.NotEmpty(t, got.Note)
+
+	// A plain URL is not looked up.
+	got = h.lookupRef(member, map[string]any{"ref": "https://jira.acme.com/browse/PROJ-1"}, http.StatusOK)
+	assert.Equal(t, "url", got.Kind)
+	assert.False(t, got.Resolved)
+
+	h.lookupRef(member, map[string]any{"ref": "not a ref"}, http.StatusBadRequest)
+	h.lookupRef(member, map[string]any{"ref": " "}, http.StatusBadRequest)
+
+	rec := h.call(member, http.MethodGet, "/v1/groups/crew/taskboard", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "tcl-abc123", "a lookup adds nothing to the board")
+
+	const outsider = "tb-outsider-5555"
+	h.agent(t, outsider)
+	rec = h.call(outsider, http.MethodPost, "/v1/groups/crew/taskboard/ref-lookup", map[string]any{"ref": "LIN-1"})
+	assert.Equal(t, http.StatusForbidden, rec.Code, "the lookup needs the board's read access")
+}
