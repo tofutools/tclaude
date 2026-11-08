@@ -63,7 +63,8 @@ tclaude agent taskboard comment ls <task> [--save <dir>]
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--resolve-ref]
                                     [--next] [--after tk_a,tk_b] [--top|--before tk_x]
-                                    [--assignee <agent>|--mine] [--blocked "reason"|--done] [--attach f]…
+                                    [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
+tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
 tclaude agent taskboard ask <group> --to <agent> "what you want" [--attach f]…   # or --prompt-file f
 tclaude agent taskboard attach <task> <file>…
 tclaude agent taskboard detach <task> <name|#id>…
@@ -75,11 +76,12 @@ tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage
 tclaude agent taskboard promote <task>     # idea → end of the queue
 tclaude agent taskboard demote <task>      # next → top of the ideas
 tclaude agent taskboard block <task> --reason "waiting on CI"
+tclaude agent taskboard block <task> --on tk_…        # wait on an operator task
 tclaude agent taskboard unblock <task>
 tclaude agent taskboard drop <task> [--reason "parked in awb"]
 tclaude agent taskboard done <task>
 
-tclaude agent taskboard assign <task> --to <agent>
+tclaude agent taskboard assign <task> --to <agent>|operator
 tclaude agent taskboard unassign <task>
 tclaude agent taskboard take <task>
 tclaude agent taskboard release <task>
@@ -253,7 +255,8 @@ unless you pass `--next`.
 ## Assigning and reporting
 
 A task has at most one assignee. The assignee must be an active member of the
-task's group.
+task's group, or the operator (see [The operator as an
+assignee](#the-operator-as-an-assignee)).
 
 - `assign --to <agent>` gives the task to a member. If the task is an idea, it
   is promoted to the end of the queue first. The assignee gets an inbox message
@@ -291,6 +294,48 @@ task's group.
 
 Assigned tasks show `@<agent>` in `ls`, and their history records who
 assigned whom.
+
+### The operator as an assignee
+
+A task can be assigned to the **operator**: something an agent needs answered
+or done before its work can go on. Name it `operator` wherever an agent goes:
+`add --assignee operator`, `assign --to operator`, the dashboard's
+⋯ *Assign ›* and the forms' assignee (*You (operator)*), or a drag onto the
+operator's lane. This complements `notify-human` and `--ask-human`; nothing
+there changes.
+
+- `operator` means the operator of the node that holds the board. On a linked
+  node's board (`--peer bob`, or bob's board in the fused view) it is bob's
+  operator, under the peer grants bob gave this node, as for any assign.
+- **Permissions.** Giving the operator a task needs `taskboard.assign` on the
+  group. A grant of it narrowed to target agents does not cover the operator.
+  An agent asking about its own work needs only `taskboard.own`: it may add a
+  new task assigned to the operator, or hand the operator a task it holds. The
+  writer lock applies, as to any own write. The agent that asked may edit,
+  block and drop (withdraw) that task as its own. Only the operator, or a
+  `taskboard.assign` holder, closes it as done, and agents do not `report` on
+  it.
+- **Waiting on it.** `add … --assignee operator --blocks tk_mine` creates the
+  operator task and, in the same write, adds it as a dependency of `tk_mine`
+  and blocks `tk_mine` with the reason `waiting on operator: <title>`. The
+  change to `tk_mine` is gated as any change of it is. `block tk_mine --on
+  tk_…` does the same for an operator task that already exists.
+- **Auto-unblock.** When the operator closes the task as done, every task
+  blocked waiting on it (`--blocks` or `block --on`) is reopened, and history
+  records `unblocked: tk_… is done`. A task that depends on it but is blocked
+  for another reason stays blocked. The assignee of each task that depends on
+  it gets inbox mail, `[taskboard] unblocked: tk_… is done` or `[taskboard]
+  still blocked: tk_… is done`, with the operator's closing reason. Close it
+  with a reason (`done --reason`, or the edit form) or a comment to answer;
+  the operator's comments on it reach the agent that asked.
+- Nobody is mailed when the operator is given a task; it shows in the
+  dashboard. It never stalls.
+- A move to another group of this node keeps the operator as the assignee. A
+  move to another node does not carry the assignee, as for any task.
+- **Counts.** An open task the operator holds counts as *waiting on you*, which
+  is part of *needs you*: `ls --summary` prints `2 needs you (1 blocked, 1
+  waiting on you)`, and `tclaude agent fleet` lists the board. The context
+  route's counts carry `waiting_on_you`.
 
 ### Idle without report
 
@@ -616,10 +661,12 @@ the **Quest board**), below its Agents and Resources sections.
 - The section line shows the number of live tasks. Open, the ＋▾ add button
   and the List | Lanes switch sit on a row below it; folded, the ＋▾ moves up
   onto the section line. The group's summary line carries the breakdown,
-  for example `task board: 1 needs you · 1 in progress · 2 next · 1 idea`, so
+  for example `task board: 1 waiting on you · 1 needs you · 1 in progress · 2 next · 1 idea`, so
   a folded group still shows what is on its board (the count's tooltip has it
-  too). *Needs you* counts the blocked and the stalled tasks, and *in
-  progress* counts the other assigned tasks. *Next* and *ideas* count the
+  too). *Waiting on you* counts the open tasks assigned to the operator, and
+  the section line shows it as a tag beside the count. *Needs you* counts the
+  blocked and the stalled tasks, and *in progress* counts the other assigned
+  tasks. *Next* and *ideas* count the
   unassigned open tasks in each stage.
 - **Open**, the *List* view is a table like the Agents and Resources tables
   above it. It lists the queue in your order, then the Ideas band, then the
@@ -659,6 +706,7 @@ a CLI verb:
 | *Comment* in the edit form's Activity, and a comment's *Edit* / *Delete* | `comment add <task> …` · `comment edit` · `comment rm` |
 | ↺ *Reopen*, on a task under *history* | `POST /v1/taskboard/tasks/{id}/status {"status":"open"}` |
 | ⋯ *Assign ›* and a member, or drag a row onto an agent's row in the Agents section | `assign <task> --to <agent>` |
+| ⋯ *Assign › You (operator)*, or drag a card onto the *You* lane | `assign <task> --to operator` |
 | ⋯ *Unassign*, or drag an assigned row onto *drop here to unassign* | `unassign <task>` |
 | Drag a task onto another group's Task board or header row (Ctrl/Cmd clones), or ⋯ *Move to group ›* / *Clone to group ›* | `move-to-group <task> <group> [--clone] [--stage next]` |
 
@@ -757,7 +805,14 @@ The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
 *Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
 needs you* also holds stalled tasks.
 
-The *Unassigned* lane comes first, then one lane per agent, grouped by role
+The operator's lane comes first: *You*, tinted, with how many tasks wait on
+you (on a linked node's board, *operator of <node>*). It shows while the
+operator holds a task, or when you may assign. Its tasks stand in *In
+progress*; *Ideas* is striped, as for an agent. A card dragged onto it is
+assigned to the operator, and its **+** starts a task assigned to the
+operator. In the *List*, *Who* says *you* and *State* says *waiting*.
+
+The *Unassigned* lane comes next, then one lane per agent, grouped by role
 (the owner's role first), by subgroup, or not grouped. Each lane head shows the
 agent's state and how many tasks it holds. A name too long for the lane column
 ends in "…"; hover it for the full name.
@@ -837,7 +892,7 @@ those drags aren't accepted in the lanes.
 | `comment add` | `POST /v1/taskboard/tasks/{id}/comments {"body","key"?}` (multipart: a `comment` JSON part and `file` parts) → 201 `{id, group, comment}`, 200 on a repeated key |
 | `comment edit` / `rm` | `PATCH` `{"body"}` / `DELETE /v1/taskboard/tasks/{id}/comments/{cid}` → `{id, group, comment}`; 403 `not_author` for anyone else |
 | `comment ls` | `GET /v1/taskboard/tasks/{id}/comments` → `{id, group, comments}`; a comment's file is read through `…/attachments/{aid}` |
-| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`) |
+| `add` | `POST /v1/groups/{g}/taskboard/tasks` (`--resolve-ref` sends `"resolve_ref":true`; `--assignee` sends `"to"`, `--blocked` sends `"status":"blocked","block_reason"`, `--done` sends `"status":"done"`, `--blocks` sends `"blocks"`) |
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` |
@@ -845,7 +900,7 @@ those drags aren't accepted in the lanes.
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
-| `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` |
+| `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `report` | `POST /v1/taskboard/tasks/{id}/report {"outcome":"done"\|"failed","note":…}` → `{task, repeated, blocked}` |
@@ -877,7 +932,9 @@ comment carries `id`, `kind`, `body` (its current body, empty once deleted),
 `last_edited_by`, `last_edited_by_name` and `last_edited_at`.
 
 The group listing also returns `locked`, and `writers` when the board is
-locked. Each task carries `assignee` (`agent_id`, `name`), `assigned_by`,
+locked. Each task carries `assignee` (`agent_id`, `name`; for the operator
+`{"agent_id":"operator","name":"operator","operator":true}`), `blocked_on`
+when it waits on an operator task, `assigned_by`,
 `assigned_at`, `outcome`, `outcome_note` and `failures` when they are set.
 Every change is recorded in the audit log as `taskboard.<verb>`, with the
 group, the task id and, for an assignment, the target agent.

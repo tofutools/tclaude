@@ -26,6 +26,7 @@ import { taskFileLimits } from './taskboard-actions.js';
 import { useAttachmentIntake } from './attachment-intake.js';
 import { TaskFiles } from './groups-taskboard-files.js';
 import { writeClipboard } from './insecure-origin.js';
+import { operatorOptionLabel } from './groups-taskboard-new.js';
 
 const html = htm.bind(h);
 
@@ -333,11 +334,13 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       ? html`<${Select} class="tb-edit-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy}
           onChange=${(event) => { const to = event.currentTarget.value; setDraft((current) => setAssignee(current, to)); }}>
           <option value="">— unassigned —</option>
+          <option value="operator">${operatorOptionLabel(group)}</option>
           ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}
-          ${assignee && !members.some((m) => m.agent_id === assignee) && html`<option value=${assignee}>${task.assignee?.name || assignee}</option>`}
+          ${assignee && assignee !== 'operator' && !members.some((m) => m.agent_id === assignee) && html`<option value=${assignee}>${task.assignee?.name || assignee}</option>`}
         <//>`
-      : html`<span>${task.assignee?.name || assignee}</span>`,
-      canAssign && draft.to !== start.to ? (draft.to ? 'the brief goes to its inbox' : 'its assignee is told') : null)}
+      : html`<span>${task.assignee?.operator ? operatorOptionLabel(group) : task.assignee?.name || assignee}</span>`,
+      canAssign && draft.to !== start.to ? (draft.to === 'operator' ? 'it waits on the operator, who closes it as done'
+        : draft.to ? 'the brief goes to its inbox' : 'its assignee is told') : null)}
     ${row('After', html`<${DepsEdit} task=${task} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}

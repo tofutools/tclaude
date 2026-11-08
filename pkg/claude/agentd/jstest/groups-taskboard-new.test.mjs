@@ -139,7 +139,7 @@ test('Write it myself sends every field, the assignee included, in one add', asy
   await harness.act(async () => { harness.fireEvent(dialog().querySelector('input[name="tb-new-stage"][value="next"]'), 'change'); });
   await harness.act(async () => { harness.fireEvent(dialog().querySelector('[data-dep="tk_00000001"]'), 'change'); });
   const assignee = dialog().querySelector('.tb-new-assignee');
-  assert.deepEqual([...assignee.querySelectorAll('option')].map((o) => o.value), ['', 'agt_dev', 'agt_lead', 'agt_away']);
+  assert.deepEqual([...assignee.querySelectorAll('option')].map((o) => o.value), ['', 'operator', 'agt_dev', 'agt_lead', 'agt_away']);
   await selectValue(harness, assignee, 'agt_dev');
   await click(submit());
   assert.deepEqual(api.calls, [
