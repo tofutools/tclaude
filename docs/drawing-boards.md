@@ -18,7 +18,8 @@ in their groups, newest first, with a green dot on a drawing board an agent has 
 session on. Pick one to open it in a tab. The box at the top searches titles and groups;
 a new title makes a drawing board with **Create** or Enter, and the title of one that
 exists opens it. `/drawing-boards/<id>` opens that drawing board's tab, and `/drawing-boards` opens the
-list. A drawing board tab behaves like a terminal
+list. `?crop=x,y,width,height` and `?elements=a,b` (up to 200 ids) open it on that part, with those
+elements selected. A drawing board tab behaves like a terminal
 tab: it reorders, joins tab groups, and moves between a tab, an overlay window and a
 browser window of its own, with **Open in overlay**, **Open in separate window** and
 **Open in the Collab tab** (in the drawing board's **View** menu, and on its tab's
@@ -379,8 +380,9 @@ tclaude agent drawing-board export plan --attach-to tk_4f0a --comment "Reworked 
 - `--node <peer>` puts a linked node's drawing board on a task here: that node
   draws the PNG, under the grants it gave this node, and the file's link back
   names the node. *✎ Open on its node* opens the board on that node's page
-  (`?node=`), never a board of the same id here, and exporting the same part
-  of the same node's board again updates that file.
+  (`?node=`), on the part the image shows as a drawing from this node's board
+  does, never a board of the same id here. Exporting the same part of the same
+  node's board again updates that file.
 
 ### A linked node's drawing boards, for agents
 

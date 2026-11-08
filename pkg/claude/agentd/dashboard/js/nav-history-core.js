@@ -155,8 +155,12 @@ export const ITEM_SUBTABS = {
 //     node chip narrowing the view).
 //   - groups: group (the group the Route map shows), view (its table view).
 //   - usage: period (the Costs span: 7d / 30d / 90d, or a past month YYYY-MM).
+//   - drawing-boards: crop (x,y,width,height) and elements (ids, comma
+//     separated): the part of the board to show (drawing-board-model.js
+//     drawingBoardFocusOf), as a task's drawing on a linked node opens it.
 export const TAB_PARAMS = {
   usage: ['period'],
+  'drawing-boards': ['crop', 'elements'],
   messages: ['q', 'from', 'page', 'box', 'at', 'scope'],
   groups: ['group', 'view'],
 };
@@ -169,6 +173,10 @@ export const TAB_PARAMS = {
 //   - task: a task's edit form, as <task-id>[@<node>]:<group> (task-route.js).
 export const OVERLAY_PARAMS = ['manage', 'notification', 'task'];
 const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
+// A drawing board's focus: four numbers, and up to 200 element ids.
+const FOCUS_NUMBER = '-?\\d+(\\.\\d+)?';
+const FOCUS_CROP = new RegExp(`^${FOCUS_NUMBER}(,${FOCUS_NUMBER}){3}$`);
+const FOCUS_ELEMENTS = /^[A-Za-z0-9_-]{1,64}(,[A-Za-z0-9_-]{1,64}){0,199}$/;
 export const MANAGE_KINDS = new Set(['profiles', 'roles', 'sandbox', 'templates']);
 
 // normalizeParams keeps the tab's known params (and the overlay params) with
@@ -184,6 +192,8 @@ function normalizeParams(tab, params) {
     if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
     if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
     if (key === 'task' && !TASK_ROUTE.test(str)) continue;
+    if (key === 'crop' && !FOCUS_CROP.test(str)) continue;
+    if (key === 'elements' && !FOCUS_ELEMENTS.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
   }
   return Object.keys(out).length ? out : undefined;
