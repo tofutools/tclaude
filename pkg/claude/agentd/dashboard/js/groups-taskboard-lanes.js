@@ -617,6 +617,16 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useState({});
   useCellReveal(cells, CELL_SHOWN, setOpen);
+  // laneTasks are the ids of the tasks in a lane's cells.
+  const laneTasks = (lane) => LANE_COLUMNS.flatMap((column) => (cells.get(`${lane.id}|${column.key}`) || []).map((task) => task.id));
+  // A cross-link to a task in a folded offline lane unfolds that lane group,
+  // as its cell opens past the cap (useCellReveal).
+  const want = taskRevealRequest.value;
+  useEffect(() => {
+    if (!want || Date.now() - want.at > REVEAL_FRESH_MS) return;
+    const lg = groups.find((g) => g.offline && g.lanes.some((lane) => laneTasks(lane).includes(want.taskId)));
+    if (lg) setUnfolded((now) => (now[lg.key] ? now : { ...now, [lg.key]: true }));
+  }, [want?.seq]);
   // landIn opens a full cell a task is dropped or added into: the task lands
   // at its place in the order, which may be past the cap, and would vanish
   // behind "+ n more".
@@ -679,6 +689,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
             <span class="tb-lane-group-name"><span class="ui-eyebrow">${lg.label}</span>
             <span class="tb-lane-sub">${lg.lanes.length} agent${lg.lanes.length === 1 ? '' : 's'}${lg.offline ? ' · offline' : ''}</span></span>
             ${lg.offline && html`<${Button} size="sm" variant="link" class="tb-lane-fold" aria-expanded=${folded ? 'false' : 'true'}
+              data-hidden-tasks=${folded ? lg.lanes.flatMap(laneTasks).join(' ') : undefined}
               onClick=${() => setUnfolded({ ...unfolded, [lg.key]: folded })}>${folded ? '▸ show offline lanes' : '▾ fold offline lanes'}<//>`}
           </div>`,
           ...(folded ? [] : lg.lanes.map(row)),

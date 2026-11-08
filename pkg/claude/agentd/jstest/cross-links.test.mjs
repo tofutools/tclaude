@@ -81,9 +81,13 @@ test('in triage a card\'s avatar links to its agent, and the agent\'s row links 
   const indicator = tri.c.querySelector('[data-agent-tasks="agt_builder"] .tb-agent-task-title');
   assert.equal(indicator.getAttribute('role'), 'link', 'the agent\'s row links to its task');
   assert.match(indicator.getAttribute('title'), /Show “building” on the task board/);
+  // A click on it finds the card: the indicator names the board rightly.
+  const scrolled = layout(t, tri.harness);
+  await tri.harness.act(async () => { tri.harness.fireEvent(indicator, 'click'); });
+  await until(tri.harness, () => scrolled.some(([id]) => id === 'tk_00000001'), 'the scroll to the card');
 });
 
-test('a click on the agent row\'s task scrolls to the card, opening the cell that holds it past its cap', async (t) => {
+test('a jump to a task scrolls to the card, opening the cell that holds it past its cap', async (t) => {
   // Unassigned Next holds four: the fourth, the target, is past the cap of three.
   const tasks = [...['a', 'b', 'c'].map((n) => row(`tk_0000000${n}`, `queued ${n}`)), row('tk_0000000e', 'target')];
   const { harness, c } = await mount(t, 'xl-jump', { tasks });
@@ -141,4 +145,68 @@ test('in the List, Who links to a member agent; the operator and a former member
   assert.equal(who('tk_00000002').getAttribute('role'), null);
   assert.equal(who('tk_00000003').getAttribute('role'), null);
   assert.match(c.querySelector('tr[data-task-id="tk_00000001"] .tb-who').getAttribute('title'), /^builder/, 'the tooltip still says who assigned it');
+});
+
+test('an outline goes when its link re-renders or unmounts while hovered', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { agentLink } = await harness.importDashboardModule('js/cross-links.js');
+  const n = harness.signals.signal(0);
+  const shown = harness.signals.signal(true);
+  function Link() {
+    return shown.value ? harness.html`<span class="x" ...${agentLink({ group: 'g', id: 'a', name: `n${n.value}` })}>hi</span>` : null;
+  }
+  const { container } = await harness.mount(harness.html`<${Link} />`);
+  const outlines = () => harness.document.querySelectorAll('.xlink-hover').length;
+  await harness.act(async () => { harness.fireEvent(container.querySelector('.x'), 'mouseenter'); });
+  assert.equal(outlines(), 1);
+  await harness.act(async () => { n.value = 1; });
+  await harness.act(async () => { harness.fireEvent(container.querySelector('.x'), 'mouseleave'); });
+  assert.equal(outlines(), 0, 'the re-rendered link\'s leave takes it');
+
+  await harness.act(async () => { harness.fireEvent(container.querySelector('.x'), 'mouseenter'); });
+  assert.equal(outlines(), 1);
+  await harness.act(async () => { shown.value = false; });
+  await until(harness, () => outlines() === 0, 'the outline of the unmounted link to go');
+});
+
+test('a double-click on a card\'s avatar does not open the card', async (t) => {
+  const tasks = [row('tk_00000001', 'building', { assignee: builder })];
+  const { harness, c } = await mount(t, 'xl-dbl', { by: 'triage', tasks });
+  let bubbled = 0;
+  c.addEventListener('dblclick', () => { bubbled += 1; });
+  await harness.act(async () => { harness.fireEvent(c.querySelector('.tb-card[data-task-id="tk_00000001"] .tb-card-marker'), 'dblclick'); });
+  assert.equal(bubbled, 0);
+});
+
+test('a click on an offline agent\'s task unfolds the offline lanes; hovering outlines their fold', async (t) => {
+  const tasks = [row('tk_00000001', 'parked', { assignee: { agent_id: 'agt_sleeper', name: 'sleeper' } })];
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { AgentTaskIndicator } = await harness.importDashboardModule('js/taskboard-agent-indicator.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const name = 'xl-offline';
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, 'lanes');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
+  const entry = { group: name, group_id: 1, counts: { live: 1 }, tasks, closed: [] };
+  const source = { context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const group = { name, members: [{ agent_id: 'agt_builder', title: 'builder', online: true }, { agent_id: 'agt_sleeper', title: 'sleeper', online: false }] };
+  const { container: c } = await harness.mount(harness.html`<details data-group-key=${name} open><summary>${name}</summary>
+    <table><tbody><tr data-dnd-agent="agt_sleeper"><td>sleeper
+      <${AgentTaskIndicator} group=${group} member=${group.members[1]} source=${source} /></td></tr></tbody></table>
+    <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${fakeApi()} />
+  </details>`);
+  const scrolled = layout(t, harness);
+  const fold = c.querySelector('.tb-lane-fold');
+  assert.equal(fold.getAttribute('aria-expanded'), 'false', 'the offline lanes start folded');
+  assert.equal(c.querySelector('[data-task-id="tk_00000001"]'), null);
+  const link = c.querySelector('[data-agent-tasks="agt_sleeper"] .tb-agent-task-title');
+
+  await harness.act(async () => { harness.fireEvent(link, 'mouseenter'); });
+  await until(harness, () => harness.document.querySelector('.xlink-hover.xlink-folded'), 'the fold outlined');
+  assert.equal(fold.getAttribute('aria-expanded'), 'false', 'hovering never unfolds');
+  await harness.act(async () => { harness.fireEvent(link, 'mouseleave'); });
+
+  await harness.act(async () => { harness.fireEvent(link, 'click'); });
+  await until(harness, () => scrolled.some(([id]) => id === 'tk_00000001'), 'the scroll to the card');
+  assert.equal(c.querySelector('.tb-lane-fold').getAttribute('aria-expanded'), 'true');
 });

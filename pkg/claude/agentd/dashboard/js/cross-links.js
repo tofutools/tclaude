@@ -77,12 +77,20 @@ function scrollToEl(el) {
 // land waits for find() to yield (the unfolded parts draw on the next
 // render, a task's lanes cell opens after that), then scrolls there and
 // blips. At the deadline it settles for what the fallback finds.
+// A newer click cancels the one still waiting; past the deadline, a fallback
+// that finds nothing either ends the wait.
+let landing = 0;
 function land(find) {
   const started = Date.now();
+  const mine = ++landing;
   const tick = () => {
-    if (!live()) return;
-    const hit = find(false) || (Date.now() - started >= FIND_MS ? find(true) : null);
-    if (!hit) { setTimeout(tick, 80); return; }
+    if (!live() || mine !== landing) return;
+    const late = Date.now() - started >= FIND_MS;
+    const hit = find(false) || (late ? find(true) : null);
+    if (!hit) {
+      if (!late) setTimeout(tick, 80);
+      return;
+    }
     scrollToEl(hit.el);
     blip(hit.el);
   };
@@ -111,9 +119,10 @@ export function jumpToTask(target) {
 
 // --- hover: outline the target, or what hides it ---
 
-// highlight outlines resolve()'s element until the returned stop() runs.
+// highlight outlines resolve()'s element until the returned stop() runs, or
+// until the link `src` leaves the page (it unmounted while hovered).
 // Off-screen, the outline becomes a marker on the viewport's edge.
-function highlight(resolve) {
+function highlight(resolve, src) {
   if (!live()) return () => {};
   const overlay = document.createElement('div');
   overlay.className = 'xlink-hover';
@@ -126,7 +135,9 @@ function highlight(resolve) {
   });
   // Mark the edge each frame from the box track() placed.
   let raf = 0;
+  const stop = () => { cancelAnimationFrame(raf); tracker.stop(); overlay.remove(); if (hovering?.stop === stop) hovering = null; };
   const edge = () => {
+    if (src && !src.isConnected) { stop(); return; }
     const el = tracker.el();
     if (el) {
       const r = el.getBoundingClientRect();
@@ -145,15 +156,23 @@ function highlight(resolve) {
     raf = requestAnimationFrame(edge);
   };
   raf = requestAnimationFrame(edge);
-  return () => { cancelAnimationFrame(raf); tracker.stop(); overlay.remove(); };
+  return stop;
 }
+
+// hovering is the one outline up. It lives here, not in a link's props: a
+// link re-rendered while hovered gets new handlers, and its mouseleave must
+// still take the outline the old ones put up.
+let hovering = null;
 
 // linkProps are a link's handlers and attributes: a click (or Enter or
 // Space) jumps, the pointer or focus on it outlines the target.
 function linkProps(jump, resolve, title) {
-  let stop = null;
-  const on = () => { stop?.(); stop = highlight(resolve); };
-  const off = () => { stop?.(); stop = null; };
+  const off = () => { hovering?.stop(); hovering = null; };
+  const on = (event) => {
+    off();
+    const stop = highlight(resolve, event?.currentTarget);
+    hovering = { stop };
+  };
   return {
     role: 'link', tabindex: '0', title, 'data-xlink': '',
     onClick: (event) => { event.preventDefault(); event.stopPropagation(); off(); jump(); },
@@ -165,9 +184,9 @@ function linkProps(jump, resolve, title) {
       jump();
     },
     onMouseEnter: on, onMouseLeave: off, onFocus: on, onBlur: off,
-    // A drag that starts on the link (a lane head reorders, a card moves)
-    // still drags; only the outline goes.
-    onDragStart: off,
+    // A double-click is two clicks on the link, never the card's own
+    // double-click (which opens its edit form).
+    onDblClick: (event) => event.stopPropagation(),
   };
 }
 
