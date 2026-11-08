@@ -584,7 +584,7 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
     ${peers.map((r) => {
       const alike = sharedAlike(r.catalog);
       return html`<div class="fs-peer" key=${r.id} data-peer=${r.id}>
-      <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
+      <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
       ${!r.catalog.length
         ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 5).</div>`
         : html`${alike && html`<div class="fs-shared-alike" data-shared-alike>All ${r.catalog.length} groups share: <span>${alike}</span></div>`}

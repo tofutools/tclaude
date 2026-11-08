@@ -11,6 +11,13 @@ import { keyTransition, peerName } from './fleet-model.js';
 // created later. (Wording follows the daemon's confirmation_required error.)
 export const UNRESTRICTED_CONSEQUENCE = 'Unrestricted trust grants this peer every peer permission on all groups — every live group and every group created later — plus automatic spawn and local unscoped grants towards it. Interactive terminal attach includes answering harness approval prompts.';
 
+// peerLabelFor names a peer by its trusted label. A peer this node has not
+// labelled falls back to its instance ID: whole for a dialog, or shortened
+// (shortID) with short, for a table cell.
+export function peerLabelFor(peers, id, { short = false } = {}) {
+  return (peers || []).find((p) => p.id === id)?.label || (short ? shortID(id) : id);
+}
+
 // shortID abbreviates an instance ID for tables; dialogs always show it whole.
 export function shortID(id) {
   const s = String(id || '');

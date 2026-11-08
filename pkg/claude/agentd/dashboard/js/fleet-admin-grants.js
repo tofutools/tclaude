@@ -143,7 +143,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
       <${FaTable} id="fleet-grants" head=${['Peer / pool', 'Permission', 'Where', 'Allows', '']}>${visible.map(({ t, err, full, rows, shown }) => html`
           <tr key=${`h|${t.id}`} class="fa-grant-peer" data-peer=${t.id}>
             <td colspan="4"><${Button} size="sm" variant="link" class="fa-link" data-fa="open-target" title="Show only these grants" onClick=${() => setTarget(t.id)}><b>${t.label}</b><//>
-              ${!t.pool && html` <code class="muted">${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
+              ${!t.pool && html` <code class="muted" title=${t.id}>${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
               <span class="muted"> · </span>${t.level === 'unrestricted' ? html`<span class="fa-level unrestricted">unrestricted</span>` : html`<span class="muted">${t.pool ? 'pool' : 'restricted'}</span>`}
               <span class="muted"> · ${err ? '' : rows.length ? `${rows.length} grant${rows.length === 1 ? '' : 's'}` : 'no grants'}</span>${err && html`<span class="fa-danger">${err}</span>`}</td>
             <td class="fa-acts"><${Button} size="sm" data-fa="add-grant" onClick=${() => setAdding(t.id)}>+ Add<//>${directRows(rows).length > 0 && html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-all" onClick=${() => revokeAll(t, full)}>Revoke all…<//>`}</td>

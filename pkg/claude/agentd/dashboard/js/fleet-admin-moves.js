@@ -9,6 +9,7 @@ import { AgentCombobox, choiceAgents } from './agent-picker.js';
 import { PeerCombobox, namedItems } from './registry-picker.js';
 import { errText, localStamp, timeOf } from './cell-format.js';
 import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -109,7 +110,8 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
   const [error, setError] = useState('');
   const [teleport, setTeleport] = useState(null);
   const [tick, setTick] = useState(0);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
 
   useEffect(() => {
     let off = false;
@@ -156,7 +158,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
         <td title=${m.direction === 'out' ? 'leaving this node' : 'arriving here'}>${m.direction === 'out' ? '⇢' : '⇠'}</td>
         <td>${m.teleport ? 'teleport' : 'move'}</td>
         <td><code title=${m.source_agent}>${shortAgent(m.source_agent)}</code>${m.target_agent ? html` → <code title=${m.target_agent}>${shortAgent(m.target_agent)}</code>` : ''}</td>
-        <td>${label(m.peer)}</td>
+        <td>${cellLabel(m.peer)}</td>
         <td>${m.group || ''}</td>
         <td class=${FAILED.has(m.state) ? 'fa-danger' : ''} title=${m.last_error || ''}>${m.state}${m.last_error ? html` <span class="muted">— ${m.last_error}</span>` : ''}</td>
         <td class="muted">${!timeOf(m.expires_at) ? '' : Date.parse(m.expires_at) < now ? 'expired' : localStamp(m.expires_at)}</td>

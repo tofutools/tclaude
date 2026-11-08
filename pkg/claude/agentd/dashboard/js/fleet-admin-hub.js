@@ -390,7 +390,7 @@ function AuditSection({ actions }) {
         <td>${detail(e)}
           ${e.kind === 'exec' && (e.detail?.script != null
             ? html`<details class="fa-hub-script"><summary>script (${e.detail.script.length} chars)</summary><pre class="fa-bi-text">${e.detail.script}</pre></details>`
-            : html` <span class="muted" data-redacted>the script needs hub.exec${e.detail?.script_sha256 ? html` · sha256 <code>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
+            : html` <span class="muted" data-redacted>the script needs hub.exec${e.detail?.script_sha256 ? html` · sha256 <code title=${e.detail.script_sha256}>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
       </tr>`)}<//>`}
     <div class="fa-ns-actions">
       <${Button} size="sm" disabled=${busy} onClick=${() => load()}>Refresh<//>
@@ -616,7 +616,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => copy(newToken.token).then(() => toast('Invite token copied', false)).catch(() => toast('Copy it from the page', true))}>copy<//>
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setNewToken(null)}>hide<//></div></div>`}
       ${listOr(data.invites, (rows) => (!rows.length ? html`<div class="muted">No open invites.</div>` : html`<${FaTable} id="fleet-hub-invites" head=${['Token', 'Space', 'Created', 'Expires', 'Used', '']}>${rows.map((i) => html`<tr key=${i.token_hash} data-token=${i.token_hash}>
-          <td><code>${String(i.token_hash || '').slice(0, 12)}…</code></td><td>${i.space || '—'}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td>
+          <td><code title=${i.token_hash || ''}>${String(i.token_hash || '').slice(0, 12)}…</code></td><td>${i.space || '—'}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td>
           <td>${i.used ? (i.used_by || 'yes') : 'no'}</td>
           <td class="fa-acts">${!i.used && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke-invite" onClick=${() => revokeInvite(i)}>Revoke…<//>`}</td>
         </tr>`)}<//>`))}

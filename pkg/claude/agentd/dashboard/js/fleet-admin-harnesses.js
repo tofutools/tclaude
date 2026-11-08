@@ -124,7 +124,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
               <${Button} size="sm" id="fleet-harness-backup" onClick=${backupNow}>Back up now<//>
             </div>
             ${backups && (backups.length
-              ? html`<${FaTable} id="fleet-harness-backups" head=${['Backup', 'Taken', '']}>${backups.map((b) => html`<tr key=${b.id}><td><code>${b.id.slice(0, 12)}</code></td><td>${when(b.created_at)}</td>
+              ? html`<${FaTable} id="fleet-harness-backups" head=${['Backup', 'Taken', '']}>${backups.map((b) => html`<tr key=${b.id}><td><code title=${b.id}>${b.id.slice(0, 12)}</code></td><td>${when(b.created_at)}</td>
                   <td class="fa-acts"><${Button} size="sm" data-fa="restore" onClick=${() => restore(b)}>Restore…<//></td></tr>`)}<//>`
               : html`<div class="muted">No backups yet.</div>`)}`}`
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
