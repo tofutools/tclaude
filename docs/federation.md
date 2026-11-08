@@ -79,9 +79,9 @@ spontaneous agent send. Trust alone grants no group access.
 Replies are the exception that needs no grant on the receiving side. An
 answer to mail your agent sent is let in while that mail is live. So is
 the answer to a question your agent asked a peer's operator with
-`taskboard ask-operator --peer`: your instance records the question when
-it is asked, and lets in one answer mail from that peer, for that agent,
-within 30 days (see [Questions for the operator](taskboard.md#questions-for-the-operator)).
+`taskboard ask-operator --peer`: your instance records the question (a
+task's Q1 by the task id, a later one as `tk_…#n`) when it is asked, and
+lets in one answer mail from that peer, for that agent, within 30 days (see [Questions for the operator](taskboard.md#questions-for-the-operator)).
 
 ## Upgrading
 

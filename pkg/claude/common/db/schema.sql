@@ -2426,6 +2426,14 @@ CREATE TRIGGER group_tasks_column_clear
 				OR NOT EXISTS (SELECT 1 FROM group_task_columns c WHERE c.group_id = NEW.group_id AND c.slug = NEW.column_slug))
 			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
 
+CREATE TRIGGER group_task_questions_close
+			AFTER UPDATE OF status ON group_tasks
+			WHEN NEW.status IN ('done','dropped') AND OLD.status IN ('open','blocked')
+			BEGIN
+				UPDATE group_task_questions SET state = 'closed', closed_at = COALESCE(NEW.closed_at, NEW.updated_at)
+					WHERE task_id = NEW.id AND state = 'open';
+			END;
+
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
 			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2498,3 +2506,23 @@ CREATE TABLE federation_peer_questions (
 			expires_at INTEGER NOT NULL,
 			PRIMARY KEY (peer, task, agent)
 		) STRICT;
+
+CREATE TABLE group_task_questions (
+			id              INTEGER PRIMARY KEY,
+			task_id         TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			n               INTEGER NOT NULL,
+			event_id        INTEGER NOT NULL,
+			title           TEXT NOT NULL,
+			spec            TEXT NOT NULL,
+			asked_by        TEXT NOT NULL,
+			asked_via       TEXT NOT NULL DEFAULT '',
+			asked_at        INTEGER NOT NULL,
+			state           TEXT NOT NULL DEFAULT 'open',
+			blocks          INTEGER NOT NULL DEFAULT 0,
+			answer          TEXT NOT NULL DEFAULT '',
+			answer_event_id INTEGER,
+			closed_at       INTEGER,
+			UNIQUE (task_id, n)
+		) STRICT;
+
+CREATE INDEX idx_group_task_questions_open ON group_task_questions(task_id) WHERE state = 'open';

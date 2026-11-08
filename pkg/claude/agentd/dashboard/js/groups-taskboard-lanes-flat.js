@@ -19,11 +19,11 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, laneColumn, striped, useCellReveal, useLaneDrag,
+  BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, laneColumn, operatorQuestions, striped, useCellReveal, useLaneDrag,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
-import { AnswerFor, askerOf } from './groups-taskboard-answer.js';
+import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboard-answer.js';
 
 const html = htm.bind(h);
 
@@ -118,6 +118,9 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const [open, setOpen] = useState({});
   useCellReveal(cells, FLAT_SHOWN, setOpen);
   const [answering, setAnswering] = useState('');
+  const answerable = canAssign(actions) && typeof actions?.api?.answer === 'function';
+  // Triage's You also holds the open questions on the agents' tasks.
+  const questions = mode === ALL ? [] : operatorQuestions(entry);
   const nameOf = (actor) => actorLabel(actor, group, snapshot);
   const [landed, setLanded] = useState(null);
   const landIn = (key, list, id = '') => {
@@ -143,14 +146,17 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
           marker=${cardMarker(task, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
-          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${canAssign(actions) && typeof actions.api?.answer === 'function' ? setAnswering : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null} />`} />
+      ${row === OPERATOR && column.key === 'progress' && questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
+        task=${task} question=${question} askedBy=${nameOf(question.asked_by)} onOpen=${actions ? onEdit : null}
+        onAnswer=${answerable ? (id, n) => setAnswering(`${id}#${n}`) : null} />`)}
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;
   };
   const rowCount = (row) => columns.reduce((sum, column) => sum + (column.key === 'done' ? 0 : (cells.get(`${row}|${column.key}`) || []).length), 0);
   const head = (row) => {
-    if (row === OPERATOR) return html`<${LaneHead} lane=${{ id: OPERATOR, name: operatorName(group), holds: (cells.get(`${OPERATOR}|progress`) || []).length }} />`;
+    if (row === OPERATOR) return html`<${LaneHead} lane=${{ id: OPERATOR, name: operatorName(group), holds: (cells.get(`${OPERATOR}|progress`) || []).length + questions.length }} />`;
     if (row === UNASSIGNED) return html`<${LaneHead} lane=${{ id: UNASSIGNED, name: 'Unassigned', count: rowCount(UNASSIGNED) }} />`;
     const n = rowCount(AGENTS);
     return html`<div class="tb-lane-head"><span class="tb-lane-name">Agents</span><span class="tb-lane-sub">${n} task${n === 1 ? '' : 's'} · every agent</span></div>`;
@@ -159,14 +165,15 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   // You shows while the operator holds a task, or for a viewer who may give
   // the operator one, as the operator's lane does.
   const rows = triage
-    ? [...(([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || canAssign(actions)) ? [OPERATOR] : []), UNASSIGNED, AGENTS]
+    ? [...(([...cells.keys()].some((key) => key.startsWith(`${OPERATOR}|`)) || questions.length > 0 || canAssign(actions)) ? [OPERATOR] : []), UNASSIGNED, AGENTS]
     : [ALL];
   const count = (column) => [...cells.entries()].reduce((sum, [k, list]) => sum + (k.endsWith(`|${column}`) ? list.length : 0), 0);
   const cols = `${triage ? `${HEAD_PX}px ` : ''}repeat(${columns.length}, minmax(${MIN_STAGE_PX}px, 1fr))`;
   const min = (triage ? HEAD_PX : 0) + columns.length * MIN_STAGE_PX;
-  const answerTask = answering && tasks.find((task) => task.id === answering);
+  const target = answerTarget(answering);
+  const answerTask = answering && tasks.find((task) => task.id === target.id);
   return html`<div class="tb-lanes-wrap">
-    ${answerTask && html`<${AnswerFor} task=${answerTask} actions=${actions} askedBy=${actorLabel(askerOf(answerTask), group, snapshot)} onClose=${() => setAnswering('')} />`}
+    ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
     <div class=${`tb-lanes tb-lanes-flat${triage ? '' : ' tb-lanes-row'}`} data-taskboard-lanes=${group.name} data-lanes-by=${mode}

@@ -212,25 +212,28 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/taskboard/tasks/{id}/attachments":         {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	"DELETE /v1/taskboard/tasks/{id}/attachments/{aid}": {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
 	// A task's activity stream and comments.
-	"GET /v1/taskboard/tasks/{id}/activity":          {slugs: []string{PermTaskboardRead}, target: agentViewNode},
-	"GET /v1/taskboard/tasks/{id}/comments":          {slugs: []string{PermTaskboardRead}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/comments":         {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"PATCH /v1/taskboard/tasks/{id}/comments/{cid}":  {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"DELETE /v1/taskboard/tasks/{id}/comments/{cid}": {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"PATCH /v1/taskboard/tasks/{id}":                 {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/move":             {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/stage":            {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/status":           {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/reopen":           {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/archive":          {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/unarchive":        {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
-	"POST /v1/groups/{name}/taskboard/archive-done":  {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
-	"POST /v1/taskboard/tasks/{id}/move-to-group":    {slugs: []string{PermTaskboardTransfer}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/assign":           {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/unassign":         {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/start":            {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"POST /v1/taskboard/tasks/{id}/answer":           {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
-	"GET /v1/taskboard/tasks/{id}/answer":            {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/activity":              {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/comments":              {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/comments":             {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"PATCH /v1/taskboard/tasks/{id}/comments/{cid}":      {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"DELETE /v1/taskboard/tasks/{id}/comments/{cid}":     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"PATCH /v1/taskboard/tasks/{id}":                     {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/move":                 {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/stage":                {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/status":               {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/reopen":               {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/archive":              {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/unarchive":            {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/groups/{name}/taskboard/archive-done":      {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"POST /v1/taskboard/tasks/{id}/move-to-group":        {slugs: []string{PermTaskboardTransfer}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/assign":               {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/unassign":             {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/start":                {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/answer":               {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/answer":                {slugs: []string{PermTaskboardRead}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/questions":            {slugs: []string{PermTaskboardWrite}, target: agentViewNode},
+	"POST /v1/taskboard/tasks/{id}/questions/{n}/answer": {slugs: []string{PermTaskboardAssign}, target: agentViewNode},
+	"GET /v1/taskboard/tasks/{id}/questions/{n}":         {slugs: []string{PermTaskboardRead}, target: agentViewNode},
 	// A move or clone across nodes (taskboard_transfer.go): create on the
 	// target, then drop the original on its source with a note.
 	"POST /v1/groups/{name}/taskboard/transfer-in": {slugs: []string{PermTaskboardTransfer}, target: agentViewGroup},
@@ -576,7 +579,7 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 	// A question asked on the peer's board is recorded, so its answer mail
 	// is let in (taskboard_question_peer.go).
 	var asked *peerQuestionCapture
-	if pattern == peerQuestionCreateRoute && peerCreateAsksQuestion(r.Header.Get("Content-Type"), body) {
+	if pattern == peerQuestionAskRoute || pattern == peerQuestionCreateRoute && peerCreateAsksQuestion(r.Header.Get("Content-Type"), body) {
 		asked = &peerQuestionCapture{ResponseWriter: rec}
 		out = asked
 	}

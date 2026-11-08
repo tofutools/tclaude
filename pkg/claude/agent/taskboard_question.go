@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,17 +16,21 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// Question tasks (tk_aa049a67): ask-operator puts a question to the operator
-// on the board, answer answers it.
+// Questions for the operator (tk_aa049a67, tk_8b2c86f7): ask-operator puts
+// a question to the operator on a task of the board (an entry of its
+// activity) or on a new task made for it; answer answers it.
 
 // rcAskTimeout is ask-operator --wait's exit code when the wait ran out
 // before an answer; the question stays open and the answer still comes by
 // mail.
 const rcAskTimeout = 6
 
-// taskboardQuestion is the wire shape of a question task's question.
+// taskboardQuestion is the wire shape of a question on a task.
 type taskboardQuestion struct {
 	Kind    string `json:"kind,omitempty"`
+	N       int    `json:"n,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Body    string `json:"body,omitempty"`
 	Multi   bool   `json:"multi,omitempty"`
 	Options []struct {
 		Key         string `json:"key"`
@@ -34,12 +39,25 @@ type taskboardQuestion struct {
 		Preview     string `json:"preview,omitempty"`
 	} `json:"options,omitempty"`
 	Recommend string `json:"recommend,omitempty"`
+	AskedBy   string `json:"asked_by,omitempty"`
+	State     string `json:"state,omitempty"`
+	Blocks    bool   `json:"blocks,omitempty"`
+	Waiting   bool   `json:"waiting,omitempty"`
 	Answer    *struct {
 		Picked     []string `json:"picked"`
 		Text       string   `json:"text,omitempty"`
 		AnsweredBy string   `json:"answered_by"`
 		AnsweredAt string   `json:"answered_at"`
 	} `json:"answer,omitempty"`
+}
+
+// open reports whether the question waits on its answer. A node from
+// before per-task questions sends no state: open until answered.
+func (q *taskboardQuestion) open() bool {
+	if q.State != "" {
+		return q.State == "open"
+	}
+	return q.Answer == nil
 }
 
 // answerLines is the answer, readable: the picked labels, then the text.
@@ -61,55 +79,93 @@ func (q *taskboardQuestion) answerLines() []string {
 	return out
 }
 
-// printTaskboardQuestion is show's question block.
+// questionHow is how the question is answered.
+func (q *taskboardQuestion) questionHow() string {
+	switch {
+	case len(q.Options) == 0:
+		return "answer in words"
+	case q.Multi:
+		return "pick any"
+	}
+	return "pick one"
+}
+
+// printTaskboardQuestion is show's questions block: each question, its
+// options and, once answered, its answer.
 func printTaskboardQuestion(stdout io.Writer, t taskboardTask) {
-	q := t.Question
-	if q == nil {
-		return
+	qs := t.Questions
+	if len(qs) == 0 && t.Question != nil {
+		qs = []*taskboardQuestion{t.Question}
 	}
-	pick := "pick one"
-	if q.Multi {
-		pick = "pick any"
+	for _, q := range qs {
+		head := "  question"
+		if q.N > 0 {
+			head = fmt.Sprintf("  Q%d", q.N)
+		}
+		state := q.State
+		if state == "" {
+			state = "open"
+			if q.Answer != nil {
+				state = "answered"
+			}
+		}
+		title := ""
+		if q.Title != "" && q.Title != t.Title {
+			title = " " + q.Title
+		}
+		fmt.Fprintf(stdout, "%s [%s]%s  (%s", head, state, title, q.questionHow())
+		if q.AskedBy != "" {
+			fmt.Fprintf(stdout, "; asked by %s", q.AskedBy)
+		}
+		fmt.Fprintln(stdout, ")")
+		if q.Body != "" {
+			fmt.Fprintln(stdout, indentText(q.Body, "      "))
+		}
+		printQuestionOptions(stdout, q, "    ")
+		if lines := q.answerLines(); len(lines) > 0 {
+			fmt.Fprintf(stdout, "    answered by %s at %s\n", q.Answer.AnsweredBy, q.Answer.AnsweredAt)
+			for _, l := range lines {
+				fmt.Fprintf(stdout, "      %s\n", l)
+			}
+		} else if q.open() && (t.Status == "open" || t.Status == "blocked") {
+			which := ""
+			if q.N > 0 && t.OpenQuestions > 1 {
+				which = fmt.Sprintf(" --question %d", q.N)
+			}
+			fmt.Fprintf(stdout, "    answer it: tclaude agent taskboard answer %s%s --pick <key> [--text \"…\"]\n", t.ID, which)
+		}
 	}
-	if len(q.Options) == 0 {
-		pick = "answer in words"
-	}
-	fmt.Fprintf(stdout, "  question: %s\n", pick)
+}
+
+func printQuestionOptions(stdout io.Writer, q *taskboardQuestion, indent string) {
 	for i, o := range q.Options {
 		rec := ""
 		if o.Key == q.Recommend {
 			rec = "  (recommended)"
 		}
-		fmt.Fprintf(stdout, "    %d. %s [%s]%s\n", i+1, o.Label, o.Key, rec)
+		fmt.Fprintf(stdout, "%s%d. %s [%s]%s\n", indent, i+1, o.Label, o.Key, rec)
 		if o.Description != "" {
-			fmt.Fprintf(stdout, "       %s\n", o.Description)
+			fmt.Fprintf(stdout, "%s   %s\n", indent, o.Description)
 		}
-	}
-	if lines := q.answerLines(); len(lines) > 0 {
-		fmt.Fprintf(stdout, "  answered by %s at %s\n", q.Answer.AnsweredBy, q.Answer.AnsweredAt)
-		for _, l := range lines {
-			fmt.Fprintf(stdout, "    %s\n", l)
-		}
-	} else if t.Status == "open" || t.Status == "blocked" {
-		fmt.Fprintf(stdout, "  answer it: tclaude agent taskboard answer %s --pick <key> [--text \"…\"]\n", t.ID)
 	}
 }
 
 // ---- ask-operator ----
 
 type taskboardAskOperatorParams struct {
-	Group       string   `pos:"true" help:"Group whose board the question goes on"`
-	Question    string   `pos:"true" help:"The question, one line (the task's title)"`
+	Target      string   `pos:"true" help:"A task (tk_…) to ask on, or a group: a new task in the operator's lane is made for the question"`
+	Question    string   `pos:"true" help:"The question, one line"`
 	Body        string   `long:"body" optional:"true" help:"Context for the operator (Markdown, up to 8 KiB)"`
 	BodyFile    string   `long:"body-file" optional:"true" help:"Read the context from this file ('-' for stdin)"`
 	Option      []string `long:"option" short:"o" optional:"true" help:"A choice: \"Label\" or \"Label: description\" (split at the first colon and space; repeat, 2 to 6). Without options the operator answers in words"`
 	OptionsFile string   `long:"options-file" optional:"true" help:"The options as JSON: [{\"label\",\"description\",\"preview\",\"key\"}…] (a preview is monospace text, up to 2 KiB); not with --option"`
 	Multi       bool     `long:"multi" help:"The operator may pick several options"`
 	Recommend   string   `long:"recommend" optional:"true" help:"The option you recommend: its number (from 1), key or label"`
-	Blocks      string   `long:"blocks" optional:"true" help:"A task of the board (tk_…, typically yours) that waits on the answer: blocked on the question until it is answered"`
+	Block       bool     `long:"block" help:"On a task: block it until the question is answered (or withdrawn)"`
+	Blocks      string   `long:"blocks" optional:"true" help:"For a group: a task of the board (tk_…, typically yours) that waits on the new question task, blocked until it is answered"`
 	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail)"`
-	Idea        bool     `long:"idea" help:"Put it in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
-	Attach      []string `long:"attach" optional:"true" help:"Attach a file you can read (repeatable; at most 10, 4 MiB each)"`
+	Idea        bool     `long:"idea" help:"For a group: put the question task in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
+	Attach      []string `long:"attach" optional:"true" help:"For a group: attach a file you can read to the new task (repeatable; at most 10, 4 MiB each)"`
 	Peer        string   `long:"peer" optional:"true" help:"Ask the operator of a linked node, on its board, under the grants it gave this node"`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON        bool     `long:"json" help:"Output JSON"`
@@ -118,16 +174,20 @@ type taskboardAskOperatorParams struct {
 func taskboardAskOperatorCmd() *cobra.Command {
 	return boa.CmdT[taskboardAskOperatorParams]{
 		Use:   "ask-operator",
-		Short: "Ask the operator a question on the board: options to pick and/or free text; the answer comes back to you",
-		Long: "Puts a question to the operator as a task in their lane: up to 6 --option choices (or none, for an answer in " +
-			"words), --multi to allow several, --recommend to mark the one you suggest. The operator answers in the dashboard " +
-			"or with `taskboard answer`: the task closes as done, and the answer comes to your inbox as " +
-			"`[taskboard] answered: …` with the picks, the text and the answer as JSON. --blocks makes your task wait on it " +
-			"(reopened when it is answered); --wait holds the command until the answer comes and prints it. Asking about " +
-			"your own work needs taskboard.own. The board stays quiet: no popup, no Messages entry.",
+		Short: "Ask the operator a question on a task (or on a new one): options to pick and/or free text; the answer comes back to you",
+		Long: "Puts a question to the operator. On a task (tk_…), the question is an entry of the task's activity, " +
+			"numbered Q1, Q2…, and shows in the operator's lane until it is answered; the task keeps its assignee. " +
+			"--block blocks the task until the answer. On a group, a new task in the operator's lane is made for the " +
+			"question, and answering it closes that task as done (--blocks makes your task wait on it). Up to 6 " +
+			"--option choices (or none, for an answer in words), --multi to allow several, --recommend to mark the one " +
+			"you suggest. The operator answers in the dashboard or with `taskboard answer`; the answer comes to your " +
+			"inbox as `[taskboard] answered…` with the picks, the text and the answer as JSON, and is recorded under " +
+			"the question in the task's activity. --wait holds the command until the answer comes and prints it. " +
+			"Withdraw an open question by deleting its entry (`taskboard comment rm <task> <#id>`). Asking on your own " +
+			"group's board needs taskboard.own. The board stays quiet: no popup, no Messages entry.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardAskOperatorParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeGroupNames)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
@@ -166,6 +226,9 @@ func parseQuestionOptions(opts []string, file string) ([]map[string]any, error) 
 	return out, nil
 }
 
+// isTaskRef reports whether s names a task (tk_…) rather than a group.
+func isTaskRef(s string) bool { return strings.HasPrefix(strings.TrimSpace(s), "tk_") }
+
 func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	var wait time.Duration
 	if s := strings.TrimSpace(p.Wait); s != "" {
@@ -176,7 +239,15 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 		}
 		wait = d
 	}
-	if p.Idea && (p.Blocks != "" || wait > 0) {
+	onTask := isTaskRef(p.Target)
+	switch {
+	case onTask && (p.Blocks != "" || p.Idea || len(p.Attach) > 0):
+		fmt.Fprintln(stderr, "Error: on a task, --blocks, --idea and --attach do not apply (--block blocks the task itself)")
+		return rcInvalidArg
+	case !onTask && p.Block:
+		fmt.Fprintln(stderr, "Error: --block is for a question on a task; for a group, --blocks names the task that waits")
+		return rcInvalidArg
+	case p.Idea && (p.Blocks != "" || wait > 0):
 		fmt.Fprintln(stderr, "Error: an idea for the operator is not waited on; --idea takes no --blocks or --wait")
 		return rcInvalidArg
 	}
@@ -205,14 +276,6 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 		}
 		q["recommend"] = r
 	}
-	req := map[string]any{"title": p.Question, "body": body, "to": "operator", "question": q}
-	if b := strings.TrimSpace(p.Blocks); b != "" {
-		req["blocks"] = b
-	}
-	if p.Idea {
-		req["start"], req["stage"] = false, "idea"
-	}
-	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Group)) + "/taskboard/tasks"
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -220,6 +283,17 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	if rc != rcOK {
 		return rc
 	}
+	if onTask {
+		return askOperatorOnTask(p, q, body, wait, ask, stdout, stderr)
+	}
+	req := map[string]any{"title": p.Question, "body": body, "to": "operator", "question": q}
+	if b := strings.TrimSpace(p.Blocks); b != "" {
+		req["blocks"] = b
+	}
+	if p.Idea {
+		req["start"], req["stage"] = false, "idea"
+	}
+	path := "/v1/groups/" + url.PathEscape(strings.TrimSpace(p.Target)) + "/taskboard/tasks"
 	var t taskboardTask
 	if len(p.Attach) > 0 {
 		err = taskboardUploadFiles(p.Peer, path, req, p.Attach, &t, ask)
@@ -240,7 +314,48 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	if !p.JSON {
 		fmt.Fprintf(stdout, "asked %s: %s; waiting up to %s for the answer…\n", t.ID, t.Title, wait)
 	}
-	return waitTaskboardAnswer(p.Peer, t.ID, wait, p.JSON, stdout, stderr)
+	// Its question by number; a node from before per-task questions sends
+	// none, and is waited on through the question task's own route.
+	n := 0
+	if t.Question != nil {
+		n = t.Question.N
+	}
+	return waitTaskboardAnswer(p.Peer, t.ID, n, wait, p.JSON, stdout, stderr)
+}
+
+// taskboardAsked is POST …/questions's answer.
+type taskboardAsked struct {
+	Task     taskboardTask      `json:"task"`
+	Question *taskboardQuestion `json:"question"`
+}
+
+// askOperatorOnTask asks on an existing task: an entry of its activity.
+func askOperatorOnTask(p *taskboardAskOperatorParams, q map[string]any, body string, wait, ask time.Duration, stdout, stderr io.Writer) int {
+	q["title"], q["body"], q["block"] = p.Question, body, p.Block
+	var out taskboardAsked
+	if err := remoteRequestOpts(p.Peer, http.MethodPost, taskboardPath(p.Target, "/questions"), q, &out, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if out.Question == nil || out.Question.N < 1 {
+		fmt.Fprintln(stderr, "Error: the daemon did not return the question")
+		return rcIOFailure
+	}
+	if wait == 0 {
+		if p.JSON {
+			return writeJSONTo(stdout, out)
+		}
+		blocked := ""
+		if p.Block {
+			blocked = "; the task is blocked until the answer"
+		}
+		fmt.Fprintf(stdout, "asked Q%d on %s: %s%s; %s\n", out.Question.N, out.Task.ID, out.Question.Title, blocked, answerWhere(p.Peer))
+		return rcOK
+	}
+	if !p.JSON {
+		fmt.Fprintf(stdout, "asked Q%d on %s: %s; waiting up to %s for the answer…\n", out.Question.N, out.Task.ID, out.Question.Title, wait)
+	}
+	return waitTaskboardAnswer(p.Peer, out.Task.ID, out.Question.N, wait, p.JSON, stdout, stderr)
 }
 
 // answerWhere says where the answer to a question comes: the inbox, also
@@ -252,22 +367,33 @@ func answerWhere(peer string) string {
 	return "the answer comes to your inbox as remote mail from " + peer
 }
 
-// taskboardAnswerState is GET …/answer.
+// taskboardAnswerState is GET …/questions/{n} (or …/answer).
 type taskboardAnswerState struct {
 	Task     string             `json:"task"`
+	N        int                `json:"n,omitempty"`
 	Status   string             `json:"status"`
+	State    string             `json:"state,omitempty"`
 	Answered bool               `json:"answered"`
 	Question *taskboardQuestion `json:"question"`
 }
 
-// waitTaskboardAnswer long-polls the question until it is answered or
-// closed, or wait runs out.
-func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdout, stderr io.Writer) int {
+// questionPath is question n's route, or with n 0 the task's question
+// route (its only open question).
+func questionPath(id string, n int) string {
+	if n <= 0 {
+		return taskboardPath(id, "/answer")
+	}
+	return taskboardPath(id, "/questions/"+strconv.Itoa(n))
+}
+
+// waitTaskboardAnswer long-polls question n (0: a question task's) until
+// it is answered or closed, or wait runs out.
+func waitTaskboardAnswer(peer, id string, n int, wait time.Duration, asJSON bool, stdout, stderr io.Writer) int {
 	deadline := time.Now().Add(wait)
 	for {
 		left := time.Until(deadline)
 		if left <= 0 {
-			fmt.Fprintf(stderr, "no answer within %s; %s stays open: %s\n", wait, id, answerWhere(peer))
+			fmt.Fprintf(stderr, "no answer within %s; the question on %s stays open: %s\n", wait, id, answerWhere(peer))
 			return rcAskTimeout
 		}
 		step := min(left, 30*time.Second).Round(time.Second)
@@ -278,16 +404,21 @@ func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdou
 		// The daemon holds the request for up to step: the client budget
 		// is step plus headroom, not the default 10s.
 		opts := DaemonOpts{Timeout: step + 15*time.Second}
-		if err := remoteRequestOpts(peer, http.MethodGet, taskboardPath(id, "/answer")+"?wait="+step.String(), nil, &st, opts); err != nil {
+		if err := remoteRequestOpts(peer, http.MethodGet, questionPath(id, n)+"?wait="+step.String(), nil, &st, opts); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}
-		if st.Answered || (st.Status != "open" && st.Status != "blocked") {
+		ended := st.State != "" && st.State != "open"
+		if st.Answered || ended || (st.Status != "open" && st.Status != "blocked") {
 			if asJSON {
 				return writeJSONTo(stdout, st)
 			}
 			if !st.Answered {
-				fmt.Fprintf(stdout, "%s was %s without an answer\n", id, st.Status)
+				what := st.State
+				if what == "" || what == "open" {
+					what = st.Status
+				}
+				fmt.Fprintf(stdout, "the question on %s was %s without an answer\n", id, what)
 				return rcOK
 			}
 			for _, l := range st.Question.answerLines() {
@@ -301,7 +432,8 @@ func waitTaskboardAnswer(peer, id string, wait time.Duration, asJSON bool, stdou
 // ---- answer ----
 
 type taskboardAnswerParams struct {
-	Task     string `pos:"true" help:"Question task id (tk_…)"`
+	Task     string `pos:"true" help:"Task id (tk_…) the question is on"`
+	Question string `long:"question" short:"q" optional:"true" help:"Which question (Q2 or 2); needed only when the task has several open"`
 	Pick     string `long:"pick" optional:"true" help:"The option(s) picked: key, label or number (from 1), comma-separated for a multi-select question"`
 	Text     string `long:"text" optional:"true" help:"An answer in words, with the pick or instead of one"`
 	Peer     string `long:"peer" optional:"true" help:"Answer on a linked node's board, under the grants it gave this node (taskboard.assign)"`
@@ -312,10 +444,12 @@ type taskboardAnswerParams struct {
 func taskboardAnswerCmd() *cobra.Command {
 	return boa.CmdT[taskboardAnswerParams]{
 		Use:   "answer",
-		Short: "Answer a question put to the operator: it closes as done and the answer goes to the agent that asked",
-		Long: "Answers a question task (`ask-operator`): --pick names the option(s), --text answers in words, with a pick or " +
-			"instead of one. The task closes as done, the tasks waiting on it reopen, and the agent that asked gets the " +
-			"answer by mail. Answering is the operator's, or a taskboard.assign holder's; never the asking agent's.",
+		Short: "Answer a question put to the operator: the answer goes to the agent that asked",
+		Long: "Answers a question on a task (`ask-operator`): --pick names the option(s), --text answers in words, with a " +
+			"pick or instead of one, and --question names the question when the task has several open. The answer is " +
+			"recorded under the question in the task's activity and goes to the agent that asked by mail; a task the " +
+			"question blocked is unblocked, and a task made for the question closes as done (the tasks waiting on it " +
+			"reopen). Answering is the operator's, or a taskboard.assign holder's; never the asking agent's.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardAnswerParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -327,10 +461,28 @@ func taskboardAnswerCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// parseQuestionN reads --question: "", "2" or "Q2".
+func parseQuestionN(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(strings.TrimPrefix(s, "Q"), "q"))
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("--question %q: name it Q2 or 2", s)
+	}
+	return n, nil
+}
+
 func runTaskboardAnswer(p *taskboardAnswerParams, stdout, stderr io.Writer) int {
 	picks := splitTaskIDs(p.Pick)
 	if len(picks) == 0 && strings.TrimSpace(p.Text) == "" {
 		fmt.Fprintln(stderr, "Error: give --pick, --text, or both")
+		return rcInvalidArg
+	}
+	n, err := parseQuestionN(p.Question)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -339,8 +491,7 @@ func runTaskboardAnswer(p *taskboardAnswerParams, stdout, stderr io.Writer) int 
 	// A number picks by position: read the question first.
 	numbered := false
 	for _, k := range picks {
-		var n int
-		if _, err := fmt.Sscanf(k, "%d", &n); err == nil && fmt.Sprint(n) == k {
+		if v, err := strconv.Atoi(k); err == nil && strconv.Itoa(v) == k {
 			numbered = true
 		}
 	}
@@ -350,21 +501,54 @@ func runTaskboardAnswer(p *taskboardAnswerParams, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}
-		if t.Question == nil {
-			fmt.Fprintf(stderr, "Error: %s is not a question\n", t.ID)
+		q, msg := pickQuestion(t, n)
+		if q == nil {
+			fmt.Fprintf(stderr, "Error: %s\n", msg)
 			return rcInvalidArg
 		}
 		for i, k := range picks {
-			var n int
-			if _, err := fmt.Sscanf(k, "%d", &n); err == nil && fmt.Sprint(n) == k {
-				if n < 1 || n > len(t.Question.Options) {
-					fmt.Fprintf(stderr, "Error: --pick %d: the question has %d options\n", n, len(t.Question.Options))
+			if v, err := strconv.Atoi(k); err == nil && strconv.Itoa(v) == k {
+				if v < 1 || v > len(q.Options) {
+					fmt.Fprintf(stderr, "Error: --pick %d: the question has %d options\n", v, len(q.Options))
 					return rcInvalidArg
 				}
-				picks[i] = t.Question.Options[n-1].Key
+				picks[i] = q.Options[v-1].Key
 			}
 		}
 	}
 	req := map[string]any{"picked": picks, "text": strings.TrimSpace(p.Text)}
-	return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/answer"), req, p.AskHuman, p.JSON, "answered", stdout, stderr)
+	path := taskboardPath(p.Task, "/answer")
+	if n > 0 {
+		path = questionPath(p.Task, n) + "/answer"
+	}
+	return taskboardWrite(p.Peer, http.MethodPost, path, req, p.AskHuman, p.JSON, "answered", stdout, stderr)
+}
+
+// pickQuestion is the question an answer names: n, or with n 0 the task's
+// only open question; else why not.
+func pickQuestion(t taskboardTask, n int) (*taskboardQuestion, string) {
+	qs := t.Questions
+	if len(qs) == 0 && t.Question != nil {
+		qs = []*taskboardQuestion{t.Question}
+	}
+	var open []*taskboardQuestion
+	for _, q := range qs {
+		if n > 0 && q.N == n {
+			return q, ""
+		}
+		if q.open() {
+			open = append(open, q)
+		}
+	}
+	switch {
+	case n > 0:
+		return nil, fmt.Sprintf("%s has no question Q%d", t.ID, n)
+	case len(qs) == 0:
+		return nil, t.ID + " has no question"
+	case len(open) == 1:
+		return open[0], ""
+	case len(open) == 0:
+		return nil, t.ID + " has no open question"
+	}
+	return nil, fmt.Sprintf("%s has %d open questions; name one with --question", t.ID, len(open))
 }
