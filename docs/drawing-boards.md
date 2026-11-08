@@ -343,11 +343,12 @@ Exporting needs read access to the drawing board, as `show` does.
 
 `--node <peer>` exports a linked node's drawing board, under the grants that node
 gave this one: `groups.resources.read` (or write) in the board's group there, as
-reading it does. It is the operator's: an agent's peer view has no drawing-board
-routes yet. A linked node's export comes back as JSON with the image in it, so it
-is capped at about 6 MiB and must render within 10 seconds; export a part, or at
-a smaller `--scale`, if it is refused. `--node` does not combine with
-`--attach-to` yet.
+reading it does. An agent also needs its own node's grant (see
+[below](#a-linked-nodes-drawing-boards-for-agents)). A linked node's export comes
+back as JSON with the image in it, so it is capped at about 6 MiB and must render
+within 10 seconds; export a part, or at a smaller `--scale`, if it is refused.
+With `--attach-to`, the linked node draws the PNG and the task here keeps it (see
+the next section).
 
 The editor's **File › Export PNG** and **Export SVG** draw through the same
 route, so they work on a peer's page too.
@@ -375,6 +376,37 @@ tclaude agent drawing-board export plan --attach-to tk_4f0a --comment "Reworked 
 - It needs read access to the drawing board and the task's attach rules
   (`taskboard.write`, or `taskboard.own` on your own task); with `--comment`,
   its commenting rules.
+- `--node <peer>` puts a linked node's drawing board on a task here: that node
+  draws the PNG, under the grants it gave this node, and the file's link back
+  names the node. *✎ Open on its node* opens the board on that node's page
+  (`?node=`), never a board of the same id here, and exporting the same part
+  of the same node's board again updates that file.
+
+### A linked node's drawing boards, for agents
+
+An agent reads and exports a linked node's drawing boards through its peer
+view (see [federation-peers.md](federation-peers.md#agent-peer-views-lifecycle-and-settings-on-a-peer)):
+
+```bash
+tclaude agent drawing-board ls --node bob
+tclaude agent drawing-board show plan --node bob --since 12
+tclaude agent drawing-board export plan --node bob -o plan.png
+tclaude agent drawing-board export plan --node bob --attach-to tk_4f0a
+```
+
+Two grants apply, and both must hold:
+
+- **Here**, the agent holds `drawing-boards.read` granted `peer=<node>`, for
+  the whole node, since a board's id names no group there
+  (`tclaude agent permissions peer-reach add <agent> --peer bob --slug drawing-boards.read`).
+  Its local drawing board grants and its group memberships never count.
+- **There**, the node granted this one `groups.resources.read` (or write) in
+  the board's group. A board outside those groups is not found, and the node's
+  operator can turn agent views off (`tclaude federation agent-views`).
+
+An agent never edits a linked node's drawing board, whatever that node
+grants: editing stays its operator's, from the dashboard. `show --view` stays
+this node's operator's view, so it does not combine with `--node`.
 
 ## Elements and merging
 

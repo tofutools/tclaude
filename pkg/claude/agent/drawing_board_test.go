@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -556,4 +557,29 @@ func TestDrawingBoardAskHumanReachesEverySubcommandsRequest(t *testing.T) {
 	require.Equal(t, rcOK, runDrawingBoardSnapshot(&drawingBoardSnapshotParams{Output: out}, "plan", &bytes.Buffer{}, &bytes.Buffer{}))
 	require.Len(t, raw, 1)
 	assert.Equal(t, "30s", raw[0].AskHuman.String())
+}
+
+// ls and show --node read a linked node's drawing boards through its peer
+// view; --view stays this node's operator's.
+func TestDrawingBoardLsShowOnALinkedNode(t *testing.T) {
+	var paths []string
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, _, out any, _ DaemonOpts) error {
+		paths = append(paths, method+" "+path)
+		if strings.HasSuffix(path, "/drawing-boards") {
+			return json.Unmarshal([]byte(`{"drawingBoards":[{"id":"plan","title":"Plan","version":3,"group":"crew"}]}`), out)
+		}
+		return json.Unmarshal([]byte(`{"id":"plan","title":"Plan","version":3,"elements":[]}`), out)
+	}
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runDrawingBoardLs(&drawingBoardLsParams{Node: "bob"}, &stdout, &stderr), stderr.String())
+	assert.Contains(t, stdout.String(), "plan")
+	since := int64(2)
+	require.Equal(t, rcOK, runDrawingBoardShow(&drawingBoardShowParams{Node: "bob", Since: &since}, "plan", &stdout, &stderr), stderr.String())
+	assert.Equal(t, []string{
+		"GET /v1/federation/peer/bob/drawing-boards",
+		"GET /v1/federation/peer/bob/drawing-boards/plan?since=2",
+	}, paths)
+	assert.Equal(t, rcInvalidArg, runDrawingBoardShow(&drawingBoardShowParams{Node: "bob", View: true}, "plan", &stdout, &stderr))
 }

@@ -167,8 +167,29 @@ func drawingBoardPath(id string, tail ...string) string {
 // version loses the merge and stays deleted.
 const drawingBoardWithTombstones = 0
 
+// peerDrawingBoardsPath is a linked node's drawing boards through its peer
+// view: its own label or instance ID picks the node, and that node's grants
+// to this one bound what comes back (an agent also needs drawing-boards.read
+// held peer=<node>).
+func peerDrawingBoardsPath(node string, tail ...string) string {
+	p := "/v1/federation/peer/" + url.PathEscape(node) + "/drawing-boards"
+	for _, t := range tail {
+		p += "/" + t
+	}
+	return p
+}
+
 func fetchDrawingBoard(id string, since int64) (*drawingBoardDoc, error) {
+	return fetchDrawingBoardOn("", id, since)
+}
+
+// fetchDrawingBoardOn reads a drawing board on this node, or with node set
+// on that linked node.
+func fetchDrawingBoardOn(node, id string, since int64) (*drawingBoardDoc, error) {
 	path := drawingBoardPath(id)
+	if node != "" {
+		path = peerDrawingBoardsPath(node, url.PathEscape(id))
+	}
 	if since >= 0 {
 		path += "?since=" + strconv.FormatInt(since, 10)
 	}
@@ -221,7 +242,8 @@ func drawingBoardRandomNonce() int64 {
 // ---- ls ----
 
 type drawingBoardLsParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	JSON bool   `long:"json" help:"Output JSON"`
+	Node string `long:"node" optional:"true" help:"List a linked node's drawing boards, by its label or instance ID: those in the groups it grants this node groups.resources.read in"`
 }
 
 func drawingBoardLsCmd() *cobra.Command {
@@ -240,7 +262,11 @@ func runDrawingBoardLs(p *drawingBoardLsParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		DrawingBoards []drawingBoardSummary `json:"drawingBoards"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/drawing-boards", nil, &resp, drawingBoardOpts()); err != nil {
+	path := "/v1/drawing-boards"
+	if node := strings.TrimSpace(p.Node); node != "" {
+		path = peerDrawingBoardsPath(node)
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &resp, drawingBoardOpts()); err != nil {
 		return drawingBoardErr(stderr, err)
 	}
 	if p.JSON {
@@ -281,6 +307,7 @@ type drawingBoardShowParams struct {
 	Since *int64 `long:"since" help:"Only elements changed after this drawing board version, deletions included"`
 	JSON  bool   `long:"json" help:"Output the drawing board JSON (elements in Excalidraw form)"`
 	View  bool   `long:"view" help:"Only the elements in the part of the drawing board the operator has on screen"`
+	Node  string `long:"node" optional:"true" help:"Show a linked node's drawing board, by its label or instance ID, under the grants it gave this node"`
 }
 
 func drawingBoardShowCmd() *cobra.Command {
@@ -290,7 +317,8 @@ func drawingBoardShowCmd() *cobra.Command {
 		Long: "Prints the drawing board version and one line per live element: type, id, rounded x,y,w,h, a text excerpt, " +
 			"for arrows and lines their attached ends (element:side) and routing, and for attached text its container. With --since N only the elements changed after version N are " +
 			"listed, deletions included. Remember the printed version and pass it as --since next time. " +
-			"With --view only the elements the operator currently has on screen are listed (\"this\", \"here\").",
+			"With --view only the elements the operator currently has on screen are listed (\"this\", \"here\"). " +
+			"--node reads a linked node's drawing board under the grants that node gave this one (an agent also needs drawing-boards.read granted peer=<node>).",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *drawingBoardShowParams, _ *cobra.Command, args []string) {
@@ -312,7 +340,12 @@ func runDrawingBoardShow(p *drawingBoardShowParams, id string, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: --view lists the whole operator view; it does not combine with --since")
 		return rcInvalidArg
 	}
-	doc, err := fetchDrawingBoard(id, since)
+	node := strings.TrimSpace(p.Node)
+	if p.View && node != "" {
+		fmt.Fprintln(stderr, "Error: --view is this node's operator's view; a linked node does not share its operator's")
+		return rcInvalidArg
+	}
+	doc, err := fetchDrawingBoardOn(node, id, since)
 	if err != nil {
 		return drawingBoardErr(stderr, err)
 	}

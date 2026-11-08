@@ -102,10 +102,17 @@ func TestDrawingBoardExportAttachesToATask(t *testing.T) {
 		{AttachTo: "tk_1", Format: "svg"},
 		{Output: "x.png", Comment: "see"},
 		{Output: "x.png", Replace: 3},
-		{AttachTo: "tk_1", Node: "bob"},
 	} {
 		assert.Equal(t, rcInvalidArg, runDrawingBoardExport(&bad, "plan", &stdout, &stderr), "%+v", bad)
 	}
+
+	// A linked node's board: the daemon has that node draw it, and the task
+	// here keeps it.
+	stdout.Reset()
+	rc = runDrawingBoardExport(&drawingBoardExportParams{AttachTo: "tk_1", Node: "bob"}, "plan", &stdout, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, map[string]any{"board": "plan", "node": "bob"}, gotBody)
+	assert.Contains(t, stdout.String(), "drawing board plan on bob at version 7")
 }
 
 // --node exports a linked node's drawing board through its peer view, which

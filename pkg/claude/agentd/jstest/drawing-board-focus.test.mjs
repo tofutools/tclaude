@@ -42,8 +42,23 @@ test('a task drawing names its board only when the reference is well formed', as
   assert.equal(drawingLink({ name: 'a.png' }), null);
   assert.equal(drawingLink({ drawing: { board: '../etc', version: 1 } }), null);
   assert.deepEqual(drawingLink({ drawing: { board: 'plan', version: 4, elements: ['a', 'b c', 7], crop: { x: 1, y: 2, width: 3, height: 4 } } }),
-    { board: 'plan', version: 4, elements: ['a'], box: { x: 1, y: 2, width: 3, height: 4 } });
+    { board: 'plan', version: 4, elements: ['a'], box: { x: 1, y: 2, width: 3, height: 4 }, node: '' });
   assert.equal(drawingLink({ drawing: { board: 'plan', crop: { x: 1, y: 2, width: -3, height: 4 } } }).box, null);
+  assert.equal(drawingLink({ drawing: { board: 'plan', node: 'inst_bob1234' } }).node, 'inst_bob1234', 'a linked node\'s board names its node');
+  assert.equal(drawingLink({ drawing: { board: 'plan', node: '../x' } }), null, 'a malformed node names nothing');
+});
+
+test("a linked node's drawing opens on that node's page, never this node's board of the same id", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { StoredTile, openDrawingLink } = await harness.importDashboardModule('js/groups-taskboard-files.js');
+  const attachment = { id: 3, name: 'plan.png', size: 1200, drawing: { board: 'plan', version: 2, node: 'inst_bob1234' } };
+  const view = await harness.mount(harness.html`<${StoredTile} api=${{ local: true }} taskId="tk_1" attachment=${attachment} onOpen=${() => {}} />`);
+  const button = view.container.querySelector('.tb-file-drawing');
+  assert.match(button.textContent, /Open on its node/);
+  assert.match(button.getAttribute('title'), /inst_bob1234/);
+  const opened = [];
+  await openDrawingLink({ board: 'plan', node: 'inst_bob1234' }, { open: (...args) => opened.push(args) });
+  assert.deepEqual(opened, [['/drawing-boards/plan?node=inst_bob1234', '_blank', 'noopener']]);
 });
 
 test("a drawing's tile offers its drawing board on this node's board only", async (t) => {
