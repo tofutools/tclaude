@@ -402,6 +402,34 @@ body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not
 .ui-switch:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
 .ui-switch:disabled { opacity: .45; cursor: not-allowed; }
 
+/* A resource editor's header (resource-editor-header.js): identity, a menu
+   bar (File · Edit · View · Share), and the people at the right. */
+.reh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.reh-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.reh-spacer { flex: 1 1 0; }
+.reh-menubar { display: flex; align-items: center; gap: 1px; }
+.reh-menubar-slot { position: relative; }
+.reh-menubar-label { border: 0; border-radius: 4px; padding: 3px 8px; background: none; color: var(--ui-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.reh-menubar-label:hover, .reh-menubar-label.open { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
+.reh-menubar-label:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.reh-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: var(--z-popover); min-width: 240px; max-height: 70vh; overflow: auto; }
+.reh-menu .reh-menu-label { flex: 1 1 auto; }
+.reh-menu .reh-menu-key { color: var(--ui-muted-text); font-size: 11px; margin-left: 16px; }
+.reh-menu-heading { padding: 4px 10px 2px; color: var(--ui-muted-text); font-size: 10.5px; }
+.reh-menu-node { padding: 4px 6px; }
+.reh-people { display: flex; align-items: center; }
+.reh-stack { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ui-line); border-radius: 14px; padding: 2px 8px 2px 3px;
+  background: none; color: var(--ui-text); font: inherit; font-size: 12px; cursor: pointer; }
+.reh-stack:hover { border-color: var(--ui-focus); }
+.reh-stack:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.reh-avatars { display: inline-flex; }
+.reh-avatar { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-left: -5px; border-radius: 50%;
+  border: 2px solid var(--ui-menu-bg); background: #388bfd; color: #fff; font-size: 10px; font-weight: 600; }
+.reh-avatar:first-child { margin-left: 0; }
+.reh-avatar.offline { opacity: .5; }
+.reh-avatar.drawing { box-shadow: 0 0 0 2px #a371f7; }
+.reh-stack-count { color: var(--ui-muted-text); }
+
 /* Menus: the panel only. Positioning and open/close stay with the owner. */
 .ui-menu {
   display: flex; flex-direction: column; gap: 1px; min-width: 160px; padding: 4px;

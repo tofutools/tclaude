@@ -35,6 +35,7 @@ import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } f
 import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { DrawingBoardEditor, DrawingBoardPaneGate, DrawingBoardsGate } from './drawing-board-island.js';
+import { editorMoveItems } from './resource-editor-header.js';
 import { peerDrawingBoardsShared } from './peer-drawing-boards.js';
 import { DrawingBoardDeleteHost, askDeleteDrawingBoard, onDrawingBoardDeleted } from './drawing-board-manage.js';
 import { LockBadge, resourceLockState, resourceLocked, setResourceLock } from './resource-lock.js';
@@ -602,14 +603,15 @@ function DrawingBoardPane({ pane, active, solo, manageTitle, actions, snapshot, 
     visible=${() => solo || !!document.getElementById('tab-terminals')?.classList.contains('active')}
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
-    headActions=${solo
-      ? html`<${Button} size="sm" class="mux-btn" title="Move this drawing board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
-        ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this drawing board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
+    moves=${editorMoveItems({
+      what: 'this drawing board',
+      toCollab: solo ? () => void actions.reattachPane(pane.key) : null,
       // A peer's drawing board stays a tab: the overlay windows and a pop-out's
       // page are this node's own, and would open its drawing board of the same id.
-      : onPeerPage() ? null : html`
-        <${Button} size="sm" class="mux-btn" title="Float this drawing board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
-        <${Button} size="sm" class="mux-btn" title="Move this drawing board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
+      toOverlay: solo ? (soloFloats(pane) ? () => void actions.reattachPane(pane.key, { overlay: true }) : null)
+        : onPeerPage() ? null : () => void actions.openPaneInOverlay(pane.key),
+      toWindow: solo || onPeerPage() ? null : () => void actions.popOutPane(pane.key, { floats: true }),
+    })} />` : null;
   return html`<div
     class=${`mux-pane mux-pane-drawing-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}

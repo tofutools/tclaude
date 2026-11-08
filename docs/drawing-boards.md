@@ -21,24 +21,25 @@ exists opens it. `/drawing-boards/<id>` opens that drawing board's tab, and `/dr
 list. A drawing board tab behaves like a terminal
 tab: it reorders, joins tab groups, and moves between a tab, an overlay window and a
 browser window of its own, with **Open in overlay**, **Open in separate window** and
-**Open in the Collab tab**. Dragging it off the strip floats it where you drop it. Like a
+**Open in the Collab tab** (in the drawing board's **View** menu, and on its tab's
+right-click menu). Dragging it off the strip floats it where you drop it. Like a
 terminal tab it lasts as long as its page: a reload brings back the drawing board the
 URL names and any drawing board in the overlay, and a new browser window starts with none. The URL of a deleted
 drawing board opens nothing and becomes `/terminals`.
 
 A drawing board is stored in this tclaude instance, not in a file of its own. To get one
-out, **⤓** on its row or in its header downloads an `.excalidraw` file.
+out, **⤓** on its row or **File › Download .excalidraw** in the editor downloads an `.excalidraw` file.
 **Import…** under the list makes a new drawing board of such a file, named after it.
 What a drawing board cannot hold, such as images, is left out, and the dashboard says
 how many elements that was.
 
-To delete a drawing board, use **🗑** on its row or **Delete drawing board…** on its tab's
-right-click menu. The dialog names the drawing board and every agent on it, and offers
+To delete a drawing board, use **🗑** on its row, **File › Delete drawing board…** in
+the editor, or **Delete drawing board…** on its tab's right-click menu. The dialog names the drawing board and every agent on it, and offers
 **⤓ Export first**, because a delete cannot be undone. Any tab or window showing
 the drawing board closes, a browser tab of its own says the drawing board was deleted, and
 everyone who was on it, stopped agents included, gets a message saying so.
 
-**Open in overlay**, on the drawing board or its tab's right-click menu, or dragging its tab off the strip, floats the
+**Open in overlay**, in the drawing board's **View** menu or its tab's right-click menu, or dragging its tab off the strip, floats the
 drawing board in its own window over every dashboard view, apart from the companion
 window, so you can work in both at once. It moves like the companion: drag it by
 its title bar, resize it from any edge or corner, and snap it to an edge or into a
@@ -82,11 +83,21 @@ and with three or more, space them evenly.
 - **Copy and paste:** Ctrl C, X and V use Excalidraw's clipboard format, so they work
   with excalidraw.com. Plain text pastes as a text element.
 
-The chip beside the title shows `synced`, `saving…`, `not saved` or `offline`. Click a
-person's chip to open that agent in the companion, or **×** to remove them. **＋ Invite
-agent** lists live agents and also sends the one you pick instructions for using
-drawing boards. The group selector files the drawing board under a group, and **⤓** downloads it as
-`.excalidraw`.
+The editor's header has the title, the lock, and a chip that shows `synced`,
+`saving…`, `not saved` or `offline`. Then comes a menu bar, which every resource editor
+shares:
+
+- **File:** **Export** (**Download .excalidraw**; the image export joins it there), and
+  **Delete drawing board…**.
+- **View:** **Zoom to fit** (Shift+1), **Zoom 100%** (Shift+0), **Zoom in**, **Zoom out**,
+  and the moves: **Open in overlay**, **Open in separate window**, **Open in the Collab tab**.
+- **Share:** the agents on the drawing board. Click one to open that agent in the
+  companion, or **×** to remove them. **Invite agent ›** lists live agents and also sends
+  the one you pick instructions for using drawing boards. The group selector files the
+  drawing board under a group.
+
+The avatars at the right of the header are the same agents, with who is drawing; a
+click opens **Share**. ←/→ move along the menu bar, ↓ goes into a menu, and Escape closes it.
 
 ### Connecting shapes
 
