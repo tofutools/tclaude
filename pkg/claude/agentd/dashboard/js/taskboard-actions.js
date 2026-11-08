@@ -289,6 +289,16 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       if (after) body.after = after;
       return call('POST', taskPath(id, '/reopen'), body);
     },
+    // archive takes a task off every list and the history, kept and
+    // recoverable (`taskboard archive`); a live one is dropped first.
+    archive(id, reason = '') {
+      return call('POST', taskPath(id, '/archive'), reason ? { reason } : {});
+    },
+    // archiveDone archives a board's done tasks, or only those closed longer
+    // ago than olderThan ('7d'): `taskboard archive-done`.
+    archiveDone(group, olderThan = '') {
+      return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
+    },
     // moveToGroup moves the task to another group of its node, or with
     // clone copies it there (groups-taskboard-transfer.js).
     moveToGroup(id, group, { clone = false, stage = '' } = {}) {

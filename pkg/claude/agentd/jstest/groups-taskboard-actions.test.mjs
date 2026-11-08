@@ -25,7 +25,7 @@ function fakeApi() {
   const record = (verb) => async (...args) => { calls.push([verb, ...args]); return verb === 'capture' || verb === 'importRefs'
     ? { created: 2, results: [{ input: 'a', task: {} }, { input: 'b', task: {} }] } : {}; };
   return { calls, capture: record('capture'), importRefs: record('importRefs'), edit: record('edit'), move: record('move'), stage: record('stage'), status: record('status'),
-    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen') };
+    assign: record('assign'), unassign: record('unassign'), reopen: record('reopen'), archive: record('archive'), archiveDone: record('archiveDone') };
 }
 
 async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
@@ -76,10 +76,10 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000003'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…']);
-  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…', 'Drop and archive']);
 
   await click(button('tk_00000004', 'Next'));
   await click(button('tk_00000001', 'Done'));
@@ -383,11 +383,36 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   api.can = { assign: false };
   const { cluster, menu } = await mountBoard(t, 'tba-noassign', { api });
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…', 'Drop and archive']);
   // Closing someone's task is the assignee's or an assigner's (the status
   // route refuses it otherwise): no Done or Drop on an assigned row.
   assert.deepEqual(cluster('tk_00000002'), ['Edit']);
   assert.deepEqual(await menu('tk_00000002'), ['Block…']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…', 'Drop and archive']);
+});
+
+test('a task archives from its ⋯ or a right-click, and the history line archives the done tasks', async (t) => {
+  const { harness, c, api, rowOf, menu, pick, click } = await mountBoard(t, 'tba-archive');
+  assert.ok((await menu('tk_00000001')).includes('Drop and archive'), 'a live task is dropped and archived');
+  api.calls.length = 0;
+  await pick('tk_00000001', 'Drop and archive');
+  assert.deepEqual(api.calls, [['archive', 'tk_00000001']]);
+
+  // A right-click on a row opens its ⋯, in place of the browser's menu.
+  await click(c.querySelector('.tb-history-toggle'));
+  const ctx = await harness.act(async () => harness.fireEvent(rowOf('tk_00000005'), 'contextmenu'));
+  assert.ok(c.querySelector('.gr-add-menu'), 'the row menu opens');
+  assert.ok([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].some((b) => b.textContent.trim() === 'Archive'));
+  void ctx;
+  api.calls.length = 0;
+  await click([...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive'));
+  assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
+
+  // Archive done ▾: every done task, or those done longer ago than an age.
+  api.calls.length = 0;
+  await click(c.querySelector('.tb-archive-done-btn'));
+  assert.deepEqual([...c.querySelectorAll('[data-archive-done]')].map((b) => b.dataset.archiveDone), ['all', '1d', '7d', '30d']);
+  await click(c.querySelector('[data-archive-done="7d"]'));
+  assert.deepEqual(api.calls, [['archiveDone', 'tba-archive', '7d']]);
 });

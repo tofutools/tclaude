@@ -587,6 +587,8 @@ type GroupTaskListOpts struct {
 	Stage string
 	// Closed also lists done and dropped tasks not yet archived.
 	Closed bool
+	// Archived lists only the archived tasks, most recently closed first.
+	Archived bool
 }
 
 // ListGroupTasks lists a group's board in the operator's order: the live
@@ -602,6 +604,9 @@ func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error)
 		where += ` OR archived_at IS NULL`
 	}
 	where += `)`
+	if opts.Archived {
+		where = `group_id = ? AND archived_at IS NOT NULL`
+	}
 	args := []any{groupID}
 	if opts.Stage != "" {
 		where += ` AND stage = ?`

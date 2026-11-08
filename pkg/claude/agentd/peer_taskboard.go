@@ -46,6 +46,7 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	group("GET /v1/groups/{name}/taskboard", read)
 	group("POST /v1/groups/{name}/taskboard/tasks", write)
 	group("POST /v1/groups/{name}/taskboard/ask", write)
+	group("POST /v1/groups/{name}/taskboard/archive-done", write)
 	// A task moved or cloned in from another node (taskboard.transfer).
 	group("POST /v1/groups/{name}/taskboard/transfer-in", peerViewRule{feature: "groups.taskboard.transfer-in", requires: PermTaskboardTransfer, group: true})
 
@@ -70,6 +71,7 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// transfer-in and an ask that carry files.
 	for _, pattern := range []string{"PATCH /v1/taskboard/tasks/{id}", "POST /v1/taskboard/tasks/{id}/move",
 		"POST /v1/taskboard/tasks/{id}/stage", "POST /v1/taskboard/tasks/{id}/status", "POST /v1/taskboard/tasks/{id}/reopen",
+		"POST /v1/taskboard/tasks/{id}/archive", "POST /v1/taskboard/tasks/{id}/unarchive",
 		"POST /v1/taskboard/tasks/{id}/attachments", "DELETE /v1/taskboard/tasks/{id}/attachments/{aid}",
 		// Comments: a peer comments under taskboard.write (taskboard.own is
 		// a member's, on its own group's board), and edits or deletes only

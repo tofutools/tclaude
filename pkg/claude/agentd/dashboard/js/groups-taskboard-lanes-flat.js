@@ -21,7 +21,7 @@ import htm from 'htm';
 import {
   BlockDialog, Card, CellAdd, CellCards, LANE_COLUMNS, LaneHead, OPERATOR, UNASSIGNED, cellAdd, laneColumn, striped, useCellReveal, useLaneDrag,
 } from './groups-taskboard-lanes.js';
-import { actorLabel, agentLabel, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
+import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
 
 const html = htm.bind(h);
@@ -138,7 +138,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
           marker=${cardMarker(task, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key }) } : null}
-          onEdit=${actions ? onEdit : null} />`} />
+          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} />`} />
       ${add && html`<${CellAdd} lane=${lane} column=${column} add=${add} wizard=${wizard} group=${group} entry=${entry}
         onNewTask=${(choice, initial) => { landIn(key, list); onNewTask(choice, initial); }} />`}
     </div>`;

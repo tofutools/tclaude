@@ -71,6 +71,9 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardOwnGate, handleTaskboardStage))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/reopen", handleTaskboardTask(taskboardOwnGate, handleTaskboardReopen))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/archive", handleTaskboardTask(taskboardOwnGate, handleTaskboardArchive))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/unarchive", handleTaskboardTask(taskboardOwnGate, handleTaskboardUnarchive))
+	mux.HandleFunc("POST /v1/groups/{name}/taskboard/archive-done", v1GroupRoute(handleTaskboardArchiveDone))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move-to-group", handleTaskboardTask(taskboardOwnGate, handleTaskboardMoveToGroup))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/moved-away", handleTaskboardTask(taskboardOwnGate, handleTaskboardMovedAway))
 	mux.HandleFunc("POST /v1/groups/{name}/taskboard/transfer-in", v1GroupRoute(handleTaskboardTransferIn))
@@ -345,6 +348,9 @@ type taskboardTaskView struct {
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	ClosedAt         string `json:"closed_at,omitempty"`
+	// ArchivedAt is when a closed task was archived (by hand or by the
+	// sweep); an archived task is on no list but ls --archived.
+	ArchivedAt string `json:"archived_at,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -436,6 +442,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			ID: t.ID, Group: group, Title: t.Title, Body: t.Body, Stage: t.Stage, Status: t.Status, Rank: t.Rank,
 			BlockReason: t.BlockReason, DependsOn: t.DependsOn, CreatedBy: t.CreatedBy,
 			CreatedAt: rfc3339(t.CreatedAt), UpdatedAt: rfc3339(t.UpdatedAt), ClosedAt: rfc3339(t.ClosedAt),
+			ArchivedAt: rfc3339(t.ArchivedAt),
 		}
 		if v.DependsOn == nil {
 			v.DependsOn = []string{}
@@ -676,8 +683,9 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
 		return
 	}
-	all := r.URL.Query().Get("all")
-	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Stage: stage, Closed: all == "1" || all == "true"})
+	all, archived := r.URL.Query().Get("all"), r.URL.Query().Get("archived")
+	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Stage: stage, Closed: all == "1" || all == "true",
+		Archived: archived == "1" || archived == "true"})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
