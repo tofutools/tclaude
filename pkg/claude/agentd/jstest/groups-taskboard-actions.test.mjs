@@ -76,10 +76,10 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000003'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…', 'Drop and archive']);
-  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…', 'Drop and archive']);
-  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…', 'Drop and archive']);
-  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…']);
+  assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…']);
 
   await click(button('tk_00000004', 'Next'));
   await click(button('tk_00000001', 'Done'));
@@ -383,21 +383,18 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   api.can = { assign: false };
   const { cluster, menu } = await mountBoard(t, 'tba-noassign', { api });
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…']);
   // Closing someone's task is the assignee's or an assigner's (the status
   // route refuses it otherwise): no Done or Drop on an assigned row.
   assert.deepEqual(cluster('tk_00000002'), ['Edit']);
   assert.deepEqual(await menu('tk_00000002'), ['Block…']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…', 'Drop and archive']);
+  assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…']);
 });
 
 test('a task archives from its ⋯ or a right-click, and the history line archives the done tasks', async (t) => {
-  const { harness, c, api, rowOf, menu, pick, click } = await mountBoard(t, 'tba-archive');
-  assert.ok((await menu('tk_00000001')).includes('Drop and archive'), 'a live task is dropped and archived');
-  api.calls.length = 0;
-  await pick('tk_00000001', 'Drop and archive');
-  assert.deepEqual(api.calls, [['archive', 'tk_00000001']]);
+  const { harness, c, api, rowOf, menu, click } = await mountBoard(t, 'tba-archive');
+  assert.ok(!(await menu('tk_00000001')).includes('Archive'), 'a live task is dropped first, which asks why');
 
   // A right-click on a row opens its ⋯, in place of the browser's menu.
   await click(c.querySelector('.tb-history-toggle'));

@@ -126,7 +126,7 @@ tclaude agent taskboard block tk_… --reason "waiting on review"   ;   unblock 
 tclaude agent taskboard drop tk_… --reason "parked in awb"
 tclaude agent taskboard reopen tk_… [--next|--idea] [--assignee <agent>|--unassign]   # a done task needs more work
 tclaude agent taskboard archive tk_… [--reason "…"]   ;   unarchive tk_…   ;   ls <group> --archived   # out of the history, kept
-tclaude agent taskboard archive-done <group> [--older-than 7d]   # tidy the done tasks (taskboard.write)
+tclaude agent taskboard archive <group> --done [--older-than 7d]   # tidy the done tasks (taskboard.write)
 tclaude agent taskboard move-to-group tk_… <other-group>[@<peer>] [--clone] [--stage next]   # @peer: created there, then dropped here
 ```
 

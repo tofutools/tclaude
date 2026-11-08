@@ -49,7 +49,7 @@ func handleTaskboardArchive(w http.ResponseWriter, r *http.Request, t *db.GroupT
 			writeTaskboardError(w, err)
 			return
 		}
-		mailTaskboardWaiters(r, g, dropped, db.GroupTaskDropped, reason, waiters, t.AssigneeID == db.OperatorAssignee)
+		mailTaskboardWaiters(r, g, dropped, db.GroupTaskDropped, firstNonEmpty(reason, "archived"), waiters, t.AssigneeID == db.OperatorAssignee)
 	} else if !requireTaskboardTaskChange(w, r, g, t) {
 		return
 	}
@@ -80,7 +80,7 @@ func handleTaskboardUnarchive(w http.ResponseWriter, r *http.Request, t *db.Grou
 // `taskboard archive <group> --done [--older-than 7d]`: every done task of
 // the board not yet archived, or those closed longer ago than older_than.
 func handleTaskboardArchiveDone(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) {
+	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, true) || !requireGroupActive(w, g) {
 		return
 	}
 	var body struct {

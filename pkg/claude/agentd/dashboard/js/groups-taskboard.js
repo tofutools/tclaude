@@ -395,18 +395,16 @@ function rowMenu({ task, group, tasks, actions, onForm }) {
   return items;
 }
 
-// archiveItems is a task's ⋯ Archive (`taskboard archive`): it leaves every
-// list and the history, kept and recoverable (unarchive, reopen). A live
-// task is dropped on the way, so it takes what a drop takes.
+// archiveItems is a closed task's ⋯ Archive (`taskboard archive`): it
+// leaves the history, kept and recoverable (unarchive, reopen). A live task
+// is dropped first, through ⋯ Drop…, which asks the reason. The route takes
+// the board's write (or the assignee's own), as any change of a closed task.
 export function archiveItems(task, actions) {
-  if (!actions || actions.busy || typeof actions.api?.archive !== 'function' || !canClose(task, actions)) return [];
-  const closed = task.status === 'done' || task.status === 'dropped';
+  if (!actions || actions.busy || typeof actions.api?.archive !== 'function') return [];
+  if (task.status !== 'done' && task.status !== 'dropped') return [];
   return [{
-    label: closed ? 'Archive' : 'Drop and archive',
-    danger: !closed,
-    attrs: { 'data-task-menu': 'archive', title: closed
-      ? 'taskboard archive: out of the history, kept (ls --archived; unarchive brings it back)'
-      : 'taskboard archive: drop it and archive it, kept (ls --archived; reopen brings it back)' },
+    label: 'Archive',
+    attrs: { 'data-task-menu': 'archive', title: 'taskboard archive: out of the history, kept (ls --archived; unarchive brings it back)' },
     run: () => actions.run(`${task.id}:archive`, 'Archive', (api) => api.archive(task.id)),
   }];
 }
@@ -734,7 +732,7 @@ function ImportPanel({ group, actions, initial = {}, onClose }) {
 // table under its tasks (the closed ones follow it, in the same columns),
 // or a line of its own under an empty list.
 // ARCHIVE_AGES are the "Archive done" choices: every done task, or those
-// closed longer ago than an age (`taskboard archive-done --older-than`).
+// closed longer ago than an age (`taskboard archive <group> --done --older-than`).
 export const ARCHIVE_AGES = [
   { age: '', label: 'All done tasks' },
   { age: '1d', label: 'Done over a day ago' },
@@ -749,7 +747,7 @@ function HistoryLine({ entry, group = null, actions = null, open, onToggle, wiza
   if (counts.dropped) parts.push(`${counts.dropped} dropped`);
   const archivable = !!group && !!actions && !actions.busy && typeof actions.api?.archiveDone === 'function' && closed.some((task) => task.status === 'done');
   const archive = archivable && ARCHIVE_AGES.map(({ age, label }) => ({
-    key: age || 'all', label, attrs: { 'data-archive-done': age || 'all', title: `taskboard archive-done ${group.name}${age ? ` --older-than ${age}` : ''}` },
+    key: age || 'all', label, attrs: { 'data-archive-done': age || 'all', title: `taskboard archive ${group.name} --done${age ? ` --older-than ${age}` : ''}` },
     run: () => actions.run(`${group.name}:archive-done`, 'Archive done', (api) => api.archiveDone(group.name, age)),
   }));
   const body = html`${parts.join(' · ')}

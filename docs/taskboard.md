@@ -710,12 +710,12 @@ You can archive a task before the sweep does. An archived task is on no list
 and not in the history, but it is kept, and it is purged with the other
 closed tasks after `taskboard.retention_days`.
 
-- `archive <task> [--reason "…"]` archives a done or dropped task. A live
-  task is dropped first, with the reason, and then archived. Permissions are
-  those of done and drop: your own task under `taskboard.own`, an unassigned
-  one under `taskboard.write`, and someone else's with `taskboard.assign`.
-  Tasks that wait on a live task you archive are told, as for a drop.
-- `archive-done <group> [--older-than 7d]` archives every done task on the
+- `archive <task> [--reason "…"]` archives a done or dropped task: your own
+  under `taskboard.own`, any other under `taskboard.write`. A live task is
+  dropped first, with the reason, and then archived; that is gated as a drop
+  (someone else's live task needs `taskboard.assign`), and the tasks that
+  wait on it are told, as for a drop.
+- `archive <group> --done [--older-than 7d]` archives every done task on the
   board, or only those closed longer ago than the age (`1d`, `7d`, `36h`).
   Dropped tasks stay. It needs `taskboard.write`.
 - `ls <group> --archived` lists the archive, most recently closed first.
@@ -724,8 +724,10 @@ closed tasks after `taskboard.retention_days`.
   again by the next sweep. `reopen` puts an archived task straight back on
   the board.
 
-In the dashboard, a task's ⋯ menu has *Archive* (*Drop and archive* for a
-live task). Right-clicking a List row or a lanes card opens that menu. The
+In the dashboard, a done or dropped task's ⋯ menu has *Archive*: in the
+List's history and on a lanes card in *Done*. Right-clicking a List row or a
+lanes card opens that menu. A live task is dropped first (⋯ *Drop…*, which
+asks the reason), then archived. The
 history line's *Archive done ▾* archives every done task, or those done over
 a day, a week or 30 days ago. Bringing a task back is CLI-only.
 
@@ -1057,7 +1059,7 @@ those drags aren't accepted in the lanes.
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |
-| `archive-done` | `POST /v1/groups/{name}/taskboard/archive-done {"older_than"?: "7d"}` (answers `{"group","archived":[ids],"count"}`) |
+| `archive <group> --done` | `POST /v1/groups/{name}/taskboard/archive-done {"older_than"?: "7d"}` (answers `{"group","archived":[ids],"count"}`) |
 | `ls --archived` | `GET /v1/groups/{name}/taskboard?archived=1` |
 | `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |

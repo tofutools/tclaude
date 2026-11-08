@@ -295,7 +295,7 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
       return call('POST', taskPath(id, '/archive'), reason ? { reason } : {});
     },
     // archiveDone archives a board's done tasks, or only those closed longer
-    // ago than olderThan ('7d'): `taskboard archive-done`.
+    // ago than olderThan ('7d'): `taskboard archive <group> --done`.
     archiveDone(group, olderThan = '') {
       return call('POST', `/v1/groups/${encodeURIComponent(group)}/taskboard/archive-done`, olderThan ? { older_than: olderThan } : {});
     },

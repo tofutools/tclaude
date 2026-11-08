@@ -603,12 +603,13 @@ test('a done card dragged out of Done reopens there, in the column\'s stage and 
 
 test('a lanes card has a ⋯ with Archive, also on a right-click', async (t) => {
   const { api, c, card, harness } = await mountLanes(t, 'tbl-archive');
-  const el = card('tk_00000001');
-  assert.ok(el.querySelector('.tb-card-more'), 'the card has a ⋯');
+  assert.equal(card('tk_00000001').querySelector('.tb-card-more'), null, 'a live card has none');
+  const el = card('tk_00000005');
+  assert.ok(el.querySelector('.tb-card-more'), 'a done card has a ⋯');
   await harness.act(async () => { harness.fireEvent(el, 'contextmenu'); });
-  const item = [...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Drop and archive');
+  const item = [...c.querySelectorAll('.gr-add-menu [role="menuitem"]')].find((b) => b.textContent.trim() === 'Archive');
   assert.ok(item, 'the right-click opens it');
   api.calls.length = 0;
   await harness.act(async () => { harness.fireEvent(item, 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  assert.deepEqual(api.calls, [['archive', 'tk_00000001']]);
+  assert.deepEqual(api.calls, [['archive', 'tk_00000005']]);
 });
