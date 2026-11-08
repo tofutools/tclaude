@@ -16,7 +16,7 @@ test('usage limit banner follows crossed steps and clears when nothing is crosse
   await update({ value: 100, pct: 20 });
   assert.equal(mounted.container.querySelector('[role="status"]'), null);
   await update({ value: 250, pct: 50, reached: 'notify' });
-  assert.match(mounted.container.textContent, /Global limit "Monthly": \$250 \/ \$500 this month \(50%, warning\)/);
+  assert.match(mounted.container.textContent, /Global limit "Monthly": \$250\.00 \/ \$500\.00 this month \(50%, warning\)/);
   assert.match(mounted.container.textContent, /estimates may differ from charges/);
   assert.equal(mounted.container.querySelector('.over-limit'), null);
   await update({ value: 460, pct: 92, reached: 'wrap_up' });

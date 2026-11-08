@@ -7,7 +7,7 @@ import { GroupCombobox } from './group-picker.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
-import { fmtUSD } from './costs-model.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -73,7 +73,7 @@ export function parseUSD(text) {
 
 // usageGrantText says what an approved usage request granted.
 export function usageGrantText(r) {
-  const amount = r?.grant_max_usd > 0 ? fmtUSD(Number(r.grant_max_usd)) : 'usage with no cap';
+  const amount = r?.grant_max_usd > 0 ? fmtExactUSD(Number(r.grant_max_usd)) : 'usage with no cap';
   return `${amount} on ${r?.grant_http_proxy || 'any gateway'}`;
 }
 

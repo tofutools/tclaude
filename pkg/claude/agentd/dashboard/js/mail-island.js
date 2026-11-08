@@ -40,7 +40,7 @@ import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { Button, Select } from './ui-components.js';
 import { GroupCombobox } from './group-picker.js';
 import { requestJSON } from './request-json.js';
-import { fmtUSD } from './costs-model.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -510,9 +510,9 @@ function UsageAccessDecision({ request, controller }) {
   const tooMuch = usd !== null && request.max_usd > 0 && (usd === 0 || usd > request.max_usd);
   const peer = request.conv_title || request.origin_peer;
   const approve = () => controller.decideAccess(request.id, 'approve', { grant_ttl_seconds: Number(ttl), http_proxy: gateway, max_usd: usd || 0 });
-  const what = `${usd > 0 ? `up to ${fmtUSD(usd)}` : 'with no cap'} through ${gateway || 'any of your model gateways'}`;
+  const what = `${usd > 0 ? `up to ${fmtExactUSD(usd)}` : 'with no cap'} through ${gateway || 'any of your model gateways'}`;
   return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
-    <span class="access-peer-consequence">Approving lets ${peer}'s agents bill their model calls to you, ${what}, ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${gateways.length === 0 ? html` <b class="fa-danger">This node has no enabled model gateway.</b>` : ''}${tooMuch ? html` <b class="fa-danger">At most $${Number(request.max_usd).toFixed(2)} was asked for.</b>` : ''}</span>
+    <span class="access-peer-consequence">Approving lets ${peer}'s agents bill their model calls to you, ${what}, ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${gateways.length === 0 ? html` <b class="fa-danger">This node has no enabled model gateway.</b>` : ''}${tooMuch ? html` <b class="fa-danger">At most ${fmtExactUSD(Number(request.max_usd))} was asked for.</b>` : ''}</span>
     <span class="grow"></span>
     ${request.http_proxy ? html`<span class="access-usage-gateway mono">${request.http_proxy}</span>` : html`<${Select} class="access-usage-gateway" title="The model gateway it bills to" value=${gateway} onChange=${(e) => setGateway(e.currentTarget.value)}>
       ${gateways.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<option value="">any gateway</option><//>`}

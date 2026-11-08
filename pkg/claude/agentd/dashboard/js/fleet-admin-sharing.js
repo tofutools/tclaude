@@ -12,13 +12,13 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { Button } from './ui-components.js';
 import { errText } from './cell-format.js';
 import { FaTable } from './fa-table.js';
-import { fmtUSD } from './costs-model.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 const DAY_MS = 86400000;
 
 export function dollars(n) {
-  return fmtUSD(Number(n) || 0);
+  return fmtExactUSD(Number(n) || 0);
 }
 
 // shareBar is how much of a capped share is spent, 0-100 (null: no cap).
