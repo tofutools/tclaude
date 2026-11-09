@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/launcher"
@@ -188,7 +189,7 @@ func autostartStatus() launcher.AutostartStatus {
 	return autostartFactory().Status(context.Background())
 }
 
-func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor string) {
+func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor, access string) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	dec := json.NewDecoder(r.Body)
@@ -202,6 +203,12 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 		writeError(w, http.StatusBadRequest, "invalid_arg", "only one autostart JSON object is allowed")
 		return
 	}
+	if access != serviceAccessFull && req.ServeArgs != nil {
+		// The serve flags choose what the daemon listens on and trusts; a
+		// restricted peer keeps the ones this node runs with.
+		writeError(w, http.StatusForbidden, "local_only_setting", "serve_args can only be chosen on the node itself or by an unrestricted peer")
+		return
+	}
 	a := autostartFactory()
 	switch req.Action {
 	case "install":
@@ -210,6 +217,14 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
+		if access != serviceAccessFull {
+			// A restricted peer re-installs with the flags agentd runs with;
+			// it does not replace boot flags the operator chose for the unit.
+			if cur := a.Status(r.Context()); cur.Installed && cur.Managed && !slices.Equal(cur.Argv, launcher.RedactArgv(spec.Argv)) {
+				writeError(w, http.StatusForbidden, "local_only_setting", "the autostart unit runs with other flags than agentd does now; only the node itself or an unrestricted peer may replace them")
+				return
+			}
+		}
 		if err := a.Install(r.Context(), spec); err != nil {
 			writeAutostartError(w, err)
 			return
@@ -217,7 +232,7 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 		recordFederationAudit("node.service.autostart", actor, "", "", "install "+a.Paths.Unit+": "+strings.Join(launcher.RedactArgv(spec.Argv), " "), http.StatusOK)
 		st := nodeServiceStatus(false)
 		st.Autostart.Warnings = append(st.Autostart.Warnings, warnings...)
-		writeJSON(w, http.StatusOK, st)
+		writeJSON(w, http.StatusOK, serviceStatusFor(st, access))
 		return
 	case "uninstall":
 		if req.ServeArgs != nil || req.KeepEnv != nil {
@@ -233,7 +248,7 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 		writeError(w, http.StatusBadRequest, "invalid_arg", "action must be install or uninstall")
 		return
 	}
-	writeJSON(w, http.StatusOK, nodeServiceStatus(false))
+	writeJSON(w, http.StatusOK, serviceStatusFor(nodeServiceStatus(false), access))
 }
 
 func writeAutostartError(w http.ResponseWriter, err error) {

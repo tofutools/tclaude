@@ -114,6 +114,14 @@ would also stop the tmux server and the agents (`control-group` or `mixed`),
 and a system unit while `agentd` is not root. Under launchd on macOS, the
 restart is `launchctl kickstart -k`.
 
+A linked node can do the same through `--node <peer>` on `tclaude service
+status|restart|install|uninstall`. Reading takes the node's `node.read` grant.
+Restarting and autostart also take `node.update.settings`. A peer under
+restricted trust sees variable names but not their values, and installs
+autostart with the serve flags this node runs with: choosing other flags takes
+this node's own operator or unrestricted trust. See
+[the grant table](../federation-peers.md).
+
 If the tmux server itself dies, or the machine reboots, the agents are gone.
 They show as offline. Resume them from the dashboard or with
 `tclaude agent resume <agent>`.

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -171,6 +172,12 @@ type NodeService struct {
 	Launcher       launcher.Info            `json:"launcher"`
 	Autostart      launcher.AutostartStatus `json:"autostart"`
 	RestartPending string                   `json:"restart_pending,omitempty"`
+	// Access is what the caller may do: full (this node's operator or an
+	// unrestricted peer), manage (a peer holding node.update.settings:
+	// restart and autostart, with the observed serve flags only) or read.
+	Access string `json:"access"`
+	// Redacted names what a restricted peer's view withholds.
+	Redacted []string `json:"redacted,omitempty"`
 }
 
 func nodeServiceStatus(refresh bool) NodeService {
@@ -197,24 +204,87 @@ func handleDashboardNodeService(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	serveNodeService(w, r, "operator")
+	serveNodeService(w, r, "operator", serviceAccessFull)
 }
 
 func handleLocalNodeService(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage the tclaude service") {
 		return
 	}
-	serveNodeService(w, r, "operator")
+	serveNodeService(w, r, "operator", serviceAccessFull)
 }
 
-func serveNodeService(w http.ResponseWriter, r *http.Request, actor string) {
+// What a caller of the service routes may do (NodeService.Access).
+const (
+	serviceAccessFull   = "full"
+	serviceAccessManage = "manage"
+	serviceAccessRead   = "read"
+)
+
+// servePeerNodeService serves a peer: reading needs node.read, restarting
+// and autostart need node.update.settings as well, both node-wide and both
+// re-checked here. Only an unrestricted peer acts as this node's operator;
+// a restricted one sees no environment values and installs autostart with
+// the observed serve flags only.
+func servePeerNodeService(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if p, err := db.GetFederationPeer(v.peer.InstanceID); err != nil || p == nil {
+		writeError(w, http.StatusForbidden, "permission_denied", "node.read is not shared")
+		return
+	}
+	peer := v.peer.InstanceID
+	if !v.unrestricted() && !fedPeerHoldsUnscoped(peer, PermNodeRead) {
+		writeError(w, http.StatusForbidden, "permission_denied", "node.read is not shared")
+		return
+	}
+	access := serviceAccessRead
+	switch {
+	case v.unrestricted():
+		access = serviceAccessFull
+	case fedPeerHoldsUnscoped(peer, PermNodeUpdateSettings):
+		access = serviceAccessManage
+	}
+	if r.Method != http.MethodGet && access == serviceAccessRead {
+		writeError(w, http.StatusForbidden, "permission_denied", "node.update.settings is not shared")
+		return
+	}
+	serveNodeService(w, r, "operator@"+peer, access)
+}
+
+// serviceStatusFor is the status as the caller may see it: a restricted
+// peer gets the variable names of the launcher and the autostart unit, not
+// their values (the unit environment carries the harnesses' API keys).
+func serviceStatusFor(st NodeService, access string) NodeService {
+	st.Access = access
+	if access == serviceAccessFull {
+		return st
+	}
+	withhold := func(env []launcher.EnvVar) []launcher.EnvVar {
+		out := make([]launcher.EnvVar, len(env))
+		for i, e := range env {
+			out[i] = launcher.EnvVar{Key: e.Key, From: e.From}
+		}
+		return out
+	}
+	st.Launcher.Env = withhold(st.Launcher.Env)
+	st.Autostart.Env = withhold(st.Autostart.Env)
+	st.Redacted = []string{"launcher.env", "autostart.env"}
+	return st
+}
+
+func serveNodeService(w http.ResponseWriter, r *http.Request, actor, access string) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, nodeServiceStatus(r.URL.Query().Get("refresh") == "1"))
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		writeJSON(w, http.StatusOK, serviceStatusFor(nodeServiceStatus(r.URL.Query().Get("refresh") == "1"), access))
+		return
+	case http.MethodPost:
+	default:
+		// The GET pattern also matches HEAD; nothing but POST acts.
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use GET to read and POST to act")
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/autostart") {
-		serveNodeServiceAutostart(w, r, actor)
+		serveNodeServiceAutostart(w, r, actor, access)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
