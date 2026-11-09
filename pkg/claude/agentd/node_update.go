@@ -3,13 +3,11 @@ package agentd
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -152,15 +150,12 @@ func configureSelfUpdateRestart(stop func()) {
 	updateRestartState.requested = false
 	updateRestartState.Unlock()
 }
+// requestSelfUpdateRestart is the self-updater's restart hook. It restarts
+// through the launcher (see RequestDaemonRestart), so a systemd or launchd
+// service keeps its own arguments.
 func requestSelfUpdateRestart() error {
-	updateRestartState.Lock()
-	defer updateRestartState.Unlock()
-	if updateRestartState.stop == nil || updateRestartState.path == "" {
-		return fmt.Errorf("restart hook unavailable; restart agentd manually")
-	}
-	updateRestartState.requested = true
-	time.AfterFunc(500*time.Millisecond, updateRestartState.stop)
-	return nil
+	_, err := RequestDaemonRestart("self-update")
+	return err
 }
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
