@@ -117,6 +117,9 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 			// branch checks for new commits, not a newer release.
 			opts = selfUpdateApplyOptions(loadSelfUpdateSettings())
 		}
+		if req.Action != "check" {
+			opts.Launch = selfUpdateLaunchPlan()
+		}
 		job, err := service.StartWith(req, actor, authorize, opts)
 		if err != nil {
 			status := 500
@@ -229,7 +232,9 @@ func performSelfUpdateRestart() error {
 		restartExit(exitCode)
 		return nil
 	}
-	err := execSelfUpdate(path, os.Args, os.Environ())
+	// The environment this process started with, not os.Environ(): what
+	// startup exported into it is derived again from the same flags.
+	err := execSelfUpdate(path, os.Args, launchEnviron)
 	if err != nil {
 		nodeUpdates.Lock()
 		service := nodeUpdates.service

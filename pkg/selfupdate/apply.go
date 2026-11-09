@@ -32,6 +32,12 @@ type ApplyOptions struct {
 	// PostSetup is the argv after the tclaude binary for the post-update
 	// setup run; nil means off.
 	PostSetup []string
+	// Launch is how the running daemon was launched: snapshotted into the
+	// job and used for the pre-flight check of the new binary. nil skips
+	// both.
+	Launch *LaunchPlan
+	// Force goes past a failed pre-flight check (Request.Force).
+	Force bool
 }
 
 // CheckoutOptions is the source_checkout method's local git checkout.
@@ -231,6 +237,9 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 		}
 		if info.ProtocolVersion != s.status.ProtocolVersion {
 			return fmt.Errorf("target federation protocol %d differs from current %d; linked peers may be incompatible", info.ProtocolVersion, s.status.ProtocolVersion)
+		}
+		if err := s.preflight(ctx, job, b.Name, t.staged, opts); err != nil {
+			return err
 		}
 		targets = append(targets, t)
 	}
@@ -507,6 +516,11 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 		if info.ProtocolVersion != s.status.ProtocolVersion {
 			return false, fmt.Errorf("%s now reports federation protocol %d, not %d; linked peers may be incompatible (the new binary is installed; restart agentd yourself once resolved)", b.Name, info.ProtocolVersion, s.status.ProtocolVersion)
 		}
+		// An external update installs before tclaude can check: a rejection
+		// keeps the running daemon up instead of restarting into a failure.
+		if err := s.preflight(ctx, job, b.Name, path, opts); err != nil {
+			return false, fmt.Errorf("%w; the new binary is already installed, so agentd was not restarted (fix the flags, then restart it yourself)", err)
+		}
 		switch {
 		case info.Version == release.Tag:
 		case opts.Method == MethodCustom:
@@ -681,6 +695,9 @@ type TestFakes struct {
 	Inspect func(context.Context, string) (buildversion.Info, error)
 	// Revision reports the VCS commit a staged binary was built from.
 	Revision func(string) (string, bool, error)
+	// CheckArgs is the pre-flight argument check of a staged binary; nil
+	// accepts every command line.
+	CheckArgs func(ctx context.Context, binary string, args []string) (string, error)
 }
 
 // SetFakesForTest swaps the service's external boundaries; tests only.
@@ -723,6 +740,10 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 	}
 	if f.Revision != nil {
 		s.revisionOf = f.Revision
+	}
+	s.checkArgs = func(context.Context, string, []string) (string, error) { return "passed", nil }
+	if f.CheckArgs != nil {
+		s.checkArgs = f.CheckArgs
 	}
 	s.identify = func(string) error { return nil }
 }

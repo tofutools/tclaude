@@ -235,8 +235,12 @@ func startAutomaticUpdate(actor string, s config.SelfUpdateConfig) selfUpdateSch
 		req.Action = "check"
 	}
 	run.Outcome = "running"
+	opts := selfUpdateApplyOptions(s)
+	if req.Action == "apply" {
+		opts.Launch = selfUpdateLaunchPlan()
+	}
 	// Set before the job starts: Finished can run before StartWith returns.
-	job, err := svc.StartWith(req, actor, func() bool { return true }, selfUpdateApplyOptions(s))
+	job, err := svc.StartWith(req, actor, func() bool { return true }, opts)
 	switch {
 	case errors.Is(err, selfupdate.ErrBusy):
 		run.Outcome, run.Detail = "busy", "another update job is running; retrying"
@@ -276,6 +280,9 @@ var finishedRestarts sync.Map
 // pending post-update setup with the NEW tclaude binary, then the result
 // notification for automatic runs.
 func finishRestartedUpdate(ctx context.Context, svc *selfupdate.Service) {
+	// First, while nothing else has changed: did the restart keep the
+	// daemon's flags and environment?
+	compareRestartedLaunch(svc)
 	job := svc.Status().Job
 	if job == nil || job.Action != "apply" || job.State != "succeeded" && job.State != "failed" {
 		return
@@ -318,7 +325,13 @@ func finishRestartedUpdate(ctx context.Context, svc *selfupdate.Service) {
 	run.At = selfUpdateNow().UTC()
 	if job.State == "succeeded" {
 		run.Outcome = "applied"
-		notifySelfUpdate("tclaude updated to "+job.Version, fmt.Sprintf("The %s update from %s to %s completed and agentd restarted. %s", triggerOf(job.Actor), job.CurrentVersion, job.Version, setupNote))
+		body := fmt.Sprintf("The %s update from %s to %s completed and agentd restarted.", triggerOf(job.Actor), job.CurrentVersion, job.Version)
+		for _, note := range []string{job.Launch.Summary(), setupNote} {
+			if note != "" {
+				body += " " + note
+			}
+		}
+		notifySelfUpdate("tclaude updated to "+job.Version, body)
 	} else {
 		run.Outcome, run.Detail = "failed", job.Error
 		notifySelfUpdate("Automatic tclaude update failed", job.Error)

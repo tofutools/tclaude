@@ -2860,3 +2860,23 @@ test('the Spawn requests sub-tab counts the requests waiting for a decision', as
   assert.equal(pendingSpawnCount([{ status: 'pending', expires_at: '2000-01-01T00:00:00Z' }]), 0, 'an expired request no longer waits');
   assert.equal(pendingSpawnCount(null), 0);
 });
+
+test('node update: the job says whether the restart kept the daemon\'s flags and environment', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NodeUpdateDialog, launchView } = await harness.importDashboardModule('js/node-update.js');
+  assert.equal(launchView(null), null);
+  assert.deepEqual(launchView({ state: 'identical' }), { ok: true, text: 'Kept flags and environment ✓' });
+  assert.match(launchView({ state: 'recorded', args_check: 'failed', args_check_detail: 'unknown flag: --wizard' }).text, /rejects the daemon's flags: unknown flag: --wizard/);
+  const differs = { state: 'differs', differences: [
+    { kind: 'flag', change: 'removed', name: '--no-tray', before: '--no-tray' },
+    { kind: 'flag', change: 'changed', name: '--dashboard-port', before: '--dashboard-port=1', after: '--dashboard-port=2' },
+    { kind: 'env', change: 'changed', name: 'ANTHROPIC_API_KEY' },
+  ] };
+  const actions = { status: async () => ({ current_version: 'v0.44.0', latest_version: 'v0.44.0', update_available: false, job: { id: 'u1', action: 'apply', version: 'v0.44.0', state: 'succeeded', phase: 'restarted', launch: differs } }), start: async () => { throw new Error('no'); } };
+  await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'local', label: 'this node', local: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${globalThis} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const line = harness.document.querySelector('#fleet-node-update-launch');
+  assert.match(line.className, /fa-warn/);
+  assert.match(line.textContent, /3 differences in flags and environment after the restart/);
+  assert.match(line.textContent, /--no-tray removed.*--dashboard-port changed: --dashboard-port=1 → --dashboard-port=2.*environment ANTHROPIC_API_KEY changed/s);
+});
