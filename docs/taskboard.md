@@ -1350,8 +1350,10 @@ work of its own. An epic that is still an idea is a card in Ideas, marked
   **tasks**, each with where it is and who holds it. A click on a task opens
   it. *+ add a task* adds a new task to the epic, *add an existing task* puts
   in one of the board's tasks that is in no epic, and × takes a task out.
-  These changes are made at once, not with Save. Done on an epic with open
-  tasks closes the epic and leaves the tasks open (`done --force`).
+  These changes are made at once, not with Save. An epic has no stage, only a
+  **Status**: open, done or dropped. Done on an epic with open tasks closes
+  the epic and leaves the tasks open (`done --force`). While an epic is an
+  idea, *Promote to open epic* moves it to Next, where its strip card shows.
 - A task's edit form, and the New task form, have an **Epic** picker.
   *＋ ▾ → New epic* adds an epic, in Ideas or Next.
 - When every task in an epic is closed, its strip card asks **close epic?**:

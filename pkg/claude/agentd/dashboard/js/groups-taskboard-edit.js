@@ -58,9 +58,6 @@ export const WHERE = [
 
 const CLOSED = new Set(['done', 'dropped']);
 
-// EPIC_WHERE are the places an epic can be: it is no work of its own, so
-// never in progress, blocked or in a column; its tasks are.
-export const EPIC_WHERE = WHERE.filter((w) => !['progress', 'blocked'].includes(w.key));
 
 // whereOf is where a task is now.
 export function whereOf(task) {
@@ -254,7 +251,7 @@ export async function runPlan(api, steps) {
   return { saved, refused };
 }
 
-function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current, columns = [], epic = false }) {
+function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current, columns = [] }) {
   // In progress takes an assignee: only a viewer who may assign moves a task
   // there. Done and Dropped follow who may close it.
   const off = (key) => {
@@ -263,8 +260,34 @@ function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, cur
     if (CLOSED.has(key) && !canClose) return 'not yours to close';
     return '';
   };
-  return html`<${StagePicker} id="taskboard-edit-where" value=${value} onChange=${(key) => { if (key) onChange(key); }} places=${epic ? EPIC_WHERE : WHERE}
-    columns=${epic ? [] : columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Where it is" />`;
+  return html`<${StagePicker} id="taskboard-edit-where" value=${value} onChange=${(key) => { if (key) onChange(key); }} places=${WHERE}
+    columns=${columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Where it is" />`;
+}
+
+// epicStatusOf is an epic draft's status: open (an idea or an open epic),
+// done or dropped.
+export function epicStatusOf(where) {
+  return where === 'done' || where === 'dropped' ? where : 'open';
+}
+
+// EpicStatus is an epic's place in its form. An epic is no stage work: it
+// is open, done or dropped, and an idea epic is promoted to an open epic
+// (it joins the strip above the board) rather than moved to a stage.
+function EpicStatus({ task, draft, busy, canClose, onChange }) {
+  const status = epicStatusOf(draft.where);
+  const idea = (task.stage || 'idea') === 'idea';
+  // Open again: where it was, an idea or an open epic.
+  const reopen = idea ? 'idea' : 'next';
+  return html`<span class="tb-epic-status">
+    <${Select} class="tb-edit-epic-status" aria-label="Epic status" value=${status} disabled=${busy}
+      onChange=${(event) => { const v = event.currentTarget.value; onChange(v === 'open' ? reopen : v); }}>
+      <option value="open">${idea ? 'Open (an idea)' : 'Open'}</option>
+      <option value="done" disabled=${!canClose && task.status !== 'done'}>Done</option>
+      <option value="dropped" disabled=${!canClose && task.status !== 'dropped'}>Dropped</option>
+    <//>
+    ${idea && status === 'open' && html`<label class="tb-epic-promote"><input type="checkbox" class="tb-edit-epic-promote" checked=${draft.where === 'next'} disabled=${busy}
+      onChange=${(event) => onChange(event.currentTarget.checked ? 'next' : 'idea')} /> Promote to open epic</label>`}
+  </span>`;
 }
 
 function whereHint(draft, task) {
@@ -432,7 +455,11 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     ${epic && row('Tasks', html`<${EpicChildren} epic=${task} api=${api} group=${group.name} tasks=${entry?.tasks || []} nameOf=${nameOf}
       onOpen=${onOpenTask} columnLabel=${(slug) => columnLabel(COLUMN_STATE + slug, entry?.columns || [])}
       onChanged=${() => onSaved({ saved: ['tasks'], refused: [] })} />`, 'a change here is made at once, not with Save')}
-    ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []} epic=${epic}
+    ${epic && row('Status', html`<${EpicStatus} task=${task} draft=${draft} busy=${busy} canClose=${canClose}
+      onChange=${(where) => setDraft((current) => setWhere(current, where))} />
+      ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label="Drop reason" maxLength=${400}
+        value=${draft.reason} disabled=${busy} placeholder="why drop it (optional)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`}`, hint || null)}
+    ${!epic && row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />
       ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
         value=${draft.reason} disabled=${busy} placeholder=${draft.where === 'blocked' ? 'why it is blocked (required)' : 'why drop it (optional)'}

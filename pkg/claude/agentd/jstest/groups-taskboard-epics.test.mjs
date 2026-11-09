@@ -134,6 +134,9 @@ test('an epic opens in the edit form with its progress and tasks; tasks are adde
   assert.match(dialog.textContent, /1\/3 done/);
   assert.equal(dialog.querySelector('.tb-edit-assignee'), null, 'an epic has no assignee');
   assert.equal(dialog.querySelector('.tb-edit-epic'), null, 'nor an epic of its own');
+  assert.equal(dialog.querySelector('[data-stage-pick="taskboard-edit-where"]'), null, 'an open epic is no stage work: no stage picker');
+  assert.ok(dialog.querySelector('.tb-edit-epic-status option[value="open"]'), 'a Status select stands in for the stage picker');
+  assert.equal(dialog.querySelector('.tb-edit-epic-promote'), null, 'it is promoted already');
   const list = dialog.querySelector('[data-epic-children]');
   assert.deepEqual([...list.querySelectorAll('[data-epic-child]')].map((el) => el.getAttribute('data-epic-child')), ['tk_00000001', 'tk_00000004']);
   assert.match(list.querySelector('[data-epic-child="tk_00000001"]').textContent, /In progress.*dev/);
@@ -186,4 +189,19 @@ test('boardEntry and the filter, and an epic\'s colour', async (t) => {
   assert.ok(!epicMatches(row('a', 'a'), EPIC.id));
   assert.equal(epicColour(EPIC.id), epicColour(EPIC.id), 'the same every time');
   assert.ok(epicColour(EPIC.id) >= 1 && epicColour(EPIC.id) <= 8);
+});
+
+test('an idea epic is promoted to an open epic, not moved to a stage', async (t) => {
+  const { harness, c, api, click, settle } = await mountBoard(t, 'ep-promote', { view: 'list' });
+  await click(c.querySelector(`tr[data-task-id="${IDEA_EPIC.id}"] .tb-title`));
+  await settle();
+  const dialog = c.querySelector('#taskboard-edit-modal');
+  assert.match(dialog.textContent, /Edit epic/);
+  assert.equal(dialog.querySelector('[data-stage-pick="taskboard-edit-where"]'), null);
+  const promote = dialog.querySelector('.tb-edit-epic-promote');
+  assert.ok(promote, 'an idea epic offers Promote to open epic');
+  promote.checked = true;
+  await harness.act(async () => { harness.fireEvent(promote, 'change'); });
+  await click(dialog.querySelector('#taskboard-edit-save'));
+  assert.deepEqual(api.calls.find((call) => call[0] === 'stage'), ['stage', IDEA_EPIC.id, 'next']);
 });
