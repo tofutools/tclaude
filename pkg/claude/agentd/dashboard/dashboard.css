@@ -9642,6 +9642,25 @@ label.cfg-label { cursor: pointer; }
 .cfg-svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .cfg-svc-cmd { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cfg-svc-warn { color: var(--ui-warn-text); font-size: 12px; line-height: 1.5; }
+/* Config › Updates (updates.self). Notes under a setting share its row
+   rhythm; .cfg-su-noterow collapses when its note has nothing to say. */
+.cfg-su-when[hidden] { display: none; }
+.cfg-su-noterow { padding: 0 0 10px 22px; font-size: 12px; }
+.cfg-su-noterow:empty { display: none; }
+.cfg-su-note { color: var(--ui-muted-text); line-height: 1.5; }
+.cfg-su-warn { color: var(--ui-warn-text); line-height: 1.5; }
+.cfg-su-alert {
+  display: flex; flex-direction: column; gap: 5px; padding: 7px 10px; margin-bottom: 6px;
+  border: 1px solid #9e6a0366; border-radius: 6px; background: #9e6a031f;
+  color: var(--ui-warn-text); font-size: 12px; line-height: 1.5;
+}
+.cfg-su-detected { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; line-height: 1.5; }
+.cfg-su-evidence { display: flex; flex-direction: column; gap: 4px; }
+.cfg-su-cmd { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cfg-su-cmd code { overflow-wrap: anywhere; }
+.cfg-su-flags { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 18px; width: 100%; }
+.cfg-su-flag { display: flex; flex-direction: column; line-height: 1.3; }
+#cfg-selfupdate-custom-command { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Remote-access cert management (JOH-278). */
 .ra-msg {
   border: 1px solid #2a623d; background: #0f2417; border-radius: 6px;

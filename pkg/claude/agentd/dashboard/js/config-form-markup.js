@@ -22,6 +22,7 @@ import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 import { KEYBINDINGS_LIST, shortcutText } from './keybindings.js';
 import { SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
 import { KeyboardShortcutList, Keys } from './shortcut-keys.js';
+import { CUSTOM_TIMEOUT_DEFAULT, INSTALL_DIR_DEFAULT, LastScheduledRun, MethodOptions, PackageManagerNote, SETUP_FLAGS, SETUP_HARNESSES, ScheduleNote, SelfUpdateDetected, SelfUpdateMetaLoader, SelfUpdateMethodNote, SetupPreview, ShadowNote, ShowWhen, WEEKDAYS, needsPackageManagerAck } from './config-self-update.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -220,6 +221,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'steward', icon: '✦', title: 'Steward', lede: 'Whether you have a Steward, your helper in the companion window, and what it may do without asking.' },
   { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
+  { id: 'updates', icon: '⬆️', title: 'Updates', lede: 'How tclaude updates itself on this machine. Everything here is opt-in: nothing runs on its own until you choose a method and turn on a schedule or start-up updates.' },
   { id: 'service', icon: '🛎️', title: 'Service', lede: 'How agentd was started on this machine (systemd, launchd or a shell), a restart that keeps its arguments, and starting it when you log in.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'processes', icon: '🔁', title: 'Processes', lede: 'Policy for process workflows shared as .pwf files.' },
@@ -260,6 +262,109 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
     </div>
     <div class="cfg-row-ctl">${children}</div>
   </div>`;
+}
+
+// UpdatesPanel is Config › Updates: updates.self. The inputs are ordinary
+// uncontrolled Config fields; the notes around them read the daemon's
+// install detection (config-self-update.js) and the adapter's draft mirror.
+function UpdatesPanel({ open }) {
+  const showSchedule = (d) => d.frequency !== 'off';
+  return html`<${SelfUpdateMetaLoader} open=${open} />
+    <${Group} title="Method" lede=${html`CLI: <code>tclaude update config show</code> · <code>tclaude update config set method ${'<method>'}</code>`}>
+      <${Setting} title="How this node is installed" wide>
+        <${SelfUpdateDetected} />
+      </${Setting}>
+      <${Setting} title="Update method" forId="cfg-selfupdate-method" k="updates.self.method"
+        summary="How tclaude updates itself. Package-manager methods are opt-in and ask you to confirm."
+        more=${html`<strong>Release download</strong> fetches the GitHub release archive and verifies its checksum. <strong>Build with go install</strong> builds the release tag with your Go toolchain. <strong>Build from a checkout</strong> fetches the release tag (or a branch) in a git checkout you name and builds it; it refuses a checkout with uncommitted changes. <strong>Custom command</strong> runs your own command. <strong>Let tclaude run …</strong> asks that package manager to upgrade tclaude. <strong>Notify me</strong> only checks and tells you. Every method that installs is checked afterwards: the new binary must report the expected version.`}>
+        <${ConfigSelect} id="cfg-selfupdate-method" aria-label="Update method"><${MethodOptions} /></${ConfigSelect}>
+      </${Setting}>
+      <div class="cfg-su-noterow"><${SelfUpdateMethodNote} /></div>
+      <${ShowWhen} test=${(d) => d.method === 'source_checkout'}>
+        <${Setting} title="Checkout" forId="cfg-selfupdate-checkout-path" k="updates.self.source_checkout.path" child
+          summary="A git checkout of tclaude. Updating refuses if it has uncommitted changes.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-checkout-path" placeholder="~/git/tclaude" aria-label="Checkout path" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+        <${Setting} title="Branch or tag" forId="cfg-selfupdate-checkout-ref" k="updates.self.source_checkout.ref" child
+          summary="Empty builds the release tag being installed.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-checkout-ref" placeholder="(the release tag)" aria-label="Checkout branch or tag" autocomplete="off" spellcheck="false" />
+        </${Setting}>
+      </${ShowWhen}>
+      <${ShowWhen} test=${(d) => d.method === 'custom'}>
+        <${Setting} title="Update command" forId="cfg-selfupdate-custom-command" k="updates.self.custom.command" child wide
+          summary=${html`Run with <code>/bin/sh -c</code>, with <code>TCLAUDE_UPDATE_*</code> variables naming the target version. Afterwards tclaude checks the new binary reports that version, and fails the update if not.`}>
+          <${ConfigTextarea} id="cfg-selfupdate-custom-command" rows="3" spellcheck="false" aria-label="Update command" placeholder="~/bin/update-tclaude.sh" />
+        </${Setting}>
+        <${Setting} title="Timeout (seconds)" forId="cfg-selfupdate-custom-timeout" k="updates.self.custom.timeout_seconds" child>
+          <${ConfigInput} type="number" id="cfg-selfupdate-custom-timeout" min="1" max="86400" placeholder=${String(CUSTOM_TIMEOUT_DEFAULT)} aria-label="Update command timeout in seconds" />
+        </${Setting}>
+      </${ShowWhen}>
+      <${ShowWhen} test=${(d, meta) => needsPackageManagerAck(d, meta)}>
+        <${Setting} title="Package manager" k="updates.self.package_manager_ack" child wide>
+          <${PackageManagerNote} />
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-selfupdate-pm-ack" /> I understand the package manager still manages tclaude here</label>
+        </${Setting}>
+        <${Setting} title="Install to" forId="cfg-selfupdate-install-dir" k="updates.self.install_dir" child
+          summary="A user bin dir for the binaries tclaude downloads or builds.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-install-dir" placeholder=${INSTALL_DIR_DEFAULT} aria-label="Install directory" autocomplete="off" spellcheck="false" style="min-width:200px" />
+        </${Setting}>
+        <div class="cfg-su-noterow"><${ShadowNote} /></div>
+      </${ShowWhen}>
+    </${Group}>
+
+    <${Group} title="When">
+      <${Setting} title="Scheduled updates" forId="cfg-selfupdate-frequency" k="updates.self.schedule.frequency"
+        summary="Runs the method above in a local time window. Each run shows up as an update job and notifies you.">
+        <${ConfigSelect} id="cfg-selfupdate-frequency" aria-label="Scheduled updates">
+          <option value="off">Off</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
+        </${ConfigSelect}>
+      </${Setting}>
+      <${ShowWhen} test=${showSchedule}>
+        <${ShowWhen} test=${(d) => d.frequency === 'weekly'}>
+          <${Setting} title="Day" forId="cfg-selfupdate-weekday" k="updates.self.schedule.weekday" child>
+            <${ConfigSelect} id="cfg-selfupdate-weekday" aria-label="Day of the week">
+              ${WEEKDAYS.map((day) => html`<option key=${day} value=${day}>${day[0].toUpperCase() + day.slice(1)}</option>`)}
+            </${ConfigSelect}>
+          </${Setting}>
+        </${ShowWhen}>
+        <${Setting} title="Time window" k="updates.self.schedule.window_start · window_end" child
+          summary="Local 24-hour time (HH:MM). The run starts inside this window; a window may wrap past midnight.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-window-start" aria-label="Window start (HH:MM)" placeholder="03:00" pattern="[0-2][0-9]:[0-5][0-9]" maxlength="5" inputmode="numeric" autocomplete="off" style="width:6em" />
+          <span aria-hidden="true">–</span>
+          <${ConfigInput} type="text" id="cfg-selfupdate-window-end" aria-label="Window end (HH:MM)" placeholder="05:00" pattern="[0-2][0-9]:[0-5][0-9]" maxlength="5" inputmode="numeric" autocomplete="off" style="width:6em" />
+        </${Setting}>
+        <${Setting} title="Wait while agents are working" forId="cfg-selfupdate-defer" k="updates.self.schedule.defer_while_agents_working" child
+          summary="Wait inside the window for no agent to be working; skip this run if that never happens.">
+          <${Toggle} id="cfg-selfupdate-defer" />
+        </${Setting}>
+        <div class="cfg-su-noterow"><${ScheduleNote} /></div>
+      </${ShowWhen}>
+      <${Setting} title="Update when the daemon starts" forId="cfg-selfupdate-on-start" k="updates.self.update_on_start"
+        summary="Each time agentd starts, check for an update and apply it with the method above.">
+        <${Toggle} id="cfg-selfupdate-on-start" />
+      </${Setting}>
+      <${Setting} title="Last scheduled run"><${LastScheduledRun} /></${Setting}>
+    </${Group}>
+
+    <${Group} title="After an update">
+      <${Setting} title="Run setup with the new version" forId="cfg-selfupdate-setup-enabled" k="updates.self.post_update_setup.enabled"
+        summary=${html`After a successful update the new binary runs <code>tclaude setup --yes</code> with the options below. Its result is kept on the update job.`}>
+        <${Toggle} id="cfg-selfupdate-setup-enabled" />
+      </${Setting}>
+      <${Setting} title="Setup options" k="updates.self.post_update_setup.flags · harness" child wide>
+        <div class="cfg-su-flags">
+          ${SETUP_FLAGS.map(({ flag, label }) => html`<label key=${flag} class="cfg-inline">
+            <${ConfigInput} type="checkbox" id=${`cfg-selfupdate-flag-${flag}`} data-cfg-setup-flag=${flag} />
+            <span class="cfg-su-flag">${label}<code class="cfg-key">--${flag}</code></span></label>`)}
+          <label class="cfg-inline">Harness
+            <${ConfigSelect} id="cfg-selfupdate-setup-harness" aria-label="Setup harness">
+              <option value="">(setup's default)</option>
+              ${SETUP_HARNESSES.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
+            </${ConfigSelect}></label>
+        </div>
+        <${SetupPreview} />
+      </${Setting}>
+    </${Group}>`;
 }
 
 const VOICE_PAUSE_ROWS = [
@@ -1119,6 +1224,10 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
       <${RemoteAdminPanel} />
+    </${Panel}>
+
+    <${Panel} id="updates" active=${active}>
+      <${UpdatesPanel} open=${active === 'updates'} />
     </${Panel}>
 
     <${Panel} id="service" active=${active}>

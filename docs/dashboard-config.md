@@ -270,6 +270,33 @@ Rows with the `agentd restart` badge need one.
 Certificate management is below the Remote access group. See
 [Operating remotely](remote.md).
 
+## Updates
+
+`/config/updates`: how tclaude updates itself (`updates.self`). Everything is
+opt-in: nothing updates on its own until you choose a method and turn on a
+schedule or start-up updates. The CLI is `tclaude update config show|set`.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Method | Update method | `updates.self.method` | not chosen |
+| Method | Checkout, Branch or tag (Build from a checkout) | `updates.self.source_checkout.path`, `.ref` | none; the release tag |
+| Method | Update command, Timeout (Custom command) | `updates.self.custom.command`, `.timeout_seconds` | none; 1800 s |
+| Method | Package manager acknowledgement, Install to | `updates.self.package_manager_ack`, `updates.self.install_dir` | off; `~/.local/bin` |
+| When | Scheduled updates | `updates.self.schedule.frequency` | off |
+| When | Day, Time window | `updates.self.schedule.weekday`, `.window_start`, `.window_end` | Monday; 03:00–05:00 |
+| When | Wait while agents are working | `updates.self.schedule.defer_while_agents_working` | off |
+| When | Update when the daemon starts | `updates.self.update_on_start` | off |
+| After an update | Run setup with the new version, Setup options | `updates.self.post_update_setup.enabled`, `.flags`, `.harness` | off |
+
+The section shows how this node's tclaude was installed, with the evidence.
+When a package manager (Homebrew, Nix, mise, asdf, apt or rpm) owns it, the
+section shows the command to update it yourself. **Notify me** is the safe
+choice there. A **Let tclaude run …** method asks you to confirm before it is
+picked. A method that installs the binary itself (release, go install,
+checkout, custom) needs you to acknowledge that the package manager still
+owns tclaude. That method installs to **Install to**, and the section warns
+when that directory comes after the package manager's copy on PATH. Methods
+that cannot run here are greyed out with the reason.
 ## Service
 
 `/config/service`: how agentd was started on this machine, and starting it when
