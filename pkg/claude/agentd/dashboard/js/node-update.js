@@ -44,8 +44,14 @@ export function launchView(launch) {
   const describe = (d) => d.kind === 'env' ? `environment ${d.name} ${d.change}`
     : d.change === 'changed' ? `${d.kind === 'flag' ? d.name : d.kind} changed: ${d.before} → ${d.after}`
       : d.change === 'added' ? `${d.kind === 'flag' ? d.name : d.kind} added` : `${d.kind === 'flag' ? d.name : d.kind} removed`;
-  if (launch.state === 'identical') return { ok: true, text: 'Kept flags and environment ✓' };
-  if (launch.state === 'differs') return { ok: false, text: `${diffs.length} difference${diffs.length === 1 ? '' : 's'} in flags and environment after the restart`, details: diffs.map(describe) };
+  // expected: the restarted daemon against its launch profile, or a unit
+  // tclaude did not write.
+  const exp = launch.expected?.state === 'differs' ? launch.expected : null;
+  const expDetails = exp ? (exp.differences || []).map((d) => `${describe(d)} (vs the ${exp.baseline === 'unit' ? 'service unit' : 'launch profile'})`) : [];
+  if (launch.state === 'identical') return exp
+    ? { ok: false, text: `Kept flags and environment ✓, but agentd does not run as its ${exp.baseline === 'unit' ? 'service unit' : 'launch profile'} says`, details: expDetails }
+    : { ok: true, text: 'Kept flags and environment ✓' };
+  if (launch.state === 'differs') return { ok: false, text: `${diffs.length} difference${diffs.length === 1 ? '' : 's'} in flags and environment after the restart`, details: [...diffs.map(describe), ...expDetails] };
   if (launch.args_check === 'failed') return { ok: false, text: `The new binary rejects the daemon's flags: ${launch.args_check_detail || 'unknown reason'}` };
   if (launch.state === 'unavailable' || launch.state === 'not_restarted') return null;
   return { ok: true, text: 'Flags and environment recorded; compared after the restart' };

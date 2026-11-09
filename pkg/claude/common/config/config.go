@@ -109,6 +109,10 @@ type Config struct {
 	// travel in config bundles or peer requests.
 	Updates *UpdatesConfig `json:"updates,omitempty"`
 
+	// Service is how agentd runs as a service: its launch profile for the
+	// autostart unit. Local to this node; secret values are never stored.
+	Service *ServiceConfig `json:"service,omitempty"`
+
 	// Snapshots configures the local agent snapshot library.
 	Snapshots *SnapshotsConfig `json:"snapshots,omitempty"`
 
