@@ -256,3 +256,23 @@ test('a schedule or harness value this build does not list is kept on save', asy
     await unmount();
   }
 });
+
+test('update on start is one setting, shown in both Updates and Service', async (t) => {
+  const { harness, adapter, root, unmount } = await mountConfig(t, { updates: { self: { method: 'release', update_on_start: true } } });
+  try {
+    const updates = root.querySelector('#cfg-selfupdate-on-start');
+    const service = root.querySelector('#cfg-selfupdate-on-start-svc');
+    assert.equal(service.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'service');
+    assert.equal(service.checked, true, 'loaded into both');
+    service.checked = false;
+    await harness.act(() => harness.fireEvent(service, 'change'));
+    assert.equal(updates.checked, false, 'turning it off in Service turns it off in Updates');
+    assert.deepEqual(adapter.assembleConfig().updates.self, { method: 'release' });
+    updates.checked = true;
+    await harness.act(() => harness.fireEvent(updates, 'change'));
+    assert.equal(service.checked, true);
+    assert.equal(adapter.assembleConfig().updates.self.update_on_start, true);
+  } finally {
+    await unmount();
+  }
+});

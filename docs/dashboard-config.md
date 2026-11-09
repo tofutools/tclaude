@@ -319,6 +319,9 @@ daemon, and its buttons act at once. The CLI is
   only a unit tclaude wrote, and a unit you wrote yourself is shown read-only.
 - On Linux, agentd stops at logout unless lingering is on. That needs sudo, so
   the section shows the `loginctl enable-linger` command to run yourself.
+- **Update on boot** (`updates.self.update_on_start`) is the same setting as
+  **Update when the daemon starts** in [Updates](#updates), and is saved with
+  **Save changes…**.
 
 ## Logs & housekeeping
 

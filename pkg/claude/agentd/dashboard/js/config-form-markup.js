@@ -1232,6 +1232,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <${Panel} id="service" active=${active}>
       <${ServicePanel} open=${active === 'service'} />
+      <${Group} title="Update on boot">
+        <${Setting} title="Update when the daemon starts" forId="cfg-selfupdate-on-start-svc" k="updates.self.update_on_start"
+          summary=${html`Each time agentd starts, check for an update and apply it with the method chosen in Config › Updates. The same setting as there; it does nothing until a method is chosen.`}>
+          <${Toggle} id="cfg-selfupdate-on-start-svc" />
+        </${Setting}>
+      </${Group}>
     </${Panel}>
 
     <${Panel} id="logs" active=${active}>

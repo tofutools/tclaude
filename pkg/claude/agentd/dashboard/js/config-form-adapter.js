@@ -894,6 +894,7 @@ function populateSelfUpdate(su) {
   $('#cfg-selfupdate-window-end').value = sched.window_end || SCHEDULE_DEFAULTS.window_end;
   $('#cfg-selfupdate-defer').checked = !!sched.defer_while_agents_working;
   $('#cfg-selfupdate-on-start').checked = !!su.update_on_start;
+  $('#cfg-selfupdate-on-start-svc').checked = !!su.update_on_start;
   $('#cfg-selfupdate-setup-enabled').checked = !!setup.enabled;
   selfUpdateLoadedFlags = Array.isArray(setup.flags) ? [...setup.flags] : [];
   const flags = new Set(selfUpdateLoadedFlags);
@@ -1005,8 +1006,15 @@ async function confirmSelfUpdateMethod(select) {
   syncSelfUpdateDraft();
 }
 
+// ON_START_TOGGLES are the one updates.self.update_on_start setting, shown
+// in both Config › Updates and Config › Service; they mirror each other.
+const ON_START_TOGGLES = ['cfg-selfupdate-on-start', 'cfg-selfupdate-on-start-svc'];
+
 function handleSelfUpdateEvent(event) {
   const target = event.target;
+  if (ON_START_TOGGLES.includes(target.id)) {
+    for (const id of ON_START_TOGGLES) if (id !== target.id) $('#' + id).checked = target.checked;
+  }
   if (!target.closest?.('[data-cfg-panel="updates"]')) return;
   syncSelfUpdateDraft();
   if (event.type === 'change' && target.id === 'cfg-selfupdate-method') void confirmSelfUpdateMethod(target);
@@ -1790,7 +1798,6 @@ async function loadConfigTab() {
     if (data.path) $('#cfg-path').textContent = data.path;
     populateConfigForm(configObj);
     configLoaded = true;
-    invalidateSelfUpdateMeta();
     const notices = [];
     if (data.warning) notices.push(data.warning);
     if (data.unknown_keys && data.unknown_keys.length) {
