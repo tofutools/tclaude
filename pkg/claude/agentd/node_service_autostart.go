@@ -67,18 +67,30 @@ var serveFlagsDenied = map[string]string{
 }
 
 // planAutostart resolves the unit's argv and env from the observed launcher
-// and the request.
-func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) (launcher.AutostartSpec, error) {
+// and the request, with warnings for what it could not keep.
+func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) (launcher.AutostartSpec, []string, error) {
+	var warnings []string
 	exe, observedFlags, err := splitServeArgv(info.RawArgv())
 	if err != nil {
-		return launcher.AutostartSpec{}, err
+		return launcher.AutostartSpec{}, nil, err
 	}
-	flags := observedFlags
+	var flags []string
 	if req.ServeArgs != nil {
 		flags = *req.ServeArgs
+	} else {
+		// The observed flags may carry terminal-only ones (a `--tui`
+		// launch); drop those rather than refuse the default install.
+		for _, f := range observedFlags {
+			name, _, _ := strings.Cut(strings.TrimLeft(f, "-"), "=")
+			if why, denied := serveFlagsDenied[name]; denied && strings.HasPrefix(f, "--") {
+				warnings = append(warnings, "Left out "+f+": "+why+".")
+				continue
+			}
+			flags = append(flags, f)
+		}
 	}
 	if err := validateServeFlags(flags); err != nil {
-		return launcher.AutostartSpec{}, err
+		return launcher.AutostartSpec{}, nil, err
 	}
 	spec := launcher.AutostartSpec{Argv: append(exe, flags...)}
 	if path, _ := autostartLookupEnv("PATH"); path != "" {
@@ -88,7 +100,9 @@ func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) 
 	if keep {
 		seen := map[string]bool{"PATH": true}
 		for _, e := range info.Env {
-			if e.From != "" || supervisorEnvKeys[e.Key] || seen[e.Key] {
+			// Variables from our own env file are rewritten into it; ones
+			// from other EnvironmentFiles are referenced, not copied.
+			if (e.From != "" && e.From != ownEnvFile) || supervisorEnvKeys[e.Key] || seen[e.Key] {
 				continue
 			}
 			if v, ok := autostartLookupEnv(e.Key); ok {
@@ -101,8 +115,14 @@ func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) 
 				spec.ExtraEnvFiles = append(spec.ExtraEnvFiles, f)
 			}
 		}
+		if !info.Supervised() {
+			warnings = append(warnings, "agentd was started from a "+info.Kind+", not a service, so only PATH was captured; variables exported in that shell are not in the unit. Add the ones the harnesses need (API keys, proxy settings, TCLAUDE_*) to the env file.")
+		}
 	}
-	return spec, launcher.ValidateSpec(spec)
+	if info.Supervised() && info.Unit != launcher.SystemdUnitName && info.Label != launcher.LaunchdLabel {
+		warnings = append(warnings, "agentd runs under "+info.Unit+info.Label+", which tclaude did not write. Disable it, or both start at boot and the second one stops at once.")
+	}
+	return spec, warnings, launcher.ValidateSpec(spec)
 }
 
 // splitServeArgv splits `<tclaude> agentd serve <flags>` or
@@ -185,7 +205,7 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 	a := autostartFactory()
 	switch req.Action {
 	case "install":
-		spec, err := planAutostart(currentLauncher(false), req, a.Paths.EnvFile)
+		spec, warnings, err := planAutostart(currentLauncher(false), req, a.Paths.EnvFile)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
@@ -194,7 +214,11 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor str
 			writeAutostartError(w, err)
 			return
 		}
-		recordFederationAudit("node.service.autostart", actor, "", "", "install "+a.Paths.Unit+": "+strings.Join(spec.Argv, " "), http.StatusOK)
+		recordFederationAudit("node.service.autostart", actor, "", "", "install "+a.Paths.Unit+": "+strings.Join(launcher.RedactArgv(spec.Argv), " "), http.StatusOK)
+		st := nodeServiceStatus(false)
+		st.Autostart.Warnings = append(st.Autostart.Warnings, warnings...)
+		writeJSON(w, http.StatusOK, st)
+		return
 	case "uninstall":
 		if req.ServeArgs != nil || req.KeepEnv != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "uninstall takes no options")

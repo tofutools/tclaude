@@ -30,6 +30,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/harnessops"
+	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
 type serveParams struct {
@@ -61,6 +62,9 @@ func serveCmd() *cobra.Command {
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				if errors.Is(err, errAgentdAlreadyRunning) {
+					os.Exit(launcher.AlreadyRunningExitCode(os.Getenv("XPC_SERVICE_NAME")))
+				}
 				os.Exit(1)
 			}
 			if err := performSelfUpdateRestart(); err != nil {
@@ -91,11 +95,17 @@ func acquireAgentdSingletonLock() (func(), error) {
 		return nil, fmt.Errorf("lock agentd data directory: %w", err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("another agentd already owns %s", dataDir)
+		return nil, fmt.Errorf("%w: another agentd already owns %s", errAgentdAlreadyRunning, dataDir)
 	}
 	var once sync.Once
 	return func() { once.Do(func() { _ = lock.Unlock() }) }, nil
 }
+
+// errAgentdAlreadyRunning: another agentd holds the singleton lock. serve
+// exits with launcher.AlreadyRunningExitCode for it, which the autostart
+// unit treats as final, so a unit that starts next to a running agentd stops
+// instead of restart-looping.
+var errAgentdAlreadyRunning = errors.New("agentd already running")
 
 // errSocketInUse marks a path a live daemon is already serving. It stays fatal
 // even for a best-effort legacy endpoint: two daemons sharing an endpoint would

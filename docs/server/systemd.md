@@ -6,9 +6,10 @@ running and how you reach the dashboard.
 ## Let tclaude write the unit
 
 `tclaude service install` writes the user unit below as
-`~/.config/systemd/user/tclaude-agentd.service`, with `PATH` (and any
-environment the running `agentd` was given by its launcher) in a 0600
-`~/.config/tclaude/agentd.env`. Then it enables the unit. By default the unit
+`~/.config/systemd/user/tclaude-agentd.service`, with your current `PATH` in a
+0600 `~/.config/tclaude/agentd.env`. If the running `agentd` is itself a
+service, the environment its unit sets goes there too. Variables you only
+exported in a shell do not: add the ones your harnesses need to that file. Then it enables the unit. By default the unit
 runs the `serve` flags the running `agentd` was started with. Pass others after
 `--`, for example `tclaude service install -- --no-tray --dashboard-port 7878`,
 and they are checked against `agentd serve`'s own flags. The Config tab's

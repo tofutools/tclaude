@@ -146,3 +146,29 @@ func TestValidateSpecRejectsUnitInjection(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemdAutostartWithoutAUserManager(t *testing.T) {
+	fs := memFS{}
+	f := &fakeRun{} // every systemctl call fails
+	a := Autostart{GOOS: "linux", User: "u", Paths: AutostartPaths("linux", "/home/u", ""), Run: f.run, FS: fs}
+	if err := a.Install(context.Background(), testSpec); err == nil {
+		t.Fatal("install succeeded without systemd")
+	}
+	if len(fs) != 0 {
+		t.Fatalf("failed install left files: %v", fs)
+	}
+	fs[a.Paths.Unit] = []byte("# " + ManagedMarker + "\n")
+	fs[a.Paths.EnvFile] = []byte("# " + ManagedMarker + "\n")
+	if err := a.Uninstall(context.Background()); err != nil || len(fs) != 0 {
+		t.Fatalf("uninstall without systemd: %v, left %v", err, fs)
+	}
+}
+
+func TestAlreadyRunningExitCode(t *testing.T) {
+	if AlreadyRunningExitCode("") != 75 || AlreadyRunningExitCode(LaunchdLabel) != 0 || AlreadyRunningExitCode("other") != 75 {
+		t.Fatal("exit codes")
+	}
+	if !strings.Contains(string(RenderSystemdUnit(testSpec, "/e")), "RestartPreventExitStatus=75") {
+		t.Fatal("unit does not stop on an already-running agentd")
+	}
+}

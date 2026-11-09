@@ -6,8 +6,9 @@ LaunchAgent keeps `agentd` running.
 `tclaude service install` writes one like the example below as
 `~/Library/LaunchAgents/com.tofutools.tclaude.agentd.plist`, logging to
 `~/.tclaude/data/launchd.log`, and enables it for your next login. It keeps the
-`serve` flags and environment the running `agentd` was started with, plus your
-current `PATH`. Pass other flags after `--`. It does not load the plist next
+`serve` flags the running `agentd` was started with and your current `PATH`,
+plus the environment of the launchd job it runs under, if any. Variables you
+only exported in a shell are not carried over. Pass other flags after `--`. It does not load the plist next
 to a running `agentd`. `tclaude service status` shows it, and
 `tclaude service uninstall` removes it. Both touch only a plist tclaude wrote.
 

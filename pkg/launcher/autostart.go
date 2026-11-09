@@ -30,6 +30,21 @@ const (
 	LaunchdLabel    = "com.tofutools.tclaude.agentd"
 )
 
+// alreadyRunningExit is agentd serve's exit status when another agentd
+// holds the singleton lock (EX_TEMPFAIL). The systemd unit lists it in
+// RestartPreventExitStatus.
+const alreadyRunningExit = 75
+
+// AlreadyRunningExitCode is the exit status for "another agentd is already
+// running". Under the managed LaunchAgent it is 0, because launchd's
+// KeepAlive{SuccessfulExit=false} respawns only a failed exit.
+func AlreadyRunningExitCode(xpcServiceName string) int {
+	if xpcServiceName == LaunchdLabel {
+		return 0
+	}
+	return alreadyRunningExit
+}
+
 // AutostartStatus is the autostart part of the service status.
 type AutostartStatus struct {
 	Supported bool `json:"supported"`
@@ -180,6 +195,7 @@ func (a Autostart) Status(ctx context.Context) AutostartStatus {
 		for i, e := range st.Env {
 			st.Env[i] = redactEnv(e.Key, e.Value)
 		}
+		st.Argv = RedactArgv(st.Argv)
 	}
 	if a.GOOS == "darwin" {
 		st.Enabled = st.Installed && !a.launchdDisabled(ctx)
@@ -263,13 +279,26 @@ func (a Autostart) installSystemd(ctx context.Context, spec AutostartSpec) error
 	if err := a.FS.MkdirAll(filepath.Dir(a.Paths.Unit), 0o755); err != nil {
 		return err
 	}
+	prevUnit, unitErr := a.FS.ReadFile(a.Paths.Unit)
 	if err := a.FS.WriteFile(a.Paths.Unit, RenderSystemdUnit(spec, a.Paths.EnvFile), 0o644); err != nil {
 		return err
 	}
-	if err := a.systemctl(ctx, "daemon-reload"); err != nil {
+	err := a.systemctl(ctx, "daemon-reload")
+	if err == nil {
+		err = a.systemctl(ctx, "enable", SystemdUnitName)
+	}
+	if err != nil {
+		// Do not leave a unit systemd cannot use behind; restore an earlier
+		// managed one, or remove the new files.
+		if unitErr == nil {
+			_ = a.FS.WriteFile(a.Paths.Unit, prevUnit, 0o644)
+		} else {
+			_ = a.FS.Remove(a.Paths.Unit)
+			_ = a.FS.Remove(a.Paths.EnvFile)
+		}
 		return err
 	}
-	return a.systemctl(ctx, "enable", SystemdUnitName)
+	return nil
 }
 
 func (a Autostart) installLaunchd(ctx context.Context, spec AutostartSpec) error {
@@ -279,7 +308,7 @@ func (a Autostart) installLaunchd(ctx context.Context, spec AutostartSpec) error
 	if a.Paths.LogFile != "" {
 		_ = a.FS.MkdirAll(filepath.Dir(a.Paths.LogFile), 0o700)
 	}
-	if err := a.FS.WriteFile(a.Paths.Unit, RenderLaunchdPlist(spec, a.Paths.LogFile), 0o644); err != nil {
+	if err := a.FS.WriteFile(a.Paths.Unit, RenderLaunchdPlist(spec, a.Paths.LogFile), 0o600); err != nil {
 		return err
 	}
 	// launchd loads ~/Library/LaunchAgents at the next login. Clear an
@@ -314,9 +343,9 @@ func (a Autostart) Uninstall(ctx context.Context) error {
 		cancel()
 		return a.FS.Remove(a.Paths.Unit)
 	}
-	if err := a.systemctl(ctx, "disable", SystemdUnitName); err != nil {
-		return err
-	}
+	// Best effort: without a reachable user manager (no systemd, no user
+	// bus) the files must still go, or the unit could never be removed.
+	_ = a.systemctl(ctx, "disable", SystemdUnitName)
 	if err := a.FS.Remove(a.Paths.Unit); err != nil {
 		return err
 	}
@@ -325,7 +354,8 @@ func (a Autostart) Uninstall(ctx context.Context) error {
 			return err
 		}
 	}
-	return a.systemctl(ctx, "daemon-reload")
+	_ = a.systemctl(ctx, "daemon-reload")
+	return nil
 }
 
 func (a Autostart) systemctl(ctx context.Context, args ...string) error {
@@ -408,7 +438,9 @@ func RenderSystemdUnit(spec AutostartSpec, envFile string) []byte {
 	var b strings.Builder
 	b.WriteString("# " + ManagedMarker + ": written by `tclaude service install`.\n")
 	b.WriteString("# tclaude rewrites or removes this file; to take it over, delete this line.\n")
-	b.WriteString("[Unit]\nDescription=tclaude agentd\n\n[Service]\nType=simple\n")
+	b.WriteString("[Unit]\nDescription=tclaude agentd\n")
+	b.WriteString("# Stop retrying after repeated failures instead of looping.\nStartLimitIntervalSec=300\nStartLimitBurst=5\n\n")
+	b.WriteString("[Service]\nType=simple\n")
 	fmt.Fprintf(&b, "EnvironmentFile=%s\n", strings.ReplaceAll(envFile, "%", "%%"))
 	for _, f := range spec.ExtraEnvFiles {
 		fmt.Fprintf(&b, "EnvironmentFile=-%s\n", strings.ReplaceAll(f, "%", "%%"))
@@ -418,7 +450,8 @@ func RenderSystemdUnit(spec AutostartSpec, envFile string) []byte {
 		quoted[i] = quoteSystemd(a, true)
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(quoted, " "))
-	b.WriteString("# Stop only agentd, not the tmux server it started.\nKillMode=process\nRestart=on-failure\nRestartSec=5\n\n")
+	b.WriteString("# Stop only agentd, not the tmux server it started.\nKillMode=process\nRestart=on-failure\nRestartSec=5\n")
+	fmt.Fprintf(&b, "# Another agentd already running is final, not a failure to retry.\nRestartPreventExitStatus=%d\n\n", alreadyRunningExit)
 	b.WriteString("[Install]\nWantedBy=default.target\n")
 	return []byte(b.String())
 }
