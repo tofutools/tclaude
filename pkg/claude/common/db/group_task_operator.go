@@ -59,6 +59,9 @@ func blockGroupTaskOnTx(tx taskTx, t, on *GroupTask, actor, expectAssignee strin
 	if on.GroupID != t.GroupID {
 		return taskConflict("invalid_arg", "task %s is on another board; a task waits only on its own board's tasks", on.ID)
 	}
+	if t.IsEpic() {
+		return errGroupTaskEpic(t.ID, "blocked")
+	}
 	if t.ID == on.ID {
 		return taskConflict("invalid_arg", "a task cannot wait on itself")
 	}

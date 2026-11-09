@@ -61,6 +61,9 @@ func AssignGroupTaskHeld(id, agentID, assignedBy string, take bool, hold, actor,
 		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee && t.AssigneeID != agentID {
 			return errAssigneeChanged(id)
 		}
+		if t.IsEpic() {
+			return errGroupTaskEpic(id, "assigned or taken")
+		}
 		if t.Status != GroupTaskOpen {
 			return taskConflict("not_open", "task %s is %s; only an open task can be assigned or taken", id, t.Status)
 		}
@@ -154,6 +157,9 @@ func StartGroupTask(id string, start bool, stage, actor, expectAssignee string) 
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
 			return errAssigneeChanged(id)
+		}
+		if t.IsEpic() {
+			return errGroupTaskEpic(id, "started")
 		}
 		if t.AssigneeID == "" {
 			return taskConflict("not_assigned", "task %s is not assigned; take it or assign it", id)

@@ -64,6 +64,19 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		if !t.ArchivedAt.IsZero() {
 			return taskConflict("archived", "task %s is archived", id)
 		}
+		if t.IsEpic() {
+			var children int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM group_tasks WHERE parent_id = ?`, id).Scan(&children); err != nil {
+				return err
+			}
+			if children > 0 {
+				return taskConflict("epic_children", "epic %s holds %d %s; an epic holds tasks of its own group: move them out of it first", id, children, plural(children, "task", "tasks"))
+			}
+		}
+		// An epic holds tasks of its own group: the task leaves its epic.
+		if err := setGroupTaskParentTx(tx, t, "", in.Actor, now); err != nil {
+			return err
+		}
 		status := GroupTaskOpen
 		if t.Status == GroupTaskDone {
 			status = GroupTaskDone

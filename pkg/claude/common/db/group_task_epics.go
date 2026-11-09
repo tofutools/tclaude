@@ -37,6 +37,34 @@ func errGroupTaskEpic(id, what string) error {
 	return taskConflict("epic", "task %s is an epic; an epic is not %s, its children are", id, what)
 }
 
+// checkNewGroupTaskKind checks a create's kind against its start state: an
+// epic starts open, with no assignee, column, question, blocked task or
+// parent.
+func checkNewGroupTaskKind(in NewGroupTask, status string) error {
+	switch in.Kind {
+	case "":
+		return nil
+	case GroupTaskKindEpic:
+	default:
+		return taskConflict("invalid_arg", "a task's kind is epic or none, not %s", in.Kind)
+	}
+	switch {
+	case status != GroupTaskOpen:
+		return taskConflict("invalid_arg", "an epic starts open")
+	case in.AssigneeID != "" || in.Hold != "":
+		return taskConflict("invalid_arg", "an epic has no assignee; its children do")
+	case in.Column != "":
+		return taskConflict("invalid_arg", "an epic sits in no column")
+	case in.Question != nil:
+		return taskConflict("invalid_arg", "an epic is not a question")
+	case in.Blocks != "":
+		return taskConflict("invalid_arg", "an epic blocks no task; add the task to it instead")
+	case in.ParentID != "":
+		return taskConflict("epic", "an epic has no parent")
+	}
+	return nil
+}
+
 // checkGroupTaskParentTx checks that parentID can be the epic of a task of
 // groupID (self, when set, is the task itself): an epic of the same group,
 // not the task, and the task is no epic.
@@ -297,6 +325,71 @@ func ListGroupTaskChildren(epicID string) ([]*GroupTask, error) {
 		}
 	}
 	return tasks, nil
+}
+
+// checkEpicStatusTx refuses what an epic's status does not do: it is never
+// blocked (its children are), and it is done only once its children are
+// closed, unless forced.
+func checkEpicStatusTx(q taskTx, t *GroupTask, status string, force bool) error {
+	switch status {
+	case GroupTaskBlocked:
+		return errGroupTaskEpic(t.ID, "blocked")
+	case GroupTaskDone:
+		if force {
+			return nil
+		}
+		n, err := liveGroupTaskChildrenTx(q, t.ID)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return taskConflict("epic_open_children", "epic %s has %d open %s; close them first, or close it anyway with --force", t.ID, n, plural(n, "child", "children"))
+		}
+	}
+	return nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// epicWaitsForChildrenTx reports whether id is an epic with a child not in
+// the archive, which keeps it out of the archive.
+func epicWaitsForChildrenTx(q taskTx, id string) (bool, error) {
+	var waits bool
+	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM group_tasks WHERE parent_id = ? AND archived_at IS NULL)`, id).Scan(&waits)
+	return waits, err
+}
+
+// archiveEpicChildrenTx archives an epic's closed children with it; a live
+// child keeps it out of the archive.
+func archiveEpicChildrenTx(q taskTx, epic *GroupTask, actor string, now time.Time) error {
+	n, err := liveGroupTaskChildrenTx(q, epic.ID)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return taskConflict("epic_open_children", "epic %s has %d open %s; an epic is archived with its children", epic.ID, n, plural(n, "child", "children"))
+	}
+	ids, err := queryRows(q, func(s rowScanner) (string, error) {
+		var id string
+		return id, s.Scan(&id)
+	}, `SELECT id FROM group_tasks WHERE parent_id = ? AND archived_at IS NULL ORDER BY id`, epic.ID)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := q.Exec(`UPDATE group_tasks SET archived_at = ?, updated_at = ? WHERE id = ?`, dbTime(now), dbTime(now), id); err != nil {
+			return err
+		}
+		if err := addGroupTaskEventTx(q, id, actor, GroupTaskEventArchived, "with epic "+epic.ID, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // liveGroupTaskChildrenTx counts an epic's open and blocked children.
