@@ -201,3 +201,15 @@ func TestRestartCommandRejectsUnsafeNames(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactArgv(t *testing.T) {
+	got := RedactArgv([]string{"/usr/bin/env", "HUB_TOKEN=abc", "PATH=/bin", "tclaude", "agentd", "serve",
+		"--api-key", "k1", "--auth-token=k2", "--dashboard-port", "7878", "--no-tray",
+		"sh", "-c", "SECRET=s1 exec tclaude --hub https://u:pw@hub.example"})
+	want := []string{"/usr/bin/env", "HUB_TOKEN=" + Redacted, "PATH=/bin", "tclaude", "agentd", "serve",
+		"--api-key", Redacted, "--auth-token=" + Redacted, "--dashboard-port", "7878", "--no-tray",
+		"sh", "-c", "SECRET=" + Redacted + " exec tclaude --hub https://" + Redacted + "@hub.example"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+}

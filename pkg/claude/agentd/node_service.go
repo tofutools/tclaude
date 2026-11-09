@@ -33,6 +33,10 @@ var (
 // client before the daemon goes away.
 var restartDelay = 500 * time.Millisecond
 
+// supervisorRestartDeadline is how long a queued supervisor restart may take
+// before a new restart request is allowed to retry.
+var supervisorRestartDeadline = 2 * time.Minute
+
 var launcherState struct {
 	sync.Mutex
 	info    *launcher.Info
@@ -95,7 +99,21 @@ func RequestDaemonRestart(reason string) (string, error) {
 	time.AfterFunc(restartDelay, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, err := launcherRestartRunner(ctx, name, args...); err != nil {
+		_, err := launcherRestartRunner(ctx, name, args...)
+		if err == nil {
+			// systemctl --no-block returns once the job is queued. If the
+			// supervisor never stops us, let a later restart try again
+			// instead of short-circuiting on a stale pending flag.
+			time.AfterFunc(supervisorRestartDeadline, func() {
+				launcherState.Lock()
+				if launcherState.pending == launcher.RestartSupervisor {
+					launcherState.pending = ""
+					slog.Warn("agentd restart: the supervisor did not restart agentd; a new restart request may retry")
+				}
+				launcherState.Unlock()
+			})
+		}
+		if err != nil {
 			// The supervisor refused; restart in place with the same
 			// argv rather than leave a staged update unapplied.
 			slog.Warn("agentd restart: supervisor restart failed; re-executing in place", "err", err)
@@ -124,6 +142,19 @@ func scheduleExecRestart() error {
 	updateRestartState.requested = true
 	time.AfterFunc(restartDelay, updateRestartState.stop)
 	return nil
+}
+
+// updateApplying reports whether a self-update job is mid-apply: stopping
+// the daemon then would leave the binaries half replaced.
+func updateApplying() bool {
+	nodeUpdates.Lock()
+	service := nodeUpdates.service
+	nodeUpdates.Unlock()
+	if service == nil {
+		return false
+	}
+	job := service.Status().Job
+	return job != nil && job.State == "running"
 }
 
 func failSelfUpdateRestart(err error) {
@@ -191,6 +222,10 @@ func serveNodeService(w http.ResponseWriter, r *http.Request, actor string) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "restart takes no parameters")
 			return
 		}
+	}
+	if updateApplying() {
+		writeError(w, http.StatusConflict, "update_busy", "an update is being applied; it restarts agentd when it is done")
+		return
 	}
 	method, err := RequestDaemonRestart("operator request")
 	if err != nil {

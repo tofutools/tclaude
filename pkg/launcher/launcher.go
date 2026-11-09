@@ -75,6 +75,19 @@ type Info struct {
 	RestartMethod string    `json:"restart_method"`
 	Warnings      []string  `json:"warnings"`
 	DetectedAt    time.Time `json:"detected_at"`
+
+	// rawArgv and rawProcessArgv are the unredacted command lines, for
+	// rewriting a unit; they never leave the process.
+	rawArgv, rawProcessArgv []string
+}
+
+// RawArgv returns the unredacted supervisor command line, or the process's
+// own when no supervisor reported one.
+func (i Info) RawArgv() []string {
+	if len(i.rawArgv) > 0 {
+		return append([]string(nil), i.rawArgv...)
+	}
+	return append([]string(nil), i.rawProcessArgv...)
 }
 
 // Supervised reports whether a service manager owns the process.
@@ -135,6 +148,44 @@ func redactEnv(key, value string) EnvVar {
 	return EnvVar{Key: key, Value: value}
 }
 
+// secretFlagRe matches a flag whose value is secret-looking.
+var secretFlagRe = regexp.MustCompile(`(?i)^--?[a-z0-9-]*(token|secret|password|passwd|key|credential|auth|cookie|passphrase)[a-z0-9-]*$`)
+
+// RedactArgv hides secret-looking values in a command line: KEY=VALUE
+// tokens (as `env KEY=VALUE cmd` or `sh -c "..."` would carry), secret
+// flags (--token=x, --token x) and credentials in URLs.
+func RedactArgv(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = a
+		if i > 0 && secretFlagRe.MatchString(argv[i-1]) && !strings.HasPrefix(a, "-") {
+			out[i] = Redacted
+			continue
+		}
+		if flag, _, ok := strings.Cut(a, "="); ok && strings.HasPrefix(flag, "-") && secretFlagRe.MatchString(flag) {
+			out[i] = flag + "=" + Redacted
+			continue
+		}
+		out[i] = redactAssignments(a)
+	}
+	return out
+}
+
+var assignRe = regexp.MustCompile(`(^|[\s;'"])([A-Za-z_][A-Za-z0-9_]*)=([^\s;'"]*)`)
+
+// redactAssignments redacts KEY=VALUE pairs with a secret-looking key, also
+// inside a shell string, and URL credentials anywhere.
+func redactAssignments(s string) string {
+	s = assignRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := assignRe.FindStringSubmatch(m)
+		if secretRe.MatchString(sub[2]) {
+			return sub[1] + sub[2] + "=" + Redacted
+		}
+		return m
+	})
+	return urlCredRe.ReplaceAllString(s, "://"+Redacted+"@")
+}
+
 // Detect reports how the process described by env was launched.
 func Detect(ctx context.Context, env Env, run Runner) Info {
 	info := Info{Kind: KindUnknown, ProcessArgv: env.Args, Warnings: []string{}, DetectedAt: time.Now().UTC()}
@@ -153,6 +204,9 @@ func Detect(ctx context.Context, env Env, run Runner) Info {
 		detectInteractive(env, &info)
 	}
 	info.RestartMethod = restartMethod(env, &info)
+	info.rawArgv, info.rawProcessArgv = info.Argv, info.ProcessArgv
+	info.Argv = RedactArgv(info.Argv)
+	info.ProcessArgv = RedactArgv(info.ProcessArgv)
 	return info
 }
 
