@@ -122,10 +122,13 @@ export function comparisonTag(comparison) {
   const n = comparison.differences?.length || 0;
   const tag = comparison.state === 'identical' ? { cls: 'ui-tag cfg-launch-same', text: 'identical' }
     : comparison.state === 'differs' ? { cls: 'ui-tag ui-tag-warn', text: `differs · ${n}` }
-    // unavailable: the running daemon's launch could not be read to compare.
+    // unavailable: agentd's command line is not `agentd serve`.
     : comparison.state === 'unavailable' ? { cls: 'ui-tag', text: 'cannot compare now' }
+    // not_applied: agentd was started by hand (a shell, a tmux pane), not by
+    // the unit the profile describes, so it is not compared with it.
+    : comparison.state === 'not_applied' ? { cls: 'ui-tag', text: 'started by hand', note: 'the profile applies to the unit started at boot' }
     : { cls: 'ui-tag', text: 'nothing to compare' };
-  return { ...tag, baseline: BASELINE[comparison.baseline] || '' };
+  return { ...tag, baseline: tag.note || BASELINE[comparison.baseline] || '' };
 }
 
 // shownValue is a difference's value as the table may show it: an
