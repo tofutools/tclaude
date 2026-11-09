@@ -45,6 +45,9 @@ const ManagedMarker = "Managed by tclaude"
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+	// From is the EnvironmentFile the variable came from; empty for the
+	// unit's own Environment= / EnvironmentVariables.
+	From string `json:"from,omitempty"`
 }
 
 // Info is the read-only launcher status.

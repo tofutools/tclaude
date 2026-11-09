@@ -3,6 +3,8 @@ package agentd
 import (
 	"context"
 	"errors"
+	"os"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
@@ -20,6 +22,11 @@ func InstallLauncherTestDefaults() {
 			Getenv: func(string) string { return "" }, ReadFile: func(string) ([]byte, error) { return nil, errors.New("suppressed") }}
 	}
 	restartDelay = 0
+	autostartFactory = func() launcher.Autostart {
+		return launcher.Autostart{GOOS: "linux", UID: 1000, User: "tester",
+			Paths: launcher.AutostartPaths("linux", "/nonexistent-test-home", ""), Run: refuse, FS: NewMemFS()}
+	}
+	autostartLookupEnv = func(string) (string, bool) { return "", false }
 }
 
 // SetLauncherForTest swaps the process context and both supervisor runners,
@@ -54,4 +61,52 @@ func ExecRestartRequestedForTest() bool {
 	updateRestartState.Lock()
 	defer updateRestartState.Unlock()
 	return updateRestartState.requested
+}
+
+// MemFS is an in-memory launcher.FS for autostart tests.
+type MemFS struct {
+	mu    sync.Mutex
+	Files map[string][]byte
+	Modes map[string]os.FileMode
+}
+
+func NewMemFS() *MemFS {
+	return &MemFS{Files: map[string][]byte{}, Modes: map[string]os.FileMode{}}
+}
+
+func (m *MemFS) ReadFile(p string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b, ok := m.Files[p]; ok {
+		return append([]byte(nil), b...), nil
+	}
+	return nil, os.ErrNotExist
+}
+
+func (m *MemFS) WriteFile(p string, b []byte, mode os.FileMode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Files[p], m.Modes[p] = append([]byte(nil), b...), mode
+	return nil
+}
+
+func (m *MemFS) MkdirAll(string, os.FileMode) error { return nil }
+
+func (m *MemFS) Remove(p string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.Files[p]; !ok {
+		return os.ErrNotExist
+	}
+	delete(m.Files, p)
+	return nil
+}
+
+// SetAutostartForTest swaps the Autostart (paths, FS, runner) and the
+// environment lookup planAutostart reads values from.
+func SetAutostartForTest(a launcher.Autostart, lookupEnv func(string) (string, bool)) func() {
+	prevFactory, prevLookup := autostartFactory, autostartLookupEnv
+	autostartFactory = func() launcher.Autostart { return a }
+	autostartLookupEnv = lookupEnv
+	return func() { autostartFactory, autostartLookupEnv = prevFactory, prevLookup }
 }

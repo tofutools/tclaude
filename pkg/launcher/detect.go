@@ -64,7 +64,10 @@ func detectSystemd(ctx context.Context, env Env, run Runner, info *Info) bool {
 	for _, f := range parseEnvironmentFiles(props["EnvironmentFiles"]) {
 		info.EnvironmentFiles = append(info.EnvironmentFiles, f)
 		if data, err := env.ReadFile(f); err == nil {
-			info.Env = append(info.Env, parseEnvFile(data)...)
+			for _, v := range parseEnvFile(data) {
+				v.From = f
+				info.Env = append(info.Env, v)
+			}
 		}
 	}
 	if info.UnitPath != "" {

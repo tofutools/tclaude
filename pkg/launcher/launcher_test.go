@@ -17,10 +17,14 @@ type fakeRun struct {
 func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, error) {
 	cmd := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, cmd)
-	for prefix, out := range f.out {
-		if strings.HasPrefix(cmd, prefix) {
-			return []byte(out), nil
+	best, found := "", false
+	for prefix := range f.out {
+		if strings.HasPrefix(cmd, prefix) && (!found || len(prefix) > len(best)) {
+			best, found = prefix, true
 		}
+	}
+	if found {
+		return []byte(f.out[best]), nil
 	}
 	return nil, errors.New("not found")
 }
@@ -63,8 +67,9 @@ func TestDetectSystemdUser(t *testing.T) {
 	if !reflect.DeepEqual(info.Argv, wantArgv) {
 		t.Fatalf("argv = %q", info.Argv)
 	}
-	wantEnv := []EnvVar{{"FOO", "bar"}, {"SPACED", "a b"}, {"API_TOKEN", Redacted},
-		{"PATH", "/usr/bin:/home/u/bin"}, {"GITHUB_TOKEN", Redacted}, {"PROXY", Redacted}}
+	const envFile = "/home/u/.config/tclaude/agentd.env"
+	wantEnv := []EnvVar{{"FOO", "bar", ""}, {"SPACED", "a b", ""}, {"API_TOKEN", Redacted, ""},
+		{"PATH", "/usr/bin:/home/u/bin", envFile}, {"GITHUB_TOKEN", Redacted, envFile}, {"PROXY", Redacted, envFile}}
 	if !reflect.DeepEqual(info.Env, wantEnv) {
 		t.Fatalf("env = %+v", info.Env)
 	}
@@ -170,7 +175,7 @@ func TestDetectLaunchd(t *testing.T) {
 	if !reflect.DeepEqual(info.Argv, []string{"/opt/homebrew/bin/tclaude", "agentd", "serve", "--no-tray"}) {
 		t.Fatalf("argv = %q", info.Argv)
 	}
-	wantEnv := []EnvVar{{"PATH", "/opt/homebrew/bin:/usr/bin"}, {"OPENAI_API_KEY", Redacted}, {"XPC_SERVICE_NAME", "com.tofutools.tclaude.agentd"}}
+	wantEnv := []EnvVar{{Key: "PATH", Value: "/opt/homebrew/bin:/usr/bin"}, {Key: "OPENAI_API_KEY", Value: Redacted}, {Key: "XPC_SERVICE_NAME", Value: "com.tofutools.tclaude.agentd"}}
 	if !reflect.DeepEqual(info.Env, wantEnv) {
 		t.Fatalf("env = %+v", info.Env)
 	}

@@ -1,8 +1,17 @@
 # macOS launchd
 
 On a Mac that stays on (a Mac mini in a closet, a build machine), a per-user
-LaunchAgent keeps `agentd` running. tclaude does not install one for you. This
-is an example to adapt.
+LaunchAgent keeps `agentd` running.
+
+`tclaude service install` writes one like the example below as
+`~/Library/LaunchAgents/com.tofutools.tclaude.agentd.plist`, logging to
+`~/.tclaude/data/launchd.log`, and enables it for your next login. It keeps the
+`serve` flags and environment the running `agentd` was started with, plus your
+current `PATH`. Pass other flags after `--`. It does not load the plist next
+to a running `agentd`. `tclaude service status` shows it, and
+`tclaude service uninstall` removes it. Both touch only a plist tclaude wrote.
+
+To write it yourself, adapt this example:
 
 `~/Library/LaunchAgents/com.example.tclaude-agentd.plist`:
 
