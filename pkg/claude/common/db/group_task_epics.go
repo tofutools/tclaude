@@ -133,15 +133,6 @@ func setGroupTaskParentTx(q taskTx, t *GroupTask, parentID, actor string, now ti
 	return nil
 }
 
-// refreshEpicTx brings epic id's close suggestion up to date: set (with an
-// event) when it is live, has children and none of them is live; cleared
-// otherwise. An archived epic with a child out of the archive comes out of
-// it too, so a visible child never points at an archived epic.
-func refreshEpicTx(q taskTx, id string, now time.Time) error {
-	_, err := refreshEpicSuggestTx(q, id, now)
-	return err
-}
-
 // GroupTaskEpicCloseSuggested, when set, is called after the commit that
 // marks an epic close-suggested (agentd mails its creator, once: see
 // ClaimGroupTaskCloseNudge).
@@ -155,8 +146,11 @@ func epicsCloseSuggested(ids []string) {
 	}
 }
 
-// refreshEpicSuggestTx is refreshEpicTx, reporting whether it newly
-// suggested closing the epic.
+// refreshEpicSuggestTx brings epic id's close suggestion up to date: set
+// (with an event) when it is live, has children and none of them is live;
+// cleared otherwise. It reports whether it newly set it. An archived epic
+// with a child out of the archive comes out of it too, so a visible child
+// never points at an archived epic.
 func refreshEpicSuggestTx(q taskTx, id string, now time.Time) (bool, error) {
 	if id == "" {
 		return false, nil
