@@ -270,6 +270,29 @@ Rows with the `agentd restart` badge need one.
 Certificate management is below the Remote access group. See
 [Operating remotely](remote.md).
 
+## Service
+
+`/config/service`: how agentd was started on this machine, and starting it when
+you log in. Nothing here is in `config.json`: the section reads the running
+daemon, and its buttons act at once. The CLI is
+`tclaude service status|install|uninstall`.
+
+- **Launcher** shows what started agentd (a systemd user or system unit,
+  launchd, a tmux pane or a shell), the command and environment it runs with
+  (secret-looking values hidden), and the unit's restart policy.
+  **Restart agentd…** goes through that supervisor (`systemctl --user restart`,
+  `launchctl kickstart -k`), so the unit's own arguments stay; without one,
+  agentd re-runs itself with the same arguments.
+- **Start on login** writes a systemd user unit (Linux) or a LaunchAgent
+  (macOS) for agentd, with `KillMode=process` so tmux sessions survive
+  restarts. By default it keeps the serve flags and environment agentd runs
+  with now. **use these** takes your own serve flags instead, which the daemon
+  checks one by one. The section compares the unit's command with the running
+  one. Installing takes effect at the next login or boot. **Remove…** deletes
+  only a unit tclaude wrote, and a unit you wrote yourself is shown read-only.
+- On Linux, agentd stops at logout unless lingering is on. That needs sudo, so
+  the section shows the `loginctl enable-linger` command to run yourself.
+
 ## Logs & housekeeping
 
 `/config/logs`: log verbosity and rotation, and cleanup of retired agents.

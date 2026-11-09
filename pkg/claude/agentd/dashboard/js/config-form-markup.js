@@ -13,6 +13,7 @@ import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
 import { RelaunchPolicyTable } from './relaunch-policy-table.js';
 import { RemoteAdminPanel } from './remote-admin.js';
+import { ServicePanel } from './config-service.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -219,6 +220,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'steward', icon: '✦', title: 'Steward', lede: 'Whether you have a Steward, your helper in the companion window, and what it may do without asking.' },
   { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
+  { id: 'service', icon: '🛎️', title: 'Service', lede: 'How agentd was started on this machine (systemd, launchd or a shell), a restart that keeps its arguments, and starting it when you log in.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'processes', icon: '🔁', title: 'Processes', lede: 'Policy for process workflows shared as .pwf files.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -1117,6 +1119,10 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
       <${RemoteAdminPanel} />
+    </${Panel}>
+
+    <${Panel} id="service" active=${active}>
+      <${ServicePanel} open=${active === 'service'} />
     </${Panel}>
 
     <${Panel} id="logs" active=${active}>
