@@ -16,7 +16,8 @@ Official release binaries report their real release version and the `release`
 install marker. Release archives must match the official SHA-256 checksums.
 Go-installed binaries use `go install` at the selected version. Source/dev or
 unmarked builds report their method explicitly and warn that updating replaces
-local modifications; their default is `go install @latest`. A staged binary
+local modifications; their default is `go install @latest`. That is the
+behaviour with no update method chosen; see "How tclaude updates itself". A staged binary
 must report the expected release version and the same federation protocol before
 any installed binary is replaced. Unknown current versions have a nullable
 update-available hint rather than a guessed ordering. A new update creates a
@@ -59,6 +60,136 @@ warnings, and offers Check now, Update to the latest and Roll back; update and
 rollback confirm that the binaries are replaced and the daemon restarts. It
 follows the job through the status read, so the restart does not lose it. A
 peer that has not granted you `node.update` says so.
+
+## How tclaude updates itself
+
+Self-updating is opt-in. Nothing prompts you, and nothing updates on its own
+until you choose an update method and turn on a schedule or update on start.
+Set it in the Config tab's Updates section or with the CLI:
+
+```bash
+tclaude update config show            # settings, detected install, methods
+tclaude update config set method release
+tclaude update config set schedule weekly
+tclaude update config set weekday sunday
+tclaude update config set window 03:00-05:00
+tclaude update config set post-setup on
+tclaude update config set setup-flags install-agent-skills,install-default-agent-permissions
+```
+
+`tclaude update config set --help` lists every key. The settings live in
+`config.json` under `updates.self`. The Config tab, the API and the CLI use
+the same validation.
+
+**Detection.** tclaude inspects the installed `tclaude`, `tclaude-agentd` and
+`tclaude-hub` binaries and recommends a method, with the evidence:
+
+| Detected | Recommendation |
+|---|---|
+| official release build | `release` |
+| `go install` build | `go_install` (`release` when Go is not on PATH) |
+| source or checkout build | `manual`; choose `source_checkout` to rebuild from your checkout |
+| owned by a package manager | `manual`, with the command to run yourself and the command to untrack it |
+| anything else (wrapper script, patched build) | `manual` (*unrecognized*) |
+
+Package-manager ownership covers the following installs:
+
+- a Homebrew Cellar
+- the Nix store: an imperative `nix profile` entry, or declarative NixOS, home-manager or flake configs
+- mise and asdf install directories
+- dpkg (`dpkg -S`) and rpm (`rpm -qf`) packages
+
+The recommendation is only a suggestion; your choice wins.
+
+**Methods.**
+
+- `release`: download the GitHub release archive and verify its SHA-256 checksum.
+- `go_install`: build with `go install …@<version>`. Needs Go.
+- `source_checkout`: in `source_checkout.path`, run `git fetch` and check out
+  the release tag (or `source_checkout.ref`, fast-forwarding a branch), then
+  build with `go install . ./cmd/...` into a staging directory. It refuses a
+  checkout with uncommitted changes. Needs go and git.
+- `homebrew`, `nix_profile`, `mise`, `apt`, `dnf`: let tclaude run the package
+  manager's fixed command, for example `brew upgrade tofutools/tap/tclaude`
+  or `sudo -n apt-get install --only-upgrade -y <pkg>`. These are never
+  recommended and need an explicit opt-in: `--confirm-package-manager` on the
+  CLI, or `confirm_package_manager` in the API. `apt` and `dnf` are offered
+  only when passwordless `sudo -n` works. asdf installs have no in-place
+  upgrade command, so they stay notify-only.
+- `custom`: your own `/bin/sh -c` command (`custom.command`, with
+  `custom.timeout_seconds`, default 1800). It gets `TCLAUDE_UPDATE_VERSION`,
+  `TCLAUDE_UPDATE_CURRENT_VERSION`, `TCLAUDE_UPDATE_JOB_ID` and
+  `TCLAUDE_UPDATE_BINARIES` (`name=path,…`), and must install exactly the
+  target version.
+- `manual`: check and notify only; applying is refused.
+
+Every method is verified afterwards. The resulting binaries must report the
+expected version and the same federation protocol before agentd restarts. A
+package manager that lags the GitHub release only produces a warning, but a
+downgrade is refused. An update in place keeps a backup for `--rollback`.
+
+**Package-managed binaries.** tclaude never writes into a package manager's
+tree (`/usr`, `/nix`, a Cellar, mise and asdf installs). With no method
+chosen, `tclaude update --apply` refuses a package-managed binary (HTTP 409
+`update_method_package_managed`) and names the package-manager command.
+Choosing `release`, `go_install` or `source_checkout` for such an install
+installs next to it instead. That requires `package_manager_ack` and writes
+to `install_dir` (default `~/.local/bin`). Untrack the package-manager copy
+first (for example `brew uninstall tclaude`), or make sure `install_dir`
+comes before it on PATH; the settings warn when it is shadowed. A rollback
+removes the copy tclaude installed and restarts from the package-managed
+binary.
+
+**Explicit updates.** `tclaude update --apply` and the Fleet dialog's Update
+button use the chosen method. When none is chosen, they keep the per-binary
+behaviour described above. Under `manual` they return HTTP 409
+`update_method_notify_only`. A tclaude-driven method over a package-managed
+binary without the acknowledgement returns HTTP 409
+`update_package_manager_ack_required`.
+
+**Schedule and update on start.** `schedule.frequency` can be `off`
+(default), `daily` or `weekly` (`schedule.weekday`). A run starts inside the
+local window from `schedule.window_start` to `schedule.window_end`; the
+window may wrap past midnight. Each window occurrence runs at most once, even
+across daemon restarts. With `schedule.defer_while_agents_working`, the run
+waits while any agent is working and retries until the window closes.
+`update_on_start` runs the same update each time agentd starts, except for
+the start that follows an update's own restart. Both are idle until a method
+is chosen. Under `manual`, they only check and notify when an update is
+available.
+
+Automatic runs use the ordinary update job, with a durable ID, the audit
+trail and restart verification. Their actor is `scheduler` or `startup`.
+The operator gets a Messages-tab notification when a run applies an update,
+fails, or (under `manual`) finds one.
+
+**Post-update setup.** With `post_update_setup.enabled`, the new daemon runs
+the NEW binary's `tclaude setup --yes` after a successful update that
+restarted it. You can add flags from an allowlist (`install-all`,
+`install-agent-skills`, `install-default-agent-permissions`,
+`install-utility-skills`, `install-sandbox-hardening`, `install-proxy-skills`,
+`install-resume-threshold-override`, `all-harnesses`, `absolute-paths`) and
+`--harness <name>`; there is never free text. The job's `post_setup` records
+the state, args, exit code and the last 8 KiB of output.
+
+**API.** `GET /api/node/update/settings` (CLI: `/v1/node/update/settings`)
+returns:
+
+- the effective `settings` and `method_chosen`
+- `detected`: the recommendation, `manual_command`, `untrack_command` and the
+  binaries with `managed_by` and `evidence`
+- `methods`, with availability and the fixed command each would run
+- the setup flag and harness allowlists
+- `install_dir`, `install_dir_shadowed` and `shadowed_by`; pass
+  `?install_dir=` to check an unsaved value
+- `warnings`, `next_scheduled_run` and `last_scheduled_run`
+
+`PUT` takes `{"settings": {...}, "confirm_package_manager": bool}` and
+returns the same view, or HTTP 400 with an `errors` list. The update status
+also reports `chosen_method` and `detected_method`. A job reports `method`,
+`output` (the bounded tail of a package-manager or custom command),
+`relocations` and `post_setup`. For now, a peer reaches the settings routes
+only with unrestricted trust.
 
 ## Custom update scripts
 

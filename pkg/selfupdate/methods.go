@@ -141,7 +141,8 @@ var packageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._:/@-]{0,12
 // PackageManagerTree reports whether a path is inside a tree a package
 // manager owns, which tclaude never writes into.
 func PackageManagerTree(path string) bool {
-	return path == "/usr" || strings.HasPrefix(path, "/usr/") || path == "/nix" || strings.HasPrefix(path, "/nix/") || strings.Contains(path, "/Cellar/") || strings.HasSuffix(path, "/Cellar")
+	return path == "/usr" || strings.HasPrefix(path, "/usr/") || path == "/nix" || strings.HasPrefix(path, "/nix/") || strings.Contains(path, "/Cellar/") || strings.HasSuffix(path, "/Cellar") ||
+		strings.Contains(path+"/", "/mise/installs/") || strings.Contains(path+"/", "/.asdf/installs/")
 }
 
 func probe(argv ...string) (string, bool) {

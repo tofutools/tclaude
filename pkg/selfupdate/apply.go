@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"golang.org/x/mod/semver"
 )
 
@@ -90,15 +91,47 @@ func (s *Service) admit(opts ApplyOptions) error {
 			return &PackageManagedError{Binary: b}
 		case TclaudeDriven(opts.Method) && b.ManagedBy != "" && !opts.PackageManagerAck:
 			return &PackageManagedError{Binary: b, NeedsAck: true}
-		case TclaudeDriven(opts.Method) && b.ManagedBy != "" && (!filepath.IsAbs(opts.InstallDir) || PackageManagerTree(filepath.Clean(opts.InstallDir))):
-			return fmt.Errorf("updates.self.install_dir must be an absolute path outside package-manager trees")
+		case TclaudeDriven(opts.Method) && opts.Method != MethodCustom && b.ManagedBy != "":
+			if err := checkInstallDir(opts.InstallDir, b); err != nil {
+				return err
+			}
 		case opts.Method != MethodCustom && pm == "" && b.ManagedBy == "" && b.Version == "" && !s.hooks.ReleaseOnly:
 			return fmt.Errorf("%s at %s is not an identifiable tclaude binary (%s); choose the custom or manual method", b.Name, b.Path, b.Evidence)
 		}
-		matched = matched || pm != "" && b.ManagedBy == pm
+		if pm != "" && b.ManagedBy == pm {
+			if ManagerCommands(b.ManagedBy, b.Package) == nil {
+				return fmt.Errorf("the %s method cannot run: the %s entry for %s is unknown; update it yourself (%s)", opts.Method, pm, b.Path, UpdateHint(b.ManagedBy, b.Package))
+			}
+			matched = true
+		}
 	}
 	if pm != "" && !matched {
 		return fmt.Errorf("the %s method does not apply: no installed tclaude binary is managed by %s", opts.Method, pm)
+	}
+	return nil
+}
+
+// checkInstallDir refuses an install_dir that would write into the package
+// manager's own files: a package-manager tree, the managed binary's own
+// directory, or a destination the manager owns.
+func checkInstallDir(dir string, b Binary) error {
+	if !filepath.IsAbs(dir) || PackageManagerTree(filepath.Clean(dir)) {
+		return fmt.Errorf("updates.self.install_dir must be an absolute path outside package-manager trees")
+	}
+	resolvedDir := filepath.Clean(dir)
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		resolvedDir = r
+	}
+	if resolvedDir == filepath.Dir(b.Path) {
+		return fmt.Errorf("updates.self.install_dir %s is the directory %s manages; choose another", dir, b.ManagedBy)
+	}
+	dest := Binary{Name: b.Name, Path: filepath.Join(resolvedDir, b.Name)}
+	if resolved, err := filepath.EvalSymlinks(dest.Path); err == nil {
+		dest.Path = resolved
+		classify(&dest)
+		if dest.ManagedBy != "" {
+			return fmt.Errorf("%s is owned by %s; choose another updates.self.install_dir", dest.Path, dest.ManagedBy)
+		}
 	}
 	return nil
 }
@@ -235,6 +268,20 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 		}
 		return e, nil
 	}
+	kept := targets[:0]
+	for _, t := range targets {
+		after, err := fileHash(t.staged)
+		if err != nil {
+			return err
+		}
+		// Already installed (say, a shadowed copy next to a package-managed
+		// binary): nothing to write, nothing to restart for.
+		if hash, err := fileHash(t.dest); err == nil && hash == after {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	targets = kept
 	for i := range targets {
 		t := &targets[i]
 		after, err := fileHash(t.staged)
@@ -280,14 +327,18 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 		}
 	}
 	if len(manifest.Entries) == 0 {
-		// Nothing tclaude can restore; an older backup no longer matches.
+		_ = os.Remove(backupDir)
+	}
+	if len(manifest.Entries) == 0 && changed {
+		// A package manager replaced the binaries; the older backup no
+		// longer matches them.
 		if err := os.Remove(filepath.Join(s.dir, "backup.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		s.mu.Lock()
 		s.status.RollbackAvailable = false
 		s.mu.Unlock()
-	} else {
+	} else if len(manifest.Entries) > 0 {
 		if err := syncDir(backupDir); err != nil {
 			return fmt.Errorf("could not persist backup directory: %w", err)
 		}
@@ -439,7 +490,7 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 			job.Warnings = append(job.Warnings, fmt.Sprintf("%s has no newer tclaude than %s yet", b.ManagedBy, b.Version))
 			continue
 		}
-		if bi, err := buildinfo.ReadFile(path); err != nil || bi.Main.Path != module {
+		if err := s.identify(path); err != nil {
 			return false, fmt.Errorf("%s at %s is not a tclaude binary after the update", b.Name, path)
 		}
 		info, err := s.inspect(ctx, path)
@@ -536,12 +587,22 @@ func (s *Service) RunPostSetup(ctx context.Context, tclaude string) (Job, error)
 		s.mu.Unlock()
 		return Job{}, fmt.Errorf("no pending post-update setup")
 	}
+	if s.active {
+		s.mu.Unlock()
+		return Job{}, ErrBusy
+	}
+	// No update job starts while the setup runs; its result belongs to
+	// this job.
+	s.active = true
 	job := *s.status.Job
 	setup := *job.PostSetup
 	now := time.Now().UTC()
 	setup.State, setup.StartedAt = "running", &now
 	job.PostSetup = &setup
 	err := s.saveJob(job)
+	if err != nil {
+		s.active = false
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return job, err
@@ -568,6 +629,7 @@ func (s *Service) RunPostSetup(ctx context.Context, tclaude string) (Job, error)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.active = false
 	job.PostSetup = &setup
 	return job, s.saveJob(job)
 }
@@ -586,4 +648,53 @@ func (s *Service) RestartPath(current string) string {
 		}
 	}
 	return current
+}
+
+func identifyModule(path string) error {
+	bi, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if bi.Main.Path != module {
+		return fmt.Errorf("not the tclaude module")
+	}
+	return nil
+}
+
+// TestFakes replace the network, build and binary-inspection boundaries.
+type TestFakes struct {
+	Release func(context.Context, string) (Release, error)
+	// Stage writes the named binary into dir for every staging method.
+	Stage   func(ctx context.Context, release Release, name, dir string) (string, error)
+	Inspect func(context.Context, string) (buildversion.Info, error)
+}
+
+// SetFakesForTest swaps the service's external boundaries; tests only.
+func (s *Service) SetFakesForTest(f TestFakes) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f.Release != nil {
+		s.release = f.Release
+	}
+	if f.Stage != nil {
+		s.stageRelease = f.Stage
+		s.stageGo = func(ctx context.Context, name, version, dir string) (string, error) {
+			return f.Stage(ctx, Release{Tag: version}, name, dir)
+		}
+		s.stageCheckout = func(ctx context.Context, _ CheckoutOptions, tag, dir string) (map[string]string, error) {
+			out := map[string]string{}
+			for _, b := range s.binaries {
+				p, err := f.Stage(ctx, Release{Tag: tag}, b.Name, dir)
+				if err != nil {
+					return nil, err
+				}
+				out[b.Name] = p
+			}
+			return out, nil
+		}
+	}
+	if f.Inspect != nil {
+		s.inspect = f.Inspect
+	}
+	s.identify = func(string) error { return nil }
 }

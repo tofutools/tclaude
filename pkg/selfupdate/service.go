@@ -49,13 +49,15 @@ type Service struct {
 	// stageCheckout builds every binary from a local checkout into dir.
 	stageCheckout func(context.Context, CheckoutOptions, string, string) (map[string]string, error)
 	inspect       func(context.Context, string) (buildversion.Info, error)
+	// identify confirms an externally installed file is a tclaude binary.
+	identify func(string) error
 }
 
 func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, inspect: inspectStaged}
+	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, inspect: inspectStaged, identify: identifyModule}
 	s.status = Status{CurrentVersion: buildversion.AppVersion(), InstallMethod: buildversion.InstallMethod, ProtocolVersion: buildversion.BuildInfo().ProtocolVersion, Binaries: binaries, Warnings: []string{}}
 	if s.status.InstallMethod == "" {
 		s.status.InstallMethod = "source_or_unmarked"
@@ -205,7 +207,15 @@ func (s *Service) phase(job *Job, phase string) error {
 	return nil
 }
 func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOptions) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// A custom command or checkout build may need longer than the default.
+	budget := 20 * time.Minute
+	if extra := opts.CustomTimeout + 10*time.Minute; opts.Method == MethodCustom && extra > budget {
+		budget = extra
+	}
+	if opts.Method == MethodSourceCheckout {
+		budget = 60 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	var err error
 	if req.Action == "rollback" {
@@ -487,11 +497,12 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 		}
 	}
 	// Files the update created are removed last: nothing after them can fail
-	// and need undoing.
+	// and need undoing. The daemon then restarts from the original binary.
 	for _, e := range created {
 		if err := os.Remove(e.target()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("could not remove %s installed by the update: %w", e.target(), err)
 		}
+		job.Relocations = append(job.Relocations, Relocation{Name: e.Binary.Name, From: e.target(), To: e.Binary.Path})
 	}
 	job.RestartRequired = true
 	return nil
