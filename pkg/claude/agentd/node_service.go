@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,8 +27,25 @@ import (
 var (
 	launcherRunner        launcher.Runner = launcher.ExecRunner
 	launcherRestartRunner launcher.Runner = detachedLauncherRun
-	launcherProcessEnv                    = func() launcher.Env { return launcher.FromProcess(runtime.GOOS) }
+	launcherProcessEnv                    = func() launcher.Env {
+		env := launcher.FromProcess(runtime.GOOS)
+		env.TmuxServerPID = tmuxServerPIDForLauncher
+		return env
+	}
 )
+
+// tmuxServerPIDForLauncher probes the tclaude tmux server without starting
+// one: its pid, 0 when none runs, an error when it cannot tell.
+func tmuxServerPIDForLauncher() (int, error) {
+	pid, state := tuiTmuxServerPID()
+	switch state {
+	case tuiTmuxProbeNone:
+		return 0, nil
+	case tuiTmuxProbeRunning:
+		return strconv.Atoi(pid)
+	}
+	return 0, fmt.Errorf("tmux server state unknown")
+}
 
 // restartDelay lets the HTTP response that asked for a restart reach the
 // client before the daemon goes away.
@@ -71,7 +89,12 @@ func currentLauncher(refresh bool) launcher.Info {
 // The restart happens shortly after the call returns. It returns the method
 // it chose.
 func RequestDaemonRestart(reason string) (string, error) {
-	info := currentLauncher(false)
+	if method := pendingRestart(); method != "" {
+		return method, nil
+	}
+	// Detect afresh: where the tmux server runs decides whether a unit
+	// restart is safe, and it may have started since the cached detection.
+	info := currentLauncher(true)
 	launcherState.Lock()
 	if launcherState.pending != "" {
 		method := launcherState.pending
@@ -79,20 +102,25 @@ func RequestDaemonRestart(reason string) (string, error) {
 		return method, nil
 	}
 	name, args, supervised := launcher.RestartCommand(info)
-	method := launcher.RestartExec
-	if supervised {
-		method = launcher.RestartSupervisor
-	}
 	if !supervised {
-		if err := scheduleExecRestart(); err != nil {
+		method := launcher.RestartExec
+		var err error
+		if info.RestartMethod == launcher.RestartExit {
+			method = launcher.RestartExit
+			err = scheduleExitRestart(info.RestartExitCode)
+		} else {
+			err = scheduleExecRestart()
+		}
+		if err != nil {
 			launcherState.Unlock()
 			return "", err
 		}
 		launcherState.pending = method
 		launcherState.Unlock()
-		slog.Info("agentd restart: re-executing in place", "reason", reason, "launcher", info.Kind)
+		slog.Info("agentd restart", "method", method, "exit_code", info.RestartExitCode, "reason", reason, "launcher", info.Kind)
 		return method, nil
 	}
+	method := launcher.RestartSupervisor
 	launcherState.pending = method
 	launcherState.Unlock()
 	slog.Info("agentd restart: asking the supervisor", "reason", reason, "launcher", info.Kind, "command", name+" "+strings.Join(args, " "))
@@ -131,15 +159,29 @@ func RequestDaemonRestart(reason string) (string, error) {
 	return method, nil
 }
 
+func pendingRestart() string {
+	launcherState.Lock()
+	defer launcherState.Unlock()
+	return launcherState.pending
+}
+
 // scheduleExecRestart arms the graceful stop + in-place re-exec that
 // performSelfUpdateRestart carries out once serve returns.
-func scheduleExecRestart() error {
+func scheduleExecRestart() error { return armRestart(false, 0) }
+
+// scheduleExitRestart arms the graceful stop + exit with code, after which
+// the unit's Restart= policy starts agentd again through its own ExecStart.
+// A self-update has already made its job durable before it asks.
+func scheduleExitRestart(code int) error { return armRestart(true, code) }
+
+func armRestart(exit bool, code int) error {
 	updateRestartState.Lock()
 	defer updateRestartState.Unlock()
-	if updateRestartState.stop == nil || updateRestartState.path == "" {
+	if updateRestartState.stop == nil || (!exit && updateRestartState.path == "") {
 		return fmt.Errorf("restart hook unavailable; restart agentd manually")
 	}
 	updateRestartState.requested = true
+	updateRestartState.exit, updateRestartState.exitCode = exit, code
 	time.AfterFunc(restartDelay, updateRestartState.stop)
 	return nil
 }

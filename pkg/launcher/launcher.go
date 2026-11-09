@@ -9,9 +9,12 @@ package launcher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,6 +37,11 @@ const (
 	// RestartExec stops gracefully and re-executes in place with the same
 	// argv and environment (same PID).
 	RestartExec = "exec"
+	// RestartExit stops gracefully and exits with RestartExitCode, which the
+	// unit's Restart= policy answers by starting it again through its own
+	// ExecStart (a wrapper re-resolves its arguments). Used where tclaude may
+	// not restart the unit itself (a system unit, not root).
+	RestartExit = "exit"
 )
 
 // ManagedMarker is written into every unit file or plist tclaude writes. A
@@ -74,23 +82,55 @@ type Info struct {
 	KillMode      string `json:"kill_mode,omitempty"`
 	// ManagedByTclaude reports whether the unit file carries ManagedMarker.
 	ManagedByTclaude bool `json:"managed_by_tclaude"`
-	// RestartMethod is how a daemon restart will be carried out.
-	RestartMethod string    `json:"restart_method"`
-	Warnings      []string  `json:"warnings"`
-	DetectedAt    time.Time `json:"detected_at"`
+	// Wrapped: the unit's command is not `tclaude agentd serve` itself (a
+	// wrapper script that execs it). Argv is the wrapper, ProcessArgv what
+	// agentd actually runs with.
+	Wrapped bool `json:"wrapped"`
+	// Rewritable is false when a supervisor unit tclaude did not write owns
+	// agentd: tclaude never offers to rewrite it.
+	Rewritable bool `json:"rewritable"`
+	// UnitCgroup is the unit's cgroup (systemd).
+	UnitCgroup string `json:"unit_cgroup,omitempty"`
+	// Tmux is where the tclaude tmux server runs, when it could be probed.
+	Tmux *TmuxPlacement `json:"tmux,omitempty"`
+	// RestartMethod is how a daemon restart will be carried out;
+	// RestartExitCode is the exit status of RestartExit.
+	RestartMethod   string    `json:"restart_method"`
+	RestartExitCode int       `json:"restart_exit_code"`
+	Warnings        []string  `json:"warnings"`
+	DetectedAt      time.Time `json:"detected_at"`
 
 	// rawArgv and rawProcessArgv are the unredacted command lines, for
 	// rewriting a unit; they never leave the process.
-	rawArgv, rawProcessArgv []string
+	rawArgv, rawProcessArgv  []string
+	successExit, preventExit map[int]bool
 }
 
-// RawArgv returns the unredacted supervisor command line, or the process's
-// own when no supervisor reported one.
+// TmuxPlacement is the tclaude tmux server's cgroup relative to agentd's
+// unit: whether stopping the unit can take the server and the agents down.
+type TmuxPlacement struct {
+	Running bool   `json:"running"`
+	PID     int    `json:"pid,omitempty"`
+	Cgroup  string `json:"cgroup,omitempty"`
+	// InUnit: the server is inside agentd's unit cgroup.
+	InUnit bool `json:"in_unit"`
+}
+
+// RawArgv returns the unredacted command line agentd is configured with:
+// the supervisor's when it runs `agentd serve` directly, otherwise (no
+// supervisor, or a wrapper) the process's own.
 func (i Info) RawArgv() []string {
-	if len(i.rawArgv) > 0 {
+	if len(i.rawArgv) > 0 && !i.Wrapped {
 		return append([]string(nil), i.rawArgv...)
 	}
 	return append([]string(nil), i.rawProcessArgv...)
+}
+
+// IsServeArgv reports whether argv runs agentd directly:
+// `<tclaude> agentd serve ...` or `<tclaude-agentd> serve ...`.
+func IsServeArgv(argv []string) bool {
+	return len(argv) >= 3 && argv[1] == "agentd" && argv[2] == "serve" ||
+		len(argv) >= 2 && filepath.Base(argv[0]) == "tclaude-agentd" && argv[1] == "serve"
 }
 
 // Supervised reports whether a service manager owns the process.
@@ -117,6 +157,9 @@ type Env struct {
 	ReadFile func(string) ([]byte, error)
 	// StdinTTY reports whether stdin is a terminal.
 	StdinTTY bool
+	// TmuxServerPID probes the tclaude tmux server: its pid, or 0 when none
+	// runs. nil, or an error, means it cannot tell.
+	TmuxServerPID func() (int, error)
 }
 
 // FromProcess returns the Env of the running process.
@@ -206,7 +249,20 @@ func Detect(ctx context.Context, env Env, run Runner) Info {
 	default:
 		detectInteractive(env, &info)
 	}
-	info.RestartMethod = restartMethod(env, &info)
+	if info.Supervised() {
+		info.Wrapped = len(info.Argv) > 0 && !IsServeArgv(info.Argv)
+		if info.Wrapped {
+			info.Warnings = append(info.Warnings, "The unit runs a wrapper, not `tclaude agentd serve` itself; restarts go through the unit so the wrapper resolves its arguments again. The arguments agentd runs with now are process_argv.")
+		}
+		if !info.ManagedByTclaude {
+			info.Warnings = append(info.Warnings, "tclaude did not write this unit, so it never rewrites it; edit it yourself.")
+		}
+	}
+	info.Rewritable = !info.Supervised() || info.ManagedByTclaude
+	if info.UnitCgroup != "" {
+		info.Tmux = probeTmux(env, info.UnitCgroup)
+	}
+	info.RestartMethod, info.RestartExitCode = restartMethod(env, &info)
 	info.rawArgv, info.rawProcessArgv = info.Argv, info.ProcessArgv
 	info.Argv = RedactArgv(info.Argv)
 	info.ProcessArgv = RedactArgv(info.ProcessArgv)
@@ -224,32 +280,87 @@ func detectInteractive(env Env, info *Info) {
 	}
 }
 
-func restartMethod(env Env, info *Info) string {
-	switch info.Kind {
-	case KindSystemdUser:
-		if killsTmux(info.KillMode) {
-			info.Warnings = append(info.Warnings, "The unit uses KillMode="+info.KillMode+": a unit restart would also stop the tmux server and every agent, so tclaude restarts in place instead. Set KillMode=process.")
-			return RestartExec
-		}
-		return RestartSupervisor
-	case KindSystemdSystem:
-		if killsTmux(info.KillMode) {
-			info.Warnings = append(info.Warnings, "The unit uses KillMode="+info.KillMode+": a unit restart would also stop the tmux server and every agent, so tclaude restarts in place instead. Set KillMode=process.")
-			return RestartExec
-		}
-		if env.EUID != 0 {
-			info.Warnings = append(info.Warnings, "System unit and agentd is not root: tclaude cannot restart the unit, so it restarts in place with the same arguments.")
-			return RestartExec
-		}
-		return RestartSupervisor
-	case KindLaunchd:
-		return RestartSupervisor
+// probeTmux places the tclaude tmux server relative to unitCgroup, or
+// returns nil when it cannot tell.
+func probeTmux(env Env, unitCgroup string) *TmuxPlacement {
+	if env.TmuxServerPID == nil {
+		return nil
 	}
-	return RestartExec
+	pid, err := env.TmuxServerPID()
+	if err != nil {
+		return nil
+	}
+	if pid <= 0 {
+		return &TmuxPlacement{}
+	}
+	raw, err := env.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
+	if err != nil {
+		return nil
+	}
+	cg := cgroupPath(string(raw))
+	if cg == "" {
+		return nil
+	}
+	return &TmuxPlacement{Running: true, PID: pid, Cgroup: cg,
+		InUnit: cg == unitCgroup || strings.HasPrefix(cg, unitCgroup+"/")}
 }
 
-func killsTmux(mode string) bool {
-	return mode == "" || mode == "control-group" || mode == "mixed"
+// restartKillsTmux reports whether stopping the unit would also stop the
+// tmux server (and so every agent): it runs in the unit's cgroup and the
+// KillMode reaches it. With no server running nothing can be lost; when the
+// server cannot be placed, KillMode alone decides, conservatively.
+func restartKillsTmux(info *Info) bool {
+	modeKills := info.KillMode == "" || info.KillMode == "control-group" || info.KillMode == "mixed"
+	if info.Tmux == nil {
+		return modeKills
+	}
+	return info.Tmux.Running && info.Tmux.InUnit && modeKills
+}
+
+// exitRestartCode returns an exit status the unit's Restart= policy answers
+// by starting it again, or ok=false.
+func exitRestartCode(info *Info) (int, bool) {
+	switch info.RestartPolicy {
+	case "always", "on-success":
+		if !info.preventExit[0] {
+			return 0, true
+		}
+	case "on-failure":
+		for _, code := range []int{1, 2, 3} {
+			if !info.successExit[code] && !info.preventExit[code] {
+				return code, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func restartMethod(env Env, info *Info) (string, int) {
+	switch info.Kind {
+	case KindSystemdUser, KindSystemdSystem:
+		if restartKillsTmux(info) {
+			why := "The unit uses KillMode=" + info.KillMode + " and"
+			if info.Tmux != nil {
+				why += " the tclaude tmux server runs inside the unit (" + info.Tmux.Cgroup + "):"
+			} else {
+				why += " the tclaude tmux server could not be placed:"
+			}
+			info.Warnings = append(info.Warnings, why+" a unit restart would also stop it and every agent, so tclaude restarts in place instead. Set KillMode=process, or run tmux in its own unit.")
+			return RestartExec, 0
+		}
+		if info.Kind == KindSystemdUser || env.EUID == 0 {
+			return RestartSupervisor, 0
+		}
+		if code, ok := exitRestartCode(info); ok {
+			info.Warnings = append(info.Warnings, fmt.Sprintf("System unit and agentd is not root: tclaude restarts by exiting (status %d) and lets Restart=%s start the unit again.", code, info.RestartPolicy))
+			return RestartExit, code
+		}
+		info.Warnings = append(info.Warnings, "System unit and agentd is not root, and Restart="+info.RestartPolicy+" would not start it again after an exit: tclaude restarts in place with the same arguments.")
+		return RestartExec, 0
+	case KindLaunchd:
+		return RestartSupervisor, 0
+	}
+	return RestartExec, 0
 }
 
 // RestartCommand returns the supervisor command that restarts info's

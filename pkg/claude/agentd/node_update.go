@@ -158,7 +158,14 @@ var updateRestartState struct {
 	stop      func()
 	path      string
 	requested bool
+	// exit: end the process with exitCode instead of re-executing, for the
+	// supervisor's Restart= to start it again (launcher.RestartExit).
+	exit     bool
+	exitCode int
 }
+
+// restartExit ends the process for an exit restart; tests swap it.
+var restartExit = os.Exit
 
 func configureSelfUpdateRestart(stop func()) {
 	path, _ := os.Executable()
@@ -189,12 +196,19 @@ func requestSelfUpdateRestart() error {
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
 	requested, path := updateRestartState.requested, updateRestartState.path
+	exit, exitCode := updateRestartState.exit, updateRestartState.exitCode
 	updateRestartState.stop = nil
 	updateRestartState.Unlock()
 	if !requested {
 		return nil
 	}
 	db.Close()
+	if exit {
+		// The supervisor starts agentd again (Restart=), through the unit's
+		// own ExecStart.
+		restartExit(exitCode)
+		return nil
+	}
 	err := execSelfUpdate(path, os.Args, os.Environ())
 	if err != nil {
 		nodeUpdates.Lock()
