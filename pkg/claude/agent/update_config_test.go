@@ -28,3 +28,11 @@ func TestUpdateConfigSetKeys(t *testing.T) {
 	require.Contains(t, out.String(), "Post-update setup:  on: tclaude setup --yes --install-agent-skills --install-utility-skills")
 	require.Contains(t, out.String(), "Schedule:           off")
 }
+
+func TestUpdateConfigNodeRoutesToPeer(t *testing.T) {
+	require.Equal(t, "/v1/node/update/settings", updateSettingsPath(""))
+	require.Equal(t, "/v1/federation/peer/bob%20node/node/update/settings", updateSettingsPath("bob node"))
+	var out bytes.Buffer
+	printUpdateSettings(&updateSettingsView{Settings: config.SelfUpdateConfig{Method: "custom"}.Resolved(), Redacted: []string{"custom.command"}}, &out)
+	require.Contains(t, out.String(), "withheld from peers")
+}
