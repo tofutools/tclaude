@@ -195,17 +195,19 @@ change: `full`, `settings` or `read`.
 dashboard's `/api/peer/{instance_id}/node/update/settings` use the same API on
 a trusted node. Reading needs that node's `node.update` grant (`access:
 "read"`). Changing needs `node.update.settings` (`access: "settings"`), an
-instance-wide, default-off peer permission that `node.update` does not imply.
-With it, a peer may change the schedule, update on start, the post-update
-setup flags and the custom timeout, and switch between `release`,
+instance-wide, default-off peer permission that `node.update` does not imply;
+a change needs both. With them, a peer may change the schedule, update on
+start and the post-update setup flags, and switch between `release`,
 `go_install` and `manual`.
 
-Some settings stay with the node's own operator: the custom command, the
-source checkout path, `install_dir` and `package_manager_ack`. Switching to a
+Some settings stay with the node's own operator: `custom` (the command and
+its timeout), `source_checkout` (the path and the ref), `install_dir` and
+`package_manager_ack`. Switching to a
 package-manager, `custom` or `source_checkout` method does too; a peer is
 refused with HTTP 403 `local_only_setting`. A peer may always switch a node
 back to `manual`. The custom command is withheld from a peer
-(`redacted: ["custom.command"]`); sending it back empty keeps it.
+(`redacted: ["custom.command"]`); a peer sends it back empty, which keeps it,
+and any other value is refused. The `?install_dir=` check is local only.
 
 Unrestricted trust implies both grants and acts as the node's operator
 (`access: "full"`). The grant is checked again on every request. Every

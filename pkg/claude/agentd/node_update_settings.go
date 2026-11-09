@@ -72,6 +72,11 @@ func servePeerNodeUpdateSettings(w http.ResponseWriter, r *http.Request, v *peer
 		writeError(w, 403, "permission_denied", rule.requires+" is not shared")
 		return
 	}
+	// Changing also returns the full view, which reading guards.
+	if r.Method != http.MethodGet && !v.unrestricted() && !fedPeerHoldsUnscoped(v.peer.InstanceID, PermNodeUpdate) {
+		writeError(w, 403, "permission_denied", "node.update is not shared")
+		return
+	}
 	access := settingsAccessRead
 	switch {
 	case v.unrestricted():
@@ -111,16 +116,17 @@ func (e *settingsRefusal) Error() string { return e.msg }
 // always allowed.
 func restrictedSettingsChange(current, next config.SelfUpdateConfig) (config.SelfUpdateConfig, error) {
 	current, next = current.Resolved(), next.Resolved()
-	if next.Custom.Command == "" {
-		next.Custom.Command = current.Custom.Command // the peer saw it redacted
-	}
+	// The peer saw the command withheld and sends it back empty. Any other
+	// value is refused outright, so a peer cannot confirm a guessed command.
+	commandSent := next.Custom.Command != ""
+	next.Custom.Command = current.Custom.Command
 	localOnly := map[string]bool{
-		"custom.command":       next.Custom.Command != current.Custom.Command,
-		"source_checkout.path": next.SourceCheckout.Path != current.SourceCheckout.Path,
-		"install_dir":          next.InstallDir != current.InstallDir,
-		"package_manager_ack":  next.PackageManagerAck != current.PackageManagerAck,
+		"custom":              commandSent || *next.Custom != *current.Custom,
+		"source_checkout":     *next.SourceCheckout != *current.SourceCheckout,
+		"install_dir":         next.InstallDir != current.InstallDir,
+		"package_manager_ack": next.PackageManagerAck != current.PackageManagerAck,
 	}
-	for _, field := range []string{"custom.command", "source_checkout.path", "install_dir", "package_manager_ack"} {
+	for _, field := range []string{"custom", "source_checkout", "install_dir", "package_manager_ack"} {
 		if localOnly[field] {
 			return next, &settingsRefusal{403, "local_only_setting", "updates.self." + field + " can only be changed on the node itself or by an unrestricted peer", nil}
 		}
@@ -216,7 +222,11 @@ func serveNodeUpdateSettings(w http.ResponseWriter, r *http.Request, actor, acce
 		}
 		recordFederationAudit("federation.node.update.settings", actor, "", "", changedSelfUpdateFields(previous, next), 200)
 	}
-	view := buildSelfUpdateSettingsView(r.URL.Query().Get("install_dir"))
+	probe := r.URL.Query().Get("install_dir")
+	if restricted {
+		probe = "" // a peer may not probe this node's paths
+	}
+	view := buildSelfUpdateSettingsView(probe)
 	view.Access = access
 	if restricted && view.Settings.Custom != nil && view.Settings.Custom.Command != "" {
 		// The command is the operator's free text and may carry secrets.
