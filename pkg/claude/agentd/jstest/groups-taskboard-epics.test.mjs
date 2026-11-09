@@ -243,6 +243,7 @@ test('lanes by epic: a lane per open epic and No epic; a drag to another epic\'s
   const { harness, c, api, settle } = await mountBoard(t, 'ep-lanes', { prefs: { 'lanes-by': 'epic' } });
   const heads = [...c.querySelectorAll('[data-board-row-head]')].map((el) => el.getAttribute('data-board-row-head'));
   assert.deepEqual(heads, [EPIC.id, DONE_EPIC.id, 'none'], 'the strip\'s epics in order, then No epic');
+  assert.equal(c.querySelector('.tb-epic-strip'), null, 'the lane heads are the epics: no strip above');
   const cell = (row, column) => c.querySelector(`.tb-cell[data-board-row="${row}"][data-column="${column}"]`);
   assert.ok(cell(EPIC.id, 'next').querySelector('.tb-card[data-task-id="tk_00000001"]'), 'an epic\'s task is in its lane');
   assert.equal(cell(EPIC.id, 'next').querySelector('.tb-epic-chip'), null, 'the lane says the epic: no chip');

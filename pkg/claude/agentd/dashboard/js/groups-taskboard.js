@@ -996,7 +996,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
     onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
   return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
-    <${EpicStrip} entry=${full} actions=${actions} onEdit=${actions ? openEdit : null} />
+    ${!(view === 'lanes' && lanesBy === 'epic') && html`<${EpicStrip} entry=${full} actions=${actions} onEdit=${actions ? openEdit : null} />`}
     ${editDialog}
     ${reasonDialog}
     ${moveDialog}

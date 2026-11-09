@@ -19033,7 +19033,7 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
    strike-through: it only made a done task harder to read (operator). */
 .tb-card-done { cursor: default; border-color: #21262d; }
 .tb-card-done .tb-card-title, .tb-card-done .tb-title { color: #7d8590; }
-.tb-card-title { color: #e6edf3; overflow-wrap: anywhere; }
+.tb-card-title { color: #e6edf3; overflow-wrap: break-word; }
 
 /* Epics (groups-taskboard-epics.js, tk_0a821784). Each epic has a colour,
    from its id: its chip on its tasks, its strip card's edge, its mark. */
