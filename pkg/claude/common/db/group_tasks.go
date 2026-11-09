@@ -622,6 +622,7 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 			return nil, err
 		}
 		in.Question.AskedBy, in.Question.Title, in.Question.Body, in.Question.Blocks = in.Actor, in.Title, "", false
+		in.Question.AttachmentIDs = nil
 		if err := askGroupTaskQuestionTx(tx, &GroupTask{ID: id, GroupID: in.GroupID}, in.Question, now); err != nil {
 			return nil, err
 		}
@@ -654,8 +655,15 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 			return nil, err
 		}
 	}
-	if err := insertGroupTaskAttachmentsTx(tx, id, 0, append([]GroupTaskAttachment(nil), in.Attachments...), in.Actor, now); err != nil {
+	files := append([]GroupTaskAttachment(nil), in.Attachments...)
+	if err := insertGroupTaskAttachmentsTx(tx, id, 0, files, in.Actor, now); err != nil {
 		return nil, err
+	}
+	if in.Question != nil {
+		// A question task's files are its question's to show.
+		if err := linkQuestionTaskFilesTx(tx, id, in.Question, files); err != nil {
+			return nil, err
+		}
 	}
 	if in.Blocks != "" {
 		if status != GroupTaskOpen {

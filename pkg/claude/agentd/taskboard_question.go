@@ -75,19 +75,36 @@ func taskboardQuestionN(w http.ResponseWriter, r *http.Request) (int, bool) {
 }
 
 // POST /v1/taskboard/tasks/{id}/questions {"title", "body", "options",
-// "multi", "recommend", "block"} — `ask-operator <task>`: asks the
-// operator on the task, as an entry of its activity. Asking is gated as
-// commenting is; block (the task waits on the answer) as a change of the
-// task.
+// "multi", "recommend", "block", "attach_existing"} — `ask-operator
+// <task>`: asks the operator on the task, as an entry of its activity.
+// Asking is gated as commenting is; block (the task waits on the answer)
+// and files sent with it (a multipart request: the JSON as its "task"
+// part, beside "file" parts) as a change of the task. The files become the
+// task's own, as `taskboard attach` makes them, and the question shows
+// them, after the task's files attach_existing names ("#13" or a name):
+// the answer dialog previews them with the question (tk_72dff9f8).
 func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		db.GroupTaskQuestion
-		Block bool `json:"block"`
+		Block          bool     `json:"block"`
+		AttachExisting []string `json:"attach_existing"`
 	}
-	if !decodeTaskboardBody(w, r, &body) {
+	// Files are gated as attaching them is, before their bytes are read.
+	multipart := isMultipart(r)
+	if multipart && !requireTaskboardTaskChange(w, r, g, t) {
 		return
 	}
-	if body.Block {
+	files, ok := decodeTaskboardRequest(w, r, &body)
+	if !ok {
+		return
+	}
+	if len(body.AttachExisting) > db.GroupTaskQuestionAttachmentsMax {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("a question shows at most %d files", db.GroupTaskQuestionAttachmentsMax))
+		return
+	}
+	if multipart {
+		// Gated above.
+	} else if body.Block {
 		if !requireTaskboardTaskChange(w, r, g, t) {
 			return
 		}
@@ -114,13 +131,21 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 	}
 	// Who asked is the daemon's to say, never the body's.
 	q.AskedBy, q.AskedVia, q.Blocks = actor, taskboardPeerAskerPrincipal(r), body.Block
-	q.Answer, q.State, q.Source = nil, "", ""
-	out, asked, err := db.AskGroupTaskQuestion(t.ID, &q)
+	q.Answer, q.State, q.Source, q.AttachmentIDs = nil, "", "", nil
+	rows, ok := storeTaskUploadsOrFail(w, files, actor)
+	if !ok {
+		return
+	}
+	out, asked, err := db.AskGroupTaskQuestionWithFiles(t.ID, &q, rows, body.AttachExisting)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
-	setAuditDetail(r, fmt.Sprintf("asked Q%d on %s", asked.N, t.ID))
+	detail := fmt.Sprintf("asked Q%d on %s", asked.N, t.ID)
+	if n := len(asked.AttachmentIDs); n > 0 {
+		detail += fmt.Sprintf(" with %d file(s)", n)
+	}
+	setAuditDetail(r, detail)
 	views, err := taskboardViews(g.Name, []*db.GroupTask{out})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())

@@ -173,6 +173,11 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
   const shownTask = read.task;
   const context = own ? shownTask.body : q.body;
   const files = shownTask.attachments || [];
+  // The files sent with the question (ask-operator --attach) or named by it
+  // (--attach-existing), tk_72dff9f8: shown first, images large; the rest
+  // of the task's files after them. A file detached since drops out.
+  const linked = questionFiles(q, files);
+  const others = files.filter((f) => !linked.includes(f));
   const mdFiles = useMarkdownFiles(api, shownTask, [], context || '');
   const options = q.options || [];
   const recommended = options.find((o) => o.key === q.recommend);
@@ -210,9 +215,13 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
     ${context ? html`<div class="tb-answer-context" tabindex="0" aria-label="The question"><${MarkdownDocument} source=${context} attachments=${mdFiles} className="markdown-document tb-answer-md" /></div>`
       : own && read.state === 'loading' ? html`<div class="ui-hint tb-answer-context-hint">reading the question…</div>`
       : own && read.state === 'failed' ? html`<div class="ui-hint tb-answer-context-hint">the question's brief could not be read</div>` : null}
-    ${files.length > 0 && html`<div class="tb-answer-files" data-answer-files=${files.length}>
-      <span class="ui-eyebrow">${own ? 'Attached' : 'Files on the task'} · ${files.length}</span>
-      <${StoredFiles} api=${api} taskId=${task.id} attachments=${files} surface="taskboard-answer" />
+    ${linked.length > 0 && html`<div class="tb-answer-files tb-answer-qfiles" data-answer-question-files=${linked.length}>
+      <span class="ui-eyebrow">With this question · ${linked.length}</span>
+      <${StoredFiles} api=${api} taskId=${task.id} attachments=${linked} class="tb-files-large" surface="taskboard-answer-q" />
+    </div>`}
+    ${others.length > 0 && html`<div class="tb-answer-files" data-answer-files=${others.length}>
+      <span class="ui-eyebrow">${linked.length ? 'Other files on the task' : own ? 'Attached' : 'Files on the task'} · ${others.length}</span>
+      <${StoredFiles} api=${api} taskId=${task.id} attachments=${others} surface="taskboard-answer" />
     </div>`}
     ${options.length > 0 && html`<div class="tb-answer-options">
       <div class="tb-answer-head"><span class="ui-eyebrow">${q.multi ? `Pick any of ${options.length}` : `Pick one of ${options.length}`}</span>
@@ -237,6 +246,13 @@ export function AnswerDialog({ task, question = null, askedBy = '', busy = false
       </span>
     </div>` : html`<span class="ui-hint tb-new-hint">${answerHint(source, askedBy, own, q.n)}</span>`}
   <//>`;
+}
+
+// questionFiles is the task's files question q shows (its attachment_ids),
+// in the question's order.
+export function questionFiles(q, files) {
+  const ids = Array.isArray(q?.attachment_ids) ? q.attachment_ids : [];
+  return ids.map((id) => (files || []).find((f) => f.id === id)).filter(Boolean);
 }
 
 // answerHint says where the answer goes.

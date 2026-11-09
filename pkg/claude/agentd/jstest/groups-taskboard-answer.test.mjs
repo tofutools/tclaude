@@ -159,3 +159,26 @@ test('a question task\'s dialog reads its brief, renders it, and shows its files
   for (let i = 0; i < 5; i += 1) await harness.act(() => new Promise((r) => setTimeout(r, 0)));
   assert.equal(harness.document.querySelector('.image-preview-overlay h2')?.textContent, 'mock.png', 'a tile opens the attachment viewer');
 });
+
+// A question on a task shows the files sent with it or named by it
+// (attachment_ids, tk_72dff9f8) first, large, then the task's other files.
+test('a question\'s own files come first, large, before the task\'s other files', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AnswerDialog } = await harness.importDashboardModule('js/groups-taskboard-answer.js');
+  const files = [{ id: 7, name: 'old.txt', size: 4, content_type: 'text/plain', sha256: 'a'.repeat(64) },
+    { id: 8, name: 'epics-ab.png', size: 68, content_type: 'image/png', image: true, previewable: true, sha256: 'b'.repeat(64) },
+    { id: 9, name: 'epics-cd.png', size: 68, content_type: 'image/png', image: true, previewable: true, sha256: 'c'.repeat(64) }];
+  // 99 was detached since: it drops out.
+  const q = { ...question(), n: 2, body: 'Which slice first?', attachment_ids: [9, 99, 8] };
+  const the = row('tk_0000000c', 'Epics', { attachments: files, questions: [q], open_questions: 1 });
+  await harness.mount(harness.html`<${AnswerDialog} task=${the} question=${q} askedBy="lead" onSubmit=${async () => true} onClose=${() => {}} />`);
+  const dialog = harness.document.querySelector('#taskboard-answer-modal');
+  const own = dialog.querySelector('.tb-answer-qfiles');
+  assert.ok(own, 'the question has its own files');
+  assert.match(own.textContent, /With this question · 2/);
+  assert.deepEqual([...own.querySelectorAll('[data-file]')].map((el) => el.getAttribute('data-file')), ['9', '8'], 'in the question\'s order');
+  assert.ok(own.querySelector('.tb-files-large'), 'shown large');
+  const rest = dialog.querySelector('[data-answer-files]');
+  assert.match(rest.textContent, /Other files on the task · 1/);
+  assert.deepEqual([...rest.querySelectorAll('[data-file]')].map((el) => el.getAttribute('data-file')), ['7']);
+});

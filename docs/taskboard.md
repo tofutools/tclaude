@@ -564,9 +564,28 @@ tclaude agent taskboard ask-operator tk_4f0a "Lane highlight colour?" \
   --option "Amber: warm, matches the ★" --option Teal --option "No tint" \
   --recommend 1 --block --wait 10m
 
+# With images for the operator to look at: attach them.
+tclaude agent taskboard ask-operator tk_4f0a "Which layout?" \
+  --attach mock-a.png --attach mock-b.png --option A --option B
+
 # On a group: a new task in the operator's lane, made for the question.
 tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --option No --blocks tk_mine
 ```
+
+**To show the operator an image (or any file), attach it.** `--attach
+<file>` (repeatable; at most 10, 4 MiB each, the types `taskboard attach`
+takes) sends it with the question: it becomes a file of the task, as
+`taskboard attach` makes it, and the question lists it, so the Answer dialog
+previews it with the question, an image large, a click enlarging it.
+`--attach-existing <#n|name>` (on a task) names a file already on the task
+the same way. A local file path pasted into the body is no use to the
+operator, who reads the question in the dashboard, maybe on another device:
+`ask-operator` warns (on stderr; the question is still asked) when the body
+names a local image file and nothing is attached. Over HTTP, `POST
+/v1/taskboard/tasks/{id}/questions` takes the question's JSON as the "task"
+part of a multipart request with "file" parts, and `attach_existing:
+["#13", "name.png"]`; the question's `attachment_ids` list the task's files
+it shows.
 
 - `--option "Label"` or `--option "Label: description"`, repeated: none, or
   2 to 6. `--options-file q.json` takes them as JSON instead,
@@ -595,8 +614,9 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   (its *Questions*, at the top, and each open question in its activity).
   Every one opens the same Answer dialog, which shows the question with
   everything needed to decide: its context rendered as Markdown, the files
-  that go with it (a question task's own, asked with `--attach`, or those
-  of the task it is asked on) opening in the attachment viewer, and each
+  that go with it opening in the attachment viewer (first, large, the
+  files the question was asked with or named; then the task's other
+  files), and each
   option with its description and preview, the recommended one marked.
   Or with `answer <task> [--question n] --pick
   <key|label|n>[,…] [--text "…"]`; `--question` is needed only when the
@@ -622,7 +642,9 @@ tclaude agent taskboard ask-operator crew "Ship behind a flag?" --option Yes --o
   question when it is asked and lets in that one answer, from that node, for
   you, within 30 days; it needs no `message.direct` grant, and any other
   mail from the node is refused as before. Asking on a linked node's task
-  takes `taskboard.write` there, answering `taskboard.assign`. `--wait` and
+  takes `taskboard.write` there, answering `taskboard.assign`; files go
+  with it under the same grant (`taskboard attach --peer`): small ones
+  directly, larger ones through the operator's staged upload. `--wait` and
   `show <task> --peer <node>` read the answer too.
 - `show` prints each question, its options and, once answered, the answer;
   `activity` shows them in the stream. The board stays quiet: a question
