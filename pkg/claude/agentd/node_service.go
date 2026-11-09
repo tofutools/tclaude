@@ -168,15 +168,17 @@ func failSelfUpdateRestart(err error) {
 
 // NodeService is the GET /api/node/service and /v1/node/service body.
 type NodeService struct {
-	Launcher       launcher.Info `json:"launcher"`
-	RestartPending string        `json:"restart_pending,omitempty"`
+	Launcher       launcher.Info            `json:"launcher"`
+	Autostart      launcher.AutostartStatus `json:"autostart"`
+	RestartPending string                   `json:"restart_pending,omitempty"`
 }
 
 func nodeServiceStatus(refresh bool) NodeService {
 	info := currentLauncher(refresh)
+	auto := autostartStatus()
 	launcherState.Lock()
 	defer launcherState.Unlock()
-	return NodeService{Launcher: info, RestartPending: launcherState.pending}
+	return NodeService{Launcher: info, Autostart: auto, RestartPending: launcherState.pending}
 }
 
 // NodeRestartResult is the POST .../service/restart body.
@@ -188,6 +190,7 @@ type NodeRestartResult struct {
 func registerNodeServiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/service", handleDashboardNodeService)
 	mux.HandleFunc("POST /api/node/service/restart", handleDashboardNodeService)
+	mux.HandleFunc("POST /api/node/service/autostart", handleDashboardNodeService)
 }
 
 func handleDashboardNodeService(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +211,10 @@ func serveNodeService(w http.ResponseWriter, r *http.Request, actor string) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	if r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, nodeServiceStatus(r.URL.Query().Get("refresh") == "1"))
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/autostart") {
+		serveNodeServiceAutostart(w, r, actor)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)

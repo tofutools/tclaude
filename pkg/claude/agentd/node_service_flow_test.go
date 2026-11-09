@@ -31,10 +31,16 @@ func (r *recordedRunner) run(_ context.Context, name string, args ...string) ([]
 	if r.fail != nil {
 		return nil, r.fail
 	}
-	for prefix, out := range r.out {
-		if strings.HasPrefix(cmd, prefix) {
-			return []byte(out), nil
+	// Longest matching prefix wins: map order is random, and fixtures
+	// overlap ("systemctl --user" and "systemctl --user is-enabled").
+	best, found := "", false
+	for prefix := range r.out {
+		if strings.HasPrefix(cmd, prefix) && (!found || len(prefix) > len(best)) {
+			best, found = prefix, true
 		}
+	}
+	if found {
+		return []byte(r.out[best]), nil
 	}
 	return nil, errors.New("unexpected command " + cmd)
 }
@@ -46,10 +52,22 @@ func (r *recordedRunner) called() []string {
 }
 
 func systemdUserEnv(killMode string) (launcher.Env, *recordedRunner) {
-	unit := "/home/u/.config/systemd/user/tclaude-agentd.service"
+	return systemdUserEnvFor(killMode, "tclaude-agentd.service", "[Service]\nExecStart=/x\n", "")
+}
+
+// systemdUserEnvFor is agentd running as the main process of a user unit
+// named name, whose file holds unitFile. A non-empty envFileContent makes
+// the unit's only environment tclaude's own agentd.env.
+func systemdUserEnvFor(killMode, name, unitFile, envFileContent string) (launcher.Env, *recordedRunner) {
+	unit := "/home/u/.config/systemd/user/" + name
 	files := map[string]string{
-		"/proc/4242/cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/tclaude-agentd.service\n",
-		unit:                "[Service]\nExecStart=/x\n",
+		"/proc/4242/cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/" + name + "\n",
+		unit:                unitFile,
+	}
+	envFiles := ""
+	if envFileContent != "" {
+		files["/home/u/.config/tclaude/agentd.env"] = envFileContent
+		envFiles = "EnvironmentFiles=/home/u/.config/tclaude/agentd.env (ignore_errors=no)\n"
 	}
 	env := launcher.Env{GOOS: "linux", PID: 4242, UID: 1000, EUID: 1000,
 		Args:   []string{"/home/u/.local/bin/tclaude", "agentd", "serve", "--no-tray"},
@@ -60,9 +78,13 @@ func systemdUserEnv(killMode string) (launcher.Env, *recordedRunner) {
 			}
 			return nil, os.ErrNotExist
 		}}
-	probe := &recordedRunner{out: map[string]string{"systemctl --user show tclaude-agentd.service": "Id=tclaude-agentd.service\nMainPID=4242\n" +
+	inline := "Environment=PATH=/usr/bin HUB_TOKEN=s3cret\n"
+	if envFileContent != "" {
+		inline = ""
+	}
+	probe := &recordedRunner{out: map[string]string{"systemctl --user show " + name: "Id=" + name + "\nMainPID=4242\n" +
 		"ExecStart={ path=/home/u/.local/bin/tclaude ; argv[]=/home/u/.local/bin/tclaude agentd serve --no-tray ; ignore_errors=no }\n" +
-		"Environment=PATH=/usr/bin HUB_TOKEN=s3cret\nRestart=on-failure\nKillMode=" + killMode + "\nFragmentPath=" + unit + "\n"}}
+		inline + envFiles + "Restart=on-failure\nKillMode=" + killMode + "\nFragmentPath=" + unit + "\n"}}
 	return env, probe
 }
 
