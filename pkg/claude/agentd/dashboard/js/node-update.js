@@ -5,6 +5,7 @@ import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { RequestError, requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
+import { NodeUpdateSettings } from './node-update-settings.js';
 
 const html = htm.bind(h);
 
@@ -36,6 +37,14 @@ export function versionView(s) {
 
 export class NodeUpdateError extends RequestError {}
 
+// UPDATE_REFUSALS lead the daemon's own message for an apply its update
+// settings refuse (see the auto-update settings below the version).
+const UPDATE_REFUSALS = {
+  update_method_package_managed: 'a package manager owns tclaude there.',
+  update_package_manager_ack_required: 'the package-manager acknowledgement is missing.',
+  update_method_notify_only: 'its update method only notifies.',
+};
+
 // createNodeUpdateActions wraps GET/POST /api/node/update (and the peer-proxied
 // form). Jobs are followed through the status read, which survives the
 // daemon's restart.
@@ -44,6 +53,10 @@ export function createNodeUpdateActions({ fetchImpl = (...a) => globalThis.fetch
   return Object.freeze({
     status: (node) => call('GET', updateBase(node)),
     start: (node, action, version) => call('POST', updateBase(node), version ? { action, version } : { action }),
+    // The node's auto-update settings (updates.self); a peer's needs
+    // node.update to read and node.update.settings to change.
+    settings: (node) => call('GET', `${updateBase(node)}/settings`),
+    saveSettings: (node, body) => call('PUT', `${updateBase(node)}/settings`, body),
   });
 }
 
@@ -103,7 +116,8 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
     setBusy(true);
     return actions.start(node, action, version)
       .then((j) => { setStatus((s) => ({ ...(s || {}), job: j })); setTick((n) => n + 1); })
-      .catch((e) => toast(e?.code === 'update_busy' ? `${node.label} is already updating` : `Update ${action} failed: ${errText(e)}`, true))
+      .catch((e) => toast(e?.code === 'update_busy' ? `${node.label} is already updating`
+        : UPDATE_REFUSALS[e?.code] ? `${node.label}: ${UPDATE_REFUSALS[e.code]} ${errText(e)}` : `Update ${action} failed: ${errText(e)}`, true))
       .finally(() => setBusy(false));
   };
   const v = versionView(status);
@@ -154,6 +168,7 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
       ${job && html`<div id="fleet-node-update-job" class=${job.state === 'failed' || job.state === 'rolled_back' || job.rolled_back ? 'fa-danger' : ''}>
         ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' || job.phase === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase && job.phase !== job.state && !(job.state === 'completed' && job.phase === 'complete') ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${job.error ? ` — ${job.error}` : ''}
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
-      </div>`}`}
+      </div>`}
+      ${!node.hub && actions.settings && html`<${NodeUpdateSettings} node=${node} actions=${actions} confirm=${confirm} toast=${toast} />`}`}
   </${Dialog}>`;
 }

@@ -61,6 +61,25 @@ rollback confirm that the binaries are replaced and the daemon restarts. It
 follows the job through the status read, so the restart does not lose it. A
 peer that has not granted you `node.update` says so.
 
+Below the version, **Auto-update settings** shows the node's `updates.self`
+(see [How tclaude updates itself](#how-tclaude-updates-itself)): method,
+schedule, update on daemon start and post-update setup, with **Save
+settings**. How much you can change depends on the node:
+
+- This node, or a peer that trusts you unrestricted: everything, including the
+  checkout path, a custom command, the package-manager acknowledgement and
+  switching to a package-manager method (which asks you to confirm).
+- A peer that granted `node.update.settings`: the schedule, start-up updates,
+  post-update setup and a switch among the methods that need no free text. A
+  custom command shows as hidden.
+- A peer that granted only `node.update`: read-only, naming the grant it
+  lacks.
+
+When a package manager owns the node's tclaude and a tclaude-driven method is
+picked, the dialog shows the untrack command. Only the node itself or an
+unrestricted peer can acknowledge it. The CLI is `tclaude update config
+show|set --node <peer>`.
+
 ## How tclaude updates itself
 
 Self-updating is opt-in. Nothing prompts you, and nothing updates on its own
