@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -24,13 +23,14 @@ func detectSystemd(ctx context.Context, env Env, run Runner, info *Info) bool {
 	if err != nil {
 		return false
 	}
-	unit, user := unitFromCgroup(string(raw))
+	unit, unitPath, user := unitFromCgroup(string(raw))
 	if unit == "" {
 		return false
 	}
 	args := []string{"show", unit, "--no-pager",
 		"-p", "Id", "-p", "MainPID", "-p", "ExecStart", "-p", "Environment",
-		"-p", "EnvironmentFiles", "-p", "Restart", "-p", "KillMode", "-p", "FragmentPath"}
+		"-p", "EnvironmentFiles", "-p", "Restart", "-p", "KillMode", "-p", "FragmentPath",
+		"-p", "SuccessExitStatus", "-p", "RestartPreventExitStatus"}
 	if user {
 		args = append([]string{"--user"}, args...)
 	}
@@ -54,8 +54,11 @@ func detectSystemd(ctx context.Context, env Env, run Runner, info *Info) bool {
 	}
 	info.UnitPath = props["FragmentPath"]
 	info.Argv = parseExecStartArgv(props["ExecStart"])
+	info.UnitCgroup = unitPath
 	info.RestartPolicy = props["Restart"]
 	info.KillMode = props["KillMode"]
+	info.successExit = exitStatuses(props["SuccessExitStatus"])
+	info.preventExit = exitStatuses(props["RestartPreventExitStatus"])
 	for _, kv := range splitQuoted(props["Environment"]) {
 		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
 			info.Env = append(info.Env, redactEnv(k, v))
@@ -78,28 +81,57 @@ func detectSystemd(ctx context.Context, env Env, run Runner, info *Info) bool {
 	return true
 }
 
-// unitFromCgroup returns the .service leaf of the unified (or name=systemd)
-// cgroup path, and whether it lives under a user manager.
-func unitFromCgroup(raw string) (unit string, user bool) {
+// unitFromCgroup returns the service unit owning the unified (or
+// name=systemd) cgroup path, that unit's cgroup path, and whether it lives
+// under a user manager. The unit is the innermost .service segment other
+// than a user manager, so a process in a delegated subgroup of its unit
+// (DelegateSubgroup=) is still found.
+func unitFromCgroup(raw string) (unit, unitPath string, user bool) {
 	for _, line := range strings.Split(raw, "\n") {
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) != 3 || (parts[0] != "0" && parts[1] != "name=systemd") {
 			continue
 		}
-		p := parts[2]
-		leaf := path.Base(p)
-		if !strings.HasSuffix(leaf, ".service") || !unitNameRe.MatchString(leaf) {
-			continue
-		}
-		user = false
-		for _, seg := range strings.Split(p, "/") {
-			if strings.HasPrefix(seg, "user@") && strings.HasSuffix(seg, ".service") && seg != leaf {
-				user = true
+		segs := strings.Split(parts[2], "/")
+		for i := len(segs) - 1; i >= 0; i-- {
+			seg := segs[i]
+			if !strings.HasSuffix(seg, ".service") || strings.HasPrefix(seg, "user@") || !unitNameRe.MatchString(seg) {
+				continue
 			}
+			for _, outer := range segs[:i] {
+				if strings.HasPrefix(outer, "user@") && strings.HasSuffix(outer, ".service") {
+					user = true
+				}
+			}
+			return seg, strings.Join(segs[:i+1], "/"), user
 		}
-		return leaf, user
+		return "", "", false
 	}
-	return "", false
+	return "", "", false
+}
+
+// cgroupPath returns the unified (or name=systemd) path of a
+// /proc/<pid>/cgroup file.
+func cgroupPath(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 && (parts[0] == "0" || parts[1] == "name=systemd") {
+			return strings.TrimSpace(parts[2])
+		}
+	}
+	return ""
+}
+
+// exitStatuses parses SuccessExitStatus= / RestartPreventExitStatus=, which
+// list exit codes and signal names; only the codes matter here.
+func exitStatuses(s string) map[int]bool {
+	out := map[int]bool{}
+	for _, f := range strings.Fields(s) {
+		if n, err := strconv.Atoi(f); err == nil {
+			out[n] = true
+		}
+	}
+	return out
 }
 
 // parseShow parses `systemctl show` KEY=VALUE output. Repeated keys

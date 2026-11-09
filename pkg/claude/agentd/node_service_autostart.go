@@ -120,8 +120,10 @@ func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) 
 			warnings = append(warnings, "agentd was started from a "+info.Kind+", not a service, so only PATH was captured; variables exported in that shell are not in the unit. Add the ones the harnesses need (API keys, proxy settings, TCLAUDE_*) to the env file.")
 		}
 	}
-	if info.Supervised() && info.Unit != launcher.SystemdUnitName && info.Label != launcher.LaunchdLabel {
-		warnings = append(warnings, "agentd runs under "+info.Unit+info.Label+", which tclaude did not write. Disable it, or both start at boot and the second one stops at once.")
+	// Keyed on the marker, not the name: a system unit called
+	// tclaude-agentd.service is not the user unit autostart writes.
+	if info.Supervised() && !info.ManagedByTclaude {
+		warnings = append(warnings, "agentd runs under "+info.Kind+" "+info.Unit+info.Label+", which tclaude did not write and never rewrites. Disable it, or both start at boot and the second one stops at once.")
 	}
 	return spec, warnings, launcher.ValidateSpec(spec)
 }

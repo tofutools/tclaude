@@ -183,3 +183,105 @@ func TestNodeServiceRestartKeepsTmuxAliveUnderControlGroupKillMode(t *testing.T)
 	}
 	require.Empty(t, restart.called(), "a unit restart would kill the agents' tmux server")
 }
+
+// A system unit with Restart=always, a wrapper ExecStart and tmux in its
+// own unit (how an Ansible-managed server runs agentd): agentd is not root,
+// so it restarts by exiting and lets systemd start the wrapper again.
+func TestNodeServiceRestartExitsForRestartAlwaysSystemUnit(t *testing.T) {
+	f := newFlow(t)
+	var procsMu sync.Mutex
+	procs := []int{4242}
+	unitProcs := func() []int {
+		procsMu.Lock()
+		defer procsMu.Unlock()
+		return append([]int(nil), procs...)
+	}
+	files := map[string]string{
+		"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n",
+		"/proc/777/cgroup":  "0::/system.slice/tclaude-tmux.service/tclaude-tmux\n",
+	}
+	env := launcher.Env{GOOS: "linux", PID: 4242, UID: 1001, EUID: 1001,
+		Args:   []string{"/home/tool/go/bin/tclaude", "agentd", "serve", "-p", "7878"},
+		Getenv: func(k string) string { return map[string]string{"INVOCATION_ID": "x"}[k] },
+		ReadFile: func(p string) ([]byte, error) {
+			if v, ok := files[p]; ok {
+				return []byte(v), nil
+			}
+			return nil, os.ErrNotExist
+		},
+		TmuxServerPID: func() (int, error) { return 777, nil },
+		CgroupProcs:   func(string) ([]int, error) { return unitProcs(), nil }}
+	probe := &recordedRunner{out: map[string]string{"systemctl show tclaude-agentd.service": "Id=tclaude-agentd.service\nMainPID=4242\n" +
+		"ExecStart={ path=/usr/bin/fish ; argv[]=/usr/bin/fish -lc exec /usr/local/bin/tclaude-agentd-serve ; ignore_errors=no }\n" +
+		"Restart=always\nKillMode=control-group\nFragmentPath=/etc/systemd/system/tclaude-agentd.service\n"}}
+	restart := &recordedRunner{}
+	stopped := make(chan struct{}, 1)
+	t.Cleanup(agentd.SetLauncherForTest(env, probe.run, restart.run, func() { stopped <- struct{}{} }))
+
+	rec := fedHuman(t, f, "GET", "/v1/node/service", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var st agentd.NodeService
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	require.True(t, st.Launcher.Wrapped)
+	require.False(t, st.Launcher.Rewritable)
+	require.Equal(t, launcher.RestartExit, st.Launcher.RestartMethod)
+	require.Equal(t, []string{"/usr/bin/fish", "-lc", "exec", "/usr/local/bin/tclaude-agentd-serve"}, st.Launcher.Argv)
+	require.Equal(t, env.Args, st.Launcher.ProcessArgv)
+
+	rec = fedHuman(t, f, "POST", "/v1/node/service/restart", nil)
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"method":"exit"`)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon never stopped for the exit restart")
+	}
+	exited, code, err := agentd.PerformRestartForTest()
+	require.NoError(t, err)
+	require.True(t, exited, "an exit restart ends the process instead of re-executing")
+	require.Equal(t, 0, code, "Restart=always restarts after a clean exit")
+	require.Empty(t, restart.called(), "a non-root agentd never asks systemd to restart a system unit")
+}
+
+// The exit is decided again when it happens: an agent runtime that started
+// inside the unit since the request would die with it, so agentd re-execs in
+// place instead.
+func TestNodeServiceExitRestartRechecksTheUnitBeforeExiting(t *testing.T) {
+	f := newFlow(t)
+	var procsMu sync.Mutex
+	procs := []int{4242}
+	files := map[string]string{"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n"}
+	env := launcher.Env{GOOS: "linux", PID: 4242, UID: 1001, EUID: 1001, Args: []string{"/bin/tclaude", "agentd", "serve"},
+		Getenv: func(k string) string { return map[string]string{"INVOCATION_ID": "x"}[k] },
+		ReadFile: func(p string) ([]byte, error) {
+			if v, ok := files[p]; ok {
+				return []byte(v), nil
+			}
+			return nil, os.ErrNotExist
+		},
+		TmuxServerPID: func() (int, error) { return 0, nil },
+		CgroupProcs: func(string) ([]int, error) {
+			procsMu.Lock()
+			defer procsMu.Unlock()
+			return append([]int(nil), procs...), nil
+		}}
+	probe := &recordedRunner{out: map[string]string{"systemctl show tclaude-agentd.service": "Id=tclaude-agentd.service\nMainPID=4242\n" +
+		"ExecStart={ path=/bin/tclaude ; argv[]=/bin/tclaude agentd serve ; ignore_errors=no }\nRestart=always\nKillMode=control-group\n"}}
+	stopped := make(chan struct{}, 1)
+	t.Cleanup(agentd.SetLauncherForTest(env, probe.run, (&recordedRunner{}).run, func() { stopped <- struct{}{} }))
+
+	rec := fedHuman(t, f, "POST", "/v1/node/service/restart", nil)
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"method":"exit"`)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon never stopped")
+	}
+	procsMu.Lock()
+	procs = append(procs, 5150) // e.g. an OpenCode server, started meanwhile
+	procsMu.Unlock()
+	exited, _, err := agentd.PerformRestartForTest()
+	require.False(t, exited, "exiting would stop the new process with the unit")
+	require.Error(t, err, "the in-place re-exec of the test's fake path fails, proving it was the path taken")
+}

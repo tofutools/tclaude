@@ -260,7 +260,21 @@ func printServiceStatus(st serviceStatus, w io.Writer) {
 	for _, e := range l.Env {
 		fmt.Fprintln(w, envLine(e, envWithheld(st)))
 	}
-	fmt.Fprintf(w, "Restart method:  %s\n", termtext.Cell(l.RestartMethod))
+	if t := l.Tmux; t != nil {
+		where := "not running"
+		if t.Running {
+			where = "in its own cgroup " + t.Cgroup
+			if t.InUnit {
+				where = "inside agentd's unit (" + t.Cgroup + ")"
+			}
+		}
+		fmt.Fprintf(w, "Tmux server:     %s\n", termtext.Cell(where))
+	}
+	method := l.RestartMethod
+	if method == launcher.RestartExit {
+		method = fmt.Sprintf("exit (status %d, Restart=%s starts it again)", l.RestartExitCode, l.RestartPolicy)
+	}
+	fmt.Fprintf(w, "Restart method:  %s\n", termtext.Cell(method))
 	if st.RestartPending != "" {
 		fmt.Fprintf(w, "Restart pending: %s\n", termtext.Cell(st.RestartPending))
 	}
@@ -288,8 +302,11 @@ func runServiceRestart(p *serviceRestartParams, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	how := "re-executing in place with the same arguments"
-	if res.Method == launcher.RestartSupervisor {
+	switch res.Method {
+	case launcher.RestartSupervisor:
 		how = "through " + res.Launcher
+	case launcher.RestartExit:
+		how = "by exiting; " + res.Launcher + " starts it again through the unit's own command"
 	}
 	fmt.Fprintf(stdout, "agentd is restarting %s.\n", termtext.Cell(how))
 	return 0

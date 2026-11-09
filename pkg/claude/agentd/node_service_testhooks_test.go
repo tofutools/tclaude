@@ -110,3 +110,13 @@ func SetAutostartForTest(a launcher.Autostart, lookupEnv func(string) (string, b
 	autostartLookupEnv = lookupEnv
 	return func() { autostartFactory, autostartLookupEnv = prevFactory, prevLookup }
 }
+
+// PerformRestartForTest runs what serve does after it returns for a
+// restart, with the process exit captured instead of taken.
+func PerformRestartForTest() (exited bool, code int, err error) {
+	prev := restartExit
+	restartExit = func(c int) { exited, code = true, c }
+	defer func() { restartExit = prev }()
+	err = performSelfUpdateRestart()
+	return exited, code, err
+}

@@ -108,11 +108,24 @@ unit, its `ExecStart` arguments, its environment (secret-looking values
 redacted), `KillMode`, and how a restart will be carried out. A restart, by
 `tclaude service restart` or after `tclaude update --apply`, goes through
 systemd (`systemctl --user --no-block restart <unit>`), so the unit's own
-arguments and environment apply to the new process. Two cases restart in place
-instead (same PID, same arguments and environment): a unit whose `KillMode`
-would also stop the tmux server and the agents (`control-group` or `mixed`),
-and a system unit while `agentd` is not root. Under launchd on macOS, the
-restart is `launchctl kickstart -k`.
+arguments and environment apply to the new process. A wrapper script in
+`ExecStart` runs again, so arguments it works out at start (an interface
+address, say) are worked out afresh.
+
+A unit restart is avoided only when it would stop the agents. tclaude checks
+where the tmux server really runs. If the server is inside agentd's own unit,
+and `KillMode` is `control-group` or `mixed`, tclaude restarts in place
+instead: same PID, same arguments and environment. A tmux server in a unit of
+its own (an external resource-delegation unit, for example) is safe, whatever
+agentd's `KillMode` is.
+
+A system unit can be restarted through systemd only by root. When `agentd` is
+not root, it exits instead and lets the unit's `Restart=` start it again:
+with status 0 for `Restart=always`, or with a failure status for
+`Restart=on-failure`. Any other `Restart=` setting gets the in-place restart.
+`tclaude service status` shows the method it will use and why.
+
+Under launchd on macOS, the restart is `launchctl kickstart -k`.
 
 A linked node can do the same through `--node <peer>` on `tclaude service
 status|restart|install|uninstall`. Reading takes the node's `node.read` grant.

@@ -111,20 +111,115 @@ func TestDetectSystemdKillModeControlGroupRestartsInPlace(t *testing.T) {
 	}
 }
 
-func TestDetectSystemdSystemNonRootRestartsInPlace(t *testing.T) {
-	f := &fakeRun{out: map[string]string{"systemctl show tclaude-agentd.service": userShow}}
-	env := testEnv("linux", map[string]string{"INVOCATION_ID": "abc"}, map[string]string{
-		"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n",
-	})
-	info := Detect(context.Background(), env, f.run)
-	if info.Kind != KindSystemdSystem || info.RestartMethod != RestartExec {
-		t.Fatalf("info = %+v", info)
+func TestDetectSystemdSystemNonRootRestartMethod(t *testing.T) {
+	for _, c := range []struct {
+		name, props string
+		euid        int
+		method      string
+		code        int
+	}{
+		{"on-failure exits 1", "", 1000, RestartExit, 1},
+		{"1 is a success status", "SuccessExitStatus=1 SIGTERM\n", 1000, RestartExit, 2},
+		{"Restart=no re-execs", "Restart=no\n", 1000, RestartExec, 0},
+		{"on-abnormal re-execs", "Restart=on-abnormal\n", 1000, RestartExec, 0},
+		{"root asks systemd", "", 0, RestartSupervisor, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Later keys win in parseShow, so props appended after override.
+			f := &fakeRun{out: map[string]string{"systemctl show tclaude-agentd.service": userShow + c.props}}
+			if strings.HasPrefix(c.props, "Restart=") {
+				f.out["systemctl show tclaude-agentd.service"] = strings.Replace(userShow, "Restart=on-failure\n", c.props, 1)
+			}
+			env := testEnv("linux", map[string]string{"INVOCATION_ID": "abc"}, map[string]string{
+				"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n",
+			})
+			env.EUID = c.euid
+			info := Detect(context.Background(), env, f.run)
+			if info.Kind != KindSystemdSystem || info.RestartMethod != c.method || info.RestartExitCode != c.code {
+				t.Fatalf("method/code = %s/%d, want %s/%d; warnings %q", info.RestartMethod, info.RestartExitCode, c.method, c.code, info.Warnings)
+			}
+			if c.method == RestartSupervisor {
+				name, args, ok := RestartCommand(info)
+				if !ok || name != "systemctl" || strings.Join(args, " ") != "--no-block restart tclaude-agentd.service" {
+					t.Fatalf("root restart = %v %s %q", ok, name, args)
+				}
+			}
+		})
 	}
-	env.EUID = 0
-	info = Detect(context.Background(), env, f.run)
-	name, args, ok := RestartCommand(info)
-	if !ok || name != "systemctl" || strings.Join(args, " ") != "--no-block restart tclaude-agentd.service" {
-		t.Fatalf("root restart = %v %s %q", ok, name, args)
+}
+
+// A system unit with Restart=always and the default KillMode, whose
+// ExecStart is a wrapper that execs agentd, with the tmux server in its own
+// unit (a delegated tclaude-tmux.service): restarting by exit is safe and
+// goes through the wrapper again.
+const wrapperShow = `Id=tclaude-agentd.service
+MainPID=4242
+ExecStart={ path=/usr/bin/fish ; argv[]=/usr/bin/fish -lc exec /usr/local/bin/tclaude-agentd-serve ; ignore_errors=no }
+Restart=always
+KillMode=control-group
+FragmentPath=/etc/systemd/system/tclaude-agentd.service
+`
+
+func TestDetectWrappedSystemUnitWithTmuxElsewhere(t *testing.T) {
+	tmuxPID := 777
+	files := map[string]string{
+		"/proc/4242/cgroup":                          "0::/system.slice/tclaude-agentd.service\n",
+		"/proc/777/cgroup":                           "0::/system.slice/tclaude-tmux.service/tclaude-tmux\n",
+		"/etc/systemd/system/tclaude-agentd.service": "[Service]\n",
+	}
+	f := &fakeRun{out: map[string]string{"systemctl show tclaude-agentd.service": wrapperShow}}
+	env := testEnv("linux", map[string]string{"INVOCATION_ID": "abc"}, files)
+	env.Args = []string{"/home/tool/go/bin/tclaude", "agentd", "serve", "-p", "7878", "--dashboard-bind", "100.64.0.7"}
+	env.TmuxServerPID = func() (int, error) { return tmuxPID, nil }
+
+	info := Detect(context.Background(), env, f.run)
+	if info.RestartMethod != RestartExit || info.RestartExitCode != 0 {
+		t.Fatalf("method = %s/%d; warnings %q", info.RestartMethod, info.RestartExitCode, info.Warnings)
+	}
+	if info.Tmux == nil || !info.Tmux.Running || info.Tmux.InUnit || info.UnitCgroup != "/system.slice/tclaude-agentd.service" {
+		t.Fatalf("tmux = %+v unit cgroup %q", info.Tmux, info.UnitCgroup)
+	}
+	if !info.Wrapped || info.Rewritable || info.ManagedByTclaude {
+		t.Fatalf("wrapped/rewritable/managed = %v/%v/%v", info.Wrapped, info.Rewritable, info.ManagedByTclaude)
+	}
+	if !reflect.DeepEqual(info.RawArgv(), env.Args) {
+		t.Fatalf("a wrapped unit's configured argv is the process's: %q", info.RawArgv())
+	}
+
+	// The same unit with tmux inside it (a delegated subgroup of agentd's
+	// own unit): an exit would take the agents down, so re-exec in place.
+	files["/proc/777/cgroup"] = "0::/system.slice/tclaude-agentd.service/tmux\n"
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExec || info.Tmux == nil || !info.Tmux.InUnit {
+		t.Fatalf("tmux in unit: method %s tmux %+v", info.RestartMethod, info.Tmux)
+	}
+	// No tmux server running: nothing to lose.
+	tmuxPID = 0
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExit {
+		t.Fatalf("no tmux: method %s", info.RestartMethod)
+	}
+	// The server cannot be probed: KillMode alone decides, conservatively.
+	env.TmuxServerPID = func() (int, error) { return 0, errors.New("unknown") }
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExec || info.Tmux != nil {
+		t.Fatalf("unknown tmux: method %s", info.RestartMethod)
+	}
+}
+
+func TestUnitFromCgroupFindsDelegatedSubgroup(t *testing.T) {
+	for raw, want := range map[string][3]string{
+		"0::/system.slice/tclaude-agentd.service\n":                                {"tclaude-agentd.service", "/system.slice/tclaude-agentd.service", ""},
+		"0::/system.slice/tclaude-agentd.service/agentd\n":                         {"tclaude-agentd.service", "/system.slice/tclaude-agentd.service", ""},
+		"0::/user.slice/user-1000.slice/user@1000.service/app.slice/x.service\n":   {"x.service", "/user.slice/user-1000.slice/user@1000.service/app.slice/x.service", "user"},
+		"0::/user.slice/user-1000.slice/user@1000.service/init.scope\n":            {"", "", ""},
+		"12:pids:/whatever\n1:name=systemd:/system.slice/tclaude-agentd.service\n": {"tclaude-agentd.service", "/system.slice/tclaude-agentd.service", ""},
+	} {
+		unit, path, user := unitFromCgroup(raw)
+		u := ""
+		if user {
+			u = "user"
+		}
+		if got := [3]string{unit, path, u}; got != want {
+			t.Errorf("unitFromCgroup(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }
 
@@ -216,5 +311,58 @@ func TestRedactArgv(t *testing.T) {
 		"sh", "-c", "SECRET=" + Redacted + " exec tclaude --hub https://" + Redacted + "@hub.example"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+}
+
+// The unit's cgroup decides, not just tmux: an OpenCode server agentd
+// started inside the unit would die with a unit restart too.
+func TestRestartMethodCountsEveryProcessInTheUnit(t *testing.T) {
+	files := map[string]string{
+		"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n",
+		"/proc/777/cgroup":  "0::/system.slice/tclaude-tmux.service\n",
+	}
+	f := &fakeRun{out: map[string]string{"systemctl show tclaude-agentd.service": wrapperShow}}
+	env := testEnv("linux", map[string]string{"INVOCATION_ID": "abc"}, files)
+	env.TmuxServerPID = func() (int, error) { return 777, nil }
+	procs := []int{4242, 5150}
+	env.CgroupProcs = func(path string) ([]int, error) {
+		if path != "/system.slice/tclaude-agentd.service" {
+			t.Fatalf("read cgroup %q", path)
+		}
+		return procs, nil
+	}
+	info := Detect(context.Background(), env, f.run)
+	if info.RestartMethod != RestartExec || info.UnitOtherPIDs == nil || !reflect.DeepEqual(*info.UnitOtherPIDs, []int{5150}) {
+		t.Fatalf("other process in unit: method %s others %v", info.RestartMethod, info.UnitOtherPIDs)
+	}
+	procs = []int{4242}
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExit {
+		t.Fatalf("only agentd in unit: method %s", info.RestartMethod)
+	}
+	// The cgroup cannot be read: tmux placement decides.
+	env.CgroupProcs = func(string) ([]int, error) { return nil, errors.New("no cgroupfs") }
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExit || info.UnitOtherPIDs != nil {
+		t.Fatalf("unreadable cgroup, tmux elsewhere: method %s", info.RestartMethod)
+	}
+}
+
+func TestProcCgroupProcsWalksSubgroups(t *testing.T) {
+	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
+		t.Skip("no cgroupfs")
+	}
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Skip("no /proc")
+	}
+	pids, err := ProcCgroupProcs(cgroupPath(string(raw)))
+	if err != nil {
+		t.Skipf("cgroup not readable here: %v", err)
+	}
+	found := false
+	for _, p := range pids {
+		found = found || p == os.Getpid()
+	}
+	if !found {
+		t.Fatalf("own pid %d not in own cgroup's procs %v", os.Getpid(), pids)
 	}
 }
