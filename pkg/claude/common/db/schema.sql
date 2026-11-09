@@ -2440,6 +2440,11 @@ CREATE TRIGGER group_tasks_column_cordoned_on_move
 				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
 			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
 
+CREATE INDEX idx_group_tasks_status ON group_tasks(status, group_id);
+
+CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
+			WHERE archived_at IS NULL AND status IN ('done','dropped');
+
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
 			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
