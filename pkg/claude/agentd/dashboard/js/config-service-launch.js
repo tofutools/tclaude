@@ -5,7 +5,7 @@
 // It reads GET <url> ({ profile, suggested, missing, owned, launcher,
 // comparison, access, redacted, version }) and saves with PUT
 // { profile, version }; { profile: null } clears it. A stale version is a
-// 409 (launch_profile_conflict) carrying the current view: the edits stay,
+// 409 (launch_profile_conflict) carrying the current view (body.current): the edits stay,
 // over the new version, so Save again overwrites and Discard takes theirs.
 // A refused profile is a 400 { errors: [{ path, code, message }] }, each
 // shown on its row (profile.flags[i], profile.env[i].key|value,
@@ -105,21 +105,12 @@ export function rowErrors(errors, paths) {
 }
 
 // missingKeys are the inherited names agentd does not have now, so the unit
-// would get them empty: by the running daemon's variables (suggested), which
-// also covers a name just typed, else as the daemon reported for the saved
-// profile.
-export function missingKeys(view, draft) {
-  // The daemon's own word for the saved profile's names; the running
-  // variables (suggested) only for a name the saved profile does not inherit.
-  const out = new Set(view?.missing || []);
-  const running = view?.suggested?.env;
-  if (!Array.isArray(running)) return out;
-  const have = new Set(running.map((e) => e.key));
-  const saved = new Set(view?.profile?.inherit_env || []);
-  for (const r of draft.env) {
-    if (r.mode === INHERIT && r.key && !saved.has(r.key) && !have.has(r.key)) out.add(r.key);
-  }
-  return out;
+// would get them empty, as the daemon reports them for the saved profile.
+// A name just typed is not checked here: suggested is not all of agentd's
+// environment (from a shell it is PATH and the variables tclaude uses), so
+// it cannot say a name is absent. The daemon says so once it is saved.
+export function missingKeys(view) {
+  return new Set(view?.missing || []);
 }
 
 const BASELINE = { profile: 'compared with the profile', unit: 'compared with the unit' };
@@ -227,7 +218,7 @@ export function LaunchProfile({
     } catch (e) {
       if (!alive.current) return;
       if (e?.status === 409 && e.code === 'launch_profile_conflict') {
-        const current = e.body?.view || e.body;
+        const current = e.body?.current;
         if (current?.version !== undefined) take(current, { keepDraft: true });
         else await load();
         setNote(profile
@@ -275,7 +266,7 @@ export function LaunchProfile({
     ...(view.suggested?.env || []).filter((e) => e.secret).map((e) => e.key),
     ...draft.env.filter((r) => r.secret).map((r) => r.key),
   ]);
-  const missing = missingKeys(view, draft);
+  const missing = missingKeys(view);
   const tag = comparisonTag(view.comparison);
   const setFlag = (i, value) => setDraft({ ...draft, flags: draft.flags.map((f, j) => (j === i ? value : f)) });
   const setEnv = (i, patch) => setDraft({ ...draft, env: draft.env.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
@@ -292,7 +283,8 @@ export function LaunchProfile({
         ${tag && html`<span class="cfg-launch-cmp"><span class=${tag.cls} id="cfg-launch-cmp">${tag.text}</span>${tag.baseline && html` <span class="muted" id="cfg-launch-baseline">${tag.baseline}</span>`}</span>`}
       <//>
       ${view.comparison?.differences?.length > 0 && html`<${Row} label="Differences"><${Differences} comparison=${view.comparison} secretKeys=${secretKeys} restricted=${restricted} /><//>`}
-      ${view.owned === false && html`<${Row} label=""><div class="cfg-svc-warn" id="cfg-launch-unowned">${view.launcher?.unit ? html`The unit <code>${view.launcher.unit}</code>` : 'The unit'} was not written by tclaude, so tclaude never changes it and a profile is not applied to it.${view.comparison?.baseline === 'unit' ? ' The comparison is with the unit\'s own command and environment.' : ''}</div><//>`}
+      ${(view.warnings || []).map((w) => html`<${Row} key=${w} label=""><div class="cfg-svc-warn" data-launch-warning="">${w}</div><//>`)}
+      ${view.owned === false && !view.warnings?.length && html`<${Row} label=""><div class="cfg-svc-warn" id="cfg-launch-unowned">${view.launcher?.unit ? html`The unit <code>${view.launcher.unit}</code>` : 'The unit'} was not written by tclaude, so tclaude never changes it and a profile is not applied to it.${view.comparison?.baseline === 'unit' ? ' The comparison is with the unit\'s own command and environment.' : ''}</div><//>`}
       ${!editable ? html`<${ReadOnly} view=${view} />
         <${Row} label=""><span class="muted" id="cfg-launch-readonly">${view.access === 'read'
           ? 'Changing it needs node.update.settings on that node.'

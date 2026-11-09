@@ -129,7 +129,7 @@ test("Use what's running now fills the rows, leaves a secret flag out with a not
   }
 });
 
-test('a refused row is marked by its path; an inherited name agentd lacks is warned under its row', async (t) => {
+test('a refused row is marked by its path', async (t) => {
   const put = (body) => (body.profile?.flags?.includes('--tui')
     ? { status: 400, body: { error: 'refused', errors: [{ path: 'profile.flags[2]', code: 'invalid_flag', message: '--tui is not a serve flag' }] } }
     : null);
@@ -148,8 +148,7 @@ test('a refused row is marked by its path; an inherited name agentd lacks is war
       if (on) o.setAttribute('selected', ''); else o.removeAttribute('selected');
     }
     await harness.act(async () => { harness.fireEvent(mode, 'change'); });
-    assert.match(root.querySelector('[data-launch-missing="HTTPS_PROXY"]').textContent, /no HTTPS_PROXY now/);
-    assert.equal(root.querySelector('[data-launch-missing="PATH"]'), null, 'agentd has PATH');
+    assert.equal(root.querySelector('[data-launch-missing="HTTPS_PROXY"]'), null, 'a name just typed waits for the daemon\'s word');
     await click('#cfg-launch-save');
     await until(() => root.querySelector('[data-launch-row="f2"] .cfg-launch-err'), 'the row error');
     assert.match(root.querySelector('[data-launch-row="f2"] .cfg-launch-err').textContent, /--tui is not a serve flag/);
@@ -163,7 +162,7 @@ test('a refused row is marked by its path; an inherited name agentd lacks is war
 test('a stale version keeps the edits over the current view; Clear asks and sends null', async (t) => {
   let stale = true;
   const put = (body, state) => {
-    if (stale && body.version === 'v2') { stale = false; return { status: 409, body: { error: 'changed', code: 'launch_profile_conflict', ...state, version: 'v3' } }; }
+    if (stale && body.version === 'v2') { stale = false; return { status: 409, body: { error: 'changed', code: 'launch_profile_conflict', current: { ...state, version: 'v3' } } }; }
     return null;
   };
   const { root, click, type, puts, confirms, until, unmount } = await setup(t, SET_VIEW, { put });
@@ -259,6 +258,18 @@ test('a conflict without a usable view reads again, edits kept; a refused clear 
     await click('#cfg-launch-clear');
     await until(() => /not cleared/.test(root.querySelector('#cfg-launch-note')?.textContent || ''), 'the clear note');
     assert.equal(n, 2);
+  } finally {
+    await unmount();
+  }
+});
+
+test('an inherited name the daemon reports missing is warned under its row; the daemon\'s warnings show', async (t) => {
+  const view = { ...SET_VIEW, missing: ['ANTHROPIC_API_KEY'], warnings: ['Left out --api-token: a secret.'] };
+  const { root, unmount } = await setup(t, view);
+  try {
+    assert.match(root.querySelector('[data-launch-missing="ANTHROPIC_API_KEY"]').textContent, /no ANTHROPIC_API_KEY now/);
+    assert.equal(root.querySelector('[data-launch-missing="PATH"]'), null);
+    assert.match(root.querySelector('[data-launch-warning]').textContent, /Left out --api-token/);
   } finally {
     await unmount();
   }
