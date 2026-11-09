@@ -111,8 +111,8 @@ export function QuestionCard({ task, question, askedBy = '', onAnswer = null, on
   const mark = SOURCE_MARK[source];
   return html`<div class="ui-card tb-card tb-question-card" data-question=${`${task.id}#${q.n}`} data-question-source=${source || null}>
     <div class="tb-question-on" title=${mark.also || null}>${mark.icon} ${askedBy || 'an agent'} asks on${' '}
-      ${onOpen ? html`<${Button} size="sm" variant="link" class="tb-question-task" title="Open the task" onClick=${(event) => { event.stopPropagation(); onOpen(task.id); }}>${task.title}<//>`
-        : html`<span class="tb-question-task">${task.title}</span>`}</div>
+      ${onOpen ? html`<${Button} size="sm" variant="link" class="tb-question-task" title=${`Open the task: ${task.title}`} onClick=${(event) => { event.stopPropagation(); onOpen(task.id); }}>${task.title}<//>`
+        : html`<span class="tb-question-task" title=${task.title}>${task.title}</span>`}</div>
     <div class="tb-question-title">${q.title || task.title}</div>
     <div class="tb-card-meta"><span class="ui-tag ui-tag-accent tb-question-tag">${mark.icon} Q${q.n} · ${questionKind(q)}</span>${
       source ? html`<span class="ui-tag tb-question-also" title=${mark.also}>also in Messages</span>` : null}${
