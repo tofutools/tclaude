@@ -188,8 +188,32 @@ returns:
 returns the same view, or HTTP 400 with an `errors` list. The update status
 also reports `chosen_method` and `detected_method`. A job reports `method`,
 `output` (the bounded tail of a package-manager or custom command),
-`relocations` and `post_setup`. For now, a peer reaches the settings routes
-only with unrestricted trust.
+`relocations` and `post_setup`. The view's `access` says what the caller may
+change: `full`, `settings` or `read`.
+
+**Linked nodes.** `tclaude update config show|set --node <peer>` and the
+dashboard's `/api/peer/{instance_id}/node/update/settings` use the same API on
+a trusted node. Reading needs that node's `node.update` grant (`access:
+"read"`). Changing needs `node.update.settings` (`access: "settings"`), an
+instance-wide, default-off peer permission that `node.update` does not imply;
+a change needs both. With them, a peer may change the schedule, update on
+start and the post-update setup flags, and switch between `release`,
+`go_install` and `manual`.
+
+Some settings stay with the node's own operator: `custom` (the command and
+its timeout), `source_checkout` (the path and the ref), `install_dir` and
+`package_manager_ack`. Switching to a
+package-manager, `custom` or `source_checkout` method does too; a peer is
+refused with HTTP 403 `local_only_setting`. A peer may always switch a node
+back to `manual`. The custom command is withheld from a peer
+(`redacted: ["custom.command"]`); a peer sends it back empty, which keeps it,
+and any other value is refused. The `?install_dir=` check is local only.
+
+Unrestricted trust implies both grants and acts as the node's operator
+(`access: "full"`). The grant is checked again on every request. Every
+change and refusal appears in the federation audit as
+`federation.node.update.settings`, with the peer as actor and the changed
+keys.
 
 ## Custom update scripts
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
-const updateSettingsPath = "/v1/node/update/settings"
+// updateSettingsPath is this node's settings API, or a trusted peer's.
+func updateSettingsPath(node string) string { return updateAPIPath(node, "/settings") }
 
 // updateSettingsView mirrors GET /v1/node/update/settings.
 type updateSettingsView struct {
@@ -32,6 +34,7 @@ type updateSettingsView struct {
 	InstallShadowed  bool                    `json:"install_dir_shadowed"`
 	ShadowedBy       string                  `json:"shadowed_by"`
 	Warnings         []string                `json:"warnings"`
+	Redacted         []string                `json:"redacted"`
 	NextScheduledRun *time.Time              `json:"next_scheduled_run"`
 	LastScheduledRun *struct {
 		At      time.Time `json:"at"`
@@ -43,12 +46,14 @@ type updateSettingsView struct {
 }
 
 type updateConfigShowParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	Node string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.update grant)"`
+	JSON bool   `long:"json" help:"Output JSON"`
 }
 
 type updateConfigSetParams struct {
-	ConfirmPackageManager bool `long:"confirm-package-manager" help:"Confirm letting tclaude run a package manager (needed to switch to homebrew, nix_profile, mise, apt or dnf)"`
-	JSON                  bool `long:"json" help:"Output JSON"`
+	Node                  string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.update and node.update.settings grants)"`
+	ConfirmPackageManager bool   `long:"confirm-package-manager" help:"Confirm letting tclaude run a package manager (needed to switch to homebrew, nix_profile, mise, apt or dnf)"`
+	JSON                  bool   `long:"json" help:"Output JSON"`
 }
 
 // updateConfigKeys documents every `tclaude update config set` key.
@@ -107,12 +112,12 @@ func updateDaemonFail(err error, stderr io.Writer) int {
 	return MapDaemonErrorToRC(err)
 }
 
-func fetchUpdateSettings(stderr io.Writer) (json.RawMessage, *updateSettingsView, int) {
+func fetchUpdateSettings(node string, stderr io.Writer) (json.RawMessage, *updateSettingsView, int) {
 	if rc := RequireDaemonOrExit(stderr); rc != 0 {
 		return nil, nil, rc
 	}
 	var raw json.RawMessage
-	if err := DaemonRequest(http.MethodGet, updateSettingsPath, nil, &raw, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+	if err := DaemonRequest(http.MethodGet, updateSettingsPath(node), nil, &raw, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
 		return nil, nil, updateDaemonFail(err, stderr)
 	}
 	var view updateSettingsView
@@ -124,7 +129,7 @@ func fetchUpdateSettings(stderr io.Writer) (json.RawMessage, *updateSettingsView
 }
 
 func runUpdateConfigShow(p *updateConfigShowParams, stdout, stderr io.Writer) int {
-	raw, view, rc := fetchUpdateSettings(stderr)
+	raw, view, rc := fetchUpdateSettings(p.Node, stderr)
 	if rc != 0 {
 		return rc
 	}
@@ -189,7 +194,9 @@ func printUpdateSettings(v *updateSettingsView, out io.Writer) {
 		}
 		fmt.Fprintf(out, "Source checkout:    %s @ %s\n", c(s.SourceCheckout.Path), c(ref))
 	}
-	if s.Custom.Command != "" {
+	if slices.Contains(v.Redacted, "custom.command") {
+		fmt.Fprintf(out, "Custom command:     (set on the node; withheld from peers)\n")
+	} else if s.Custom.Command != "" {
 		fmt.Fprintf(out, "Custom command:     %s (timeout %ds)\n", c(s.Custom.Command), s.Custom.TimeoutSeconds)
 	}
 	fmt.Fprintf(out, "Install dir:        %s (package-manager ack: %s)\n", c(v.InstallDir), onOff(s.PackageManagerAck))
@@ -281,7 +288,7 @@ func applyUpdateConfigKey(s *config.SelfUpdateConfig, key, value string) error {
 }
 
 func runUpdateConfigSet(p *updateConfigSetParams, key, value string, stdout, stderr io.Writer) int {
-	_, view, rc := fetchUpdateSettings(stderr)
+	_, view, rc := fetchUpdateSettings(p.Node, stderr)
 	if rc != 0 {
 		return rc
 	}
@@ -295,7 +302,7 @@ func runUpdateConfigSet(p *updateConfigSetParams, key, value string, stdout, std
 		body["confirm_package_manager"] = true
 	}
 	var raw json.RawMessage
-	if err := DaemonRequest(http.MethodPut, updateSettingsPath, body, &raw, DaemonOpts{Timeout: 20 * time.Second, NoRetry: true}); err != nil {
+	if err := DaemonRequest(http.MethodPut, updateSettingsPath(p.Node), body, &raw, DaemonOpts{Timeout: 20 * time.Second, NoRetry: true}); err != nil {
 		var de *DaemonError
 		if errors.As(err, &de) && de.Code == "confirmation_required" {
 			fmt.Fprintf(stderr, "Error: letting tclaude run a package manager is an explicit opt-in; rerun with --confirm-package-manager\n")

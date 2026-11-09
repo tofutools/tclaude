@@ -17,6 +17,10 @@ import (
 
 const PermNodeUpdate = "node.update"
 
+// PermNodeUpdateSettings lets a peer change this node's self-update settings
+// (method, schedule, post-update setup). Instance-wide, default off.
+const PermNodeUpdateSettings = "node.update.settings"
+
 var nodeUpdates struct {
 	sync.Mutex
 	service *selfupdate.Service

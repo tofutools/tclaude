@@ -266,6 +266,7 @@ var slugFederationReach = map[string]FedReach{
 	PermAgentsStatusRead:                  {Kind: FedPeerGroup, Cap: proto.CapAgentStatus},
 	PermFederationAuditRead:               {Kind: FedPeerInstance},
 	PermNodeUpdate:                        {Kind: FedPeerInstance, Sensitive: true},
+	PermNodeUpdateSettings:                {Kind: FedPeerInstance, Sensitive: true},
 	PermNodeHarnessesInstall:              {Kind: FedPeerInstance, Sensitive: true},
 	PermNodeExec:                          {Kind: FedPeerInstance, Sensitive: true},
 	PermNodeMessagesRead:                  {Kind: FedPeerInstance},

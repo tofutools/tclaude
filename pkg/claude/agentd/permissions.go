@@ -149,7 +149,7 @@ func init() { initPermissionRegistry() }
 // what an agent can hand itself. It is display guidance, not a gate.
 var riskySlugs = []string{
 	PermNodeExec, PermSessionsShell, PermSessionsAttach, PermSessionsTakeover,
-	PermNodeUpdate, PermNodeHarnessesInstall, PermNodeCredentialsReceive,
+	PermNodeUpdate, PermNodeUpdateSettings, PermNodeHarnessesInstall, PermNodeCredentialsReceive,
 	PermConfigImport, PermConfigExport, PermAgentBundleImport,
 	PermAgentDelete, PermGroupsMembersDelete,
 	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll,
@@ -763,6 +763,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
 	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
 	{Slug: PermNodeUpdate, Description: "Permit trusted peers to replace installed tclaude binaries and restart agentd. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeUpdateSettings, Description: "Permit trusted peers to change this node's self-update settings: method (never to a package-manager, custom or source-checkout method), schedule, update on start and post-update setup flags. Needs node.update as well. The custom command and its timeout, the source checkout (path and ref), the install dir and the package-manager acknowledgement stay local. High trust, default off; instance-wide peer grant."},
 	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
 	{Slug: PermNodeExec, Description: nodeExecWarning},
 	{Slug: PermNodeMessagesRead, Description: "Read private human notifications and agent message bodies across this node. Default off; instance-wide peer grant. No reply or approval authority."},
