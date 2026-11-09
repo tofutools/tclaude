@@ -338,3 +338,21 @@ export function EpicChildren({ epic, api, group, tasks = [], nameOf = (actor) =>
     ${error && html`<div class="ui-error tb-epic-error" role="alert">${error}</div>`}
   </div>`;
 }
+
+// EpicGroupRow heads an epic's group in the List grouped by epic: its name
+// in its colour, its progress, how many of its tasks are in the queue, a
+// fold toggle, and open (its edit form). epic null is No epic.
+export function EpicGroupRow({ epic, count, colspan, folded = false, onFold, onOpen = null }) {
+  const id = epic?.id || NO_EPIC;
+  return html`<tr class=${`tb-epic-group${epic ? ` tb-epic-c${epicColour(epic.id)}` : ' tb-epic-group-none'}`} data-epic-group=${id}><td colspan=${colspan}>
+    <span class="tb-epic-group-head">
+      <button type="button" data-ui-exempt class="tb-epic-group-fold" aria-expanded=${!folded} title=${folded ? 'Show its tasks' : 'Fold its tasks'}
+        onClick=${() => onFold(!folded)}>${folded ? '▸' : '▾'}</button>
+      <span class=${`tb-epic-dot${epic ? '' : ' tb-epic-dot-none'}`}></span>
+      <span class="tb-epic-group-name">${epic ? epic.title : 'No epic'}</span>
+      ${epic && html`<${EpicProgress} epic=${epic} />`}
+      <span class="muted">${epic ? progressParts(epic.progress).join(' · ') : `${count} task${count === 1 ? '' : 's'}`}</span>
+      ${epic && onOpen && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${epic.id} onClick=${() => onOpen(epic.id)}>open ›</button>`}
+    </span>
+  </td></tr>`;
+}

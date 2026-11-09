@@ -40,12 +40,13 @@ function fakeApi({ children = [] } = {}) {
   };
 }
 
-async function mountBoard(t, name, { api = fakeApi(), entry = board(name), view = 'lanes' } = {}) {
+async function mountBoard(t, name, { api = fakeApi(), entry = board(name), view = 'lanes', prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
+  for (const [key, value] of Object.entries(prefs)) dashPrefs.setItem(`tclaude.dash.groups.taskboard.${key}.${name}`, value);
   const source = {
     context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'),
     attach: () => () => {}, refresh: async () => {},
@@ -236,4 +237,64 @@ test('a task whose epic was closed with it open is in no epic', async (t) => {
   entry.tasks.push(row('tk_00000004', 'Left open', { parent_id: 'tk_eclosed1' }));
   assert.ok(boardEntry(entry, { epic: NO_EPIC, hide: true }).tasks.some((task) => task.id === 'tk_00000004'));
   assert.ok(epicCandidates(entry.tasks).some((task) => task.id === 'tk_00000004'));
+});
+
+test('lanes by epic: a lane per open epic and No epic; a drag to another epic\'s lane moves the task there, with Undo', async (t) => {
+  const { harness, c, api, settle } = await mountBoard(t, 'ep-lanes', { prefs: { 'lanes-by': 'epic' } });
+  const heads = [...c.querySelectorAll('[data-board-row-head]')].map((el) => el.getAttribute('data-board-row-head'));
+  assert.deepEqual(heads, [EPIC.id, DONE_EPIC.id, 'none'], 'the strip\'s epics in order, then No epic');
+  const cell = (row, column) => c.querySelector(`.tb-cell[data-board-row="${row}"][data-column="${column}"]`);
+  assert.ok(cell(EPIC.id, 'next').querySelector('.tb-card[data-task-id="tk_00000001"]'), 'an epic\'s task is in its lane');
+  assert.equal(cell(EPIC.id, 'next').querySelector('.tb-epic-chip'), null, 'the lane says the epic: no chip');
+  assert.ok(cell('none', 'ideas').querySelector(`.tb-card[data-task-id="${IDEA_EPIC.id}"]`), 'an idea epic is a card in No epic\'s Ideas');
+  assert.match(c.querySelector(`[data-epic-lane="${EPIC.id}"]`).textContent, /Checkout revamp.*1\/3 done/);
+
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
+  const card = (id) => c.querySelector(`.tb-card[data-task-id="${id}"]`);
+  const drag = async (id, row, column) => {
+    await harness.act(async () => { harness.fireEvent(card(id), 'dragstart', { dataTransfer: transfer }); });
+    const over = harness.fireEvent(cell(row, column), 'dragover', { dataTransfer: transfer });
+    await harness.act(async () => {});
+    await harness.act(async () => { harness.fireEvent(cell(row, column), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+    await settle();
+    return over.defaultPrevented;
+  };
+  assert.equal(await drag(IDEA_EPIC.id, EPIC.id, 'ideas'), false, 'an epic goes in no epic');
+  assert.equal(await drag('tk_00000003', EPIC.id, 'next'), true);
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit'), [['edit', 'tk_00000003', { parent: EPIC.id }]]);
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  const toast = shellState.toast.value;
+  assert.match(toast.message, /to Checkout revamp/);
+  assert.equal(toast.action?.label, 'Undo');
+  await harness.act(async () => { await toast.action.run(); });
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit').at(-1), ['edit', 'tk_00000003', { clearParent: true }], 'Undo puts it back in no epic');
+
+  api.calls.length = 0;
+  assert.equal(await drag('tk_00000001', 'none', 'next'), true);
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit'), [['edit', 'tk_00000001', { clearParent: true }]], 'onto No epic takes it out');
+});
+
+test('epicDrop: another epic\'s row moves the task there first, then the column drop', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { epicDrop } = await harness.importDashboardModule('js/groups-taskboard-lanes.js');
+  const task = row('tk_00000005', 'x', { parent_id: EPIC.id });
+  const from = { task, lane: '', column: 'next', epic: EPIC.id };
+  assert.equal(epicDrop(from, { lane: '', column: 'next', epic: EPIC.id }, null), null, 'the same row is the lane drop');
+  const calls = [];
+  const api = { edit: async (...a) => calls.push(['edit', ...a]), stage: async (...a) => calls.push(['stage', ...a]) };
+  const both = epicDrop(from, { lane: '', column: 'ideas', epic: DONE_EPIC.id, epicName: 'Search v2' }, { kind: 'stage', label: 'to Ideas', run: (a) => a.stage(task.id, 'idea') });
+  assert.equal(both.kind, 'epic+stage');
+  await both.run(api);
+  assert.deepEqual(calls, [['edit', task.id, { parent: DONE_EPIC.id }], ['stage', task.id, 'idea']]);
+  assert.equal(epicDrop(from, { lane: 'agt_x', column: 'progress', epic: '' }, null), null, 'a refused column drop is no epic move either');
+});
+
+test('the List groups the queue by epic, each group folding', async (t) => {
+  const { c, click } = await mountBoard(t, 'ep-list', { view: 'list', prefs: { 'list-by-epic': '1' } });
+  const order = () => [...c.querySelectorAll('.tb-table tbody tr')].map((tr) => tr.getAttribute('data-epic-group') || tr.getAttribute('data-task-id')).filter(Boolean);
+  const before = order();
+  assert.deepEqual(before.slice(0, 5), [EPIC.id, 'tk_00000001', DONE_EPIC.id, 'none', 'tk_00000003']);
+  assert.equal(c.querySelector('tr[data-task-id="tk_00000001"] .tb-epic-chip'), null, 'its group says the epic: no chip');
+  await click(c.querySelector(`tr[data-epic-group="${EPIC.id}"] .tb-epic-group-fold`));
+  assert.ok(!order().includes('tk_00000001'), 'folded, its tasks hide');
 });

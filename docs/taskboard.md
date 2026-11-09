@@ -1359,13 +1359,26 @@ work of its own. An epic that is still an idea is a card in Ideas, marked
 - When every task in an epic is closed, its strip card asks **close epic?**:
   *Close epic* closes it, and *Not yet* hides the question until another of
   its tasks changes. Nothing closes an epic by itself.
+- *lanes epic* gives each open epic a lane, with *No epic* last. The lane
+  head is the epic: its name, progress and *open ›*. A card there carries no
+  epic chip, since the lane names the epic. Dragging a card into another
+  epic's lane moves the task to that epic. Dragging it into *No epic* takes
+  it out of its epic. Either way a toast offers *Undo*. A drag to another
+  column in the same move also moves the task there, as in *one row*, and
+  Undo puts back only the epic. An epic still an idea gets no lane until it
+  is promoted; until then it is a card in *No epic*'s Ideas. A cell's *+*
+  adds the task to that lane's epic.
+- In the List, *Filter ▾ → group by epic* puts the queue under its epics,
+  each under a head row that folds it, with *No epic* last. Only the queue is
+  grouped; the ideas and the history stay as they are.
 
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view (*Lanes*
 unless you pick *List*). In *Lanes*, *lanes agent | role | subgroup | triage |
-one row* picks the lanes: one per agent, grouped by agent, role or subgroup, or
-the two modes without a lane per agent, described below (*triage* unless you
+one row | epic* picks the lanes: one per agent, grouped by agent, role or
+subgroup, the two modes without a lane per agent, described below, or a lane
+per epic ([Epics on the board](#epics-on-the-board)) (*triage* unless you
 pick another). The dashboard remembers both per group, for you only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
