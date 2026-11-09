@@ -105,10 +105,27 @@ The recommendation is only a suggestion; your choice wins.
 
 - `release`: download the GitHub release archive and verify its SHA-256 checksum.
 - `go_install`: build with `go install …@<version>`. Needs Go.
-- `source_checkout`: in `source_checkout.path`, run `git fetch` and check out
-  the release tag (or `source_checkout.ref`, fast-forwarding a branch), then
-  build with `go install . ./cmd/...` into a staging directory. It refuses a
-  checkout with uncommitted changes. Needs go and git.
+- `source_checkout`: build from your git checkout at `source_checkout.path`.
+  Needs go and git. With no `source_checkout.ref`, or a tag, it fetches,
+  checks out the release tag and builds it.
+
+  With `ref` set to a branch on origin, for example `main`, it **follows the
+  branch**:
+  - A check fetches and compares `origin/<ref>` with the commit the running
+    binaries were built from (their `vcs.revision`). An update means new
+    commits, listed on the job (`commits`) and in the CLI output, not a newer
+    release.
+  - Applying fast-forwards only. It refuses a dirty tree or local commits
+    ahead of origin, and never touches them.
+  - It then builds every binary with `go install . ./cmd/...` and installs
+    each where it lives now, for example GOBIN.
+  - The build is verified by commit (`vcs.revision` must be the fetched head,
+    with no local modifications) and federation protocol. Its pseudo-version
+    is accepted.
+  - Post-update setup and the restart follow as usual, so
+    `tclaude update config set post-setup on` with `setup-flags install-all`
+    reproduces a script that fast-forwards, `go install`s, and runs
+    `tclaude setup --install-all --yes`.
 - `homebrew`, `nix_profile`, `mise`, `apt`, `dnf`: let tclaude run the package
   manager's fixed command, for example `brew upgrade tofutools/tap/tclaude`
   or `sudo -n apt-get install --only-upgrade -y <pkg>`. These are never

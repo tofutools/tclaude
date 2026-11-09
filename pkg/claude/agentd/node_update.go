@@ -106,7 +106,9 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 	}
 	if r.Method == http.MethodPost {
 		var opts selfupdate.ApplyOptions
-		if req.Action == "apply" {
+		if req.Action != "rollback" {
+			// A check needs the method too: a source checkout that follows a
+			// branch checks for new commits, not a newer release.
 			opts = selfUpdateApplyOptions(loadSelfUpdateSettings())
 		}
 		job, err := service.StartWith(req, actor, authorize, opts)

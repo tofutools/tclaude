@@ -34,6 +34,10 @@ type Binary struct {
 	Package string `json:"package,omitempty"`
 	// Evidence explains ManagedBy, or why the install is unrecognized.
 	Evidence string `json:"evidence,omitempty"`
+	// Revision is the VCS commit the binary was built from (vcs.revision),
+	// and Modified whether that build had uncommitted changes.
+	Revision string `json:"revision,omitempty"`
+	Modified bool   `json:"modified,omitempty"`
 }
 type Request struct {
 	Action  string `json:"action"`
@@ -79,6 +83,11 @@ type Job struct {
 	Relocations []Relocation `json:"relocations,omitempty"`
 	// PostSetup is the post-update `tclaude setup` run, when configured.
 	PostSetup *PostSetup `json:"post_setup,omitempty"`
+	// Revision is the target commit when source_checkout follows a branch;
+	// Commits are the new commits (short hash and subject) since the
+	// running build.
+	Revision string   `json:"revision,omitempty"`
+	Commits  []string `json:"commits,omitempty"`
 }
 
 // Relocation is a binary that now runs from a different path.
@@ -112,6 +121,11 @@ type Status struct {
 	// DetectedMethod the recommendation; agentd fills both when serving.
 	ChosenMethod   string `json:"chosen_method"`
 	DetectedMethod string `json:"detected_method,omitempty"`
+	// Branch, LatestRevision and PendingCommits report the last check of a
+	// source_checkout that follows a branch.
+	Branch         string   `json:"branch,omitempty"`
+	LatestRevision string   `json:"latest_revision,omitempty"`
+	PendingCommits []string `json:"pending_commits,omitempty"`
 }
 
 func inspectBinary(name, path string) (Binary, error) {
@@ -133,7 +147,13 @@ func inspectBinary(name, path string) (Binary, error) {
 	out := Binary{Name: name, Path: resolved, Version: bi.Main.Version, Method: "source"}
 	hasVCS := false
 	for _, setting := range bi.Settings {
-		hasVCS = hasVCS || setting.Key == "vcs.revision"
+		switch setting.Key {
+		case "vcs.revision":
+			hasVCS = true
+			out.Revision = setting.Value
+		case "vcs.modified":
+			out.Modified = setting.Value == "true"
+		}
 	}
 	if semver.IsValid(bi.Main.Version) && !hasVCS {
 		out.Method = "go_install"

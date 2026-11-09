@@ -153,6 +153,12 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 			}
 			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", termtext.Cell(job.CurrentVersion), termtext.Cell(job.Version), available)
 		}
+		if len(job.Commits) > 0 {
+			fmt.Fprintf(stdout, "New commits (%d):\n", len(job.Commits))
+			for _, c := range job.Commits {
+				fmt.Fprintf(stdout, "  %s\n", termtext.Cell(c))
+			}
+		}
 		if job.Error != "" {
 			fmt.Fprintln(stderr, termtext.Cell(job.Error))
 		}

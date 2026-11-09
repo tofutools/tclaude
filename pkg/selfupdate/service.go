@@ -48,7 +48,11 @@ type Service struct {
 	stageGo      func(context.Context, string, string, string) (string, error)
 	// stageCheckout builds every binary from a local checkout into dir.
 	stageCheckout func(context.Context, CheckoutOptions, string, string) (map[string]string, error)
-	inspect       func(context.Context, string) (buildversion.Info, error)
+	// buildCheckout builds a checkout path's binaries into a dir (branch mode).
+	buildCheckout func(context.Context, string, string) (map[string]string, error)
+	// revisionOf reads a built binary's vcs.revision and vcs.modified.
+	revisionOf func(string) (string, bool, error)
+	inspect    func(context.Context, string) (buildversion.Info, error)
 	// identify confirms an externally installed file is a tclaude binary.
 	identify func(string) error
 }
@@ -57,7 +61,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, inspect: inspectStaged, identify: identifyModule}
+	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, buildCheckout: buildCheckout, revisionOf: binaryRevision, inspect: inspectStaged, identify: identifyModule}
 	s.status = Status{CurrentVersion: buildversion.AppVersion(), InstallMethod: buildversion.InstallMethod, ProtocolVersion: buildversion.BuildInfo().ProtocolVersion, Binaries: binaries, Warnings: []string{}}
 	if s.status.InstallMethod == "" {
 		s.status.InstallMethod = "source_or_unmarked"
@@ -72,6 +76,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if readJSON(filepath.Join(dir, "status.json"), &saved) == nil {
 		s.status.LatestVersion = saved.LatestVersion
 		s.status.CheckedAt = saved.CheckedAt
+		s.status.Branch, s.status.LatestRevision, s.status.PendingCommits = saved.Branch, saved.LatestRevision, saved.PendingCommits
 		s.status.Job = saved.Job
 	}
 	if _, err := os.Stat(filepath.Join(dir, "backup.json")); err == nil {
@@ -218,9 +223,17 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	var err error
-	if req.Action == "rollback" {
+	branch := false
+	if req.Action != "rollback" && req.Version == "" {
+		branch, err = s.branchMode(ctx, opts)
+	}
+	switch {
+	case err != nil:
+	case branch:
+		err = s.runBranch(ctx, req, &job, authorize, opts)
+	case req.Action == "rollback":
 		err = s.rollback(&job, authorize)
-	} else {
+	default:
 		err = s.phase(&job, "checking_release")
 		var release Release
 		if err == nil {
