@@ -116,9 +116,20 @@ type GroupTask struct {
 	// IsQuestionTask); empty for any other task. Its questions are rows of
 	// group_task_questions.
 	OperatorRequest string
+	// Kind is "" for a task, GroupTaskKindEpic for an epic: a container of
+	// tasks, with no assignee or work stage of its own (group_task_epics.go).
+	Kind string
+	// ParentID is the epic this task belongs to, "" for none.
+	ParentID string
+	// CloseSuggestedAt marks an open epic all of whose children are closed:
+	// the board suggests closing it; zero otherwise.
+	CloseSuggestedAt time.Time
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
+
+// IsEpic reports whether the task is an epic.
+func (t *GroupTask) IsEpic() bool { return t.Kind == GroupTaskKindEpic }
 
 // GroupTaskRef is one of a task's external refs: what it is (awb, linear,
 // github, gitlab, url), its link and its shown label.
@@ -196,18 +207,19 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at, column_slug, operator_request, more_refs`
+	started_at, column_slug, operator_request, more_refs, kind, COALESCE(parent_id, ''), close_suggested_at`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
-	var assigned, created, updated, closed, archived, started dbTimestamp
+	var assigned, created, updated, closed, archived, started, suggested dbTimestamp
 	var moreRefs string
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
 		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest,
-		&moreRefs); err != nil {
+		&moreRefs, &t.Kind, &t.ParentID, &suggested); err != nil {
 		return nil, err
 	}
+	t.CloseSuggestedAt = suggested.Time()
 	t.MoreRefs = decodeMoreRefs(moreRefs)
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
 	t.ClosedAt, t.ArchivedAt, t.StartedAt = closed.Time(), archived.Time(), started.Time()
