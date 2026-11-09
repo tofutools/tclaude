@@ -187,3 +187,33 @@ test('a node without the settings route shows no settings block', async (t) => {
   assert.ok(q('#fleet-node-update-modal'));
   assert.equal(q('#fleet-node-update-settings'), null);
 });
+
+test('a peer on an older build that keeps the settings to itself shows no block', async (t) => {
+  const { q } = await open(t, Object.assign(new Error('local only'), { status: 403, code: 'peer_view_local_only' }));
+  assert.ok(q('#fleet-node-update-modal'));
+  assert.equal(q('#fleet-node-update-settings'), null);
+});
+
+test('ticking a box on and off again is not an edit', async (t) => {
+  const { q, change } = await open(t, settingsView('settings'));
+  await change('#fleet-nus-on-start', true);
+  assert.ok(!q('#fleet-nus-save').hasAttribute('disabled'));
+  await change('#fleet-nus-on-start', false);
+  assert.ok(q('#fleet-nus-save').hasAttribute('disabled'), 'false is the absent default');
+});
+
+test('a limited peer can switch a custom-command node back to manual, keeping what it cannot see', async (t) => {
+  const { q, change, flush, puts } = await open(t, settingsView('settings', { method: 'custom', package_manager_ack: true }));
+  assert.match(q('#fleet-node-update-settings').textContent, /hidden from peers/);
+  assert.equal(q('#fleet-nus-command'), null);
+  assert.ok(!q('#fleet-nus-method option[value="manual"]').hasAttribute('disabled'));
+  await change('#fleet-nus-method', 'manual');
+  q('#fleet-nus-save').click();
+  await flush();
+  const sent = puts[0].body.settings;
+  assert.equal(sent.method, 'manual');
+  assert.equal(sent.custom.command, '', 'the hidden command goes back empty');
+  assert.equal(sent.custom.timeout_seconds, 1800, 'and the timeout unchanged');
+  assert.deepEqual(sent.source_checkout, { path: '~/src/tclaude', ref: '' });
+  assert.equal(sent.package_manager_ack, true, 'the acknowledgement is left as it was');
+});

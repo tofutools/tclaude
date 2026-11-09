@@ -47,6 +47,22 @@ function setupText(p) {
 
 const clone = (v) => JSON.parse(JSON.stringify(v || {}));
 
+// meaningful drops what the node stores as absent (false, '', empty lists
+// and blocks: updates.self is all omitempty), so ticking a box on and off
+// again is not an edit.
+export function meaningful(v) {
+  if (Array.isArray(v)) return v.length ? v : undefined;
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      const m = meaningful(x);
+      if (m !== undefined) out[k] = m;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  return v === false || v === '' || v === null ? undefined : v;
+}
+
 // NodeUpdateSettings reads and edits one node's updates.self. actions is
 // createNodeUpdateActions(); confirm asks before opting in to a package
 // manager.
@@ -67,7 +83,9 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
 
   if (error) {
     // An older node has no settings route: the dialog simply has no block.
-    if (error?.status === 404) return null;
+    // A peer on a build before peer-reachable settings serves the route to
+    // its own operator only (peer_view_local_only): likewise no block.
+    if (error?.status === 404 || error?.code === 'peer_view_local_only') return null;
     return html`<div class="nus" id="fleet-node-update-settings"><div class="nus-head"><b>Auto-update settings</b></div>
       <div class="muted" role="alert">${error?.status === 403 ? `${node.label} does not let you read its update settings (needs node.update).` : `Could not read the update settings: ${errText(error)}`}</div></div>`;
   }
@@ -98,7 +116,7 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
   const set = (mutate) => setDraft((cur) => { const next = clone(cur); mutate(next); return next; });
   const sched = draft.schedule || {};
   const setup = draft.post_update_setup || {};
-  const dirty = JSON.stringify(draft) !== JSON.stringify(s);
+  const dirty = JSON.stringify(meaningful(draft)) !== JSON.stringify(meaningful(s));
   const redacted = (view.redacted || []).includes('custom.command');
 
   const save = async () => {
