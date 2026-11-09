@@ -454,3 +454,21 @@ func validDomain(d string) bool {
 	}
 	return ok && rest != "" && strings.Trim(rest, "0123456789") == ""
 }
+
+// SecretEnvKey reports whether an environment variable name looks secret.
+func SecretEnvKey(key string) bool { return secretRe.MatchString(key) }
+
+// SecretFlag reports whether a flag name (`--api-token`, with or without
+// its =value) carries a secret-looking value.
+func SecretFlag(flag string) bool {
+	name, _, _ := strings.Cut(flag, "=")
+	return secretFlagRe.MatchString(name)
+}
+
+// ValidEnvKey reports whether key is a usable environment variable name in
+// a unit file or plist.
+func ValidEnvKey(key string) bool { return envKeyRe.MatchString(key) }
+
+// RedactEnv returns key/value with the value replaced by Redacted when the
+// key looks secret or the value carries URL credentials.
+func RedactEnv(key, value string) EnvVar { return redactEnv(key, value) }

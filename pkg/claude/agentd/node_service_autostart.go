@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -70,6 +72,13 @@ var serveFlagsDenied = map[string]string{
 // planAutostart resolves the unit's argv and env from the observed launcher
 // and the request, with warnings for what it could not keep.
 func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) (launcher.AutostartSpec, []string, error) {
+	cfg, _ := config.Load()
+	if profile := cfg.ServiceLaunch(); profile != nil {
+		if req.ServeArgs != nil || req.KeepEnv != nil {
+			return launcher.AutostartSpec{}, nil, errLaunchProfileSet
+		}
+		return profileAutostartSpec(info, profile)
+	}
 	var warnings []string
 	exe, observedFlags, err := splitServeArgv(info.RawArgv())
 	if err != nil {
@@ -215,6 +224,10 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor, ac
 	switch req.Action {
 	case "install":
 		spec, warnings, err := planAutostart(currentLauncher(false), req, a.Paths.EnvFile)
+		if errors.Is(err, errLaunchProfileSet) {
+			writeError(w, http.StatusBadRequest, "launch_profile_set", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return

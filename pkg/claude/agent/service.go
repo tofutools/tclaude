@@ -106,6 +106,7 @@ func ServiceCmd() *cobra.Command {
 					os.Exit(runServiceAutostart(map[string]any{"action": "uninstall"}, p.Node, p.JSON, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
+			serviceLaunchCmd(),
 		},
 	}.ToCobra()
 }

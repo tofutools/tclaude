@@ -2866,6 +2866,10 @@ test('node update: the job says whether the restart kept the daemon\'s flags and
   const { NodeUpdateDialog, launchView } = await harness.importDashboardModule('js/node-update.js');
   assert.equal(launchView(null), null);
   assert.deepEqual(launchView({ state: 'identical' }), { ok: true, text: 'Kept flags and environment ✓' });
+  const vsProfile = launchView({ state: 'identical', expected: { baseline: 'profile', state: 'differs', differences: [{ kind: 'env', change: 'changed', name: 'LANG' }] } });
+  assert.equal(vsProfile.ok, false);
+  assert.match(vsProfile.text, /Kept flags and environment ✓, but agentd does not run as its launch profile says/);
+  assert.deepEqual(vsProfile.details, ['environment LANG changed (vs the launch profile)']);
   assert.match(launchView({ state: 'recorded', args_check: 'failed', args_check_detail: 'unknown flag: --wizard' }).text, /rejects the daemon's flags: unknown flag: --wizard/);
   const differs = { state: 'differs', differences: [
     { kind: 'flag', change: 'removed', name: '--no-tray', before: '--no-tray' },

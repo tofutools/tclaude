@@ -23,6 +23,52 @@ enabled, and whether lingering is on. `tclaude service uninstall` disables and
 removes it. tclaude rewrites or removes only a unit it wrote: one that carries
 its `Managed by tclaude` comment.
 
+### Launch profile
+
+To choose the unit's flags and environment yourself instead of keeping the
+observed launch, set a launch profile (`service.launch` in `config.json`).
+`tclaude service launch use-running` (or **Use what's running now** in the
+Config tab's Service panel) fills it from the running `agentd`. You can then
+edit it with `tclaude service launch set --flag ... --env KEY=VALUE --inherit
+KEY`, or row by row in the panel. `tclaude service launch show` prints it
+together with how the running daemon compares with it.
+
+- **Flags** are `agentd serve` flags, one `--name` or `--name=value` each,
+  checked against `serve`'s own flags. A flag whose value looks secret (a
+  token, a password) is refused. Pass the secret through an inherited
+  variable instead.
+- **Explicit variables** (`env`) hold a value in `config.json`, so they must
+  not look secret.
+- **Inherited variables** (`inherit_env`) are stored by name only. When the
+  unit is written, their value comes from the running `agentd`'s environment
+  and goes into the 0600 `agentd.env`. The unit file itself never carries a
+  value. API keys and `PATH` are suggested this way. `PATH` is always
+  captured.
+
+With a profile set, `tclaude service install` writes the unit from it and
+refuses `--no-args`, `--no-keep-env` and flags after `--`; edit the profile
+instead. When agentd runs under a unit tclaude did not write (an
+Ansible-managed system unit, say), the profile is only information:
+tclaude never rewrites that unit. Its comparison is then with that unit's own
+`ExecStart` and environment, which is what a restart uses.
+
+After a self-update restart, the update job also records how the restarted
+daemon compares with the profile (or with that unit) as `launch.expected`,
+by name only. See "Flags and environment" in the
+[federation admin guide](../federation-admin.md#how-tclaude-updates-itself).
+
+The API is `GET`/`PUT /api/node/service/launch` (CLI `/v1/node/service/launch`;
+a peer's through `/api/peer/{instance_id}/node/service/launch`). `GET` returns
+the `profile`, its `version`, the `suggested` flags and variables (secrets
+redacted, marked `secret`), the `missing` inherited names, `owned`, and the
+`comparison` with its `baseline` (`profile`, `unit` or `none`). `PUT` takes
+`{"profile": {...} | null, "version": "..."}`. A stale `version` is refused
+with HTTP 409 `launch_profile_conflict`. An invalid profile is refused with
+HTTP 400 and an `errors` list naming each field (`profile.env[2].key`). A peer
+with `node.read` sees variable names, never values. With
+`node.update.settings` it may change only which variables an existing
+profile inherits. An unrestricted peer acts as the node's operator.
+
 The rest of this page is for writing the unit yourself.
 
 ## A user unit with lingering

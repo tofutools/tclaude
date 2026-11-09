@@ -76,6 +76,18 @@ type LaunchCheck struct {
 	State       string             `json:"state"`
 	Differences []LaunchDifference `json:"differences,omitempty"`
 	ComparedAt  *time.Time         `json:"compared_at,omitempty"`
+	// Expected compares the restarted daemon with the launch it is
+	// configured to run with (the launch profile, or a unit tclaude did not
+	// write), when there is one. Keys only, never values.
+	Expected *ExpectedLaunch `json:"expected,omitempty"`
+}
+
+// ExpectedLaunch is the restarted daemon against its configured launch.
+// Baseline is profile or unit; State identical or differs.
+type ExpectedLaunch struct {
+	Baseline    string             `json:"baseline"`
+	State       string             `json:"state"`
+	Differences []LaunchDifference `json:"differences,omitempty"`
 }
 
 // LaunchDifference is one change between the snapshot and the restarted
@@ -285,19 +297,26 @@ func (c *LaunchCheck) Summary() string {
 	if c == nil {
 		return ""
 	}
+	out := ""
 	switch c.State {
 	case "identical":
-		return "Kept flags and environment."
+		out = "Kept flags and environment."
 	case "differs":
 		parts := make([]string, 0, len(c.Differences))
 		for _, d := range c.Differences {
 			parts = append(parts, d.String())
 		}
-		return fmt.Sprintf("Flags and environment: %d difference(s) after the restart: %s.", len(c.Differences), strings.Join(parts, "; "))
+		out = fmt.Sprintf("Flags and environment: %d difference(s) after the restart: %s.", len(c.Differences), strings.Join(parts, "; "))
 	case "unavailable":
-		return "Flags and environment were not compared: the snapshot could not be read."
+		out = "Flags and environment were not compared: the snapshot could not be read."
 	}
-	return ""
+	if e := c.Expected; e != nil && e.State == "differs" {
+		if out != "" {
+			out += " "
+		}
+		out += fmt.Sprintf("agentd does not run as its %s says (%d difference(s)).", baselineName(e.Baseline), len(e.Differences))
+	}
+	return out
 }
 
 func (s *Service) launchPath(id string) string {
@@ -454,4 +473,42 @@ func (s *Service) CompareLaunch(argv, environ []string, kind, unit, restartMetho
 	// The hashes are no longer needed once compared.
 	_ = os.Remove(s.launchPath(job.ID))
 	return &job, nil
+}
+
+// RecordExpectedLaunch adds the comparison with the configured launch to
+// the latest job's launch report, once it has been compared with its
+// snapshot. A difference becomes a job warning.
+func (s *Service) RecordExpectedLaunch(jobID string, exp ExpectedLaunch) (*Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.Job == nil || s.status.Job.ID != jobID || s.status.Job.Launch == nil || s.status.Job.Launch.ComparedAt == nil || s.status.Job.Launch.Expected != nil {
+		return nil, nil
+	}
+	job := *s.status.Job
+	l := *job.Launch
+	for i := range exp.Differences {
+		if exp.Differences[i].Kind == "env" {
+			exp.Differences[i].Before, exp.Differences[i].After = "", ""
+		}
+	}
+	l.Expected = &exp
+	job.Launch = &l
+	if exp.State == "differs" {
+		parts := make([]string, 0, len(exp.Differences))
+		for _, d := range exp.Differences {
+			parts = append(parts, d.String())
+		}
+		job.Warnings = append(append([]string{}, job.Warnings...), fmt.Sprintf("agentd does not run as its %s says: %s.", baselineName(exp.Baseline), strings.Join(parts, "; ")))
+	}
+	if err := s.saveJob(job); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func baselineName(b string) string {
+	if b == "unit" {
+		return "service unit"
+	}
+	return "launch profile"
 }

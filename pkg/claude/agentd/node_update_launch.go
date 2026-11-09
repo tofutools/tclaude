@@ -74,6 +74,15 @@ func compareRestartedLaunch(svc *selfupdate.Service) *selfupdate.Job {
 		slog.Warn("self-update: could not record the launch comparison", "error", err)
 		return nil
 	}
+	if job != nil {
+		if exp := expectedLaunchAfterUpdate(); exp != nil {
+			if withExpected, err := svc.RecordExpectedLaunch(job.ID, *exp); err != nil {
+				slog.Warn("self-update: could not record the comparison with the configured launch", "error", err)
+			} else if withExpected != nil {
+				job = withExpected
+			}
+		}
+	}
 	if job != nil && job.Launch != nil && job.Launch.State == "differs" {
 		slog.Warn("self-update: the restarted daemon's flags or environment differ from before the update", "differences", job.Launch.Summary())
 	}

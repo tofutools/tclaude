@@ -281,6 +281,8 @@ func registerNodeServiceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/service", handleDashboardNodeService)
 	mux.HandleFunc("POST /api/node/service/restart", handleDashboardNodeService)
 	mux.HandleFunc("POST /api/node/service/autostart", handleDashboardNodeService)
+	mux.HandleFunc("GET /api/node/service/launch", handleDashboardNodeService)
+	mux.HandleFunc("PUT /api/node/service/launch", handleDashboardNodeService)
 }
 
 func handleDashboardNodeService(w http.ResponseWriter, r *http.Request) {
@@ -356,6 +358,10 @@ func serviceStatusFor(st NodeService, access string) NodeService {
 
 func serveNodeService(w http.ResponseWriter, r *http.Request, actor, access string) {
 	w.Header().Set("Cache-Control", "private, no-store")
+	if strings.HasSuffix(r.URL.Path, "/launch") {
+		serveNodeServiceLaunch(w, r, actor, access)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		writeJSON(w, http.StatusOK, serviceStatusFor(nodeServiceStatus(r.URL.Query().Get("refresh") == "1"), access))
