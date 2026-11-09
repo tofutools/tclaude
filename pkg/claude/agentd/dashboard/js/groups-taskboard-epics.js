@@ -25,6 +25,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { dashPrefs } from './prefs.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep } from './view-menu.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -355,4 +356,16 @@ export function EpicGroupRow({ epic, count, colspan, folded = false, onFold, onO
       ${epic && onOpen && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${epic.id} onClick=${() => onOpen(epic.id)}>open ›</button>`}
     </span>
   </td></tr>`;
+}
+
+// intoEpic is the write that puts a task in an epic, or in none for ''.
+export function intoEpic(id, epic) {
+  return (api) => (epic ? api.edit(id, { parent: epic }) : api.edit(id, { clearParent: true }));
+}
+
+// epicMoved says a task moved to another epic, with Undo: back in the epic
+// it was in (its parent_id, which may be a closed epic's).
+export function epicMoved(actions, task, label) {
+  const back = intoEpic(task.id, task.parent_id || '');
+  shellToast(`“${task.title}” ${label}`, false, { action: { label: 'Undo', run: () => actions.run(`${task.id}:epic`, 'Undo', back) } });
 }

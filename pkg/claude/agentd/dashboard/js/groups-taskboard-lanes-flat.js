@@ -208,7 +208,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
       <span class="tb-lane-name"><span class="tb-epic-dot"></span>${epic?.title || row}</span>
       <${EpicProgress} epic=${epic} />
       <span class="tb-lane-sub">${progressParts(epic?.progress).join(' · ')}</span>
-      ${onEdit && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${row} title="Open the epic: its brief, progress and tasks" onClick=${() => onEdit(row)}>open ›</button>`}
+      ${actions && onEdit && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${row} title="Open the epic: its brief, progress and tasks" onClick=${() => onEdit(row)}>open ›</button>`}
     </div>`;
   };
   const triage = mode !== ALL;
@@ -219,7 +219,9 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     const filter = epicBoard?.filter || {};
     const holds = (id) => [...cells.keys()].some((key) => key.startsWith(`${id}|`));
     const all = [...[...(epics?.values() || [])].filter((epic) => epic.stage !== 'idea' || holds(epic.id)).map((epic) => epic.id), NO_EPIC];
-    return filter.hide && filter.epic ? all.filter((row) => row === filter.epic) : all;
+    // Hidden others leave the rows that hold what the filter shows: the
+    // epic's own lane, and No epic while it holds the epic's card (an idea).
+    return filter.hide && filter.epic ? all.filter((row) => row === filter.epic || holds(row)) : all;
   };
   // You shows while the operator holds a task, or for a viewer who may give
   // the operator one, as the operator's lane does.

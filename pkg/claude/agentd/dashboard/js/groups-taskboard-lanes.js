@@ -49,8 +49,7 @@ import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
-import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, isEpic } from './groups-taskboard-epics.js';
-import { shellToast } from './shell-state.js';
+import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
 
 const html = htm.bind(h);
 
@@ -249,14 +248,14 @@ export function epicDrop(from, to, drop) {
   if (to.epic === undefined || (from.epic || '') === to.epic) return drop;
   const task = from.task;
   if (isEpic(task) || (drop === null && (from.lane !== to.lane || from.column !== to.column))) return null;
-  const into = (epic) => (api) => (epic ? api.edit(task.id, { parent: epic }) : api.edit(task.id, { clearParent: true }));
+  const into = (epic) => intoEpic(task.id, epic);
   const label = to.epic ? `to ${to.epicName}` : 'out of its epic';
   return {
     ...(drop || {}),
     kind: drop ? `epic+${drop.kind}` : 'epic',
     label: drop ? `${label} · ${drop.label}` : label,
     run: drop ? twoStep(into(to.epic), drop.run) : into(to.epic),
-    undo: into(from.epic || ''),
+    epicMove: true,
   };
 }
 
@@ -583,9 +582,7 @@ export function useLaneDrag(actions, group, tasks = []) {
       clear();
       if (drop.reason) { setBlocking({ task, drop }); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
-      if (ok && drop.undo) {
-        shellToast(`“${task.title}” ${drop.label}`, false, { action: { label: 'Undo', run: () => actions.run(`${task.id}:lane`, 'Undo', drop.undo) } });
-      }
+      if (ok && drop.epicMove) epicMoved(actions, task, drop.label);
       if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
@@ -597,6 +594,7 @@ export function useLaneDrag(actions, group, tasks = []) {
 export function BlockDialog({ task, drop, actions, group, onClose }) {
   const submit = async (reason) => {
     const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason));
+    if (ok && drop.epicMove) epicMoved(actions, task, drop.label.replace(/ \(asks why\)$/, ''));
     if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     return ok;
   };

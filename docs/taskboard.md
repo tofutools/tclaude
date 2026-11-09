@@ -1363,14 +1363,18 @@ work of its own. An epic that is still an idea is a card in Ideas, marked
   head is the epic: its name, progress and *open ›*. A card there carries no
   epic chip, since the lane names the epic. Dragging a card into another
   epic's lane moves the task to that epic. Dragging it into *No epic* takes
-  it out of its epic. Either way a toast offers *Undo*. A drag to another
-  column in the same move also moves the task there, as in *one row*, and
-  Undo puts back only the epic. An epic still an idea gets no lane until it
-  is promoted; until then it is a card in *No epic*'s Ideas. A cell's *+*
-  adds the task to that lane's epic.
+  it out of its epic. Either way a toast offers *Undo*, which puts the task
+  back in the epic it was in. A drag to another column in the same move also
+  moves the task there, as in *one row*, and Undo puts back only the epic.
+  The epic strip is hidden in this mode, since the lane heads are the epics.
+  An epic still an idea is a card in *No epic*'s Ideas, and gets a lane of
+  its own only once it holds a task. A cell's *+* puts the tasks the form
+  adds (one, or a pasted list) in that lane's epic; an import from a tracker
+  and *Ask an agent* do not.
 - In the List, *Filter ▾ → group by epic* puts the queue under its epics,
-  each under a head row that folds it, with *No epic* last. Only the queue is
-  grouped; the ideas and the history stay as they are.
+  each under a head row that folds it, with *No epic* last. A row dragged
+  among another epic's rows moves to that epic too, with *Undo*. Only the
+  queue is grouped; the ideas and the history stay as they are.
 
 ### Swim lanes
 

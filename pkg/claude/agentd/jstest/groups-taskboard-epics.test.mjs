@@ -299,3 +299,58 @@ test('the List groups the queue by epic, each group folding', async (t) => {
   await click(c.querySelector(`tr[data-epic-group="${EPIC.id}"] .tb-epic-group-fold`));
   assert.ok(!order().includes('tk_00000001'), 'folded, its tasks hide');
 });
+
+test('the grouped List: a row dropped among another epic\'s rows joins that epic, with Undo to its own', async (t) => {
+  const { harness, c, api } = await mountBoard(t, 'ep-list-drag', { view: 'list', prefs: { 'list-by-epic': '1' } });
+  const rowOf = (id) => c.querySelector(`tr[data-task-id="${id}"]`);
+  const transfer = { setData() {}, setDragImage() {}, effectAllowed: '', dropEffect: '' };
+  await harness.act(async () => {
+    harness.fireEvent(rowOf('tk_00000003').querySelector('.tb-handle'), 'dragstart', { dataTransfer: transfer });
+    harness.fireEvent(rowOf('tk_00000001'), 'dragover', { dataTransfer: transfer, clientY: 10 });
+  });
+  await harness.act(async () => { harness.fireEvent(rowOf('tk_00000001'), 'drop', { dataTransfer: transfer, clientY: 10 }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit' || call[0] === 'move'),
+    [['edit', 'tk_00000003', { parent: EPIC.id }], ['move', 'tk_00000003', { after: 'tk_00000001' }]]);
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  await harness.act(async () => { await shellState.toast.value.action.run(); });
+  assert.deepEqual(api.calls.at(-1), ['edit', 'tk_00000003', { clearParent: true }]);
+});
+
+test('Undo puts a task back in its own epic, even one closed with it open', async (t) => {
+  const entry = board('ep-undo');
+  entry.tasks.push(row('tk_00000008', 'Left open', { parent_id: 'tk_eclosed1' }));
+  const { harness, c, api, settle } = await mountBoard(t, 'ep-undo', { entry, prefs: { 'lanes-by': 'epic' } });
+  const cell = (r, column) => c.querySelector(`.tb-cell[data-board-row="${r}"][data-column="${column}"]`);
+  assert.ok(cell('none', 'next').querySelector('.tb-card[data-task-id="tk_00000008"]'), 'a closed epic\'s task is in No epic');
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '' };
+  await harness.act(async () => { harness.fireEvent(c.querySelector('.tb-card[data-task-id="tk_00000008"]'), 'dragstart', { dataTransfer: transfer }); });
+  harness.fireEvent(cell(EPIC.id, 'next'), 'dragover', { dataTransfer: transfer });
+  await harness.act(async () => {});
+  await harness.act(async () => { harness.fireEvent(cell(EPIC.id, 'next'), 'drop', { dataTransfer: transfer }); await new Promise((r) => setTimeout(r, 0)); });
+  await settle();
+  const { shellState } = await harness.importDashboardModule('js/shell-state.js');
+  await harness.act(async () => { await shellState.toast.value.action.run(); });
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit'), [['edit', 'tk_00000008', { parent: EPIC.id }], ['edit', 'tk_00000008', { parent: 'tk_eclosed1' }]]);
+});
+
+test('epic lanes with the filter hiding others for an idea epic still show its card', async (t) => {
+  const { c: c2 } = await mountBoard(t, 'ep-hide-idea', {
+    prefs: { 'lanes-by': 'epic', 'epic-filter': JSON.stringify({ epic: IDEA_EPIC.id, hide: true }) },
+  });
+  const heads = [...c2.querySelectorAll('[data-board-row-head]')].map((el) => el.getAttribute('data-board-row-head'));
+  assert.deepEqual(heads, ['none']);
+  assert.ok(c2.querySelector(`.tb-card[data-task-id="${IDEA_EPIC.id}"]`));
+});
+
+test('a list pasted in an epic lane\'s + joins the epic', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { submitNewTask } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const calls = [];
+  const api = {
+    capture: async () => ({ created: 2, results: [{ input: 'a', task: { id: 'tk_a' } }, { input: 'b', task: { id: 'tk_b' } }] }),
+    edit: async (...a) => { calls.push(a); },
+  };
+  const out = await submitNewTask(api, 'crew', { list: 'a\nb', start: 'next', parent: EPIC.id });
+  assert.equal(out.created, 2);
+  assert.deepEqual(calls, [['tk_a', { parent: EPIC.id }], ['tk_b', { parent: EPIC.id }]]);
+});

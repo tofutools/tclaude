@@ -56,7 +56,7 @@ import {
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
-import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicOf, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
+import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
 
@@ -612,7 +612,9 @@ function clearAgentTarget(state) {
   state.row = null;
 }
 
-function useRowDrag(tasks, actions, group = null) {
+// epicRows, when the List is grouped by epic, is a ref to { of(task), name(id) }:
+// the group a queue row is drawn in, and its epic's name.
+function useRowDrag(tasks, actions, group = null, epicRows = null) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
   const [dragging, setDragging] = useState('');
@@ -738,6 +740,20 @@ function useRowDrag(tasks, actions, group = null) {
         await actions.run(`${moving.id}:move`, 'Reopen', (api) => api.reopen(moving.id, opts));
         return;
       }
+      // Grouped by epic, a drop among another epic's queue rows puts the
+      // task in that epic too, as a drag between epic lanes does, with Undo.
+      const rows = epicRows?.current;
+      const into = rows && !isEpic(moving) && task.stage !== 'idea' ? rows.of(task) : null;
+      if (into !== null && into !== rows.of(moving)) {
+        const epic = into === NO_EPIC ? '' : into;
+        const label = epic ? `to ${rows.name(epic)}` : 'out of its epic';
+        const ok = await actions.run(`${moving.id}:move`, 'Move', async (api) => {
+          await intoEpic(moving.id, epic)(api);
+          return api.move(moving.id, { [where]: task.id });
+        });
+        if (ok) epicMoved(actions, moving, label);
+        return;
+      }
       await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { [where]: task.id }));
     },
     async dropOnIdeas(event) {
@@ -849,7 +865,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const setHistory = (on) => onHidden(on ? hidden.filter((s) => s !== 'done' && s !== 'dropped') : [...new Set([...hidden, 'done', 'dropped'])]);
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
-  const drag = useRowDrag(tasks, actions, group);
+  const epicRows = useRef(null);
+  const drag = useRowDrag(tasks, actions, group, epicRows);
   // An agent row dragged onto a task assigns it (useAgentOnTask).
   const boardRef = useRef(null);
   const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
@@ -964,7 +981,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const [folded, setFolded] = useState({});
   const grouped = view === 'list' && byEpic && epicBoard?.epics.length ? [...epicBoard.epics.map((epic) => epic.id), NO_EPIC]
     .map((id) => ({ id, rows: queue.filter((task) => (epicOf(task, epicBoard.byId) || NO_EPIC) === id) }))
-    .filter(({ id, rows }) => rows.length || (id !== NO_EPIC && epicBoard.byId.get(id)?.stage !== 'idea')) : null;
+    .filter(({ id, rows }) => rows.length || (id !== NO_EPIC && epicBoard.byId.get(id)?.stage !== 'idea' && (!epicBoard.filter.hide || epicBoard.filter.epic === id))) : null;
+  epicRows.current = grouped ? { of: (task) => epicOf(task, epicBoard.byId) || NO_EPIC, name: (id) => epicBoard.byId.get(id)?.title || id } : null;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
   const table = tasks.length ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
