@@ -929,6 +929,9 @@ func runServe(p *serveParams) error {
 
 	quit := newQuitter()
 	configureSelfUpdateRestart(quit.signal)
+	// After the restart hook: update_on_start may apply and restart.
+	startSelfUpdateScheduler()
+	defer stopSelfUpdateScheduler()
 	// Fleet release metadata polling belongs to the federation runtime
 	// (fleet_metadata.go): a standalone daemon adds no network traffic, and
 	// explicit local update/install requests still work.

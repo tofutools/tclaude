@@ -17,6 +17,10 @@ var peerViewLocalRoutes = []string{
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",
+	// Self-update settings hold free operator text (a custom command, a
+	// checkout path); only an unrestricted peer reaches them for now.
+	"GET /api/node/update/settings",
+	"PUT /api/node/update/settings",
 	"GET /api/node/update-scripts/jobs/{id}",
 	"POST /api/node/update-scripts",
 	"GET /api/node/update-scripts",
