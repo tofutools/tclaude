@@ -25,6 +25,13 @@ func ArchiveGroupTask(id, actor string) (*GroupTask, error) {
 		if !t.ArchivedAt.IsZero() {
 			return nil
 		}
+		if t.IsEpic() {
+			// An epic goes into the archive with its children, never ahead
+			// of them.
+			if err := archiveEpicChildrenTx(tx, t, actor, now); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(`UPDATE group_tasks SET archived_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
 			return err
 		}
@@ -93,13 +100,21 @@ func ArchiveClosedGroupTasks(groupID int64, statuses []string, closedBefore time
 	rows, err := queryRows(tx, func(s rowScanner) (row, error) {
 		var r row
 		return r, s.Scan(&r.id, &r.status)
-	}, `SELECT id, status FROM group_tasks WHERE `+where+` ORDER BY closed_at, id`, args...)
+	}, `SELECT id, status FROM group_tasks WHERE `+where+` ORDER BY kind = 'epic', closed_at, id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
+		// Epics come last: one whose children are not all archived by now
+		// stays out until they are.
+		if waits, err := epicWaitsForChildrenTx(tx, r.id); err != nil || waits {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if _, err := tx.Exec(`UPDATE group_tasks SET archived_at = ?, updated_at = ? WHERE id = ?`, dbTime(now), dbTime(now), r.id); err != nil {
 			return nil, err
 		}

@@ -392,6 +392,17 @@ type taskboardTaskView struct {
 	// add only, for a caller on this node: a linked node's caller could not
 	// open this node's dashboard listener.
 	URL string `json:"url,omitempty"`
+	// Kind is "epic" for an epic (a container of the board's tasks), absent
+	// for a task. ParentID is the epic a task is in.
+	Kind     string `json:"kind,omitempty"`
+	ParentID string `json:"parent_id,omitempty"`
+	// Progress counts an epic's children by where they stand (always set
+	// on an epic). CloseSuggestedAt is when its last open child closed:
+	// the board asks "close epic?" until it is closed or a child reopens.
+	Progress         *db.GroupTaskEpicProgress `json:"progress,omitempty"`
+	CloseSuggestedAt string                    `json:"close_suggested_at,omitempty"`
+	// Children are an epic's tasks, archived ones included, on show only.
+	Children []taskboardTaskView `json:"children,omitempty"`
 }
 
 // taskboardAgentRef names an agent on the wire.
@@ -465,6 +476,16 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		return nil, err
 	}
 	questions, err := db.ListGroupTaskQuestions(ids)
+	if err != nil {
+		return nil, err
+	}
+	var epicIDs []string
+	for _, t := range tasks {
+		if t.IsEpic() {
+			epicIDs = append(epicIDs, t.ID)
+		}
+	}
+	progress, err := db.GroupTaskEpicProgresses(epicIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -549,6 +570,14 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		}
 		if since, ok := staller.stalled(t); ok {
 			v.Stalled, v.IdleSince = true, rfc3339(since)
+		}
+		v.Kind, v.ParentID = t.Kind, t.ParentID
+		if t.IsEpic() {
+			v.Progress = progress[t.ID]
+			if v.Progress == nil {
+				v.Progress = &db.GroupTaskEpicProgress{}
+			}
+			v.CloseSuggestedAt = rfc3339(t.CloseSuggestedAt)
 		}
 		a := activity[t.ID]
 		v.CommentCount = a.Comments
@@ -836,8 +865,15 @@ func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		return
 	}
 	all, archived := r.URL.Query().Get("all"), r.URL.Query().Get("archived")
+	// kind=epic|task and parent=tk_… narrow the list (`ls --epic`,
+	// `taskboard epics`).
+	kind, parent := r.URL.Query().Get("kind"), r.URL.Query().Get("parent")
+	if (kind != "" && kind != db.GroupTaskKindEpic && kind != "task") || (parent != "" && !db.IsGroupTaskID(parent)) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "kind is epic or task, and parent an epic's task id")
+		return
+	}
 	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Stage: stage, Closed: all == "1" || all == "true",
-		Archived: archived == "1" || archived == "true"})
+		Archived: archived == "1" || archived == "true", Kind: kind, Parent: parent})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
@@ -955,6 +991,10 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// ask-operator <group>`), its first question: to is the operator,
 		// implied when left out.
 		Question *db.GroupTaskQuestion `json:"question"`
+		// Kind "epic" makes the task an epic (`add --epic`); parent puts
+		// the new task in an epic of the board (`add --parent tk_…`).
+		Kind   string `json:"kind"`
+		Parent string `json:"parent"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -981,7 +1021,8 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if len(body.Refs) > 0 || len(body.Lines) > 0 {
 		if body.Title != "" || body.Body != "" || body.Ref != "" || body.RefLabel != "" || len(body.AddRefs) > 0 || len(body.After) > 0 ||
-			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || body.Question != nil || len(files) > 0 {
+			body.Position != (taskboardPositionBody{}) || body.ResolveRef || body.Status != "" || body.BlockReason != "" || body.To != "" || body.Mine || body.Blocks != "" || body.Start != nil || body.Question != nil || len(files) > 0 ||
+			body.Kind != "" || body.Parent != "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
@@ -1039,6 +1080,15 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	if err == nil && reason != "" {
 		reason, err = validateTaskText("the block reason", reason, maxTaskReasonLen)
+	}
+	taskKind, parent := strings.TrimSpace(body.Kind), strings.TrimSpace(body.Parent)
+	if err == nil {
+		switch {
+		case taskKind != "" && taskKind != db.GroupTaskKindEpic:
+			err = errors.New("kind is epic, or none for a task")
+		case parent != "" && !db.IsGroupTaskID(parent):
+			err = errors.New("parent is an epic's task id (tk_…)")
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1147,7 +1197,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	in := db.NewGroupTask{GroupID: g.ID, Title: title, Body: body.Body, Stage: body.Stage,
 		RefKind: kind, RefURL: refURL, RefLabel: refLabel, MoreRefs: moreRefs, DependsOn: deps, Position: pos, Actor: actor,
 		Status: status, BlockReason: reason, AssigneeID: assignee, AssignedBy: actor, Hold: hold, Attachments: atts,
-		Question: body.Question, Column: column}
+		Question: body.Question, Column: column, Kind: taskKind, ParentID: parent}
 	if blocks != nil {
 		in.Blocks, in.BlocksExpect = blocks.ID, blocks.AssigneeID
 	}
@@ -1178,7 +1228,25 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 }
 
 func handleTaskboardShow(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
-	writeTaskboardTaskLinked(w, r, http.StatusOK, g, t)
+	if !t.IsEpic() {
+		writeTaskboardTaskLinked(w, r, http.StatusOK, g, t)
+		return
+	}
+	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
+	if err == nil {
+		var children []*db.GroupTask
+		if children, err = db.ListGroupTaskChildren(t.ID); err == nil {
+			views[0].Children, err = taskboardViews(g.Name, children)
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	if taskboardPeerAuthor(r) == "" {
+		views[0].URL = taskboardTaskURL(g.Name, t.ID)
+	}
+	writeJSON(w, http.StatusOK, views[0])
 }
 
 // GET /v1/taskboard/tasks/{id}/events: the activity stream, as "events"
@@ -1211,6 +1279,10 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		FirstRef   string   `json:"first_ref"`
 		AddDeps    []string `json:"add_deps"`
 		RmDeps     []string `json:"rm_deps"`
+		// Parent moves the task into that epic of the board; clear_parent
+		// takes it out of its epic (`edit --parent tk_… | --rm-parent`).
+		Parent      *string `json:"parent"`
+		ClearParent bool    `json:"clear_parent"`
 	}
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
@@ -1317,6 +1389,21 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	if err == nil {
 		edit.RmDeps, err = cleanTaskIDs(body.RmDeps)
 	}
+	if err == nil {
+		switch {
+		case body.ClearParent && body.Parent != nil:
+			err = errors.New("give parent or clear_parent, not both")
+		case body.ClearParent:
+			none := ""
+			edit.ParentID = &none
+		case body.Parent != nil:
+			p := strings.TrimSpace(*body.Parent)
+			if !db.IsGroupTaskID(p) {
+				err = errors.New("parent is an epic's task id (tk_…); clear_parent takes the task out of its epic")
+			}
+			edit.ParentID = &p
+		}
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
@@ -1414,6 +1501,8 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		// reason says "waiting on operator: <title>", and closing it as
 		// done reopens this task.
 		On string `json:"on"`
+		// Force closes an epic as done while children of it are still open.
+		Force bool `json:"force"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -1456,7 +1545,7 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if closing {
 		waiters = taskboardWaitersBefore(t)
 	}
-	out, err := db.SetGroupTaskStatusFor(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID)
+	out, err := db.SetGroupTaskStatusForced(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID, body.Force)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return

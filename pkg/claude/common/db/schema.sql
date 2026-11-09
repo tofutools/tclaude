@@ -2410,7 +2410,7 @@ CREATE TABLE group_tasks (
 			updated_at   INTEGER NOT NULL,
 			closed_at    INTEGER,
 			archived_at  INTEGER
-		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '') STRICT;
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
 
@@ -2444,6 +2444,8 @@ CREATE INDEX idx_group_tasks_status ON group_tasks(status, group_id);
 
 CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
 			WHERE archived_at IS NULL AND status IN ('done','dropped');
+
+CREATE INDEX idx_group_tasks_parent ON group_tasks(parent_id) WHERE parent_id IS NOT NULL;
 
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,

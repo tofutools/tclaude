@@ -116,9 +116,20 @@ type GroupTask struct {
 	// IsQuestionTask); empty for any other task. Its questions are rows of
 	// group_task_questions.
 	OperatorRequest string
+	// Kind is "" for a task, GroupTaskKindEpic for an epic: a container of
+	// tasks, with no assignee or work stage of its own (group_task_epics.go).
+	Kind string
+	// ParentID is the epic this task belongs to, "" for none.
+	ParentID string
+	// CloseSuggestedAt marks an open epic all of whose children are closed:
+	// the board suggests closing it; zero otherwise.
+	CloseSuggestedAt time.Time
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
+
+// IsEpic reports whether the task is an epic.
+func (t *GroupTask) IsEpic() bool { return t.Kind == GroupTaskKindEpic }
 
 // GroupTaskRef is one of a task's external refs: what it is (awb, linear,
 // github, gitlab, url), its link and its shown label.
@@ -196,18 +207,19 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at, column_slug, operator_request, more_refs`
+	started_at, column_slug, operator_request, more_refs, kind, COALESCE(parent_id, ''), close_suggested_at`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
-	var assigned, created, updated, closed, archived, started dbTimestamp
+	var assigned, created, updated, closed, archived, started, suggested dbTimestamp
 	var moreRefs string
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
 		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest,
-		&moreRefs); err != nil {
+		&moreRefs, &t.Kind, &t.ParentID, &suggested); err != nil {
 		return nil, err
 	}
+	t.CloseSuggestedAt = suggested.Time()
 	t.MoreRefs = decodeMoreRefs(moreRefs)
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
 	t.ClosedAt, t.ArchivedAt, t.StartedAt = closed.Time(), archived.Time(), started.Time()
@@ -290,6 +302,11 @@ type NewGroupTask struct {
 	// assignee): its first question (askGroupTaskQuestionTx), answered
 	// with AnswerGroupTaskQuestion.
 	Question *GroupTaskQuestion
+	// Kind is "" (a task) or GroupTaskKindEpic. An epic starts open, with
+	// no assignee, column, question or parent.
+	Kind string
+	// ParentID, when set, is the epic (of the same group) the task is in.
+	ParentID string
 }
 
 type taskTx interface {
@@ -498,6 +515,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if err := checkGroupTaskHold(in.Hold); err != nil {
 		return nil, err
 	}
+	if err := checkNewGroupTaskKind(in, status); err != nil {
+		return nil, err
+	}
 	// A task something waits on is queued, never an idea to triage.
 	if in.Blocks != "" && in.Hold == GroupTaskStageIdea {
 		in.Hold = GroupTaskStageNext
@@ -595,7 +615,29 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if err := setGroupTaskDepsTx(tx, t, in.DependsOn, nil); err != nil {
 		return nil, err
 	}
+	if in.Kind != "" {
+		if _, err := tx.Exec(`UPDATE group_tasks SET kind = ? WHERE id = ?`, in.Kind, id); err != nil {
+			return nil, err
+		}
+	}
+	if in.ParentID != "" {
+		if _, err := checkGroupTaskParentTx(tx, in.GroupID, t, in.ParentID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`UPDATE group_tasks SET parent_id = ? WHERE id = ?`, in.ParentID, id); err != nil {
+			return nil, err
+		}
+		if err := addGroupTaskEventTx(tx, in.ParentID, in.Actor, GroupTaskEventChildAdded, id+" "+truncateUTF8(in.Title, 200), now); err != nil {
+			return nil, err
+		}
+	}
 	detail := "in " + firstNonEmptyString(columnLabel, stage)
+	if in.Kind == GroupTaskKindEpic {
+		detail = "epic, " + detail
+	}
+	if in.ParentID != "" {
+		detail += ", in epic " + in.ParentID
+	}
 	if in.RefLabel != "" || in.RefURL != "" {
 		detail += ", ref " + firstNonEmptyString(in.RefLabel, in.RefURL)
 	}
@@ -681,11 +723,23 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 			return nil, err
 		}
 	}
+	// A new open child takes back the epic's close suggestion; one logged
+	// as done may complete it.
+	suggested, err := refreshEpicSuggestTx(tx, in.ParentID, now)
+	if err != nil {
+		return nil, err
+	}
 	out, err := getGroupTaskTx(tx, id)
 	if err != nil {
 		return nil, err
 	}
-	return out, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if suggested {
+		epicsCloseSuggested([]string{in.ParentID})
+	}
+	return out, nil
 }
 
 func firstNonEmptyString(vals ...string) string {
@@ -714,6 +768,11 @@ type GroupTaskListOpts struct {
 	Closed bool
 	// Archived lists only the archived tasks, most recently closed first.
 	Archived bool
+	// Kind limits the list to epics (GroupTaskKindEpic) or to tasks
+	// ("task"); "" lists both.
+	Kind string
+	// Parent limits the list to the children of that epic.
+	Parent string
 }
 
 // ListGroupTasks lists a group's board in the operator's order: the live
@@ -731,6 +790,19 @@ func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error)
 	stage, stageArgs := "", []any{}
 	if opts.Stage != "" {
 		stage, stageArgs = ` AND stage = ?`, []any{opts.Stage}
+	}
+	switch opts.Kind {
+	case "":
+	case GroupTaskKindEpic:
+		stage += ` AND kind = 'epic'`
+	case "task":
+		stage += ` AND kind = ''`
+	default:
+		return nil, taskConflict("invalid_arg", "kind is epic or task, not %s", opts.Kind)
+	}
+	if opts.Parent != "" {
+		stage += ` AND parent_id = ?`
+		stageArgs = append(stageArgs, opts.Parent)
 	}
 	read := func(where, order string) ([]*GroupTask, error) {
 		return queryRows(d, scanGroupTask, `SELECT `+groupTaskCols+` FROM group_tasks WHERE `+where+stage+` ORDER BY `+order,
@@ -812,6 +884,9 @@ type GroupTaskEdit struct {
 	MoreRefs *[]GroupTaskRef
 	AddDeps  []string
 	RmDeps   []string
+	// ParentID, when set, moves the task into that epic ("" takes it out
+	// of its epic), recorded as its own event on the task and the epics.
+	ParentID *string
 	Actor    string
 }
 
@@ -832,6 +907,7 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 		return nil, err
 	}
 	now := time.Now()
+	oldParent := t.ParentID
 	if err := fn(tx, t, now); err != nil {
 		return nil, err
 	}
@@ -842,7 +918,34 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 	if err != nil {
 		return nil, err
 	}
-	return out, tx.Commit()
+	// Any change to a task may complete its epic, or undo that; any change
+	// to an epic may too (reopened, closed).
+	epics := []string{oldParent, out.ParentID}
+	if out.IsEpic() {
+		epics = append(epics, id)
+	}
+	var suggested []string
+	for _, epic := range epics {
+		ok, err := refreshEpicSuggestTx(tx, epic, now)
+		if err != nil {
+			return nil, err
+		}
+		// The board flags an epic reopened with its tasks all closed, but
+		// whoever reopened it is not mailed about it.
+		if ok && epic != id {
+			suggested = append(suggested, epic)
+		}
+	}
+	if out.IsEpic() {
+		if out, err = getGroupTaskTx(tx, id); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	epicsCloseSuggested(suggested)
+	return out, nil
 }
 
 // EditGroupTask applies an edit and records which fields changed.
@@ -902,6 +1005,12 @@ func EditGroupTask(id string, e GroupTaskEdit) (*GroupTask, error) {
 				if _, err := tx.Exec(`UPDATE group_tasks SET blocked_on = '' WHERE id = ? AND blocked_on = ?`, id, dep); err != nil {
 					return err
 				}
+			}
+		}
+		if e.ParentID != nil && *e.ParentID != t.ParentID {
+			// withGroupTask brings both epics' close suggestions up to date.
+			if err := setGroupTaskParentTx(tx, t, *e.ParentID, e.Actor, now); err != nil {
+				return err
 			}
 		}
 		if len(changed) == 0 {
@@ -1012,14 +1121,37 @@ func SetGroupTaskStatusFor(id, status, reason, actor, expectAssignee string) (*G
 	})
 }
 
+// SetGroupTaskStatusForced is SetGroupTaskStatusFor that, with force, also
+// closes an epic as done while children of it are still open.
+func SetGroupTaskStatusForced(id, status, reason, actor, expectAssignee string, force bool) (*GroupTask, error) {
+	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
+		return setGroupTaskStatusOptsTx(tx, t, status, reason, actor, expectAssignee, force, now)
+	})
+}
+
 // setGroupTaskStatusTx is SetGroupTaskStatusFor's change, in tx.
 func setGroupTaskStatusTx(tx *sql.Tx, t *GroupTask, status, reason, actor, expectAssignee string, now time.Time) error {
+	return setGroupTaskStatusOptsTx(tx, t, status, reason, actor, expectAssignee, false, now)
+}
+
+func setGroupTaskStatusOptsTx(tx *sql.Tx, t *GroupTask, status, reason, actor, expectAssignee string, force bool, now time.Time) error {
 	id := t.ID
 	if expectAssignee != AnyAssignee && t.AssigneeID != expectAssignee {
 		return errAssigneeChanged(id)
 	}
 	if t.Status == status && status != GroupTaskBlocked {
 		return nil
+	}
+	if t.IsEpic() {
+		if err := checkEpicStatusTx(tx, t, status, force); err != nil {
+			return err
+		}
+		if status == GroupTaskDropped {
+			// Dropping an epic leaves its work: the children stay, out of it.
+			if err := releaseGroupTaskChildrenTx(tx, t, actor, now); err != nil {
+				return err
+			}
+		}
 	}
 	var kind, detail string
 	switch status {
@@ -1136,12 +1268,17 @@ func SweepGroupTasks(archiveBefore, purgeBefore time.Time) (archived, purged int
 	if !purgeBefore.IsZero() {
 		// By closed_at: only the tasks past retention are read. (By status
 		// the planner would walk every closed task.)
-		res, err := tx.Exec(`DELETE FROM group_tasks INDEXED BY idx_group_tasks_closed
-			WHERE status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ?`, dbTime(purgeBefore))
-		if err != nil {
-			return 0, 0, err
+		// Tasks first, then the epics none of whose children are left: an
+		// epic outlives its children, which keep pointing at it.
+		for _, kind := range []string{`kind <> 'epic'`, `kind = 'epic' AND NOT EXISTS(SELECT 1 FROM group_tasks c WHERE c.parent_id = group_tasks.id)`} {
+			res, err := tx.Exec(`DELETE FROM group_tasks INDEXED BY idx_group_tasks_closed
+				WHERE status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ? AND `+kind, dbTime(purgeBefore))
+			if err != nil {
+				return 0, 0, err
+			}
+			n, _ := res.RowsAffected()
+			purged += n
 		}
-		purged, _ = res.RowsAffected()
 	}
 	if !archiveBefore.IsZero() {
 		// Only the closed tasks not yet archived are candidates; the partial
@@ -1152,11 +1289,20 @@ func SweepGroupTasks(archiveBefore, purgeBefore time.Time) (archived, purged int
 			err := s.Scan(&id)
 			return id, err
 		}, `SELECT id FROM group_tasks INDEXED BY idx_group_tasks_history
-			WHERE archived_at IS NULL AND status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ?`, dbTime(archiveBefore))
+			WHERE archived_at IS NULL AND status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ?
+			ORDER BY kind = 'epic'`, dbTime(archiveBefore))
 		if err != nil {
 			return 0, 0, err
 		}
+		kept := 0
 		for _, id := range ids {
+			// Epics come last, and wait for their children.
+			if waits, err := epicWaitsForChildrenTx(tx, id); err != nil {
+				return 0, 0, err
+			} else if waits {
+				kept++
+				continue
+			}
 			if _, err := tx.Exec(`UPDATE group_tasks SET archived_at = ? WHERE id = ?`, dbTime(now), id); err != nil {
 				return 0, 0, err
 			}
@@ -1164,7 +1310,7 @@ func SweepGroupTasks(archiveBefore, purgeBefore time.Time) (archived, purged int
 				return 0, 0, err
 			}
 		}
-		archived = int64(len(ids))
+		archived = int64(len(ids) - kept)
 	}
 	return archived, purged, tx.Commit()
 }

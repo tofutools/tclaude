@@ -352,6 +352,53 @@ gated as `assign` and `unassign` are. Someone else who is given the task gets
 its brief; an assignee who had it gets a `reopened by` mail. Across linked
 nodes, `reopen` takes `--peer` like the other verbs.
 
+## Epics
+
+An epic groups the tasks of one piece of work: a feature, a migration, a
+release. It sits on the board like a task (an idea, then promoted to next),
+but nobody works on it directly. It has no assignee and no column, and it is
+never blocked: its tasks carry the work, and its progress is theirs.
+
+```bash
+tclaude agent taskboard add crew "Taskboard epics" --epic
+tclaude agent taskboard add crew "Schema and migration" --parent tk_1a2b3c4d
+tclaude agent taskboard edit tk_5e6f7a8b --parent tk_1a2b3c4d   # into an epic
+tclaude agent taskboard edit tk_5e6f7a8b --rm-parent            # out of it
+tclaude agent taskboard epics crew                              # open epics, with progress
+tclaude agent taskboard ls crew --epic tk_1a2b3c4d              # one epic's tasks
+tclaude agent taskboard show tk_1a2b3c4d                        # the epic, its tasks and progress
+```
+
+- A task is in at most one epic, of its own group. There is one level: an
+  epic is never inside another epic.
+- Moving a task into, out of or between epics is recorded in its history and
+  in each epic's. To undo a move, move the task back.
+- Progress counts the epic's tasks: done, in a custom column (In review and
+  the like), in progress, blocked, next and ideas. A dropped task is not
+  counted in the total.
+- When the last open task of an epic closes, the board asks "close epic?",
+  and the agent that created the epic gets one `[taskboard] close epic?`
+  mail. Nothing closes an epic by itself. A task that is added or reopened
+  takes the question back.
+- `done` on an epic with open tasks is refused unless you pass `--force`.
+  `drop` on an epic keeps its tasks: they stay on the board, out of the
+  epic, and each one's history records it.
+- An epic is archived with its tasks, never before them: archiving it by
+  hand also archives its closed tasks, and is refused while any task is
+  open. The sweep and `archive --done` leave an epic until all of its tasks
+  are archived. A task taken out of the archive brings its epic out too.
+  The retention purge deletes an epic only once none of its tasks is left,
+  so a task never loses its epic.
+- Only an open epic takes new tasks; reopen a closed one first. Reopening an
+  epic brings it back with no assignee and in no column.
+- `move-to-group` takes a task out of its epic, because an epic holds only
+  tasks of its own group. An epic that still has tasks cannot move, and an
+  epic never moves to another node. A clone of an epic is an epic, without
+  the tasks.
+
+Epics use the same routes and grants as tasks, so a linked node works with
+them under the `taskboard.read` and `taskboard.write` it was given.
+
 ## Comments and activity
 
 Each task has one append-only activity stream, oldest first. `activity <task>`
@@ -1454,6 +1501,11 @@ those drags aren't accepted in the lanes.
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--first-ref` sends `"first_ref"`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
 | `move` | `POST /v1/taskboard/tasks/{id}/move` |
+| `epics` | `GET /v1/groups/{g}/taskboard?kind=epic[&all=1]`. Each epic carries `kind:"epic"`, `progress:{total,done,dropped,blocked,in_progress,in_column,columns,next,ideas}` and, once all of its tasks are closed, `close_suggested_at` |
+| `ls --epic tk_…` | `GET /v1/groups/{g}/taskboard?parent=tk_…` (a task in an epic carries `parent_id`) |
+| `add --epic` / `--parent` | `POST /v1/groups/{g}/taskboard/tasks {…,"kind":"epic"}` / `{…,"parent":"tk_…"}` |
+| `edit --parent` / `--rm-parent` | `PATCH /v1/taskboard/tasks/{id} {"parent":"tk_…"}` / `{"clear_parent":true}` |
+| `done --force` | `POST /v1/taskboard/tasks/{id}/status {"status":"done","force":true}`. Without `force`, an epic with open tasks answers 409 `epic_open_children` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","add_refs","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
 | `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |

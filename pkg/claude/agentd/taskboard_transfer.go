@@ -95,7 +95,7 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		touchTaskBlobs(files)
 		out, err := db.CreateGroupTask(db.NewGroupTask{GroupID: target.ID, Title: t.Title, Body: t.Body, Stage: stage,
 			RefKind: t.RefKind, RefURL: t.RefURL, RefLabel: t.RefLabel, MoreRefs: t.MoreRefs, Actor: actor,
-			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name), Attachments: files})
+			Origin: fmt.Sprintf("cloned from %s in %s", t.ID, g.Name), Attachments: files, Kind: t.Kind})
 		if err != nil {
 			writeTaskboardError(w, err)
 			return
@@ -303,6 +303,11 @@ func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.Grou
 	}
 	if !t.Live() {
 		writeError(w, http.StatusConflict, "not_live", fmt.Sprintf("task %s is %s; only a live task moves to another node", t.ID, t.Status))
+		return
+	}
+	if t.IsEpic() {
+		// Its tasks stay here, and the other node would get a plain task.
+		writeError(w, http.StatusConflict, "epic", fmt.Sprintf("task %s is an epic; an epic does not move to another node", t.ID))
 		return
 	}
 	if self, _ := callerAgentID(r); self != "" && self == t.AssigneeID {

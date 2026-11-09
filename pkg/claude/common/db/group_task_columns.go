@@ -225,6 +225,9 @@ func SetGroupTaskColumn(id, slug, actor, expectAssignee string) (*GroupTask, err
 		if t.Column == slug {
 			return nil
 		}
+		if t.IsEpic() {
+			return errGroupTaskEpic(id, "moved through the columns")
+		}
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
 		}
