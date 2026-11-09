@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,22 +19,26 @@ import (
 )
 
 type serviceStatusParams struct {
-	Refresh bool `long:"refresh" help:"Detect the launcher again instead of reading the daemon's cached detection"`
-	JSON    bool `long:"json" help:"Output JSON"`
+	Refresh bool   `long:"refresh" help:"Detect the launcher again instead of reading the daemon's cached detection"`
+	Node    string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read grant)"`
+	JSON    bool   `long:"json" help:"Output JSON"`
 }
 
 type serviceRestartParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	Node string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read and node.update.settings grants)"`
+	JSON bool   `long:"json" help:"Output JSON"`
 }
 
 type serviceInstallParams struct {
-	NoArgs    bool `long:"no-args" help:"Run serve with no flags instead of keeping the observed ones"`
-	NoKeepEnv bool `long:"no-keep-env" help:"Do not carry the launcher's observed environment and EnvironmentFiles into the unit (PATH is always captured)"`
-	JSON      bool `long:"json" help:"Output JSON"`
+	NoArgs    bool   `long:"no-args" help:"Run serve with no flags instead of keeping the observed ones"`
+	NoKeepEnv bool   `long:"no-keep-env" help:"Do not carry the launcher's observed environment and EnvironmentFiles into the unit (PATH is always captured)"`
+	Node      string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read and node.update.settings grants; only an unrestricted peer may choose serve flags)"`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 type serviceUninstallParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	Node string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read and node.update.settings grants)"`
+	JSON bool   `long:"json" help:"Output JSON"`
 }
 
 // serviceStatus mirrors agentd.NodeService; agent cannot import agentd.
@@ -41,6 +46,16 @@ type serviceStatus struct {
 	Launcher       launcher.Info            `json:"launcher"`
 	Autostart      launcher.AutostartStatus `json:"autostart"`
 	RestartPending string                   `json:"restart_pending,omitempty"`
+	Access         string                   `json:"access"`
+	Redacted       []string                 `json:"redacted,omitempty"`
+}
+
+// servicePath is this node's service API, or a trusted peer's.
+func servicePath(node, tail string) string {
+	if node == "" {
+		return "/v1/node/service" + tail
+	}
+	return "/v1/federation/peer/" + url.PathEscape(node) + "/node/service" + tail
 }
 
 type serviceRestartResult struct {
@@ -88,7 +103,7 @@ func ServiceCmd() *cobra.Command {
 				Short:       "Disable and remove the autostart unit tclaude wrote (a running agentd keeps running)",
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *serviceUninstallParams, _ *cobra.Command, _ []string) {
-					os.Exit(runServiceAutostart(map[string]any{"action": "uninstall"}, p.JSON, cliStdout, cliStderr))
+					os.Exit(runServiceAutostart(map[string]any{"action": "uninstall"}, p.Node, p.JSON, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 		},
@@ -109,11 +124,11 @@ func runServiceInstall(p *serviceInstallParams, args []string, stdout, stderr io
 	if p.NoKeepEnv {
 		req["keep_env"] = false
 	}
-	return runServiceAutostart(req, p.JSON, stdout, stderr)
+	return runServiceAutostart(req, p.Node, p.JSON, stdout, stderr)
 }
 
-func runServiceAutostart(req map[string]any, asJSON bool, stdout, stderr io.Writer) int {
-	raw, rc := serviceRequest(http.MethodPost, "/v1/node/service/autostart", req, stderr)
+func runServiceAutostart(req map[string]any, node string, asJSON bool, stdout, stderr io.Writer) int {
+	raw, rc := serviceRequest(http.MethodPost, servicePath(node, "/autostart"), req, stderr)
 	if rc != 0 {
 		return rc
 	}
@@ -132,11 +147,21 @@ func runServiceAutostart(req map[string]any, asJSON bool, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "Autostart installed: %s\n", termtext.Cell(st.Autostart.Path))
 		fmt.Fprintln(stdout, "It takes effect at the next boot or login; `tclaude service status` shows it.")
 	}
-	printAutostart(st.Autostart, stdout)
+	printAutostart(st.Autostart, envWithheld(st), stdout)
 	return 0
 }
 
-func printAutostart(a launcher.AutostartStatus, w io.Writer) {
+// envWithheld reports a peer's view that leaves out environment values.
+func envWithheld(st serviceStatus) bool { return len(st.Redacted) > 0 }
+
+func envLine(e launcher.EnvVar, withheld bool) string {
+	if withheld {
+		return "  " + termtext.Cell(e.Key) + "=(withheld from peers)"
+	}
+	return "  " + termtext.Cell(e.Key) + "=" + termtext.Cell(e.Value)
+}
+
+func printAutostart(a launcher.AutostartStatus, withheld bool, w io.Writer) {
 	if !a.Supported {
 		fmt.Fprintln(w, "Autostart:       not supported on this platform")
 		return
@@ -155,7 +180,7 @@ func printAutostart(a launcher.AutostartStatus, w io.Writer) {
 		fmt.Fprintf(w, "  command:       %s\n", termtext.Cell(strings.Join(a.Argv, " ")))
 	}
 	for _, e := range a.Env {
-		fmt.Fprintf(w, "  %s=%s\n", termtext.Cell(e.Key), termtext.Cell(e.Value))
+		fmt.Fprintln(w, envLine(e, withheld))
 	}
 	if a.Linger != nil && !a.Linger.Enabled {
 		fmt.Fprintf(w, "  lingering is off: to start at boot rather than login, run: %s\n", termtext.Cell(a.Linger.Command))
@@ -183,7 +208,7 @@ func serviceRequest(method, path string, in any, stderr io.Writer) (json.RawMess
 }
 
 func runServiceStatus(p *serviceStatusParams, stdout, stderr io.Writer) int {
-	path := "/v1/node/service"
+	path := servicePath(p.Node, "")
 	if p.Refresh {
 		path += "?refresh=1"
 	}
@@ -233,7 +258,7 @@ func printServiceStatus(st serviceStatus, w io.Writer) {
 		fmt.Fprintf(w, "Env file:        %s\n", termtext.Cell(f))
 	}
 	for _, e := range l.Env {
-		fmt.Fprintf(w, "  %s=%s\n", termtext.Cell(e.Key), termtext.Cell(e.Value))
+		fmt.Fprintln(w, envLine(e, envWithheld(st)))
 	}
 	fmt.Fprintf(w, "Restart method:  %s\n", termtext.Cell(l.RestartMethod))
 	if st.RestartPending != "" {
@@ -242,11 +267,14 @@ func printServiceStatus(st serviceStatus, w io.Writer) {
 	for _, warning := range l.Warnings {
 		fmt.Fprintln(w, "Warning:", termtext.Cell(warning))
 	}
-	printAutostart(st.Autostart, w)
+	printAutostart(st.Autostart, envWithheld(st), w)
+	if st.Access == "read" {
+		fmt.Fprintln(w, "Access:          read only (restart and autostart need the node's node.update.settings grant)")
+	}
 }
 
 func runServiceRestart(p *serviceRestartParams, stdout, stderr io.Writer) int {
-	raw, rc := serviceRequest(http.MethodPost, "/v1/node/service/restart", struct{}{}, stderr)
+	raw, rc := serviceRequest(http.MethodPost, servicePath(p.Node, "/restart"), struct{}{}, stderr)
 	if rc != 0 {
 		return rc
 	}

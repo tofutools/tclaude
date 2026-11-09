@@ -209,6 +209,9 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/node/update-scripts"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateScripts}
 	rules["GET /api/node/update-scripts/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateScripts}
 	rules["POST /api/node/update-scripts"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdateScripts}
+	rules["GET /api/node/service"] = peerViewRule{feature: "node.service", requires: PermNodeRead, serve: servePeerNodeService}
+	rules["POST /api/node/service/restart"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	rules["POST /api/node/service/autostart"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
 	rules["GET /api/harnesses/availability"] = peerViewRule{feature: "node.harnesses", requires: PermNodeHarnessesRead, serve: servePeerHarnessAvailability}
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	// Usage sharing: any trusted peer may ask which gateways it may use here;
