@@ -43,6 +43,8 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 type UpdatesConfig struct {
 	Scripts   []UpdateScriptConfig           `json:"scripts,omitempty"`
 	Harnesses map[string]HarnessUpdateConfig `json:"harnesses,omitempty"`
+	// Self is how tclaude updates its own binaries; see SelfUpdateConfig.
+	Self *SelfUpdateConfig `json:"self,omitempty"`
 }
 
 // UpdateScriptConfig is one named update target. Status and Update are run
@@ -91,6 +93,7 @@ func (u *UpdatesConfig) Validate() []string {
 			errs = append(errs, "updates.harnesses."+name+".update must not be empty")
 		}
 	}
+	errs = append(errs, u.Self.Validate()...)
 	return errs
 }
 

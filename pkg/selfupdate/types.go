@@ -28,6 +28,12 @@ type Binary struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 	Method  string `json:"install_method"`
+	// ManagedBy names the package manager that owns the binary, if any.
+	ManagedBy string `json:"managed_by,omitempty"`
+	// Package is the package-manager entry (formula, profile entry, package).
+	Package string `json:"package,omitempty"`
+	// Evidence explains ManagedBy, or why the install is unrecognized.
+	Evidence string `json:"evidence,omitempty"`
 }
 type Request struct {
 	Action  string `json:"action"`
@@ -63,6 +69,33 @@ type Job struct {
 	Error           string     `json:"error,omitempty"`
 	Warnings        []string   `json:"warnings"`
 	RestartRequired bool       `json:"restart_required"`
+	// Method is the updates.self method this apply used; empty means the
+	// per-binary detected behaviour (no method chosen).
+	Method string `json:"method,omitempty"`
+	// Output is the bounded tail of an external update command (a package
+	// manager or the custom command).
+	Output string `json:"output,omitempty"`
+	// Relocations lists binaries whose installed path changed.
+	Relocations []Relocation `json:"relocations,omitempty"`
+	// PostSetup is the post-update `tclaude setup` run, when configured.
+	PostSetup *PostSetup `json:"post_setup,omitempty"`
+}
+
+// Relocation is a binary that now runs from a different path.
+type Relocation struct {
+	Name string `json:"name"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// PostSetup is the NEW binary's `tclaude setup --yes ...` run after an update.
+type PostSetup struct {
+	State      string     `json:"state"` // pending | running | succeeded | failed
+	Args       []string   `json:"args"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	Output     string     `json:"output,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 type Status struct {
 	CurrentVersion    string     `json:"current_version"`
@@ -75,6 +108,10 @@ type Status struct {
 	RollbackAvailable bool       `json:"rollback_available"`
 	Warnings          []string   `json:"warnings"`
 	Job               *Job       `json:"job,omitempty"`
+	// ChosenMethod is updates.self.method ("" when none is chosen) and
+	// DetectedMethod the recommendation; agentd fills both when serving.
+	ChosenMethod   string `json:"chosen_method"`
+	DetectedMethod string `json:"detected_method,omitempty"`
 }
 
 func inspectBinary(name, path string) (Binary, error) {
@@ -145,8 +182,16 @@ func Discover() ([]Binary, error) {
 		if p, ok := paths[name]; ok {
 			b, err := inspectBinary(name, p)
 			if err != nil {
-				return nil, err
+				// Not a binary tclaude can identify (a wrapper script, a
+				// patched package build): report it rather than failing, so
+				// the operator sees the evidence and picks a method.
+				resolved, rerr := filepath.EvalSymlinks(p)
+				if rerr != nil {
+					return nil, rerr
+				}
+				b = Binary{Name: name, Path: resolved, Method: "unrecognized", Evidence: err.Error()}
 			}
+			classify(&b)
 			out = append(out, b)
 		}
 	}

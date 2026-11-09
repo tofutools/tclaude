@@ -30,7 +30,9 @@ type updateParams struct {
 }
 
 func UpdateCmd() *cobra.Command {
-	return boa.CmdT[updateParams]{Use: "update", Short: "Check, apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, cliStdout, cliStderr)) }}.ToCobra()
+	cmd := boa.CmdT[updateParams]{Use: "update", Short: "Check, apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, cliStdout, cliStderr)) }}.ToCobra()
+	cmd.AddCommand(updateConfigCmd())
+	return cmd
 }
 func updateAPIPath(node, tail string) string {
 	if node == "" {

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,17 +40,22 @@ func localUpdateService() (*selfupdate.Service, error) {
 			status = 500
 		}
 		recordFederationAudit("federation.node.update", job.Actor, "", "", job.Action+" "+job.Version+" job="+job.ID+" "+job.State, status)
+		selfUpdateJobFinished(job)
 	}})
 	if err != nil {
 		return nil, err
 	}
 	nodeUpdates.service = svc
+	// A job finished by this process's restart verification may still owe
+	// its post-update setup and notification.
+	go finishRestartedUpdate(context.Background(), svc)
 	return svc, nil
 }
 func registerNodeUpdateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("POST /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("GET /api/node/update/jobs/{id}", handleDashboardNodeUpdate)
+	registerNodeUpdateSettingsRoutes(mux)
 }
 func handleDashboardNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -101,13 +107,24 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 		return
 	}
 	if r.Method == http.MethodPost {
-		job, err := service.Start(req, actor, authorize)
+		var opts selfupdate.ApplyOptions
+		if req.Action == "apply" {
+			opts = selfUpdateApplyOptions(loadSelfUpdateSettings())
+		}
+		job, err := service.StartWith(req, actor, authorize, opts)
 		if err != nil {
 			status := 500
 			code := "update_failed"
-			if errors.Is(err, selfupdate.ErrBusy) {
-				status = 409
-				code = "update_busy"
+			var managed *selfupdate.PackageManagedError
+			switch {
+			case errors.Is(err, selfupdate.ErrBusy):
+				status, code = 409, "update_busy"
+			case errors.Is(err, selfupdate.ErrNotifyOnly):
+				status, code = 409, "update_method_notify_only"
+			case errors.As(err, &managed) && managed.NeedsAck:
+				status, code = 409, "update_package_manager_ack_required"
+			case errors.As(err, &managed):
+				status, code = 409, "update_method_package_managed"
 			}
 			writeError(w, status, code, err.Error())
 			return
@@ -126,6 +143,8 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 		return
 	}
 	status := service.Status()
+	status.ChosenMethod = loadSelfUpdateSettings().Method
+	status.DetectedMethod = selfupdate.Detect(status.Binaries).Method
 	if rt := currentFederation(); rt != nil {
 		for _, p := range rt.cl.Directory() {
 			if p.Version != "" && p.Version != status.CurrentVersion {
@@ -159,6 +178,13 @@ func requestSelfUpdateRestart() error {
 		return fmt.Errorf("restart hook unavailable; restart agentd manually")
 	}
 	updateRestartState.requested = true
+	// An update may have moved the daemon's binary (an install next to a
+	// package-managed copy, a new Homebrew Cellar version).
+	nodeUpdates.Lock()
+	if svc := nodeUpdates.service; svc != nil {
+		updateRestartState.path = svc.RestartPath(updateRestartState.path)
+	}
+	nodeUpdates.Unlock()
 	time.AfterFunc(500*time.Millisecond, updateRestartState.stop)
 	return nil
 }
