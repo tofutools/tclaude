@@ -234,6 +234,13 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 		}
 		targets = append(targets, t)
 	}
+	return s.install(ctx, release, job, authorize, targets, external, opts)
+}
+
+// install backs up and replaces (or creates) the staged targets, runs the
+// external package-manager or custom update for external binaries, and
+// records what a rollback restores.
+func (s *Service) install(ctx context.Context, release Release, job *Job, authorize func() bool, targets []applyTarget, external []Binary, opts ApplyOptions) error {
 	if !authorize() {
 		return fmt.Errorf("update authority was revoked before replacement")
 	}
@@ -547,8 +554,13 @@ func stageCheckout(ctx context.Context, opts CheckoutOptions, tag, dir string) (
 			}
 		}
 	}
+	return buildCheckout(ctx, opts.Path, dir)
+}
+
+// buildCheckout builds every tclaude binary of the checkout at path into dir.
+func buildCheckout(ctx context.Context, path, dir string) (map[string]string, error) {
 	env := append(filteredGoEnv(os.Environ()), "GOBIN="+dir, "GOWORK=off")
-	if out, err := sys.Run(ctx, []string{"go", "-C", opts.Path, "install", ".", "./cmd/..."}, env); err != nil {
+	if out, err := currentSystem().Run(ctx, []string{"go", "-C", path, "install", ".", "./cmd/..."}, env); err != nil {
 		return nil, fmt.Errorf("building the checkout failed: %s", tail(out, 1024))
 	}
 	built := map[string]string{}
@@ -559,7 +571,7 @@ func stageCheckout(ctx context.Context, opts CheckoutOptions, tag, dir string) (
 			continue
 		}
 		if bi.Main.Path != module || bi.Path != pkg {
-			return nil, fmt.Errorf("the checkout at %s does not build the tclaude module", opts.Path)
+			return nil, fmt.Errorf("the checkout at %s does not build the tclaude module", path)
 		}
 		built[name] = path
 	}
@@ -667,6 +679,8 @@ type TestFakes struct {
 	// Stage writes the named binary into dir for every staging method.
 	Stage   func(ctx context.Context, release Release, name, dir string) (string, error)
 	Inspect func(context.Context, string) (buildversion.Info, error)
+	// Revision reports the VCS commit a staged binary was built from.
+	Revision func(string) (string, bool, error)
 }
 
 // SetFakesForTest swaps the service's external boundaries; tests only.
@@ -680,6 +694,17 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 		s.stageRelease = f.Stage
 		s.stageGo = func(ctx context.Context, name, version, dir string) (string, error) {
 			return f.Stage(ctx, Release{Tag: version}, name, dir)
+		}
+		s.buildCheckout = func(ctx context.Context, _ string, dir string) (map[string]string, error) {
+			out := map[string]string{}
+			for _, b := range s.binaries {
+				p, err := f.Stage(ctx, Release{}, b.Name, dir)
+				if err != nil {
+					return nil, err
+				}
+				out[b.Name] = p
+			}
+			return out, nil
 		}
 		s.stageCheckout = func(ctx context.Context, _ CheckoutOptions, tag, dir string) (map[string]string, error) {
 			out := map[string]string{}
@@ -695,6 +720,9 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 	}
 	if f.Inspect != nil {
 		s.inspect = f.Inspect
+	}
+	if f.Revision != nil {
+		s.revisionOf = f.Revision
 	}
 	s.identify = func(string) error { return nil }
 }
