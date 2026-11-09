@@ -19149,8 +19149,13 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
    entry of the task's activity with its answer right under it. */
 .tb-question-card { box-shadow: inset 3px 0 0 #a371f7; }
 .tb-question-on { font-size: 11px; color: var(--ui-muted, #8b949e); margin-bottom: 2px; overflow-wrap: anywhere; }
-.tb-question-task { background: none; border: 0; padding: 0; font: inherit; color: #a371f7; cursor: pointer; text-align: left; }
-.tb-question-task:hover { text-decoration: underline; }
+/* A long task title wraps inside the card, at most two lines; the full
+   title is in its title= (tk_7760b2f1). Scoped under .tb-question-on to
+   outrank .ui-btn (nowrap inline-flex), which ui.css loads after this. */
+.tb-question-on .tb-question-task { background: none; border: 0; padding: 0; font: inherit; color: #a371f7; cursor: pointer; text-align: left;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.tb-question-on .tb-question-task:hover:not(:disabled) { color: #a371f7; text-decoration: underline; }
 .tb-question-title { font-weight: 600; color: var(--ui-text-strong, #e6edf3); overflow-wrap: anywhere; }
 .tb-activity-comment.tb-activity-question { border-color: rgba(163, 113, 247, 0.6); background: rgba(163, 113, 247, 0.05); }
 .tb-activity-question .tb-comment-kind { color: #a371f7; border-color: rgba(163, 113, 247, 0.35); }
