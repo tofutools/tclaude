@@ -725,14 +725,21 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	}
 	// A new open child takes back the epic's close suggestion; one logged
 	// as done may complete it.
-	if err := refreshEpicTx(tx, in.ParentID, now); err != nil {
+	suggested, err := refreshEpicSuggestTx(tx, in.ParentID, now)
+	if err != nil {
 		return nil, err
 	}
 	out, err := getGroupTaskTx(tx, id)
 	if err != nil {
 		return nil, err
 	}
-	return out, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if suggested {
+		epicsCloseSuggested([]string{in.ParentID})
+	}
+	return out, nil
 }
 
 func firstNonEmptyString(vals ...string) string {
@@ -917,9 +924,14 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 	if out.IsEpic() {
 		epics = append(epics, id)
 	}
+	var suggested []string
 	for _, epic := range epics {
-		if err := refreshEpicTx(tx, epic, now); err != nil {
+		ok, err := refreshEpicSuggestTx(tx, epic, now)
+		if err != nil {
 			return nil, err
+		}
+		if ok {
+			suggested = append(suggested, epic)
 		}
 	}
 	if out.IsEpic() {
@@ -927,7 +939,11 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 			return nil, err
 		}
 	}
-	return out, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	epicsCloseSuggested(suggested)
+	return out, nil
 }
 
 // EditGroupTask applies an edit and records which fields changed.

@@ -36,6 +36,7 @@ func taskboardCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskboardLsCmd(),
+			taskboardEpicsCmd(),
 			taskboardShowCmd(),
 			taskboardActivityCmd(),
 			taskboardCommentCmd(),
@@ -157,6 +158,43 @@ type taskboardTask struct {
 	// refs sends only Ref.
 	Refs        []taskboardRef        `json:"refs,omitempty"`
 	Attachments []taskboardAttachment `json:"attachments,omitempty"`
+	// Kind is "epic" for an epic; ParentID is the epic a task is in.
+	Kind             string                 `json:"kind,omitempty"`
+	ParentID         string                 `json:"parent_id,omitempty"`
+	Progress         *taskboardEpicProgress `json:"progress,omitempty"`
+	CloseSuggestedAt string                 `json:"close_suggested_at,omitempty"`
+	Children         []taskboardTask        `json:"children,omitempty"`
+}
+
+// taskboardEpicProgress counts an epic's children; Total leaves the dropped
+// ones out.
+type taskboardEpicProgress struct {
+	Total      int            `json:"total"`
+	Done       int            `json:"done"`
+	Dropped    int            `json:"dropped"`
+	Blocked    int            `json:"blocked"`
+	InProgress int            `json:"in_progress"`
+	InColumn   int            `json:"in_column"`
+	Columns    map[string]int `json:"columns,omitempty"`
+	Next       int            `json:"next"`
+	Ideas      int            `json:"ideas"`
+}
+
+// text is the progress as a line reads it: "2/5 done, 1 in progress, …".
+func (p *taskboardEpicProgress) text() string {
+	if p == nil || p.Total == 0 {
+		return "no tasks yet"
+	}
+	parts := []string{fmt.Sprintf("%d/%d done", p.Done, p.Total)}
+	for _, c := range []struct {
+		n    int
+		what string
+	}{{p.InColumn, "in review/columns"}, {p.InProgress, "in progress"}, {p.Blocked, "blocked"}, {p.Next, "next"}, {p.Ideas, "ideas"}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.what))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // taskboardRef is one of a task's refs; PR is a pull request's status as
@@ -346,8 +384,11 @@ type taskboardLsParams struct {
 	// Summary is the dashboard's counts for every board you can read, one
 	// line per group (GET /v1/taskboard/context).
 	Summary bool   `long:"summary" help:"Counts for every group board you can read, one line per group"`
+	Epic    string `long:"epic" optional:"true" help:"Only the tasks of this epic (tk_…)"`
 	Peer    string `long:"peer" optional:"true" help:"List a linked node's board instead (name the group), under the grants it gave this node (taskboard.read)"`
 	JSON    bool   `long:"json" help:"Output JSON"`
+	// kind narrows the list to epics (`taskboard epics`); not a flag.
+	kind string
 }
 
 func (t taskboardTask) assigneeText() string {
@@ -371,6 +412,28 @@ func taskboardLsCmd() *cobra.Command {
 		},
 		RunFunc: func(p *taskboardLsParams, _ *cobra.Command, _ []string) {
 			taskboardExit(runTaskboardLs(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+type taskboardEpicsParams struct {
+	Group string `pos:"true" optional:"true" help:"Group whose epics to list (default: your group when you are in exactly one)"`
+	All   bool   `long:"all" help:"Also list closed epics not yet archived"`
+	Peer  string `long:"peer" optional:"true" help:"List a linked node's epics instead (name the group), under the grants it gave this node (taskboard.read)"`
+	JSON  bool   `long:"json" help:"Output JSON"`
+}
+
+func taskboardEpicsCmd() *cobra.Command {
+	return boa.CmdT[taskboardEpicsParams]{
+		Use:         "epics",
+		Short:       "List a group's open epics with their progress (ls --epic <id> lists one epic's tasks)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardEpicsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			return nil
+		},
+		RunFunc: func(p *taskboardEpicsParams, _ *cobra.Command, _ []string) {
+			taskboardExit(runTaskboardLs(&taskboardLsParams{Group: p.Group, All: p.All, Peer: p.Peer, JSON: p.JSON, kind: "epic"}, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -400,6 +463,12 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	}
 	if p.All {
 		q.Set("all", "1")
+	}
+	if e := strings.TrimSpace(p.Epic); e != "" {
+		q.Set("parent", e)
+	}
+	if p.kind != "" {
+		q.Set("kind", p.kind)
 	}
 	if p.Archived {
 		if p.All || p.Stage != "" || p.Mine {
@@ -440,7 +509,7 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		// own-group route's only invalid_arg is "no single group".
 		var de *DaemonError
 		if strings.TrimSpace(p.Group) == "" && strings.TrimSpace(p.Peer) == "" &&
-			p.Stage == "" && !p.All && !p.Archived && !p.JSON &&
+			p.Stage == "" && !p.All && !p.Archived && !p.JSON && p.Epic == "" && p.kind == "" &&
 			errors.As(err, &de) && de.Code == "invalid_arg" {
 			return runTaskboardOverview(stdout, stderr)
 		}
@@ -528,6 +597,15 @@ func taskboardRowText(t taskboardTask) string {
 		state = t.Column
 	}
 	line := fmt.Sprintf("%s  %-7s  %s", t.ID, state, t.Title)
+	if t.Kind == "epic" {
+		line = fmt.Sprintf("%s  %-7s  [epic] %s  (%s)", t.ID, state, t.Title, t.Progress.text())
+		if t.CloseSuggestedAt != "" && (t.Status == "open" || t.Status == "blocked") {
+			line += "  — all closed: close epic?"
+		}
+	}
+	if t.ParentID != "" {
+		line += "  in " + t.ParentID
+	}
 	if ref := t.refText(); ref != "" {
 		line += "  [" + ref + "]"
 	}
@@ -797,7 +875,35 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if t.Body != "" {
 		fmt.Fprintf(stdout, "\n%s\n", t.Body)
 	}
+	if t.Kind == "epic" {
+		fmt.Fprintf(stdout, "\nepic: %s\n", t.Progress.text())
+		if t.CloseSuggestedAt != "" && (t.Status == "open" || t.Status == "blocked") {
+			fmt.Fprintf(stdout, "every task in it is closed: close it with tclaude agent taskboard done %s\n", t.ID)
+		}
+		for _, c := range t.Children {
+			fmt.Fprintf(stdout, "  %s  %-7s  %-5s  %s", c.ID, taskboardChildState(c), c.Stage, c.Title)
+			if a := c.assigneeText(); a != "" {
+				fmt.Fprintf(stdout, "  @%s", a)
+			}
+			fmt.Fprintln(stdout)
+		}
+	} else if t.ParentID != "" {
+		fmt.Fprintf(stdout, "\nin epic %s (tclaude agent taskboard show %s)\n", t.ParentID, t.ParentID)
+	}
 	return rcOK
+}
+
+// taskboardChildState is a child's state on its epic's list.
+func taskboardChildState(t taskboardTask) string {
+	switch {
+	case t.Status != "open":
+		return t.Status
+	case t.Column != "":
+		return t.Column
+	case t.Assignee != nil && !t.Held:
+		return "started"
+	}
+	return "open"
 }
 
 // ---- add / edit ----
@@ -825,6 +931,9 @@ type taskboardAddParams struct {
 	Blocks   string `long:"blocks" optional:"true" help:"With --assignee operator: this task of the board (tk_…, typically yours) waits on the new one. It gains it as a dependency and is blocked on it, in the same write; closing the operator task as done reopens it"`
 	Blocked  string `long:"blocked" optional:"true" help:"Start it blocked, with this reason"`
 	Done     bool   `long:"done" help:"Log work already done: it is created done, in done this week (with --assignee, who did it; nobody is mailed)"`
+	// Epics (tk_a970ef38).
+	Epic   bool   `long:"epic" help:"Add an epic: a container of the board's tasks, with no assignee of its own; its progress is its tasks'"`
+	Parent string `long:"parent" optional:"true" help:"Add the task to this epic of the board (tk_…)"`
 	// Import flags: one task per ref or line, titles looked up through the
 	// tracker proxies.
 	FromAWB    string   `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
@@ -893,8 +1002,8 @@ func splitTaskIDs(s string) []string {
 
 func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.FromAWB != "" || p.FromLinear != "" || p.FromGitHub != "" || p.LinesFile != "" {
-		if p.Assignee != "" || p.Stage != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 {
-			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --stage, --mine, --blocked, --done and --attach are for one task")
+		if p.Assignee != "" || p.Stage != "" || p.Mine || p.Blocked != "" || p.Done || len(p.Attach) > 0 || p.Epic || p.Parent != "" {
+			fmt.Fprintln(stderr, "Error: an import takes only --next; --assignee, --stage, --mine, --blocked, --done, --epic, --parent and --attach are for one task")
 			return rcInvalidArg
 		}
 		return runTaskboardImport(p, stdin, stdout, stderr)
@@ -959,6 +1068,12 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	if b := strings.TrimSpace(p.Blocks); b != "" {
 		req["blocks"] = b
+	}
+	if p.Epic {
+		req["kind"] = "epic"
+	}
+	if parent := strings.TrimSpace(p.Parent); parent != "" {
+		req["parent"] = parent
 	}
 	switch {
 	case strings.TrimSpace(p.Blocked) != "":
@@ -1234,6 +1349,8 @@ type taskboardEditParams struct {
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear ref up through its tracker proxy to fill in its link: the new --ref, or without --ref the task's own link-less one"`
 	AddDep     string `long:"add-dep" optional:"true" help:"Comma-separated task ids to depend on"`
 	RmDep      string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
+	Parent     string `long:"parent" optional:"true" help:"Move the task into this epic of the board (tk_…); recorded on the task and both epics"`
+	RmParent   bool   `long:"rm-parent" help:"Take the task out of its epic"`
 	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON       bool   `long:"json" help:"Output JSON"`
@@ -1312,6 +1429,15 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 	}
 	if deps := splitTaskIDs(p.RmDep); len(deps) > 0 {
 		req["rm_deps"] = deps
+	}
+	switch parent := strings.TrimSpace(p.Parent); {
+	case parent != "" && p.RmParent:
+		fmt.Fprintln(stderr, "Error: give --parent or --rm-parent, not both")
+		return rcInvalidArg
+	case parent != "":
+		req["parent"] = parent
+	case p.RmParent:
+		req["clear_parent"] = true
 	}
 	if len(req) == 0 {
 		fmt.Fprintln(stderr, "Error: nothing to change; see --help")
@@ -1604,6 +1730,7 @@ func taskboardStageCmd(use, stage, short string) *cobra.Command {
 type taskboardStatusParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	Reason   string `long:"reason" optional:"true" help:"Why (kept in the task's history)"`
+	Force    bool   `long:"force" help:"done: close an epic although tasks of it are still open"`
 	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -1635,8 +1762,17 @@ func taskboardStatusCmd(use, status, short string, withReason bool) *cobra.Comma
 			return nil
 		},
 		RunFunc: func(p *taskboardStatusParams, _ *cobra.Command, _ []string) {
+			req := map[string]any{"status": status, "reason": p.Reason}
+			if p.Force {
+				if status != "done" {
+					fmt.Fprintln(cliStderr, "Error: --force is for done (an epic with open tasks)")
+					taskboardExit(rcInvalidArg)
+					return
+				}
+				req["force"] = true
+			}
 			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/status"),
-				map[string]any{"status": status, "reason": p.Reason}, p.AskHuman, p.JSON, verbs[use], cliStdout, cliStderr))
+				req, p.AskHuman, p.JSON, verbs[use], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

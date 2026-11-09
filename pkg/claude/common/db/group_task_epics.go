@@ -138,8 +138,28 @@ func setGroupTaskParentTx(q taskTx, t *GroupTask, parentID, actor string, now ti
 // otherwise. An archived epic with a child out of the archive comes out of
 // it too, so a visible child never points at an archived epic.
 func refreshEpicTx(q taskTx, id string, now time.Time) error {
+	_, err := refreshEpicSuggestTx(q, id, now)
+	return err
+}
+
+// GroupTaskEpicCloseSuggested, when set, is called after the commit that
+// marks an epic close-suggested (agentd mails its creator, once: see
+// ClaimGroupTaskCloseNudge).
+var GroupTaskEpicCloseSuggested func(epicID string)
+
+func epicsCloseSuggested(ids []string) {
+	if hook := GroupTaskEpicCloseSuggested; hook != nil {
+		for _, id := range ids {
+			hook(id)
+		}
+	}
+}
+
+// refreshEpicSuggestTx is refreshEpicTx, reporting whether it newly
+// suggested closing the epic.
+func refreshEpicSuggestTx(q taskTx, id string, now time.Time) (bool, error) {
 	if id == "" {
-		return nil
+		return false, nil
 	}
 	var kind, status string
 	var suggested sql.NullInt64
@@ -147,36 +167,36 @@ func refreshEpicTx(q taskTx, id string, now time.Time) error {
 	err := q.QueryRow(`SELECT kind, status, close_suggested_at, archived_at FROM group_tasks WHERE id = ?`, id).
 		Scan(&kind, &status, &suggested, &archived)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && kind != GroupTaskKindEpic {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	var children, live, unarchived int
 	if err := q.QueryRow(`SELECT COUNT(*), COALESCE(SUM(status IN ('open','blocked')), 0), COALESCE(SUM(archived_at IS NULL), 0)
 		FROM group_tasks WHERE parent_id = ?`, id).Scan(&children, &live, &unarchived); err != nil {
-		return err
+		return false, err
 	}
 	if archived.Valid && unarchived > 0 {
 		if _, err := q.Exec(`UPDATE group_tasks SET archived_at = NULL WHERE id = ?`, id); err != nil {
-			return err
+			return false, err
 		}
 		if err := addGroupTaskEventTx(q, id, "system", GroupTaskEventUnarchived, "a child is out of the archive", now); err != nil {
-			return err
+			return false, err
 		}
 	}
 	eligible := (status == GroupTaskOpen || status == GroupTaskBlocked) && children > 0 && live == 0
 	switch {
 	case eligible && !suggested.Valid:
 		if _, err := q.Exec(`UPDATE group_tasks SET close_suggested_at = ?, close_nudged = 0 WHERE id = ?`, dbTime(now), id); err != nil {
-			return err
+			return false, err
 		}
-		return addGroupTaskEventTx(q, id, "system", GroupTaskEventCloseSuggested, "all children are closed", now)
+		return true, addGroupTaskEventTx(q, id, "system", GroupTaskEventCloseSuggested, "all children are closed", now)
 	case !eligible && suggested.Valid:
 		_, err := q.Exec(`UPDATE group_tasks SET close_suggested_at = NULL, close_nudged = 0 WHERE id = ?`, id)
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // ClaimGroupTaskCloseNudge claims the one mail about epic id's close
@@ -194,23 +214,6 @@ func ClaimGroupTaskCloseNudge(id string) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
-}
-
-// DismissGroupTaskCloseSuggestion hides an epic's "close epic?" nudge ("not
-// yet") until a child changes again.
-func DismissGroupTaskCloseSuggestion(id, actor string) (*GroupTask, error) {
-	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
-		if !t.IsEpic() {
-			return taskConflict("not_epic", "task %s is not an epic", id)
-		}
-		if t.CloseSuggestedAt.IsZero() {
-			return nil
-		}
-		// Dismissed: keep close_nudged set so the dismissal is not mailed
-		// about, and leave close_suggested_at clear until a child changes.
-		_, err := tx.Exec(`UPDATE group_tasks SET close_suggested_at = NULL, close_nudged = 1 WHERE id = ?`, id)
-		return err
-	})
 }
 
 // GroupTaskEpicProgress counts an epic's children by where they stand. A
