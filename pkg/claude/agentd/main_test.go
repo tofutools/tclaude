@@ -70,6 +70,7 @@ func TestMain(m *testing.M) {
 	tmuxSocketPath := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName)
 
 	agentd.InstallBrokerProcTableTestDefaults()
+	agentd.InstallLauncherTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
 	agentd.DisableFleetMetadataForTest()
 	// The test process is every socket peer here, and is not an agent the daemon runs.
