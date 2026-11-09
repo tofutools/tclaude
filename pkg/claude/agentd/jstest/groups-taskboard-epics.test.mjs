@@ -354,3 +354,14 @@ test('a list pasted in an epic lane\'s + joins the epic', async (t) => {
   assert.equal(out.created, 2);
   assert.deepEqual(calls, [['tk_a', { parent: EPIC.id }], ['tk_b', { parent: EPIC.id }]]);
 });
+
+test('epic lanes: an epic whose tasks are all closed asks to close it in its lane head', async (t) => {
+  const { c, api, click } = await mountBoard(t, 'ep-lane-nudge', { prefs: { 'lanes-by': 'epic' } });
+  const head = () => c.querySelector(`[data-epic-lane="${DONE_EPIC.id}"]`);
+  assert.ok(head().querySelector(`[data-epic-nudge="${DONE_EPIC.id}"]`), 'no strip here, so the lane head asks');
+  assert.equal(c.querySelector(`[data-epic-lane="${EPIC.id}"] [data-epic-nudge]`), null, 'an epic with open tasks does not');
+  await click(head().querySelector('.tb-epic-close'));
+  assert.deepEqual(api.calls.find((call) => call[0] === 'status'), ['status', DONE_EPIC.id, 'done']);
+  await click(head().querySelector('.tb-epic-later'));
+  assert.equal(head().querySelector('[data-epic-nudge]'), null, 'Not yet puts it off');
+});

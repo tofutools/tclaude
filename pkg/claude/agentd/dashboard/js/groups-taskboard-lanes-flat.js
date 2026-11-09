@@ -31,7 +31,7 @@ import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorNa
 import { agentLink } from './cross-links.js';
 import { useOpenCells } from './groups-taskboard-lanes-layout.js';
 import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboard-answer.js';
-import { EpicBoard, EpicProgress, NO_EPIC, epicColour, epicOf, progressParts } from './groups-taskboard-epics.js';
+import { EpicBoard, EpicNudge, EpicProgress, NO_EPIC, epicColour, epicOf, progressParts } from './groups-taskboard-epics.js';
 
 const html = htm.bind(h);
 
@@ -208,6 +208,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
       <span class="tb-lane-name"><span class="tb-epic-dot"></span>${epic?.title || row}</span>
       <${EpicProgress} epic=${epic} />
       <span class="tb-lane-sub">${progressParts(epic?.progress).join(' · ')}</span>
+      ${epic && html`<${EpicNudge} epic=${epic} actions=${actions} />`}
       ${actions && onEdit && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${row} title="Open the epic: its brief, progress and tasks" onClick=${() => onEdit(row)}>open ›</button>`}
     </div>`;
   };

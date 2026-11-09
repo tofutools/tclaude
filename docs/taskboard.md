@@ -1366,7 +1366,8 @@ work of its own. An epic that is still an idea is a card in Ideas, marked
   it out of its epic. Either way a toast offers *Undo*, which puts the task
   back in the epic it was in. A drag to another column in the same move also
   moves the task there, as in *one row*, and Undo puts back only the epic.
-  The epic strip is hidden in this mode, since the lane heads are the epics.
+  The epic strip is hidden in this mode, since the lane heads are the epics;
+  an epic's **close epic?** shows in its lane head instead.
   An epic still an idea is a card in *No epic*'s Ideas, and gets a lane of
   its own only once it holds a task. A cell's *+* puts the tasks the form
   adds (one, or a pasted list) in that lane's epic; an import from a tracker

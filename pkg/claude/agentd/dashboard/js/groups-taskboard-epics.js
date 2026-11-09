@@ -181,13 +181,25 @@ export function closeNudge(epic) {
   return !!at && live(epic) && dashPrefs.getItem(NUDGE_PREF(epic.id)) !== at;
 }
 
+// EpicNudge asks "close epic?" while closeNudge holds: Close epic closes it,
+// Not yet puts the question off until another of its tasks changes. The
+// strip card and, in the lanes' epic mode, the epic's lane head carry it.
+export function EpicNudge({ epic, actions }) {
+  const [, bump] = useState(0);
+  if (!closeNudge(epic)) return null;
+  const busy = actions?.busy === `${epic.id}:close`;
+  return html`<div class="tb-epic-nudge" data-epic-nudge=${epic.id}><span>All its tasks are closed.</span>
+    ${actions && html`<${Button} size="sm" class="tb-epic-close" busy=${busy} disabled=${busy}
+      onClick=${() => actions.run(`${epic.id}:close`, 'Close epic', (api) => api.status(epic.id, 'done'))}>Close epic<//>`}
+    <${Button} size="sm" variant="ghost" class="tb-epic-later" title="Ask again when another of its tasks changes"
+      onClick=${() => { dashPrefs.setItem(NUDGE_PREF(epic.id), epic.close_suggested_at); bump((n) => n + 1); }}>Not yet<//>
+  </div>`;
+}
+
 // EpicStripCard is one open epic in the strip.
 function EpicStripCard({ epic, board, actions, onEdit }) {
-  const [, bump] = useState(0);
   const p = epic.progress || {};
   const on = board.filter.epic === epic.id;
-  const nudge = closeNudge(epic);
-  const busy = actions?.busy === `${epic.id}:close`;
   return html`<div class=${`ui-card tb-epic-card tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`} data-epic=${epic.id}>
     <div class="tb-epic-card-head">
       ${onEdit ? html`<button data-ui-exempt type="button" class="tb-epic-name" title=${`${epic.title}: opens the epic`} onClick=${() => onEdit(epic.id)}>${epic.title}</button>`
@@ -197,12 +209,7 @@ function EpicStripCard({ epic, board, actions, onEdit }) {
     </div>
     <${EpicProgress} epic=${epic} />
     <div class="tb-epic-counts">${progressParts(p).join(' · ')}</div>
-    ${nudge && html`<div class="tb-epic-nudge" data-epic-nudge=${epic.id}><span>All its tasks are closed.</span>
-      ${actions && html`<${Button} size="sm" class="tb-epic-close" busy=${busy} disabled=${busy}
-        onClick=${() => actions.run(`${epic.id}:close`, 'Close epic', (api) => api.status(epic.id, 'done'))}>Close epic<//>`}
-      <${Button} size="sm" variant="ghost" class="tb-epic-later" title="Ask again when another of its tasks changes"
-        onClick=${() => { dashPrefs.setItem(NUDGE_PREF(epic.id), epic.close_suggested_at); bump((n) => n + 1); }}>Not yet<//>
-    </div>`}
+    <${EpicNudge} epic=${epic} actions=${actions} />
   </div>`;
 }
 
