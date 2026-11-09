@@ -201,7 +201,7 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 			return fmt.Errorf("target federation protocol %d differs from current %d; linked peers may be incompatible", info.ProtocolVersion, s.status.ProtocolVersion)
 		}
 		if err := s.preflight(ctx, job, b.Name, t.staged, opts); err != nil {
-			return err
+			return refusedBeforeReplace(err)
 		}
 		targets = append(targets, t)
 	}

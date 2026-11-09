@@ -215,7 +215,9 @@ environment, and checks that it did:
   its command line (secret-looking flag values redacted), the names of its
   environment variables with a salted SHA-256 of each value (never the value
   itself), the launcher and the restart method. The snapshot stays in the
-  private job journal until the restarted daemon has compared it.
+  private job journal until the restarted daemon has compared it, and is
+  dropped when the job ends without a restart (`launch.state:
+  "not_restarted"`).
 - **Pre-flight check.** The new binary is asked whether it accepts the
   daemon's current command line, with a non-starting
   `<binary> --tclaude-check-args agentd serve <flags...>` that parses the

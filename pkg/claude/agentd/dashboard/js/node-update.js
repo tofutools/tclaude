@@ -47,7 +47,7 @@ export function launchView(launch) {
   if (launch.state === 'identical') return { ok: true, text: 'Kept flags and environment ✓' };
   if (launch.state === 'differs') return { ok: false, text: `${diffs.length} difference${diffs.length === 1 ? '' : 's'} in flags and environment after the restart`, details: diffs.map(describe) };
   if (launch.args_check === 'failed') return { ok: false, text: `The new binary rejects the daemon's flags: ${launch.args_check_detail || 'unknown reason'}` };
-  if (launch.state === 'unavailable') return { ok: true, text: 'Flags and environment were not compared' };
+  if (launch.state === 'unavailable' || launch.state === 'not_restarted') return null;
   return { ok: true, text: 'Flags and environment recorded; compared after the restart' };
 }
 

@@ -106,6 +106,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 		} else {
 			job.State = "failed"
 			job.Error = "daemon exited during update; rollback is available when a backup was made"
+			s.endLaunchCheck(&job)
 		}
 		if err := s.saveJob(job); err != nil {
 			return nil, err
@@ -204,10 +205,12 @@ func (s *Service) StartWith(req Request, actor string, authorize func() bool, op
 	opts.Force = req.Force
 	if s.hooks.Started != nil {
 		if err := s.hooks.Started(job); err != nil {
+			_ = os.Remove(s.launchPath(job.ID))
 			return Job{}, err
 		}
 	}
 	if err := s.saveJob(job); err != nil {
+		_ = os.Remove(s.launchPath(job.ID))
 		return Job{}, err
 	}
 	s.active = true
@@ -291,6 +294,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	if err != nil || !job.RestartRequired {
 		// Setup runs only from a new binary after a completed update.
 		job.PostSetup = nil
+		s.endLaunchCheck(&job)
 	}
 	if err != nil {
 		job.State = "failed"
@@ -324,6 +328,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 			job.State = "failed"
 			s.active = false
 			job.Error = "binaries updated but daemon restart failed: " + err.Error()
+			s.endLaunchCheck(&job)
 			_ = s.saveJob(job)
 			s.mu.Unlock()
 		}
@@ -598,6 +603,7 @@ func (s *Service) RestartFailed(err error) {
 		job := *s.status.Job
 		job.State = "failed"
 		job.Error = "daemon restart failed: " + err.Error()
+		s.endLaunchCheck(&job)
 		_ = s.saveJob(job)
 	}
 }

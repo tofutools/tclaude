@@ -239,7 +239,7 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 			return fmt.Errorf("target federation protocol %d differs from current %d; linked peers may be incompatible", info.ProtocolVersion, s.status.ProtocolVersion)
 		}
 		if err := s.preflight(ctx, job, b.Name, t.staged, opts); err != nil {
-			return err
+			return refusedBeforeReplace(err)
 		}
 		targets = append(targets, t)
 	}
@@ -746,4 +746,10 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 		s.checkArgs = f.CheckArgs
 	}
 	s.identify = func(string) error { return nil }
+}
+
+// refusedBeforeReplace words a pre-flight rejection found before anything
+// was replaced.
+func refusedBeforeReplace(err error) error {
+	return fmt.Errorf("%w; nothing was replaced (change the flags first, or pass --force)", err)
 }

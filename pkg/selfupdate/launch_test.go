@@ -134,6 +134,10 @@ func TestApplyRefusesABinaryThatRejectsTheDaemonFlags(t *testing.T) {
 	raw, err := os.ReadFile(bin)
 	require.NoError(t, err)
 	assert.Equal(t, "v1.0.0", string(raw), "nothing was replaced")
+	assert.Contains(t, job.Error, "nothing was replaced")
+	assert.Equal(t, "not_restarted", job.Launch.State, "no comparison follows a refused update")
+	_, err = os.Stat(s.launchPath(job.ID))
+	assert.True(t, os.IsNotExist(err), "the snapshot's hashes are dropped when no restart follows")
 
 	job, err = s.StartWith(Request{Action: "apply", Force: true}, "operator", func() bool { return true }, ApplyOptions{Launch: plan})
 	require.NoError(t, err)

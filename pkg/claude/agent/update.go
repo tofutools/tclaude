@@ -202,5 +202,7 @@ func printLaunchCheck(w io.Writer, c *selfupdate.LaunchCheck) {
 		}
 	case "unavailable":
 		fmt.Fprintln(w, "Flags and environment: not compared (the snapshot could not be read)")
+	case "not_restarted":
+		fmt.Fprintln(w, "Flags and environment: not compared (agentd was not restarted)")
 	}
 }

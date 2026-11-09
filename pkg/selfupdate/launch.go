@@ -114,6 +114,8 @@ var volatileEnv = map[string]bool{
 	"NOTIFY_SOCKET": true, "WATCHDOG_PID": true, "WATCHDOG_USEC": true, "SERVICE_RESULT": true,
 	"EXIT_CODE": true, "EXIT_STATUS": true, "MONITOR_SERVICE_RESULT": true, "TRIGGER_UNIT": true,
 	"_": true, "SHLVL": true, "OLDPWD": true,
+	// launchd: a fresh UUID for every launch of the job.
+	"LaunchInstanceID": true,
 }
 
 // ignoredEnv reports a key the comparison skips: volatile per-start values
@@ -306,15 +308,20 @@ func (s *Service) launchPath(id string) string {
 type argsChecker func(ctx context.Context, binary string, args []string) (string, error)
 
 // preflight verifies the binary at path, which replaces the daemon's
-// binary, accepts every command line the daemon may restart with. A
-// rejection fails the job unless forced.
+// binary, accepts every command line the daemon may restart with. It
+// returns the bare rejection (callers word what it means for them), nil when
+// it passed or was forced.
 func (s *Service) preflight(ctx context.Context, job *Job, name, path string, opts ApplyOptions) error {
 	plan := opts.Launch
 	if plan == nil || plan.Binary == "" || plan.Binary != name || job.Launch == nil {
 		return nil
 	}
+	// Copy on write: the saved status shares the pointer, and Status()
+	// reads it under s.mu.
+	launch := *job.Launch
+	defer func() { job.Launch = &launch }()
 	if len(plan.Args) == 0 {
-		job.Launch.ArgsCheck, job.Launch.ArgsCheckDetail = "skipped", "the daemon's command line is not `agentd serve`"
+		launch.ArgsCheck, launch.ArgsCheckDetail = "skipped", "the daemon's command line is not `agentd serve`"
 		return nil
 	}
 	result := "passed"
@@ -322,22 +329,33 @@ func (s *Service) preflight(ctx context.Context, job *Job, name, path string, op
 		mode, err := s.checkArgs(ctx, path, args)
 		if err != nil {
 			if opts.Force {
-				job.Launch.ArgsCheck, job.Launch.ArgsCheckDetail = "forced", err.Error()
-				job.Warnings = append(job.Warnings, "Forced past the flag check: "+err.Error())
+				launch.ArgsCheck, launch.ArgsCheckDetail = "forced", err.Error()
+				job.Warnings = append(append([]string{}, job.Warnings...), "Forced past the flag check: "+err.Error())
 				return nil
 			}
-			job.Launch.ArgsCheck, job.Launch.ArgsCheckDetail = "failed", err.Error()
-			return fmt.Errorf("the new %s would not start with the daemon's current flags: %s; nothing was replaced (change the flags first, or pass --force)", name, err)
+			launch.ArgsCheck, launch.ArgsCheckDetail = "failed", err.Error()
+			return fmt.Errorf("the new %s would not start with the daemon's current flags: %w", name, err)
 		}
 		if mode == "passed_help" {
 			result = mode
 		}
 	}
-	job.Launch.ArgsCheck = result
+	launch.ArgsCheck = result
 	if result == "passed_help" {
-		job.Launch.ArgsCheckDetail = "the new binary has no argument check; every flag is listed in its --help"
+		launch.ArgsCheckDetail = "the new binary has no argument check; every flag is listed in its --help"
 	}
 	return nil
+}
+
+// endLaunchCheck closes the launch report of a job that ends without a
+// restart: no comparison will follow, so the hashes are dropped now.
+func (s *Service) endLaunchCheck(job *Job) {
+	_ = os.Remove(s.launchPath(job.ID))
+	if job.Launch != nil && job.Launch.State == "recorded" {
+		l := *job.Launch
+		l.State = "not_restarted"
+		job.Launch = &l
+	}
 }
 
 // checkLaunchArgs asks binary whether it accepts args without starting
