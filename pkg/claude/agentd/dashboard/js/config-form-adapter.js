@@ -9,6 +9,8 @@ import { dashboardState } from './snapshot-store.js';
 import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
+import { shellConfirm } from './shell-state.js';
+import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
 const fallbackLists = new Map();
@@ -17,13 +19,17 @@ let configDependencies = {
   isCyclingTabs: () => false,
   fetchImpl: (...args) => globalThis.fetch(...args),
   confirmDiff: async () => false,
+  confirm: (options) => shellConfirm(options),
   lists: {
     get: id => fallbackLists.get(id) || [],
     set: (id, values) => fallbackLists.set(id, values),
   },
 };
 export function configureConfigLifecycle(callbacks = {}) { configLifecycle = callbacks; }
-export function configureConfigAdapter(dependencies = {}) { configDependencies = { ...configDependencies, ...dependencies }; }
+export function configureConfigAdapter(dependencies = {}) {
+  configDependencies = { ...configDependencies, ...dependencies };
+  selfUpdateDeps.fetchImpl = configDependencies.fetchImpl;
+}
 const latestSnapshot = () => dashboardState.snapshot.value || {};
 
 // ===================================================================
@@ -825,7 +831,197 @@ function populateConfigForm(cfg) {
   $('#cfg-remote-port').value = rb.port;
   syncCfgRemoteStatus();
 
+  populateSelfUpdate(cfg.updates?.self || {});
+
   syncCfgEnables();
+}
+
+// ===================================================================
+// Config › Updates — updates.self. The inputs load and save like every other
+// field; selfUpdateDraft mirrors the ones the panel's notes depend on, and
+// the daemon's install detection (GET /api/node/update/settings) is read
+// alongside each config load.
+// ===================================================================
+let selfUpdateAcceptedMethod = '';
+let selfUpdateLoadedMethod = '';
+let selfUpdateLoadedFlags = [];
+let installDirTimer = null;
+
+// setSelfUpdateSelect shows a value this build does not list as itself
+// ("(current value)") instead of falling back to the first option, so a save
+// keeps it. Such an option from an earlier load is removed first.
+function setSelfUpdateSelect(select, value) {
+  for (const stale of select.querySelectorAll('option[data-cfg-current]')) stale.remove();
+  setSelectValue(select, value);
+  if (value && select.value !== value) {
+    const option = makeOption(value, `${value} (current value)`);
+    option.setAttribute('data-cfg-current', '');
+    select.append(option);
+    setSelectValue(select, value);
+  }
+}
+
+function setupFlagInputs() { return $$('[data-cfg-setup-flag]'); }
+
+function syncSelfUpdateDraft() {
+  selfUpdateDraft.value = {
+    method: $('#cfg-selfupdate-method').value,
+    installDir: $('#cfg-selfupdate-install-dir').value.trim(),
+    flags: setupFlagInputs().filter((input) => input.checked).map((input) => input.getAttribute('data-cfg-setup-flag')),
+    harness: $('#cfg-selfupdate-setup-harness').value,
+    setupEnabled: $('#cfg-selfupdate-setup-enabled').checked,
+    frequency: $('#cfg-selfupdate-frequency').value,
+    ack: $('#cfg-selfupdate-pm-ack').checked,
+  };
+}
+
+function populateSelfUpdate(su) {
+  const sched = su.schedule || {};
+  const setup = su.post_update_setup || {};
+  const method = su.method || '';
+  setSelfUpdateSelect($('#cfg-selfupdate-method'), method);
+  selfUpdateAcceptedMethod = method;
+  selfUpdateLoadedMethod = method;
+  $('#cfg-selfupdate-checkout-path').value = su.source_checkout?.path || '';
+  $('#cfg-selfupdate-checkout-ref').value = su.source_checkout?.ref || '';
+  $('#cfg-selfupdate-custom-command').value = su.custom?.command || '';
+  $('#cfg-selfupdate-custom-timeout').value = su.custom?.timeout_seconds ? String(su.custom.timeout_seconds) : '';
+  $('#cfg-selfupdate-install-dir').value = su.install_dir || '';
+  $('#cfg-selfupdate-pm-ack').checked = !!su.package_manager_ack;
+  setSelfUpdateSelect($('#cfg-selfupdate-frequency'), sched.frequency || SCHEDULE_DEFAULTS.frequency);
+  setSelfUpdateSelect($('#cfg-selfupdate-weekday'), sched.weekday || SCHEDULE_DEFAULTS.weekday);
+  $('#cfg-selfupdate-window-start').value = sched.window_start || SCHEDULE_DEFAULTS.window_start;
+  $('#cfg-selfupdate-window-end').value = sched.window_end || SCHEDULE_DEFAULTS.window_end;
+  $('#cfg-selfupdate-defer').checked = !!sched.defer_while_agents_working;
+  $('#cfg-selfupdate-on-start').checked = !!su.update_on_start;
+  $('#cfg-selfupdate-on-start-svc').checked = !!su.update_on_start;
+  $('#cfg-selfupdate-setup-enabled').checked = !!setup.enabled;
+  selfUpdateLoadedFlags = Array.isArray(setup.flags) ? [...setup.flags] : [];
+  const flags = new Set(selfUpdateLoadedFlags);
+  for (const input of setupFlagInputs()) input.checked = flags.has(input.getAttribute('data-cfg-setup-flag'));
+  setSelfUpdateSelect($('#cfg-selfupdate-setup-harness'), setup.harness || '');
+  syncSelfUpdateDraft();
+}
+
+// setOrDefault writes key unless the value is blank, or is the default and
+// the file did not spell the key out — an untouched form adds no keys.
+function setOrDefault(obj, key, value, fallback) {
+  if (value === '' || value === undefined || (value === fallback && !Object.hasOwn(obj, key))) delete obj[key];
+  else obj[key] = value;
+}
+function childBlock(parent, key) {
+  return (parent[key] && typeof parent[key] === 'object') ? parent[key] : {};
+}
+function putChildBlock(parent, key, value) {
+  if (Object.keys(value).length) parent[key] = value; else delete parent[key];
+}
+
+// mergeSetupFlags keeps the file's flag list as it was — order, and flags
+// without a checkbox here — dropping only flags unticked here and appending
+// newly ticked ones, so an untouched panel leaves the list byte-identical.
+function mergeSetupFlags(loaded, checked) {
+  const boxes = new Set(setupFlagInputs().map((input) => input.getAttribute('data-cfg-setup-flag')));
+  const ticked = new Set(checked);
+  const kept = loaded.filter((flag) => !boxes.has(flag) || ticked.has(flag));
+  return [...kept, ...checked.filter((flag) => !loaded.includes(flag))];
+}
+
+// assembleSelfUpdate writes the keys the Updates panel owns onto
+// updates.self, keeping keys it has no control for, and drops blocks left
+// empty. It refuses a tclaude-driven method next to a package-managed binary
+// until the operator has acknowledged that.
+function assembleSelfUpdate(cfg) {
+  syncSelfUpdateDraft();
+  const draft = selfUpdateDraft.value;
+  // Checked only for a method picked in this edit, so a later change on the
+  // install side never blocks saving an unrelated panel.
+  if (draft.method !== selfUpdateLoadedMethod && needsPackageManagerAck(draft, selfUpdateMeta.value) && !draft.ack) {
+    const pm = managerName(selfUpdateMeta.value.detected.managed_by);
+    throw new Error(`Updates: ${pm} still manages tclaude here. Tick “I understand the package manager still manages tclaude here”, or pick another method.`);
+  }
+  const updates = childBlock(cfg, 'updates');
+  const su = childBlock(updates, 'self');
+  if (draft.method) su.method = draft.method; else delete su.method;
+
+  const sched = childBlock(su, 'schedule');
+  setOrDefault(sched, 'frequency', draft.frequency, SCHEDULE_DEFAULTS.frequency);
+  setOrDefault(sched, 'weekday', $('#cfg-selfupdate-weekday').value, SCHEDULE_DEFAULTS.weekday);
+  setOrDefault(sched, 'window_start', $('#cfg-selfupdate-window-start').value, SCHEDULE_DEFAULTS.window_start);
+  setOrDefault(sched, 'window_end', $('#cfg-selfupdate-window-end').value, SCHEDULE_DEFAULTS.window_end);
+  if ($('#cfg-selfupdate-defer').checked) sched.defer_while_agents_working = true; else delete sched.defer_while_agents_working;
+  putChildBlock(su, 'schedule', sched);
+
+  if ($('#cfg-selfupdate-on-start').checked) su.update_on_start = true; else delete su.update_on_start;
+
+  const setup = childBlock(su, 'post_update_setup');
+  if (draft.setupEnabled) setup.enabled = true; else delete setup.enabled;
+  const flags = mergeSetupFlags(selfUpdateLoadedFlags, draft.flags);
+  if (flags.length) setup.flags = flags; else delete setup.flags;
+  if (draft.harness) setup.harness = draft.harness; else delete setup.harness;
+  putChildBlock(su, 'post_update_setup', setup);
+
+  const checkout = childBlock(su, 'source_checkout');
+  setOrDefault(checkout, 'path', $('#cfg-selfupdate-checkout-path').value.trim());
+  setOrDefault(checkout, 'ref', $('#cfg-selfupdate-checkout-ref').value.trim());
+  putChildBlock(su, 'source_checkout', checkout);
+
+  const custom = childBlock(su, 'custom');
+  setOrDefault(custom, 'command', $('#cfg-selfupdate-custom-command').value.trim());
+  const timeoutRaw = $('#cfg-selfupdate-custom-timeout').value.trim();
+  const timeout = Number(timeoutRaw);
+  if (timeoutRaw !== '' && !Number.isSafeInteger(timeout)) throw new Error('Updates: the update command timeout must be a whole number of seconds');
+  setOrDefault(custom, 'timeout_seconds', timeoutRaw === '' ? '' : timeout, CUSTOM_TIMEOUT_DEFAULT);
+  putChildBlock(su, 'custom', custom);
+
+  setOrDefault(su, 'install_dir', draft.installDir);
+  if (draft.ack) su.package_manager_ack = true; else delete su.package_manager_ack;
+
+  putChildBlock(updates, 'self', su);
+  putChildBlock(cfg, 'updates', updates);
+}
+
+// refreshSelfUpdateMeta re-reads the install detection; with the install dir
+// field filled it also asks whether that dir is shadowed on PATH.
+function refreshSelfUpdateMeta() {
+  const installDir = $('#cfg-selfupdate-install-dir')?.value.trim() || '';
+  return loadSelfUpdateMeta(configDependencies.fetchImpl, { installDir });
+}
+
+// confirmSelfUpdateMethod asks before opting in to a package-manager method;
+// declining puts the previous choice back.
+async function confirmSelfUpdateMethod(select) {
+  const id = select.value;
+  const info = methodInfo(id);
+  if (!info?.package_manager || id === selfUpdateAcceptedMethod) {
+    selfUpdateAcceptedMethod = id;
+    return;
+  }
+  const ok = await configDependencies.confirm({
+    title: `${info.label} to update itself?`,
+    body: `tclaude will run ${info.command ? `“${info.command}”` : 'the package manager'} for scheduled, start-up and manual updates, then check the new version. Pick “Notify me” to run it yourself instead. Nothing changes until you save.`,
+    okLabel: info.label,
+  });
+  if (ok) selfUpdateAcceptedMethod = id;
+  else setSelectValue(select, selfUpdateAcceptedMethod);
+  syncSelfUpdateDraft();
+}
+
+// ON_START_TOGGLES are the one updates.self.update_on_start setting, shown
+// in both Config › Updates and Config › Service; they mirror each other.
+const ON_START_TOGGLES = ['cfg-selfupdate-on-start', 'cfg-selfupdate-on-start-svc'];
+
+function handleSelfUpdateEvent(event) {
+  const target = event.target;
+  if (ON_START_TOGGLES.includes(target.id)) {
+    for (const id of ON_START_TOGGLES) if (id !== target.id) $('#' + id).checked = target.checked;
+  }
+  if (!target.closest?.('[data-cfg-panel="updates"]')) return;
+  syncSelfUpdateDraft();
+  if (event.type === 'change' && target.id === 'cfg-selfupdate-method') void confirmSelfUpdateMethod(target);
+  if (target.id === 'cfg-selfupdate-install-dir' && event.type === 'input') {
+    globalThis.clearTimeout(installDirTimer);
+    installDirTimer = globalThis.setTimeout(() => { void refreshSelfUpdateMeta(); }, 400);
+  }
 }
 
 // assembleConfig builds the config object to submit. It starts from a
@@ -1429,6 +1625,8 @@ function assembleConfig() {
   if (raBind) raCfg.bind = raBind; else delete raCfg.bind;
   if (Object.keys(raCfg).length) cfg.remote_access = raCfg; else delete cfg.remote_access;
 
+  assembleSelfUpdate(cfg);
+
   return cfg;
 }
 
@@ -1702,6 +1900,7 @@ async function saveConfig() {
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = false; // the file is canonical after a save
     populateConfigForm(configObj);
+    invalidateSelfUpdateMeta();
     // The saved file is canonical now — any load-time notice (a
     // malformed file, or unknown keys that this save dropped) is
     // stale, so clear it.
@@ -1753,6 +1952,7 @@ function resetCfgSidePanel() {
 function handleConfigEvent(event) {
   const target = event.target;
   const id = target.id;
+  if (event.type === 'input' || event.type === 'change') handleSelfUpdateEvent(event);
   if (event.type === 'input') {
     if (id === 'cfg-filter') applyConfigFilter();
     if (target.closest?.('#cfg-notif-transitions')) syncCfgNotifyTypes();
