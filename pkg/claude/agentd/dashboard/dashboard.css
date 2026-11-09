@@ -9629,6 +9629,19 @@ label.cfg-label { cursor: pointer; }
 .cfg-remote-status { font-size: 12px; color: #7d8590; }
 .cfg-remote-status.ok { color: #3fb950; }
 .cfg-remote-status.warn { color: #e3b341; }
+
+/* Config › Service: the launcher and autostart readout (not config.json). */
+.cfg-svc { display: flex; flex-direction: column; gap: 14px; }
+.cfg-svc-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; font-size: 12.5px; padding: 6px 0; }
+.cfg-svc-k { color: var(--ui-muted-text); }
+.cfg-svc-v { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.cfg-svc-argv { overflow-wrap: anywhere; }
+.cfg-svc-env { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.cfg-svc-args { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 560px; }
+.cfg-svc-args input[type=text] { width: 100%; }
+.cfg-svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cfg-svc-cmd { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cfg-svc-warn { color: var(--ui-warn-text); font-size: 12px; line-height: 1.5; }
 /* Remote-access cert management (JOH-278). */
 .ra-msg {
   border: 1px solid #2a623d; background: #0f2417; border-radius: 6px;
