@@ -37,6 +37,7 @@ var forbiddenGenericCodeSites = map[string]int{
 	"harness_operations.go":         2,
 	"node_run.go":                   2,
 	"node_update.go":                1,
+	"node_update_settings.go":       2,
 	"node_update_scripts.go":        1,
 	"managed_instructions.go":       2,
 	"launch_identity.go":            3,
