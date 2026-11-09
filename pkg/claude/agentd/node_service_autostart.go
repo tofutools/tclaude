@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/launcher"
@@ -215,6 +216,14 @@ func serveNodeServiceAutostart(w http.ResponseWriter, r *http.Request, actor, ac
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
+		}
+		if access != serviceAccessFull {
+			// A restricted peer re-installs with the flags agentd runs with;
+			// it does not replace boot flags the operator chose for the unit.
+			if cur := a.Status(r.Context()); cur.Installed && cur.Managed && !slices.Equal(cur.Argv, launcher.RedactArgv(spec.Argv)) {
+				writeError(w, http.StatusForbidden, "local_only_setting", "the autostart unit runs with other flags than agentd does now; only the node itself or an unrestricted peer may replace them")
+				return
+			}
 		}
 		if err := a.Install(r.Context(), spec); err != nil {
 			writeAutostartError(w, err)

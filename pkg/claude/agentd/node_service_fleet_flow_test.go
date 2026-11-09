@@ -69,6 +69,10 @@ func TestNodeServiceFleetGrantsReadManageAndKeepServeFlagsLocal(t *testing.T) {
 	require.Equal(t, "manage", st.Access)
 	require.True(t, st.Autostart.Installed)
 	require.NotContains(t, body, "/usr/bin", "the unit's environment is withheld too")
+	// HEAD is a read, never the restart.
+	code, _, _ = call("HEAD", "/api/node/service", nil)
+	require.Equal(t, 200, code)
+	require.Empty(t, restart.called(), "HEAD must not restart")
 	code, _, body = call("POST", "/api/node/service/restart", map[string]any{})
 	require.Equal(t, 202, code, body)
 	require.Eventually(t, func() bool { return len(restart.called()) == 1 }, 5*time.Second, 5*time.Millisecond, "systemctl restart never ran")
@@ -80,8 +84,18 @@ func TestNodeServiceFleetGrantsReadManageAndKeepServeFlagsLocal(t *testing.T) {
 	require.Equal(t, "full", st.Access)
 	require.Contains(t, st.Launcher.Env, launcher.EnvVar{Key: "PATH", Value: "/usr/bin"})
 	require.Empty(t, st.Redacted)
-	code, _, body = call("POST", "/api/node/service/autostart", map[string]any{"action": "install", "serve_args": []string{"--no-tray"}})
+	code, _, body = call("POST", "/api/node/service/autostart", map[string]any{"action": "install", "serve_args": []string{"--dashboard-port", "7878"}})
 	require.Equal(t, 200, code, body)
+
+	// Back under restricted trust, the peer cannot replace those boot flags
+	// with the running ones, but may still remove the unit.
+	setFedTrustLevel(t, fh, "restricted")
+	code, _, body = call("POST", "/api/node/service/autostart", map[string]any{"action": "install"})
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, "local_only_setting")
+	code, st, body = call("POST", "/api/node/service/autostart", map[string]any{"action": "uninstall"})
+	require.Equal(t, 200, code, body)
+	require.False(t, st.Autostart.Installed)
 
 	rec := fedHuman(t, fh.f, "GET", "/v1/federation/audit", nil)
 	require.Equal(t, 200, rec.Code)

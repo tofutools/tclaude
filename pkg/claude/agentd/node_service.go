@@ -273,8 +273,14 @@ func serviceStatusFor(st NodeService, access string) NodeService {
 
 func serveNodeService(w http.ResponseWriter, r *http.Request, actor, access string) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
 		writeJSON(w, http.StatusOK, serviceStatusFor(nodeServiceStatus(r.URL.Query().Get("refresh") == "1"), access))
+		return
+	case http.MethodPost:
+	default:
+		// The GET pattern also matches HEAD; nothing but POST acts.
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "use GET to read and POST to act")
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/autostart") {
