@@ -68,7 +68,12 @@ async function mountConfig(t, config, { detected = { method: 'release', recogniz
   const deadline = Date.now() + 5000;
   while (!mounted.container.querySelector('#cfg-selfupdate-detected') && Date.now() < deadline) await settle();
   assert.ok(mounted.container.querySelector('#cfg-selfupdate-detected'), 'the install detection loads while the panel is open');
-  return { harness, adapter, root: mounted.container, calls, confirms, settle, unmount: mounted.unmount };
+  const load = async (next) => {
+    holder.raw = JSON.stringify(next);
+    await adapter.loadConfigTab();
+    await settle();
+  };
+  return { harness, adapter, root: mounted.container, calls, confirms, settle, load, unmount: mounted.unmount };
 }
 
 test('Updates loads every updates.self key and saves it back unchanged', async (t) => {
@@ -201,6 +206,52 @@ test('typing an install dir asks the daemon whether it is shadowed', async (t) =
       await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     }
     assert.ok(calls.includes('/api/node/update/settings?install_dir=~%2Fbin'), `calls: ${calls.join(', ')}`);
+  } finally {
+    await unmount();
+  }
+});
+
+test('a failed install detection says so and keeps the method picker usable', async (t) => {
+  const { harness, adapter, root, unmount } = await mountConfig(t, {}, {
+    detected: null, settings: { detection_error: 'os.Executable: no such file', warnings: ['tclaude-agentd is not on PATH'] },
+  });
+  try {
+    const text = root.querySelector('#cfg-selfupdate-detected').textContent;
+    assert.match(text, /Could not tell how tclaude was installed: os.Executable: no such file/);
+    assert.match(text, /tclaude-agentd is not on PATH/);
+    await selectValue(harness, root.querySelector('#cfg-selfupdate-method'), 'release');
+    assert.deepEqual(adapter.assembleConfig().updates, { self: { method: 'release' } }, 'no acknowledgement is asked for without a detected package manager');
+  } finally {
+    await unmount();
+  }
+});
+
+test('setup flags keep the file order and flags without a checkbox', async (t) => {
+  const flags = ['all-harnesses', 'some-future-flag', 'install-agent-skills'];
+  const { harness, adapter, root, unmount } = await mountConfig(t, { updates: { self: { post_update_setup: { enabled: true, flags } } } });
+  try {
+    assert.deepEqual(adapter.assembleConfig().updates.self.post_update_setup.flags, flags, 'an untouched list is saved as it was');
+    const box = (flag) => root.querySelector(`#cfg-selfupdate-flag-${flag}`);
+    box('all-harnesses').checked = false;
+    await harness.act(() => harness.fireEvent(box('all-harnesses'), 'change'));
+    box('absolute-paths').checked = true;
+    await harness.act(() => harness.fireEvent(box('absolute-paths'), 'change'));
+    assert.deepEqual(adapter.assembleConfig().updates.self.post_update_setup.flags,
+      ['some-future-flag', 'install-agent-skills', 'absolute-paths'], 'unticked flags go, new ones are appended');
+  } finally {
+    await unmount();
+  }
+});
+
+test('a schedule or harness value this build does not list is kept on save', async (t) => {
+  const self = { schedule: { frequency: 'hourly', weekday: 'funday' }, post_update_setup: { harness: 'future-harness' } };
+  const { adapter, root, load, unmount } = await mountConfig(t, { updates: { self } });
+  try {
+    assert.equal(root.querySelector('#cfg-selfupdate-frequency').value, 'hourly');
+    assert.deepEqual(adapter.assembleConfig().updates.self, self);
+    await load({});
+    assert.equal(root.querySelectorAll('#cfg-selfupdate-frequency option[data-cfg-current]').length, 0, 'a reload drops the stale option');
+    assert.equal(adapter.assembleConfig().updates, undefined);
   } finally {
     await unmount();
   }

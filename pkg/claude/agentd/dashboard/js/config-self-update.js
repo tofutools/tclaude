@@ -158,6 +158,11 @@ export function SelfUpdateDetected() {
   if (meta.error) return html`<span class="muted" role="alert">Could not read the update settings: ${meta.error}</span>`;
   const d = meta.detected || {};
   const label = methodInfo(d.method, meta)?.label || d.method || 'unknown';
+  const warnings = (meta.warnings || []).map((w) => html`<div key=${w} class="cfg-su-warn">${w}</div>`);
+  if (!meta.detected) {
+    return html`<div class="cfg-su-detected" id="cfg-selfupdate-detected">
+      <span class="muted">Could not tell how tclaude was installed${meta.detection_error ? `: ${meta.detection_error}` : '.'}</span>${warnings}</div>`;
+  }
   return html`<div class="cfg-su-detected" id="cfg-selfupdate-detected">
     ${d.managed_by
       ? html`<div><strong>Managed by ${managerName(d.managed_by)}.</strong> ${d.reason || ''}</div>
@@ -172,6 +177,7 @@ export function SelfUpdateDetected() {
           ${b.evidence ? html`<div class="muted">${b.evidence}</div>` : ''}</div>`)}
         ${d.build_info && html`<div class="muted">Build: ${d.build_info}</div>`}
       </div></details>`}
+    ${warnings}
   </div>`;
 }
 

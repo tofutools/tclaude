@@ -844,7 +844,22 @@ function populateConfigForm(cfg) {
 // ===================================================================
 let selfUpdateAcceptedMethod = '';
 let selfUpdateLoadedMethod = '';
+let selfUpdateLoadedFlags = [];
 let installDirTimer = null;
+
+// setSelfUpdateSelect shows a value this build does not list as itself
+// ("(current value)") instead of falling back to the first option, so a save
+// keeps it. Such an option from an earlier load is removed first.
+function setSelfUpdateSelect(select, value) {
+  for (const stale of select.querySelectorAll('option[data-cfg-current]')) stale.remove();
+  setSelectValue(select, value);
+  if (value && select.value !== value) {
+    const option = makeOption(value, `${value} (current value)`);
+    option.setAttribute('data-cfg-current', '');
+    select.append(option);
+    setSelectValue(select, value);
+  }
+}
 
 function setupFlagInputs() { return $$('[data-cfg-setup-flag]'); }
 
@@ -864,13 +879,7 @@ function populateSelfUpdate(su) {
   const sched = su.schedule || {};
   const setup = su.post_update_setup || {};
   const method = su.method || '';
-  const methodSelect = $('#cfg-selfupdate-method');
-  // An id this build does not list still shows (and saves) as itself.
-  setSelectValue(methodSelect, method);
-  if (method && methodSelect.value !== method) {
-    methodSelect.append(makeOption(method, `${method} (current value)`));
-    setSelectValue(methodSelect, method);
-  }
+  setSelfUpdateSelect($('#cfg-selfupdate-method'), method);
   selfUpdateAcceptedMethod = method;
   selfUpdateLoadedMethod = method;
   $('#cfg-selfupdate-checkout-path').value = su.source_checkout?.path || '';
@@ -879,16 +888,17 @@ function populateSelfUpdate(su) {
   $('#cfg-selfupdate-custom-timeout').value = su.custom?.timeout_seconds ? String(su.custom.timeout_seconds) : '';
   $('#cfg-selfupdate-install-dir').value = su.install_dir || '';
   $('#cfg-selfupdate-pm-ack').checked = !!su.package_manager_ack;
-  setSelectValue($('#cfg-selfupdate-frequency'), sched.frequency || SCHEDULE_DEFAULTS.frequency);
-  setSelectValue($('#cfg-selfupdate-weekday'), sched.weekday || SCHEDULE_DEFAULTS.weekday);
+  setSelfUpdateSelect($('#cfg-selfupdate-frequency'), sched.frequency || SCHEDULE_DEFAULTS.frequency);
+  setSelfUpdateSelect($('#cfg-selfupdate-weekday'), sched.weekday || SCHEDULE_DEFAULTS.weekday);
   $('#cfg-selfupdate-window-start').value = sched.window_start || SCHEDULE_DEFAULTS.window_start;
   $('#cfg-selfupdate-window-end').value = sched.window_end || SCHEDULE_DEFAULTS.window_end;
   $('#cfg-selfupdate-defer').checked = !!sched.defer_while_agents_working;
   $('#cfg-selfupdate-on-start').checked = !!su.update_on_start;
   $('#cfg-selfupdate-setup-enabled').checked = !!setup.enabled;
-  const flags = new Set(setup.flags || []);
+  selfUpdateLoadedFlags = Array.isArray(setup.flags) ? [...setup.flags] : [];
+  const flags = new Set(selfUpdateLoadedFlags);
   for (const input of setupFlagInputs()) input.checked = flags.has(input.getAttribute('data-cfg-setup-flag'));
-  setSelectValue($('#cfg-selfupdate-setup-harness'), setup.harness || '');
+  setSelfUpdateSelect($('#cfg-selfupdate-setup-harness'), setup.harness || '');
   syncSelfUpdateDraft();
 }
 
@@ -903,6 +913,16 @@ function childBlock(parent, key) {
 }
 function putChildBlock(parent, key, value) {
   if (Object.keys(value).length) parent[key] = value; else delete parent[key];
+}
+
+// mergeSetupFlags keeps the file's flag list as it was — order, and flags
+// without a checkbox here — dropping only flags unticked here and appending
+// newly ticked ones, so an untouched panel leaves the list byte-identical.
+function mergeSetupFlags(loaded, checked) {
+  const boxes = new Set(setupFlagInputs().map((input) => input.getAttribute('data-cfg-setup-flag')));
+  const ticked = new Set(checked);
+  const kept = loaded.filter((flag) => !boxes.has(flag) || ticked.has(flag));
+  return [...kept, ...checked.filter((flag) => !loaded.includes(flag))];
 }
 
 // assembleSelfUpdate writes the keys the Updates panel owns onto
@@ -934,7 +954,8 @@ function assembleSelfUpdate(cfg) {
 
   const setup = childBlock(su, 'post_update_setup');
   if (draft.setupEnabled) setup.enabled = true; else delete setup.enabled;
-  if (draft.flags.length) setup.flags = draft.flags; else delete setup.flags;
+  const flags = mergeSetupFlags(selfUpdateLoadedFlags, draft.flags);
+  if (flags.length) setup.flags = flags; else delete setup.flags;
   if (draft.harness) setup.harness = draft.harness; else delete setup.harness;
   putChildBlock(su, 'post_update_setup', setup);
 
