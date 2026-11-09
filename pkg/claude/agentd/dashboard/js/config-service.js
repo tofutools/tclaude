@@ -13,6 +13,7 @@ import { Button } from './ui-components.js';
 import { RequestError, requestJSON } from './request-json.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { writeClipboard } from './insecure-origin.js';
+import { LaunchProfile } from './config-service-launch.js';
 
 const html = htm.bind(h);
 
@@ -93,6 +94,13 @@ export function ServicePanel({
   const [argsText, setArgsText] = useState('');
   const [keepEnv, setKeepEnv] = useState(true);
   const [actionError, setActionError] = useState('');
+  // launch is the launch profile's view (config-service-launch.js): while a
+  // profile is set it decides the unit's flags and environment, so install
+  // sends neither.
+  const [launch, setLaunch] = useState(null);
+  // launchReload reads the launch profile again after the daemon or its unit
+  // changed here, so its comparison is of what runs now.
+  const [launchReload, setLaunchReload] = useState(0);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -126,6 +134,7 @@ export function ServicePanel({
         if (!s?.restart_pending) {
           setService(s);
           setRestarting(false);
+          setLaunchReload((n) => n + 1);
           toast('agentd is back');
           return;
         }
@@ -163,11 +172,13 @@ export function ServicePanel({
 
   const autostart = async (action) => {
     const a = service.autostart;
-    const body = action === 'install' ? { action, keep_env: keepEnv } : { action };
-    if (action === 'install' && argsMode === 'custom') body.serve_args = serveArgsOf(argsText);
+    const byProfile = !!launch?.profile;
+    const body = action === 'install' && !byProfile ? { action, keep_env: keepEnv } : { action };
+    if (action === 'install' && !byProfile && argsMode === 'custom') body.serve_args = serveArgsOf(argsText);
     const ok = await confirm(action === 'install' ? {
       title: a.installed ? 'Rewrite the autostart unit?' : 'Start agentd on login?',
-      body: `tclaude writes ${a.path || 'the unit'}${argsMode === 'custom' ? ` with: agentd serve ${body.serve_args.join(' ')}` : ', keeping the flags agentd runs with now'}${keepEnv ? ' and its environment' : ''}. It takes effect at the next login or boot; nothing restarts now.`,
+      body: `tclaude writes ${a.path || 'the unit'}${byProfile ? ' with the launch profile\'s flags and environment'
+        : `${argsMode === 'custom' ? ` with: agentd serve ${body.serve_args.join(' ')}` : ', keeping the flags agentd runs with now'}${keepEnv ? ' and its environment' : ''}`}. It takes effect at the next login or boot; nothing restarts now.`,
       okLabel: a.installed ? 'Rewrite' : 'Install',
     } : {
       title: 'Stop starting agentd on login?',
@@ -181,11 +192,13 @@ export function ServicePanel({
       const s = await requestJSON(`${SERVICE_URL}/autostart`, { method: 'POST', body, fetchImpl });
       if (!alive.current) return;
       setService(s);
+      setLaunchReload((n) => n + 1);
       toast(action === 'install' ? 'Autostart installed' : 'Autostart removed');
     } catch (e) {
       if (!alive.current) return;
       setActionError(e?.code === 'unit_not_managed'
         ? `${a.path || 'That unit'} was not written by tclaude, so tclaude leaves it alone.`
+        : e?.code === 'launch_profile_set' ? 'A launch profile is set: it decides the unit\'s flags and environment. Edit it above instead.'
         : errorText(e));
     } finally {
       if (alive.current) setBusy('');
@@ -205,7 +218,8 @@ export function ServicePanel({
   const observed = observedArgv(l);
   const configured = a?.installed ? a.argv : null;
   const differs = !!(configured && observed.length && !sameFlags(configured, observed));
-  const customEmpty = argsMode === 'custom' && serveArgsOf(argsText).length === 0;
+  const byProfile = !!launch?.profile;
+  const customEmpty = !byProfile && argsMode === 'custom' && serveArgsOf(argsText).length === 0;
   const any = busy || restarting;
   return html`<div class="cfg-svc" id="cfg-service">
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launcher-h">
@@ -224,6 +238,11 @@ export function ServicePanel({
       ${service.restart_pending && html`<div class="cfg-svc-warn" id="cfg-svc-restart-pending">A restart (${service.restart_pending}) is pending.</div>`}
     </div>
 
+    <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launch-h">
+      <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launch-h">Launch profile</h3>
+      <${LaunchProfile} open=${open} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
+    </div>
+
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-boot-h">
       <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-boot-h">Start on login</h3>
       ${!a ? html`<p class="cfg-group-lede" id="cfg-svc-autostart-absent">This daemon cannot set up autostart yet. CLI: <code>tclaude service status</code>.</p>`
@@ -237,14 +256,15 @@ export function ServicePanel({
           ${configured && html`<${Row} label="Unit runs"><${Argv} id="cfg-svc-configured" argv=${configured} />
             ${differs && html`<div class="cfg-svc-warn" id="cfg-svc-differs">Differs from what agentd runs with now.</div>`}<//>`}
           ${configured && html`<${Row} label="Unit environment"><${EnvList} env=${a.env} />${a.env_file ? html` <span class="muted">· from <code>${a.env_file}</code></span>` : ''}<//>`}
+          ${(!a.installed || a.managed) && byProfile && html`<${Row} label="Flags and env"><span class="muted" id="cfg-svc-by-profile">from the launch profile above</span><//>`}
           ${(!a.installed || a.managed) && html`
-            <${Row} label="Serve flags"><span class="cfg-svc-args">
+            ${!byProfile && html`<${Row} label="Serve flags"><span class="cfg-svc-args">
               <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="keep" checked=${argsMode === 'keep'} onChange=${() => setArgsMode('keep')} /> keep the flags agentd runs with now</label>
               <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="custom" checked=${argsMode === 'custom'} onChange=${() => setArgsMode('custom')} /> use these:</label>
               <input type="text" class="ui-input ui-sm" id="cfg-svc-serve-args" spellcheck="false" autocomplete="off" aria-label="agentd serve flags"
                 placeholder="--no-tray --dashboard-port 7878" disabled=${argsMode !== 'custom'} value=${argsText} onInput=${(e) => setArgsText(e.currentTarget.value)} />
             </span><//>
-            <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="cfg-svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>
+            <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="cfg-svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>`}
             <${Row} label=""><span class="cfg-svc-actions">
               <${Button} variant="primary" size="sm" id="cfg-svc-install" disabled=${!!any || customEmpty} title=${customEmpty ? 'Type the serve flags, or keep the ones agentd runs with now' : undefined} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>
               ${a.installed && html`<${Button} variant="danger" size="sm" id="cfg-svc-uninstall" disabled=${!!any} busy=${busy === 'uninstall'} onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`}
