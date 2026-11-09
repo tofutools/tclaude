@@ -136,7 +136,7 @@ export function EpicChip({ task }) {
   const epic = task?.parent_id && board?.byId.get(task.parent_id);
   if (!epic) return null;
   const on = board.filter.epic === epic.id;
-  return html`<button data-ui-exempt type="button" class=${`tb-epic-chip tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`}
+  return html`<button data-ui-exempt type="button" class=${`ui-tag tb-epic-chip tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`}
     data-epic-chip=${epic.id} title=${on ? `Epic: ${epic.title}. Click to show every task again` : `Epic: ${epic.title}. Click to show only its tasks`}
     onClick=${(event) => { event.stopPropagation(); board.setFilter({ epic: on ? '' : epic.id }); }}>${epic.title}</button>`;
 }
@@ -187,7 +187,7 @@ function EpicStripCard({ epic, board, actions, onEdit }) {
   const on = board.filter.epic === epic.id;
   const nudge = closeNudge(epic);
   const busy = actions?.busy === `${epic.id}:close`;
-  return html`<div class=${`tb-epic-card tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`} data-epic=${epic.id}>
+  return html`<div class=${`ui-card tb-epic-card tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`} data-epic=${epic.id}>
     <div class="tb-epic-card-head">
       ${onEdit ? html`<button data-ui-exempt type="button" class="tb-epic-name" title=${`${epic.title}: opens the epic`} onClick=${() => onEdit(epic.id)}>${epic.title}</button>`
         : html`<span class="tb-epic-name">${epic.title}</span>`}
@@ -308,13 +308,13 @@ export function EpicChildren({ epic, api, group, tasks = [], nameOf = (actor) =>
     ${read.state === 'loading' ? html`<span class="ui-hint">reading its tasks…</span>`
       : read.state === 'failed' && !children.length ? html`<span class="ui-hint">its tasks could not be read</span>`
       : !children.length ? html`<span class="ui-hint">No tasks in it yet.</span>`
-      : html`<table class="tb-epic-children-table"><thead><tr><th>Task</th><th>Where</th><th>Who</th><th></th></tr></thead><tbody>
+      : html`<table class="ui-compact tb-epic-children-table"><thead><tr><th>Task</th><th>Where</th><th>Who</th><th></th></tr></thead><tbody>
         ${children.map((task) => {
           const where = childWhere(task);
           return html`<tr key=${task.id} data-epic-child=${task.id} class=${where === 'done' || where === 'dropped' ? 'tb-epic-child-closed' : ''}>
             <td>${onOpen ? html`<button data-ui-exempt type="button" class="tb-epic-child-open" title=${`${task.title}: opens the task`} onClick=${() => onOpen(task.id)}>${task.title}</button>`
               : html`<span>${task.title}</span>`}${task.archived ? html` <span class="ui-hint">archived</span>` : null}</td>
-            <td><span class=${`tb-epic-where tb-epic-where-${where}`}>${where === 'column' ? columnLabel(task.column) : WHERE_WORD[where]}</span>
+            <td><span class=${`ui-tag tb-epic-where tb-epic-where-${where}`}>${where === 'column' ? columnLabel(task.column) : WHERE_WORD[where]}</span>
               ${where === 'blocked' && task.block_reason ? html` <span class="ui-hint" title=${task.block_reason}>${task.block_reason}</span>` : null}</td>
             <td>${who(task)}</td>
             <td>${writes && html`<button data-ui-exempt type="button" class="tb-epic-child-rm" disabled=${!!busy} title="Take it out of the epic (the task stays on the board)"
