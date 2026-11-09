@@ -12,10 +12,12 @@ import (
 func TestLocalImagePath(t *testing.T) {
 	cases := map[string]string{
 		"See /tmp/x/scratchpad/mock/epics-ab.png for the board.": "/tmp/x/scratchpad/mock/epics-ab.png",
-		"PNGs:\n- ~/shots/a.JPG — the strip":                    "~/shots/a.JPG",
+		"PNGs:\n- ~/shots/a.JPG — the strip":                     "~/shots/a.JPG",
 		"(/home/me/out.webp)":                                    "/home/me/out.webp",
 		"path=/var/tmp/s.svg":                                    "/var/tmp/s.svg",
 		"Look at C:\\Users\\me\\shot.png please":                 "C:\\Users\\me\\shot.png",
+		"file:///tmp/a.png":                                      "file:///tmp/a.png",
+		"/tmp/a.png,/tmp/b.png":                                  "/tmp/a.png",
 		"Attached as #13 epics-ab.png":                           "",
 		"See https://example.com/a/b.png":                        "",
 		"The notes are in /tmp/notes.md":                         "",

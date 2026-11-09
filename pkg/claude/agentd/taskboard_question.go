@@ -89,6 +89,11 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 		Block          bool     `json:"block"`
 		AttachExisting []string `json:"attach_existing"`
 	}
+	// Files are gated as attaching them is, before their bytes are read.
+	multipart := isMultipart(r)
+	if multipart && !requireTaskboardTaskChange(w, r, g, t) {
+		return
+	}
 	files, ok := decodeTaskboardRequest(w, r, &body)
 	if !ok {
 		return
@@ -97,7 +102,9 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("a question shows at most %d files", db.GroupTaskQuestionAttachmentsMax))
 		return
 	}
-	if body.Block || len(files) > 0 {
+	if multipart {
+		// Gated above.
+	} else if body.Block {
 		if !requireTaskboardTaskChange(w, r, g, t) {
 			return
 		}

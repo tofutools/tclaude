@@ -371,8 +371,9 @@ func filesNote(q *taskboardQuestion) string {
 }
 
 // localImagePathRE finds an absolute or home-relative path to an image
-// file in a question's body; a URL's "//" is no path.
-var localImagePathRE = regexp.MustCompile(`(?i)(?:^|[\s(\[<"'` + "`" + `=:])((?:/[^/\s]|~/|[A-Z]:\\)[^\s()\[\]<>"'` + "`" + `]*\.(?:png|jpe?g|gif|webp|svg|bmp|avif))\b`)
+// file in a question's body (a file:// URL too); a web URL's "//" is no
+// path.
+var localImagePathRE = regexp.MustCompile(`(?i)(?:^|[\s(\[<"'` + "`" + `=:])((?:file://)?(?:/[^/\s]|~/|[A-Z]:\\)[^\s,;()\[\]<>"'` + "`" + `]*\.(?:png|jpe?g|gif|webp|svg|bmp|avif))\b`)
 
 // localImagePath is the first local image path body names, or "": a path
 // the operator cannot open from the dashboard (ask-operator warns).

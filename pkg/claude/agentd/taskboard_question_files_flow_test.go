@@ -86,6 +86,13 @@ func TestTaskboardQuestionWithFiles(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code, body)
 	assert.NotContains(t, body, "424242")
 
+	// Another member may ask on the task, as it may comment, but sends no
+	// files with it: that is changing the task.
+	rec = h.upload(h.peer, asks, map[string]any{"title": "From the side?"}, [2]string{"side.png", string(tbPNG)})
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	code, body = h.askOn(h.peer, mine.ID, map[string]any{"title": "From the side?", "attach_existing": []string{"mock.png"}})
+	require.Equal(t, http.StatusCreated, code, "naming the task's files is asking: %s", body)
+
 	// A question task: its files are its question's.
 	rec = h.upload(h.worker, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Pick a mock", "to": "operator",
 		"question": map[string]any{"kind": "question"}}, [2]string{"a.png", string(tbPNG)})
