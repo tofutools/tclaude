@@ -93,6 +93,10 @@ type Info struct {
 	UnitCgroup string `json:"unit_cgroup,omitempty"`
 	// Tmux is where the tclaude tmux server runs, when it could be probed.
 	Tmux *TmuxPlacement `json:"tmux,omitempty"`
+	// UnitOtherPIDs lists the processes in the unit's cgroup besides agentd
+	// (tmux, an OpenCode server, a spawn in flight): what stopping the unit
+	// would kill. nil when it could not be read.
+	UnitOtherPIDs *[]int `json:"unit_other_pids,omitempty"`
 	// RestartMethod is how a daemon restart will be carried out;
 	// RestartExitCode is the exit status of RestartExit.
 	RestartMethod   string    `json:"restart_method"`
@@ -160,6 +164,9 @@ type Env struct {
 	// TmuxServerPID probes the tclaude tmux server: its pid, or 0 when none
 	// runs. nil, or an error, means it cannot tell.
 	TmuxServerPID func() (int, error)
+	// CgroupProcs lists every pid in a cgroup and its subgroups. nil, or an
+	// error, means it cannot tell.
+	CgroupProcs func(cgroupPath string) ([]int, error)
 }
 
 // FromProcess returns the Env of the running process.
@@ -171,8 +178,38 @@ func FromProcess(goos string) Env {
 	return Env{
 		GOOS: goos, PID: os.Getpid(), UID: os.Getuid(), EUID: os.Geteuid(),
 		Args: append([]string(nil), os.Args...), Getenv: os.Getenv, ReadFile: os.ReadFile,
-		StdinTTY: tty,
+		StdinTTY: tty, CgroupProcs: ProcCgroupProcs,
 	}
+}
+
+// ProcCgroupProcs reads cgroup.procs of cgroupPath and every subgroup from
+// the unified hierarchy, or cgroup v1's name=systemd one.
+func ProcCgroupProcs(cgroupPath string) ([]int, error) {
+	root := "/sys/fs/cgroup"
+	if _, err := os.Stat(filepath.Join(root, "cgroup.controllers")); err != nil {
+		root = filepath.Join(root, "systemd")
+	}
+	dir := filepath.Join(root, filepath.Clean("/"+cgroupPath))
+	var pids []int
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Name() != "cgroup.procs" {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, f := range strings.Fields(string(data)) {
+			if pid, err := strconv.Atoi(f); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+		return nil
+	})
+	return pids, err
 }
 
 var (
@@ -261,6 +298,17 @@ func Detect(ctx context.Context, env Env, run Runner) Info {
 	info.Rewritable = !info.Supervised() || info.ManagedByTclaude
 	if info.UnitCgroup != "" {
 		info.Tmux = probeTmux(env, info.UnitCgroup)
+		if env.CgroupProcs != nil {
+			if pids, err := env.CgroupProcs(info.UnitCgroup); err == nil {
+				others := []int{}
+				for _, pid := range pids {
+					if pid != env.PID {
+						others = append(others, pid)
+					}
+				}
+				info.UnitOtherPIDs = &others
+			}
+		}
 	}
 	info.RestartMethod, info.RestartExitCode = restartMethod(env, &info)
 	info.rawArgv, info.rawProcessArgv = info.Argv, info.ProcessArgv
@@ -305,16 +353,22 @@ func probeTmux(env Env, unitCgroup string) *TmuxPlacement {
 		InUnit: cg == unitCgroup || strings.HasPrefix(cg, unitCgroup+"/")}
 }
 
-// restartKillsTmux reports whether stopping the unit would also stop the
-// tmux server (and so every agent): it runs in the unit's cgroup and the
-// KillMode reaches it. With no server running nothing can be lost; when the
-// server cannot be placed, KillMode alone decides, conservatively.
-func restartKillsTmux(info *Info) bool {
+// restartKillsWorkloads reports whether stopping the unit would also stop
+// something besides agentd: the tmux server and its agents, an OpenCode
+// server agentd started, a spawn in flight. It decides from the unit's
+// cgroup when that can be read, else from where the tmux server runs, and
+// when neither is known, from KillMode alone, conservatively.
+func restartKillsWorkloads(info *Info) bool {
 	modeKills := info.KillMode == "" || info.KillMode == "control-group" || info.KillMode == "mixed"
-	if info.Tmux == nil {
-		return modeKills
+	switch {
+	case !modeKills:
+		return false
+	case info.UnitOtherPIDs != nil:
+		return len(*info.UnitOtherPIDs) > 0
+	case info.Tmux != nil:
+		return info.Tmux.Running && info.Tmux.InUnit
 	}
-	return info.Tmux.Running && info.Tmux.InUnit && modeKills
+	return true
 }
 
 // exitRestartCode returns an exit status the unit's Restart= policy answers
@@ -338,14 +392,17 @@ func exitRestartCode(info *Info) (int, bool) {
 func restartMethod(env Env, info *Info) (string, int) {
 	switch info.Kind {
 	case KindSystemdUser, KindSystemdSystem:
-		if restartKillsTmux(info) {
+		if restartKillsWorkloads(info) {
 			why := "The unit uses KillMode=" + info.KillMode + " and"
-			if info.Tmux != nil {
-				why += " the tclaude tmux server runs inside the unit (" + info.Tmux.Cgroup + "):"
-			} else {
-				why += " the tclaude tmux server could not be placed:"
+			switch {
+			case info.UnitOtherPIDs != nil:
+				why += fmt.Sprintf(" %d other process(es) run inside it (the tmux server, agent runtimes):", len(*info.UnitOtherPIDs))
+			case info.Tmux != nil:
+				why += " the tclaude tmux server runs inside it (" + info.Tmux.Cgroup + "):"
+			default:
+				why += " what runs inside it could not be read:"
 			}
-			info.Warnings = append(info.Warnings, why+" a unit restart would also stop it and every agent, so tclaude restarts in place instead. Set KillMode=process, or run tmux in its own unit.")
+			info.Warnings = append(info.Warnings, why+" a unit restart would stop them too, so tclaude restarts in place instead. Set KillMode=process, or run tmux in its own unit.")
 			return RestartExec, 0
 		}
 		if info.Kind == KindSystemdUser || env.EUID == 0 {

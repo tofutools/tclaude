@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/launcher"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
@@ -176,6 +178,7 @@ func configureSelfUpdateRestart(stop func()) {
 	updateRestartState.requested = false
 	updateRestartState.Unlock()
 }
+
 // requestSelfUpdateRestart is the self-updater's restart hook. It restarts
 // through the launcher (see RequestDaemonRestart), so a systemd or launchd
 // service keeps its own arguments.
@@ -185,12 +188,17 @@ func requestSelfUpdateRestart() error {
 	// re-exec must start the new location.
 	updateRestartState.Lock()
 	nodeUpdates.Lock()
+	relocated := false
 	if svc := nodeUpdates.service; svc != nil && updateRestartState.path != "" {
-		updateRestartState.path = svc.RestartPath(updateRestartState.path)
+		moved := svc.RestartPath(updateRestartState.path)
+		relocated = moved != updateRestartState.path
+		updateRestartState.path = moved
 	}
 	nodeUpdates.Unlock()
 	updateRestartState.Unlock()
-	_, err := RequestDaemonRestart("self-update")
+	// A supervisor restart or an exit would start the unit's own ExecStart,
+	// the old location; only the re-exec starts the moved binary.
+	_, err := requestDaemonRestart("self-update", relocated)
 	return err
 }
 func performSelfUpdateRestart() error {
@@ -201,6 +209,12 @@ func performSelfUpdateRestart() error {
 	updateRestartState.Unlock()
 	if !requested {
 		return nil
+	}
+	if exit && currentLauncher(true).RestartMethod != launcher.RestartExit {
+		// Something started inside the unit since the restart was asked
+		// for (tmux, an agent runtime): an exit would stop it with us.
+		exit = false
+		slog.Warn("agentd restart: exiting is no longer safe; re-executing in place")
 	}
 	db.Close()
 	if exit {

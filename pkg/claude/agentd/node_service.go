@@ -36,16 +36,33 @@ var (
 
 // tmuxServerPIDForLauncher probes the tclaude tmux server without starting
 // one: its pid, 0 when none runs, an error when it cannot tell.
+// A wedged server answers as unknown after probeTmuxTimeout rather than
+// hold a restart request (or the self-updater's restart hook) forever.
 func tmuxServerPIDForLauncher() (int, error) {
-	pid, state := tuiTmuxServerPID()
-	switch state {
-	case tuiTmuxProbeNone:
-		return 0, nil
-	case tuiTmuxProbeRunning:
-		return strconv.Atoi(pid)
+	type result struct {
+		pid   string
+		state tuiTmuxProbe
 	}
-	return 0, fmt.Errorf("tmux server state unknown")
+	ch := make(chan result, 1)
+	go func() {
+		pid, state := tuiTmuxServerPID()
+		ch <- result{pid, state}
+	}()
+	select {
+	case r := <-ch:
+		switch r.state {
+		case tuiTmuxProbeNone:
+			return 0, nil
+		case tuiTmuxProbeRunning:
+			return strconv.Atoi(r.pid)
+		}
+		return 0, fmt.Errorf("tmux server state unknown")
+	case <-time.After(probeTmuxTimeout):
+		return 0, fmt.Errorf("tmux server did not answer within %s", probeTmuxTimeout)
+	}
 }
+
+var probeTmuxTimeout = 5 * time.Second
 
 // restartDelay lets the HTTP response that asked for a restart reach the
 // client before the daemon goes away.
@@ -89,6 +106,13 @@ func currentLauncher(refresh bool) launcher.Info {
 // The restart happens shortly after the call returns. It returns the method
 // it chose.
 func RequestDaemonRestart(reason string) (string, error) {
+	return requestDaemonRestart(reason, false)
+}
+
+// requestDaemonRestart is RequestDaemonRestart; inPlace forces the in-place
+// re-exec (a self-update moved the binary, which the unit's own ExecStart
+// would not start).
+func requestDaemonRestart(reason string, inPlace bool) (string, error) {
 	if method := pendingRestart(); method != "" {
 		return method, nil
 	}
@@ -102,6 +126,9 @@ func RequestDaemonRestart(reason string) (string, error) {
 		return method, nil
 	}
 	name, args, supervised := launcher.RestartCommand(info)
+	if inPlace {
+		info.RestartMethod, supervised = launcher.RestartExec, false
+	}
 	if !supervised {
 		method := launcher.RestartExec
 		var err error
@@ -125,6 +152,20 @@ func RequestDaemonRestart(reason string) (string, error) {
 	launcherState.Unlock()
 	slog.Info("agentd restart: asking the supervisor", "reason", reason, "launcher", info.Kind, "command", name+" "+strings.Join(args, " "))
 	time.AfterFunc(restartDelay, func() {
+		// Decide again just before acting: a spawn since the request may
+		// have started tmux (or an agent runtime) inside the unit.
+		if fresh := currentLauncher(true); fresh.RestartMethod != launcher.RestartSupervisor {
+			slog.Warn("agentd restart: a unit restart is no longer safe; re-executing in place", "warnings", fresh.Warnings)
+			launcherState.Lock()
+			if err := scheduleExecRestart(); err != nil {
+				launcherState.pending = ""
+				failSelfUpdateRestart(fmt.Errorf("in-place restart unavailable: %w; restart agentd manually", err))
+			} else {
+				launcherState.pending = launcher.RestartExec
+			}
+			launcherState.Unlock()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_, err := launcherRestartRunner(ctx, name, args...)

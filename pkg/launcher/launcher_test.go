@@ -313,3 +313,56 @@ func TestRedactArgv(t *testing.T) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 }
+
+// The unit's cgroup decides, not just tmux: an OpenCode server agentd
+// started inside the unit would die with a unit restart too.
+func TestRestartMethodCountsEveryProcessInTheUnit(t *testing.T) {
+	files := map[string]string{
+		"/proc/4242/cgroup": "0::/system.slice/tclaude-agentd.service\n",
+		"/proc/777/cgroup":  "0::/system.slice/tclaude-tmux.service\n",
+	}
+	f := &fakeRun{out: map[string]string{"systemctl show tclaude-agentd.service": wrapperShow}}
+	env := testEnv("linux", map[string]string{"INVOCATION_ID": "abc"}, files)
+	env.TmuxServerPID = func() (int, error) { return 777, nil }
+	procs := []int{4242, 5150}
+	env.CgroupProcs = func(path string) ([]int, error) {
+		if path != "/system.slice/tclaude-agentd.service" {
+			t.Fatalf("read cgroup %q", path)
+		}
+		return procs, nil
+	}
+	info := Detect(context.Background(), env, f.run)
+	if info.RestartMethod != RestartExec || info.UnitOtherPIDs == nil || !reflect.DeepEqual(*info.UnitOtherPIDs, []int{5150}) {
+		t.Fatalf("other process in unit: method %s others %v", info.RestartMethod, info.UnitOtherPIDs)
+	}
+	procs = []int{4242}
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExit {
+		t.Fatalf("only agentd in unit: method %s", info.RestartMethod)
+	}
+	// The cgroup cannot be read: tmux placement decides.
+	env.CgroupProcs = func(string) ([]int, error) { return nil, errors.New("no cgroupfs") }
+	if info := Detect(context.Background(), env, f.run); info.RestartMethod != RestartExit || info.UnitOtherPIDs != nil {
+		t.Fatalf("unreadable cgroup, tmux elsewhere: method %s", info.RestartMethod)
+	}
+}
+
+func TestProcCgroupProcsWalksSubgroups(t *testing.T) {
+	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
+		t.Skip("no cgroupfs")
+	}
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Skip("no /proc")
+	}
+	pids, err := ProcCgroupProcs(cgroupPath(string(raw)))
+	if err != nil {
+		t.Skipf("cgroup not readable here: %v", err)
+	}
+	found := false
+	for _, p := range pids {
+		found = found || p == os.Getpid()
+	}
+	if !found {
+		t.Fatalf("own pid %d not in own cgroup's procs %v", os.Getpid(), pids)
+	}
+}
