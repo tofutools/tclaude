@@ -56,7 +56,7 @@ import {
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
-import { EpicBoard, EpicChip, EpicFilterMenu, EpicMark, EpicStrip, boardEntry, epicDimmed, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
+import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
 
@@ -449,7 +449,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [] }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [], chip = true }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -472,7 +472,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
-      <${EpicMark} task=${task} /><${EpicChip} task=${task} />
+      <${EpicMark} task=${task} />${chip && html`<${EpicChip} task=${task} />`}
       <${QuestionTag} task=${task} askedBy=${actorLabel(askerOf(task), group, snapshot)} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
@@ -612,7 +612,9 @@ function clearAgentTarget(state) {
   state.row = null;
 }
 
-function useRowDrag(tasks, actions, group = null) {
+// epicRows, when the List is grouped by epic, is a ref to { of(task), name(id) }:
+// the group a queue row is drawn in, and its epic's name.
+function useRowDrag(tasks, actions, group = null, epicRows = null) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
   const [dragging, setDragging] = useState('');
@@ -738,6 +740,20 @@ function useRowDrag(tasks, actions, group = null) {
         await actions.run(`${moving.id}:move`, 'Reopen', (api) => api.reopen(moving.id, opts));
         return;
       }
+      // Grouped by epic, a drop among another epic's queue rows puts the
+      // task in that epic too, as a drag between epic lanes does, with Undo.
+      const rows = epicRows?.current;
+      const into = rows && !isEpic(moving) && task.stage !== 'idea' ? rows.of(task) : null;
+      if (into !== null && into !== rows.of(moving)) {
+        const epic = into === NO_EPIC ? '' : into;
+        const label = epic ? `to ${rows.name(epic)}` : 'out of its epic';
+        const ok = await actions.run(`${moving.id}:move`, 'Move', async (api) => {
+          await intoEpic(moving.id, epic)(api);
+          return api.move(moving.id, { [where]: task.id });
+        });
+        if (ok) epicMoved(actions, moving, label);
+        return;
+      }
       await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { [where]: task.id }));
     },
     async dropOnIdeas(event) {
@@ -841,7 +857,7 @@ function HistoryLine({ entry, group = null, actions = null, open, onToggle, wiza
 // full is the board's whole entry, epics included, when entry is the one
 // its views draw (groups-taskboard-epics.js boardEntry): the epic strip
 // draws from it, and an epic's link opens its form.
-export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null }) {
+export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null, byEpic = false }) {
   // The List's Filter (ListFilter) hides task states; done and dropped are
   // the history, which the history line's toggle shows or hides together.
   const shows = (task) => !hidden.includes(taskRowState(task));
@@ -849,7 +865,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const setHistory = (on) => onHidden(on ? hidden.filter((s) => s !== 'done' && s !== 'dropped') : [...new Set([...hidden, 'done', 'dropped'])]);
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
-  const drag = useRowDrag(tasks, actions, group);
+  const epicRows = useRef(null);
+  const drag = useRowDrag(tasks, actions, group, epicRows);
   // An agent row dragged onto a task assigns it (useAgentOnTask).
   const boardRef = useRef(null);
   const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
@@ -957,13 +974,25 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   // The Lanes view has no Filter: its history is all or nothing.
   const closed = view === 'list' ? (entry.closed || []).filter(shows) : (history ? entry.closed || [] : []);
   const historyLine = html`<${HistoryLine} entry=${entry} group=${group} actions=${actions} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
+  // Grouped by epic (the Filter's "group by epic"), the queue is one group
+  // per open epic, in the board's order, then No epic: each under a head row
+  // that folds it. One level: the ideas and the history stay as they are.
+  const epicBoard = useContext(EpicBoard);
+  const [folded, setFolded] = useState({});
+  const grouped = view === 'list' && byEpic && epicBoard?.epics.length ? [...epicBoard.epics.map((epic) => epic.id), NO_EPIC]
+    .map((id) => ({ id, rows: queue.filter((task) => (epicOf(task, epicBoard.byId) || NO_EPIC) === id) }))
+    .filter(({ id, rows }) => rows.length || (id !== NO_EPIC && epicBoard.byId.get(id)?.stage !== 'idea' && (!epicBoard.filter.hide || epicBoard.filter.epic === id))) : null;
+  epicRows.current = grouped ? { of: (task) => epicOf(task, epicBoard.byId) || NO_EPIC, name: (id) => epicBoard.byId.get(id)?.title || id } : null;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
   const table = tasks.length ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
-        ${queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
+        ${grouped ? grouped.map(({ id, rows }) => html`<${EpicGroupRow} key=${`epic-${id}`} epic=${id === NO_EPIC ? null : epicBoard.byId.get(id)} count=${rows.length}
+            colspan=${TABLE_COLS} folded=${!!folded[id]} onFold=${(on) => setFolded({ ...folded, [id]: on })} onOpen=${actions ? openEdit : null} />
+          ${!folded[id] && rows.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} chip=${false} />`)}`)
+          : queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
         ${ideasBand}
         ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
         ${historyLine}
@@ -985,7 +1014,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
     onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
   return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
-    <${EpicStrip} entry=${full} actions=${actions} onEdit=${actions ? openEdit : null} />
+    ${!(view === 'lanes' && lanesBy === 'epic') && html`<${EpicStrip} entry=${full} actions=${actions} onEdit=${actions ? openEdit : null} />`}
     ${editDialog}
     ${reasonDialog}
     ${moveDialog}
@@ -1047,15 +1076,17 @@ export function listHidden(group, defaults = LIST_HIDDEN_DEFAULT) {
   return [...defaults];
 }
 
+const LIST_BY_EPIC_PREF = (group) => `tclaude.dash.groups.taskboard.list-by-epic.${group}`;
 const LANES_BY_PREF = (group) => `tclaude.dash.groups.taskboard.lanes-by.${group}`;
 // The "lanes" modes: a lane per agent, grouped by agent, role or subgroup;
 // or triage (You · Unassigned · Agents) and one row
 // (groups-taskboard-lanes-flat.js).
-const LANES_BY = ['agent', 'role', 'subgroup', 'triage', 'row'];
+const LANES_BY = ['agent', 'role', 'subgroup', 'triage', 'row', 'epic'];
 const LANES_BY_LABEL = { row: 'one row' };
 const LANES_BY_TITLE = {
   triage: 'Three lanes: you, unassigned, and every agent\'s tasks together',
   row: 'Every task in one row',
+  epic: 'A lane per open epic, and No epic: drag a card to another epic\'s lane to move it there',
 };
 
 // Lanes in triage mode is the default view; a viewer's remembered choice
@@ -1089,6 +1120,9 @@ function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
       bump((n) => n + 1);
     },
     setView: (value) => set(VIEW_PREF(group), value),
+    // The List grouped by epic (ListFilter's "group by epic").
+    listByEpic: dashPrefs.getItem(LIST_BY_EPIC_PREF(group)) === '1',
+    setListByEpic: (on) => { if (on) dashPrefs.setItem(LIST_BY_EPIC_PREF(group), '1'); else dashPrefs.removeItem(LIST_BY_EPIC_PREF(group)); bump((n) => n + 1); },
     setBy: (value) => set(LANES_BY_PREF(group), value),
     // The lanes' own order (groups-taskboard-lanes-layout.js): whether one
     // is stored, and putting it back to the default.
@@ -1114,7 +1148,7 @@ function ViewSelector({ prefs }) {
 // ListFilter is the List's Filter dropdown (view-menu.js, as the Groups
 // tab's view and the Collab panel's Filter): which task states the list
 // shows, with Reset. Its count is the states that differ from the default.
-function ListFilter({ group, prefs, columns = [] }) {
+function ListFilter({ group, prefs, columns = [], epics = false }) {
   const [open, setOpen] = useState(false);
   const hidden = prefs.listHidden;
   const states = listStates(columns);
@@ -1128,6 +1162,9 @@ function ListFilter({ group, prefs, columns = [] }) {
     <${ViewMenuHeading}>State<//>
     ${states.map(([key, text, title]) => html`<${ViewToggle} key=${key} id=${`${id}-${key.replace(':', '-')}`} title=${title} checked=${!hidden.includes(key)}
       onChange=${(on) => prefs.setListHidden(on ? hidden.filter((state) => state !== key) : [...hidden, key])}>${text}<//>`)}
+    ${epics && html`<${ViewMenuSep} /><${ViewMenuHeading}>Group<//>
+      <${ViewToggle} id=${`${id}-by-epic`} title="The queue under its epics, each with a head that folds it" checked=${prefs.listByEpic}
+        onChange=${prefs.setListByEpic}>group by epic<//>`}
     <${ViewMenuSep} />
     <button data-ui-exempt type="button" class="view-menu-reset" data-tb-filter-reset="" disabled=${changes === 0}
       onClick=${() => prefs.setListHidden(null)}>Reset</button>
@@ -1176,7 +1213,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section line.
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
   const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
-    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} />`}<${EpicFilterMenu} group=${shown.name} />${
+    prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} epics=${epics.epics.length > 0} />`}<${EpicFilterMenu} group=${shown.name} />${
     lanes && html`<${ColumnsMenu} entry=${view} group=${shown.name} />`}${
     lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}</div>`;
   const closeAdding = () => setAdding(null);
@@ -1192,7 +1229,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
-      view=${prefs.view} lanesBy=${prefs.by}
+      view=${prefs.view} lanesBy=${prefs.by} byEpic=${prefs.listByEpic}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//><//>`;
 }

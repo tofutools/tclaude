@@ -112,7 +112,7 @@ export function newTaskPlan(draft) {
   const next = start !== 'idea' && start !== 'done';
   // An epic is one: a list (one task per line) is never an epic's.
   if (draft.list && draft.kind !== EPIC) {
-    return { kind: 'lines', text: captureLines(draft.list).join('\n'), next: start === 'next' };
+    return { kind: 'lines', text: captureLines(draft.list).join('\n'), next: start === 'next', ...(draft.parent ? { parent: draft.parent } : {}) };
   }
   const title = String(draft.title || '').trim();
   const body = String(draft.body || '').trim();
@@ -148,7 +148,16 @@ export async function submitNewTask(api, groupName, draft, files = []) {
   if (plan.kind === 'lines') {
     const out = await api.capture(groupName, plan.text, { next: plan.next });
     const refused = (out?.results || []).filter((result) => result.error);
+    // In an epic (an epic lane's "+"), each task the list added joins it.
+    let unparented = 0;
+    if (plan.parent) {
+      for (const result of out?.results || []) {
+        if (!result.task?.id) continue;
+        try { await api.edit(result.task.id, { parent: plan.parent }); } catch (_) { unparented += 1; }
+      }
+    }
     const warning = [
+      unparented ? `${unparented} not put in the epic` : '',
       refused.length ? `${refused.length} refused (${refused.map((result) => `${result.input}: ${result.code || result.error}`).join('; ')})` : '',
       out?.failed ? `stopped: ${out.failed.message}; ${out.failed.remaining.length} not sent` : '',
     ].filter(Boolean).join(' · ');

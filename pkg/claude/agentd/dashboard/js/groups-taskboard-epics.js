@@ -25,6 +25,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { dashPrefs } from './prefs.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep } from './view-menu.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -180,13 +181,25 @@ export function closeNudge(epic) {
   return !!at && live(epic) && dashPrefs.getItem(NUDGE_PREF(epic.id)) !== at;
 }
 
+// EpicNudge asks "close epic?" while closeNudge holds: Close epic closes it,
+// Not yet puts the question off until another of its tasks changes. The
+// strip card and, in the lanes' epic mode, the epic's lane head carry it.
+export function EpicNudge({ epic, actions }) {
+  const [, bump] = useState(0);
+  if (!closeNudge(epic)) return null;
+  const busy = actions?.busy === `${epic.id}:close`;
+  return html`<div class="tb-epic-nudge" data-epic-nudge=${epic.id}><span>All its tasks are closed.</span>
+    ${actions && html`<${Button} size="sm" class="tb-epic-close" busy=${busy} disabled=${busy}
+      onClick=${() => actions.run(`${epic.id}:close`, 'Close epic', (api) => api.status(epic.id, 'done'))}>Close epic<//>`}
+    <${Button} size="sm" variant="ghost" class="tb-epic-later" title="Ask again when another of its tasks changes"
+      onClick=${() => { dashPrefs.setItem(NUDGE_PREF(epic.id), epic.close_suggested_at); bump((n) => n + 1); }}>Not yet<//>
+  </div>`;
+}
+
 // EpicStripCard is one open epic in the strip.
 function EpicStripCard({ epic, board, actions, onEdit }) {
-  const [, bump] = useState(0);
   const p = epic.progress || {};
   const on = board.filter.epic === epic.id;
-  const nudge = closeNudge(epic);
-  const busy = actions?.busy === `${epic.id}:close`;
   return html`<div class=${`ui-card tb-epic-card tb-epic-c${epicColour(epic.id)}${on ? ' is-on' : ''}`} data-epic=${epic.id}>
     <div class="tb-epic-card-head">
       ${onEdit ? html`<button data-ui-exempt type="button" class="tb-epic-name" title=${`${epic.title}: opens the epic`} onClick=${() => onEdit(epic.id)}>${epic.title}</button>`
@@ -196,12 +209,7 @@ function EpicStripCard({ epic, board, actions, onEdit }) {
     </div>
     <${EpicProgress} epic=${epic} />
     <div class="tb-epic-counts">${progressParts(p).join(' · ')}</div>
-    ${nudge && html`<div class="tb-epic-nudge" data-epic-nudge=${epic.id}><span>All its tasks are closed.</span>
-      ${actions && html`<${Button} size="sm" class="tb-epic-close" busy=${busy} disabled=${busy}
-        onClick=${() => actions.run(`${epic.id}:close`, 'Close epic', (api) => api.status(epic.id, 'done'))}>Close epic<//>`}
-      <${Button} size="sm" variant="ghost" class="tb-epic-later" title="Ask again when another of its tasks changes"
-        onClick=${() => { dashPrefs.setItem(NUDGE_PREF(epic.id), epic.close_suggested_at); bump((n) => n + 1); }}>Not yet<//>
-    </div>`}
+    <${EpicNudge} epic=${epic} actions=${actions} />
   </div>`;
 }
 
@@ -337,4 +345,34 @@ export function EpicChildren({ epic, api, group, tasks = [], nameOf = (actor) =>
     </div>`}
     ${error && html`<div class="ui-error tb-epic-error" role="alert">${error}</div>`}
   </div>`;
+}
+
+// EpicGroupRow heads an epic's group in the List grouped by epic: its name
+// in its colour, its progress, how many of its tasks are in the queue, a
+// fold toggle, and open (its edit form). epic null is No epic.
+export function EpicGroupRow({ epic, count, colspan, folded = false, onFold, onOpen = null }) {
+  const id = epic?.id || NO_EPIC;
+  return html`<tr class=${`tb-epic-group${epic ? ` tb-epic-c${epicColour(epic.id)}` : ' tb-epic-group-none'}`} data-epic-group=${id}><td colspan=${colspan}>
+    <span class="tb-epic-group-head">
+      <button type="button" data-ui-exempt class="tb-epic-group-fold" aria-expanded=${!folded} title=${folded ? 'Show its tasks' : 'Fold its tasks'}
+        onClick=${() => onFold(!folded)}>${folded ? '▸' : '▾'}</button>
+      <span class=${`tb-epic-dot${epic ? '' : ' tb-epic-dot-none'}`}></span>
+      <span class="tb-epic-group-name">${epic ? epic.title : 'No epic'}</span>
+      ${epic && html`<${EpicProgress} epic=${epic} />`}
+      <span class="muted">${epic ? progressParts(epic.progress).join(' · ') : `${count} task${count === 1 ? '' : 's'}`}</span>
+      ${epic && onOpen && html`<button type="button" data-ui-exempt class="tb-epic-lane-open" data-epic-open=${epic.id} onClick=${() => onOpen(epic.id)}>open ›</button>`}
+    </span>
+  </td></tr>`;
+}
+
+// intoEpic is the write that puts a task in an epic, or in none for ''.
+export function intoEpic(id, epic) {
+  return (api) => (epic ? api.edit(id, { parent: epic }) : api.edit(id, { clearParent: true }));
+}
+
+// epicMoved says a task moved to another epic, with Undo: back in the epic
+// it was in (its parent_id, which may be a closed epic's).
+export function epicMoved(actions, task, label) {
+  const back = intoEpic(task.id, task.parent_id || '');
+  shellToast(`“${task.title}” ${label}`, false, { action: { label: 'Undo', run: () => actions.run(`${task.id}:epic`, 'Undo', back) } });
 }

@@ -49,7 +49,7 @@ import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
-import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, isEpic } from './groups-taskboard-epics.js';
+import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
 
 const html = htm.bind(h);
 
@@ -235,6 +235,27 @@ function twoStep(first, second) {
   return async (api, reason) => {
     if (!firstDone) { await first(api); firstDone = true; }
     return second(api, reason);
+  };
+}
+
+// epicDrop is a drop on an epic's row (the lanes' epic mode,
+// groups-taskboard-lanes-flat.js): onto another epic's row the task moves to
+// that epic (`edit --parent`, or out of every epic onto No epic), first, then
+// whatever the column drop does; undo puts it back in its epic. An epic is
+// in no epic, so it does not change rows. Without an epic row it is the
+// lane drop as is.
+export function epicDrop(from, to, drop) {
+  if (to.epic === undefined || (from.epic || '') === to.epic) return drop;
+  const task = from.task;
+  if (isEpic(task) || (drop === null && (from.lane !== to.lane || from.column !== to.column))) return null;
+  const into = (epic) => intoEpic(task.id, epic);
+  const label = to.epic ? `to ${to.epicName}` : 'out of its epic';
+  return {
+    ...(drop || {}),
+    kind: drop ? `epic+${drop.kind}` : 'epic',
+    label: drop ? `${label} · ${drop.label}` : label,
+    run: drop ? twoStep(into(to.epic), drop.run) : into(to.epic),
+    epicMove: true,
   };
 }
 
@@ -428,7 +449,7 @@ function cardHint(task) {
 // menu, when given, is the card's ⋯ items (Archive): its ⋯ shows on hover,
 // and a right-click opens it. onAnswer, when given, puts Answer… on a
 // question still to answer.
-export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null }) {
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null, chip = true }) {
   const done = task.status === 'done';
   const dim = epicDimmed(useContext(EpicBoard), task);
   // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
@@ -443,7 +464,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     ${menu?.length > 0 && html`<span class="tb-card-menu"><${RowMenu} label=${task.title} items=${menu} buttonClass="tb-card-more" /></span>`}
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
-    ${(task.parent_id || isEpic(task)) && html`<div class="tb-card-epic-line"><${EpicMark} task=${task} /><${EpicChip} task=${task} /></div>`}
+    ${((chip && task.parent_id) || isEpic(task)) && html`<div class="tb-card-epic-line"><${EpicMark} task=${task} />${chip && html`<${EpicChip} task=${task} />`}</div>`}
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
       <${QuestionTag} task=${task} askedBy=${nameOf && askerOf(task) ? nameOf(askerOf(task)) : ''} /></div>`}
     ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
@@ -525,7 +546,7 @@ export function useLaneDrag(actions, group, tasks = []) {
     const from = dragged.current;
     const lane = from && to.resolve ? to.resolve(from.lane) : to.lane;
     if (lane === null || lane === undefined) return null;
-    const drop = from && laneDrop(from.task, from, { ...to, lane }, { assign });
+    const drop = from && epicDrop(from, { ...to, lane }, laneDrop(from.task, from, { ...to, lane }, { assign }));
     if (!drop) return null;
     event.preventDefault();
     event.stopPropagation();
@@ -561,6 +582,7 @@ export function useLaneDrag(actions, group, tasks = []) {
       clear();
       if (drop.reason) { setBlocking({ task, drop }); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
+      if (ok && drop.epicMove) epicMoved(actions, task, drop.label);
       if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
@@ -572,6 +594,7 @@ export function useLaneDrag(actions, group, tasks = []) {
 export function BlockDialog({ task, drop, actions, group, onClose }) {
   const submit = async (reason) => {
     const ok = await actions.run(`${task.id}:lane`, 'Block', (api) => drop.run(api, reason));
+    if (ok && drop.epicMove) epicMoved(actions, task, drop.label.replace(/ \(asks why\)$/, ''));
     if (ok && drop.agent) markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     return ok;
   };
@@ -755,10 +778,10 @@ export function laneGridStyle(resize) {
 // opens the add menu (the section's ＋▾ menu, anchored here); whichever
 // choice is made starts from the cell: its column, and the lane's agent as
 // the assignee.
-export function CellAdd({ lane, column, add, onNewTask, wizard, group, entry }) {
-  const where = `${lane.id === UNASSIGNED ? 'Unassigned' : lane.id === OPERATOR && lane.name === 'you' ? 'You' : lane.name} · ${wizard ? column.wizard : column.label}`;
+export function CellAdd({ lane, column, add, onNewTask, wizard, group, entry, parent = '', where: rowName = '' }) {
+  const where = `${rowName || (lane.id === UNASSIGNED ? 'Unassigned' : lane.id === OPERATOR && lane.name === 'you' ? 'You' : lane.name)} · ${wizard ? column.wizard : column.label}`;
   const what = wizard ? 'quest' : 'task';
-  const initial = { start: add.start, to: add.to, toName: add.to ? lane.name : '' };
+  const initial = { start: add.start, to: add.to, toName: add.to ? lane.name : '', ...(parent ? { parent } : {}) };
   return html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard}
     cell=${{ title: `New ${what} here: ${where}`, label: `New ${what} in ${where}` }}
     onChoose=${(choice) => onNewTask(choice, initial)} />`;
