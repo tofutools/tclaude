@@ -42,6 +42,9 @@ type Binary struct {
 type Request struct {
 	Action  string `json:"action"`
 	Version string `json:"version,omitempty"`
+	// Force applies even when the new binary rejects the daemon's current
+	// flags (the pre-flight check); the restart may then fail.
+	Force bool `json:"force,omitempty"`
 }
 
 func (r Request) Validate() error {
@@ -53,6 +56,9 @@ func (r Request) Validate() error {
 	}
 	if r.Action == "rollback" && r.Version != "" {
 		return fmt.Errorf("rollback does not accept a version")
+	}
+	if r.Force && r.Action != "apply" {
+		return fmt.Errorf("force applies only to apply")
 	}
 	return nil
 }
@@ -88,6 +94,10 @@ type Job struct {
 	// running build.
 	Revision string   `json:"revision,omitempty"`
 	Commits  []string `json:"commits,omitempty"`
+	// Launch reports the daemon's flags and environment across the update:
+	// the pre-flight check of the new binary and, after the restart, the
+	// comparison with the snapshot taken before it.
+	Launch *LaunchCheck `json:"launch,omitempty"`
 }
 
 // Relocation is a binary that now runs from a different path.

@@ -55,13 +55,16 @@ type Service struct {
 	inspect    func(context.Context, string) (buildversion.Info, error)
 	// identify confirms an externally installed file is a tclaude binary.
 	identify func(string) error
+	// checkArgs is the pre-flight check of a new binary against the
+	// daemon's current flags.
+	checkArgs argsChecker
 }
 
 func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, buildCheckout: buildCheckout, revisionOf: binaryRevision, inspect: inspectStaged, identify: identifyModule}
+	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, buildCheckout: buildCheckout, revisionOf: binaryRevision, inspect: inspectStaged, identify: identifyModule, checkArgs: checkLaunchArgs}
 	s.status = Status{CurrentVersion: buildversion.AppVersion(), InstallMethod: buildversion.InstallMethod, ProtocolVersion: buildversion.BuildInfo().ProtocolVersion, Binaries: binaries, Warnings: []string{}}
 	if s.status.InstallMethod == "" {
 		s.status.InstallMethod = "source_or_unmarked"
@@ -103,6 +106,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 		} else {
 			job.State = "failed"
 			job.Error = "daemon exited during update; rollback is available when a backup was made"
+			s.endLaunchCheck(&job)
 		}
 		if err := s.saveJob(job); err != nil {
 			return nil, err
@@ -190,12 +194,23 @@ func (s *Service) StartWith(req Request, actor string, authorize func() bool, op
 			job.PostSetup = &PostSetup{State: "pending", Args: append([]string{}, opts.PostSetup...)}
 		}
 	}
+	if req.Action != "check" && opts.Launch != nil {
+		// Durable before anything is replaced: the restarted daemon
+		// compares itself with it.
+		if err := writeJSONFile(s.launchPath(job.ID), opts.Launch.Snapshot); err != nil {
+			return Job{}, err
+		}
+		job.Launch = opts.Launch.Snapshot.Check()
+	}
+	opts.Force = req.Force
 	if s.hooks.Started != nil {
 		if err := s.hooks.Started(job); err != nil {
+			_ = os.Remove(s.launchPath(job.ID))
 			return Job{}, err
 		}
 	}
 	if err := s.saveJob(job); err != nil {
+		_ = os.Remove(s.launchPath(job.ID))
 		return Job{}, err
 	}
 	s.active = true
@@ -279,6 +294,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	if err != nil || !job.RestartRequired {
 		// Setup runs only from a new binary after a completed update.
 		job.PostSetup = nil
+		s.endLaunchCheck(&job)
 	}
 	if err != nil {
 		job.State = "failed"
@@ -312,6 +328,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 			job.State = "failed"
 			s.active = false
 			job.Error = "binaries updated but daemon restart failed: " + err.Error()
+			s.endLaunchCheck(&job)
 			_ = s.saveJob(job)
 			s.mu.Unlock()
 		}
@@ -586,6 +603,7 @@ func (s *Service) RestartFailed(err error) {
 		job := *s.status.Job
 		job.State = "failed"
 		job.Error = "daemon restart failed: " + err.Error()
+		s.endLaunchCheck(&job)
 		_ = s.saveJob(job)
 	}
 }

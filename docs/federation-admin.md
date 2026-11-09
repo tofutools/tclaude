@@ -208,6 +208,45 @@ restarted it. You can add flags from an allowlist (`install-all`,
 `--harness <name>`; there is never free text. The job's `post_setup` records
 the state, args, exit code and the last 8 KiB of output.
 
+**Flags and environment.** An update keeps the daemon's startup flags and
+environment, and checks that it did:
+
+- **Before anything is replaced**, the job snapshots how agentd was launched:
+  its command line (secret-looking flag values redacted), the names of its
+  environment variables with a salted SHA-256 of each value (never the value
+  itself), the launcher and the restart method. The snapshot stays in the
+  private job journal until the restarted daemon has compared it, and is
+  dropped when the job ends without a restart (`launch.state:
+  "not_restarted"`).
+- **Pre-flight check.** The new binary is asked whether it accepts the
+  daemon's current command line, with a non-starting
+  `<binary> --tclaude-check-args agentd serve <flags...>` that parses the
+  flags and exits. A binary older than that check has every flag looked up in
+  its `--help` instead. If the new binary rejects a flag (one was removed or
+  renamed), the update fails naming it and nothing is replaced, so a
+  scheduled run cannot leave a daemon that won't start (a restart loop under
+  systemd). `tclaude update --apply --force` (`"force": true`) goes past it.
+  A package manager or custom command installs before tclaude can check; a
+  rejection there keeps the running daemon up and fails the job.
+- **After the restart**, the new daemon compares its own command line and
+  environment with the snapshot. The job's `launch` reports `identical` or
+  `differs` with each flag added, removed or changed and each environment
+  variable added, removed or changed (by name only), and a difference becomes
+  a job warning and part of an automatic run's notification. A binary path
+  the update relocated, and variables a supervisor sets for every start
+  (`INVOCATION_ID`, `JOURNAL_STREAM` and the like), are expected, not
+  differences.
+
+Every restart path carries them: an in-place re-exec hands the new binary
+the exact command line and the environment agentd was started with (what
+agentd exported into its own environment at start is derived again from the
+same flags); a supervisor restart or an exit restart starts the unit's own
+`ExecStart` and environment, and the comparison then shows whether the unit
+still matches what was running. Post-update setup runs with the new daemon's
+environment. `tclaude update --job <id>` prints the check and the
+comparison; the dashboard's update dialog shows "Kept flags and environment
+✓" or the differences.
+
 **API.** `GET /api/node/update/settings` (CLI: `/v1/node/update/settings`)
 returns:
 
@@ -224,7 +263,8 @@ returns:
 returns the same view, or HTTP 400 with an `errors` list. The update status
 also reports `chosen_method` and `detected_method`. A job reports `method`,
 `output` (the bounded tail of a package-manager or custom command),
-`relocations` and `post_setup`. The view's `access` says what the caller may
+`relocations`, `post_setup` and `launch` (the pre-flight `args_check` and the
+flags-and-environment comparison). The view's `access` says what the caller may
 change: `full`, `settings` or `read`.
 
 **Linked nodes.** `tclaude update config show|set --node <peer>` and the

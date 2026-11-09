@@ -24,6 +24,7 @@ type updateParams struct {
 	Apply    bool   `long:"apply" help:"Apply a verified update and gracefully restart agentd"`
 	Rollback bool   `long:"rollback" help:"Restore the previous binaries and restart agentd"`
 	Check    bool   `long:"check" help:"Check for an update (the default)"`
+	Force    bool   `long:"force" help:"With --apply: apply even when the new binary rejects agentd's current flags (the restart may then fail)"`
 	NoWait   bool   `long:"no-wait" help:"Return the durable job ID without waiting"`
 	Job      string `long:"job" optional:"true" help:"Read an existing durable update job by ID"`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -41,6 +42,10 @@ func updateAPIPath(node, tail string) string {
 	return "/v1/federation/peer/" + url.PathEscape(node) + "/node/update" + tail
 }
 func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
+	if p.Force && !p.Apply {
+		fmt.Fprintln(stderr, "Error: --force needs --apply")
+		return rcInvalidArg
+	}
 	if (p.Apply && p.Rollback) || (p.Check && (p.Apply || p.Rollback)) || p.Job != "" && (p.Apply || p.Rollback || p.Check || p.Version != "") {
 		fmt.Fprintln(stderr, "Error: choose only one update action")
 		return rcInvalidArg
@@ -52,6 +57,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	if p.Rollback {
 		req.Action = "rollback"
 	}
+	req.Force = p.Force
 	if err := req.Validate(); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return rcInvalidArg
@@ -159,6 +165,7 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 				fmt.Fprintf(stdout, "  %s\n", termtext.Cell(c))
 			}
 		}
+		printLaunchCheck(stdout, job.Launch)
 		if job.Error != "" {
 			fmt.Fprintln(stderr, termtext.Cell(job.Error))
 		}
@@ -167,4 +174,35 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 		return rcIOFailure
 	}
 	return 0
+}
+
+// printLaunchCheck reports whether the update kept agentd's flags and
+// environment: the new binary's pre-flight check and, after the restart, the
+// comparison with what ran before.
+func printLaunchCheck(w io.Writer, c *selfupdate.LaunchCheck) {
+	if c == nil {
+		return
+	}
+	if c.ArgsCheck != "" {
+		line := "Flag check of the new binary: " + strings.ReplaceAll(c.ArgsCheck, "_", " ")
+		if c.ArgsCheckDetail != "" {
+			line += " (" + c.ArgsCheckDetail + ")"
+		}
+		fmt.Fprintln(w, termtext.Cell(line))
+	}
+	switch c.State {
+	case "recorded":
+		fmt.Fprintf(w, "Flags and environment: snapshot of %d flag/argument(s) and %d environment key(s); compared after the restart\n", max(len(c.Argv)-1, 0), c.EnvKeys)
+	case "identical":
+		fmt.Fprintln(w, "Flags and environment: kept ✓")
+	case "differs":
+		fmt.Fprintf(w, "Flags and environment: %d difference(s) after the restart:\n", len(c.Differences))
+		for _, d := range c.Differences {
+			fmt.Fprintf(w, "  %s\n", termtext.Cell(d.String()))
+		}
+	case "unavailable":
+		fmt.Fprintln(w, "Flags and environment: not compared (the snapshot could not be read)")
+	case "not_restarted":
+		fmt.Fprintln(w, "Flags and environment: not compared (agentd was not restarted)")
+	}
 }

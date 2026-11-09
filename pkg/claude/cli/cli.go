@@ -24,6 +24,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
+	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
 // Main runs a tclaude binary end to end and never returns: it dispatches
@@ -41,6 +42,9 @@ func Main(version string, newRoot func() *cobra.Command) {
 	if len(os.Args) == 2 && os.Args[1] == "--tclaude-build-info" {
 		_ = json.NewEncoder(os.Stdout).Encode(buildversion.BuildInfo())
 		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == selfupdate.CheckArgsFlag {
+		os.Exit(CheckArgs(os.Stderr, newRoot(), os.Args[2:]))
 	}
 	if handled, code := probehelper.Dispatch(os.Args); handled {
 		os.Exit(code)
@@ -65,6 +69,32 @@ func run(version string, newRoot func() *cobra.Command) int {
 	cmd.Version = buildversion.AppVersion()
 	if err := execute(os.Stderr, cmd); err != nil {
 		return 1
+	}
+	return 0
+}
+
+// CheckArgs is the self-updater's pre-flight check of a new binary: it
+// resolves the subcommand args name and parses its flags and positional
+// arguments exactly as running it would, then returns 0 (accepted) or
+// selfupdate.CheckArgsRejected with the reason on stderr. It never runs the
+// command or the root's pre-run (no config, state or database is touched).
+func CheckArgs(stderr io.Writer, root *cobra.Command, args []string) int {
+	reject := func(err error) int {
+		fmt.Fprintln(stderr, "Error:", err.Error())
+		return selfupdate.CheckArgsRejected
+	}
+	cmd, rest, err := root.Find(args)
+	if err != nil {
+		return reject(err)
+	}
+	if !cmd.Runnable() {
+		return reject(fmt.Errorf("%q is not a runnable command", cmd.CommandPath()))
+	}
+	if err := cmd.ParseFlags(rest); err != nil {
+		return reject(err)
+	}
+	if err := cmd.ValidateArgs(cmd.Flags().Args()); err != nil {
+		return reject(err)
 	}
 	return 0
 }

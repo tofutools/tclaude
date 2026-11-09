@@ -41,3 +41,13 @@ func FinishRestartedUpdateForTest(svc *selfupdate.Service) {
 // SelfUpdateJobFinishedForTest is the service Finished hook production wires
 // in localUpdateService, for services built by tests.
 func SelfUpdateJobFinishedForTest(job selfupdate.Job) { selfUpdateJobFinished(job) }
+
+// SetSelfUpdateProcessForTest fixes the argv and launch environment the
+// self-updater snapshots before an update and compares after the restart.
+func SetSelfUpdateProcessForTest(argv, environ []string) func() {
+	prev := selfUpdateProcess
+	selfUpdateProcess = func() ([]string, []string) {
+		return append([]string(nil), argv...), append([]string(nil), environ...)
+	}
+	return func() { selfUpdateProcess = prev }
+}
