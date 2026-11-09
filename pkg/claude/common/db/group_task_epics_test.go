@@ -166,3 +166,24 @@ func TestGroupTaskEpicDropReleasesChildren(t *testing.T) {
 	require.Empty(t, c.ParentID)
 	require.Equal(t, GroupTaskOpen, c.Status, "the work stays")
 }
+
+func TestGroupTaskEpicClosedTakesNoTasksAndReopensWithoutAssignee(t *testing.T) {
+	setupTestDB(t)
+	gid, err := CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	worker, _, err := EnsureAgentForConv("conv-worker-1", "test")
+	require.NoError(t, err)
+	epic, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "Epic", Kind: GroupTaskKindEpic, Actor: "op"})
+	require.NoError(t, err)
+	_, err = SetGroupTaskStatus(epic.ID, GroupTaskDropped, "", "op")
+	require.NoError(t, err)
+	_, err = CreateGroupTask(NewGroupTask{GroupID: gid, Title: "late", ParentID: epic.ID, Actor: "op"})
+	requireTaskConflict(t, err, "not_live")
+
+	_, err = ReopenGroupTask(epic.ID, GroupTaskReopen{Assignee: worker, Actor: "op"})
+	requireTaskConflict(t, err, "epic")
+	got, err := ReopenGroupTask(epic.ID, GroupTaskReopen{Assignee: KeepAssignee, Actor: "op"})
+	require.NoError(t, err)
+	require.Equal(t, GroupTaskOpen, got.Status)
+	require.Empty(t, got.AssigneeID)
+}

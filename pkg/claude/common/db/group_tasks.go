@@ -930,7 +930,9 @@ func withGroupTask(id string, fn func(tx *sql.Tx, t *GroupTask, now time.Time) e
 		if err != nil {
 			return nil, err
 		}
-		if ok {
+		// The board flags an epic reopened with its tasks all closed, but
+		// whoever reopened it is not mailed about it.
+		if ok && epic != id {
 			suggested = append(suggested, epic)
 		}
 	}

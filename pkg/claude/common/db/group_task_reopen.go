@@ -39,6 +39,9 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		if t.Live() {
 			return taskConflict("not_closed", "task %s is %s; only a done or dropped task is reopened", id, t.Status)
 		}
+		if t.IsEpic() && (in.Column != "" || (in.Assignee != KeepAssignee && in.Assignee != "")) {
+			return errGroupTaskEpic(id, "assigned or put in a column")
+		}
 		if answered, err := questionTaskAnsweredTx(tx, t); err != nil {
 			return err
 		} else if answered {

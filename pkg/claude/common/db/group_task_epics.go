@@ -88,6 +88,9 @@ func checkGroupTaskParentTx(q taskTx, groupID int64, self *GroupTask, parentID s
 	if !p.IsEpic() {
 		return nil, taskConflict("not_epic", "task %s is not an epic; make the parent with add --epic", parentID)
 	}
+	if !p.Live() {
+		return nil, taskConflict("not_live", "epic %s is %s; reopen it first", parentID, p.Status)
+	}
 	return p, nil
 }
 

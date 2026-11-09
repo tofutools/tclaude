@@ -96,6 +96,20 @@ func TestTaskboardEpicTracksItsTasksAndNudgesItsCreator(t *testing.T) {
 	require.Equal(t, "open", shown.Status, "never closed by itself")
 
 	call(http.MethodPost, "/v1/taskboard/tasks/"+epic.ID+"/status", map[string]any{"status": "done"}, http.StatusOK)
+
+	// Reopening the epic flags it again on the board, but mails nobody.
+	reopened := call(http.MethodPost, "/v1/taskboard/tasks/"+epic.ID+"/reopen", map[string]any{}, http.StatusOK)
+	require.NotEmpty(t, reopened.CloseSuggestedAt)
+	nudges = 0
+	for _, s := range tbInboxSubjects(t, lead) {
+		if strings.Contains(s, "close epic?") {
+			nudges++
+		}
+	}
+	require.Equal(t, 1, nudges)
+	// An epic does not move to another node.
+	rec = h.call(lead, http.MethodPost, "/v1/taskboard/tasks/"+epic.ID+"/moved-away", map[string]any{"check": true})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
 
 // A linked node works epics through the routes and grants it already has.
