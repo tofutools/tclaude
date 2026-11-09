@@ -102,6 +102,8 @@ test('the pure helpers: rows, suggested, the PUT profile and its error paths', a
   assert.equal(m.shownValue({ kind: 'env', name: 'LANG' }, 'C.UTF-8', { secretKeys, restricted: true }), null);
   assert.equal(m.shownValue({ kind: 'env', name: 'ANTHROPIC_API_KEY' }, 'sk-x', { secretKeys, restricted: false }), null);
   assert.equal(m.shownValue({ kind: 'flag', name: '--x' }, '<redacted>', { secretKeys, restricted: false }), null);
+  assert.equal(m.comparisonTag({ state: 'unavailable', baseline: 'profile' }).text, 'cannot compare now');
+  assert.equal(m.comparisonTag({ state: 'unconfigured', baseline: 'none' }).baseline, '');
 });
 
 test("Use what's running now fills the rows, leaves a secret flag out with a note, and Save sends the version", async (t) => {
