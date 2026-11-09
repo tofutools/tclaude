@@ -1,0 +1,189 @@
+// Epics on the Task board (groups-taskboard-epics.js, tk_0a821784): the
+// strip of open epics, the epic chip on their tasks, the Epic filter, the
+// "close epic?" nudge, New epic, and the epic in the edit form.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], ...extra });
+const progress = (extra = {}) => ({ total: 0, done: 0, dropped: 0, blocked: 0, in_progress: 0, in_column: 0, next: 0, ideas: 0, ...extra });
+
+const EPIC = row('tk_e0000001', 'Checkout revamp', { kind: 'epic', progress: progress({ total: 3, done: 1, next: 1, in_progress: 1 }) });
+const DONE_EPIC = row('tk_e0000002', 'Search v2', { kind: 'epic', progress: progress({ total: 2, done: 2 }), close_suggested_at: '2026-11-09T10:00:00Z' });
+const IDEA_EPIC = row('tk_e0000003', 'Personalisation', { kind: 'epic', stage: 'idea', progress: progress() });
+
+function board(group) {
+  return {
+    group, group_id: 1,
+    counts: { live: 6, next: 3, ideas: 2 },
+    tasks: [
+      EPIC, DONE_EPIC, IDEA_EPIC,
+      row('tk_00000001', 'Saved carts', { parent_id: EPIC.id }),
+      row('tk_00000002', 'Gift cards', { stage: 'idea' }),
+      row('tk_00000003', 'Plan the release'),
+    ],
+    closed: [],
+  };
+}
+
+function fakeApi({ children = [] } = {}) {
+  const calls = [];
+  const answer = (verb, value = () => ({})) => async (...args) => { calls.push([verb, ...args]); return value(...args); };
+  return {
+    calls,
+    create: answer('create', (group, task) => ({ id: 'tk_00000009', title: task.title })),
+    edit: answer('edit', (id) => ({ id })),
+    status: answer('status'),
+    task: async (id) => (id === EPIC.id ? { ...EPIC, body: 'Make checkout fast.', children } : { ...board('x').tasks.find((t) => t.id === id), body: '' }),
+    activity: async () => ({ entries: [] }),
+    move: answer('move'), stage: answer('stage'), assign: answer('assign'), unassign: answer('unassign'),
+  };
+}
+
+async function mountBoard(t, name, { api = fakeApi(), entry = board(name), view = 'lanes' } = {}) {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${name}`, '1');
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${name}`, view);
+  const source = {
+    context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'),
+    attach: () => () => {}, refresh: async () => {},
+  };
+  const group = { name, members: [{ agent_id: 'agt_dev', title: 'dev', online: true }] };
+  const mounted = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />`);
+  const c = mounted.container;
+  const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const click = async (el) => { await harness.act(async () => { harness.fireEvent(el, 'click'); }); await settle(); };
+  return { harness, c, api, click, settle, dashPrefs };
+}
+
+const cardOf = (c, id) => c.querySelector(`.tb-card[data-task-id="${id}"]`);
+
+test('open epics are a strip above the board, not cards in its columns; an idea epic stays in Ideas', async (t) => {
+  const { c } = await mountBoard(t, 'ep-strip');
+  const strip = c.querySelector('.tb-epic-strip');
+  assert.ok(strip, 'the strip shows');
+  assert.deepEqual([...strip.querySelectorAll('[data-epic]')].map((el) => el.getAttribute('data-epic')), [EPIC.id, DONE_EPIC.id]);
+  assert.match(strip.querySelector(`[data-epic="${EPIC.id}"]`).textContent, /1\/3 done · 1 in progress · 1 next/);
+  assert.equal(cardOf(c, EPIC.id), null, 'an open epic is no card in a column');
+  const idea = cardOf(c, IDEA_EPIC.id);
+  assert.ok(idea, 'an idea epic is a card in Ideas');
+  assert.match(idea.textContent, /◆ epic/);
+  const child = cardOf(c, 'tk_00000001');
+  assert.equal(child.querySelector('.tb-epic-chip').textContent, 'Checkout revamp', 'its task carries the epic\'s chip');
+  assert.equal(cardOf(c, 'tk_00000003').querySelector('.tb-epic-chip'), null, 'a task in no epic has none');
+});
+
+test('a chip filters the board to its epic: the others dim, or hide', async (t) => {
+  const { harness, c, click, dashPrefs } = await mountBoard(t, 'ep-filter');
+  await click(cardOf(c, 'tk_00000001').querySelector('.tb-epic-chip'));
+  assert.ok(!cardOf(c, 'tk_00000001').classList.contains('tb-epic-dim'), 'its tasks stay');
+  assert.ok(cardOf(c, 'tk_00000003').classList.contains('tb-epic-dim'), 'the others dim');
+  assert.match(c.querySelector('.tb-epic-filter-btn').textContent, /Epic: Checkout revamp/);
+  assert.match(dashPrefs.getItem('tclaude.dash.groups.taskboard.epic-filter.ep-filter'), /tk_e0000001/, 'kept for this viewer');
+  // Hide: only its tasks are drawn.
+  await click(c.querySelector('.tb-epic-filter-btn'));
+  const hide = [...c.querySelectorAll('input[type="radio"]')].find((el) => el.parentElement.textContent.trim() === 'hide');
+  hide.checked = true;
+  await harness.act(async () => { harness.fireEvent(hide, 'change'); });
+  assert.equal(cardOf(c, 'tk_00000003'), null, 'the others are hidden');
+  assert.ok(cardOf(c, 'tk_00000001'));
+  // The chip again shows every task.
+  await click(cardOf(c, 'tk_00000001').querySelector('.tb-epic-chip'));
+  assert.ok(cardOf(c, 'tk_00000003'), 'every task again');
+});
+
+test('an epic whose tasks are all closed asks to close it; Not yet puts it off', async (t) => {
+  const first = await mountBoard(t, 'ep-nudge');
+  const card = first.c.querySelector(`[data-epic="${DONE_EPIC.id}"]`);
+  assert.ok(card.querySelector('[data-epic-nudge]'), 'the nudge shows');
+  assert.equal(first.c.querySelector(`[data-epic="${EPIC.id}"] [data-epic-nudge]`), null, 'not on an epic with open tasks');
+  await first.click(card.querySelector('.tb-epic-close'));
+  assert.deepEqual(first.api.calls.find((call) => call[0] === 'status'), ['status', DONE_EPIC.id, 'done'], 'Close epic closes it, never on its own');
+  await first.click(first.c.querySelector(`[data-epic="${DONE_EPIC.id}"] .tb-epic-later`));
+  assert.equal(first.c.querySelector(`[data-epic="${DONE_EPIC.id}"] [data-epic-nudge]`), null, 'Not yet hides it');
+  assert.equal(first.dashPrefs.getItem(`tclaude.dash.groups.taskboard.epic-nudge.${DONE_EPIC.id}`), DONE_EPIC.close_suggested_at,
+    'until another of its tasks changes');
+});
+
+test('New epic adds an epic, with no assignee or dependencies', async (t) => {
+  const { harness, c, api, click } = await mountBoard(t, 'ep-new');
+  await click(c.querySelector('[data-taskboard-new]'));
+  await click(c.querySelector('[data-taskboard-new-epic]'));
+  const dialog = c.querySelector('#taskboard-new-modal');
+  assert.match(dialog.textContent, /New epic · ep-new/);
+  assert.equal(dialog.querySelector('.tb-new-assignee'), null);
+  assert.equal(dialog.querySelector('.tb-deps-picker'), null);
+  assert.equal(dialog.querySelector('.tb-new-epic'), null, 'an epic is in no epic');
+  await harness.input(dialog.querySelector('.tb-new-title'), 'Payments hardening');
+  await click(dialog.querySelector('#taskboard-new-submit'));
+  assert.deepEqual(api.calls.find((call) => call[0] === 'create'), ['create', 'ep-new',
+    { title: 'Payments hardening', body: '', ref: '', resolveRef: false, kind: 'epic', stage: 'idea', status: '', to: '' }]);
+});
+
+test('an epic opens in the edit form with its progress and tasks; tasks are added and taken out at once', async (t) => {
+  const children = [row('tk_00000001', 'Saved carts', { parent_id: EPIC.id, assignee: { agent_id: 'agt_dev', name: 'dev' } }),
+    row('tk_00000004', 'Fix the badge', { parent_id: EPIC.id, status: 'done' })];
+  const { harness, c, api, click, settle } = await mountBoard(t, 'ep-edit', { api: fakeApi({ children }) });
+  await click(c.querySelector(`[data-epic="${EPIC.id}"] .tb-epic-name`));
+  await settle();
+  const dialog = c.querySelector('#taskboard-edit-modal');
+  assert.ok(dialog, 'the epic opens in the edit form');
+  assert.match(dialog.textContent, /Edit epic/);
+  assert.match(dialog.textContent, /1\/3 done/);
+  assert.equal(dialog.querySelector('.tb-edit-assignee'), null, 'an epic has no assignee');
+  assert.equal(dialog.querySelector('.tb-edit-epic'), null, 'nor an epic of its own');
+  const list = dialog.querySelector('[data-epic-children]');
+  assert.deepEqual([...list.querySelectorAll('[data-epic-child]')].map((el) => el.getAttribute('data-epic-child')), ['tk_00000001', 'tk_00000004']);
+  assert.match(list.querySelector('[data-epic-child="tk_00000001"]').textContent, /In progress.*dev/);
+  assert.match(list.querySelector('[data-epic-child="tk_00000004"]').textContent, /Done/);
+
+  await harness.input(list.querySelector('.tb-epic-add-title'), 'Address autocomplete');
+  await click(list.querySelector('.tb-epic-add-new'));
+  assert.deepEqual(api.calls.find((call) => call[0] === 'create'), ['create', 'ep-edit', { title: 'Address autocomplete', parent: EPIC.id }]);
+
+  // The board's tasks in no epic (not epics) can be added.
+  const pick = list.querySelector('.tb-epic-add-pick');
+  assert.deepEqual([...pick.querySelectorAll('option')].map((o) => o.value), ['', 'tk_00000002', 'tk_00000003']);
+  for (const option of pick.querySelectorAll('option')) { option.removeAttribute('selected'); option.selected = false; }
+  const chosen = pick.querySelector('option[value="tk_00000003"]');
+  chosen.setAttribute('selected', '');
+  chosen.selected = true;
+  await harness.act(() => harness.fireEvent(pick, 'change'));
+  await click(list.querySelector('.tb-epic-add-existing'));
+  assert.deepEqual(api.calls.find((call) => call[0] === 'edit'), ['edit', 'tk_00000003', { parent: EPIC.id }]);
+
+  await click(list.querySelector('[data-epic-child="tk_00000001"] .tb-epic-child-rm'));
+  assert.deepEqual(api.calls.filter((call) => call[0] === 'edit').at(-1), ['edit', 'tk_00000001', { clearParent: true }]);
+});
+
+test('the edit plan moves a task between epics, and closes an epic with open tasks by force', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { editPlan, draftOf } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
+  const task = row('tk_00000003', 'Plan the release');
+  const calls = [];
+  const api = { edit: async (...args) => calls.push(['edit', ...args]), status: async (...args) => calls.push(['status', ...args]) };
+  for (const step of editPlan(task, { ...draftOf(task), parent: EPIC.id })) await step.run(api);
+  assert.deepEqual(calls, [['edit', 'tk_00000003', { parent: EPIC.id }]]);
+  calls.length = 0;
+  const inEpic = { ...task, parent_id: EPIC.id };
+  for (const step of editPlan(inEpic, { ...draftOf(inEpic), parent: '' })) await step.run(api);
+  assert.deepEqual(calls, [['edit', 'tk_00000003', { clearParent: true }]]);
+  calls.length = 0;
+  for (const step of editPlan(EPIC, { ...draftOf(EPIC), where: 'done' })) await step.run(api);
+  assert.deepEqual(calls, [['status', EPIC.id, 'done', '', { force: true }]]);
+});
+
+test('boardEntry and the filter, and an epic\'s colour', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { boardEntry, epicColour, epicMatches, NO_EPIC } = await harness.importDashboardModule('js/groups-taskboard-epics.js');
+  const entry = board('x');
+  assert.deepEqual(boardEntry(entry).tasks.map((task) => task.id), [IDEA_EPIC.id, 'tk_00000001', 'tk_00000002', 'tk_00000003']);
+  assert.deepEqual(boardEntry(entry, { epic: EPIC.id, hide: true }).tasks.map((task) => task.id), ['tk_00000001']);
+  assert.deepEqual(boardEntry(entry, { epic: NO_EPIC, hide: true }).tasks.map((task) => task.id), ['tk_00000002', 'tk_00000003']);
+  assert.ok(epicMatches(row('a', 'a', { parent_id: EPIC.id }), EPIC.id));
+  assert.ok(!epicMatches(row('a', 'a'), EPIC.id));
+  assert.equal(epicColour(EPIC.id), epicColour(EPIC.id), 'the same every time');
+  assert.ok(epicColour(EPIC.id) >= 1 && epicColour(EPIC.id) <= 8);
+});

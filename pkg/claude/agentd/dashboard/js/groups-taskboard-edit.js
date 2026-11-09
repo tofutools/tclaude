@@ -21,7 +21,7 @@
 // the form then stays open and names what was not saved.
 
 import { Fragment, h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
 import { COMMENT_AREA, TaskActivity } from './groups-taskboard-comments.js';
@@ -42,7 +42,8 @@ export { MAX_REFS, RefsField, draftRefs, multiRefs };
 import { AnswerWith, TaskQuestions, askerOf, taskQuestions } from './groups-taskboard-answer.js';
 
 import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
-import { COLUMN_STATE } from './taskboard-context.js';
+import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
+import { EpicBoard, EpicChildren, EpicProgress, isEpic, progressParts } from './groups-taskboard-epics.js';
 const html = htm.bind(h);
 
 // WHERE are the places a task can be, as the form offers them.
@@ -56,6 +57,10 @@ export const WHERE = [
 ];
 
 const CLOSED = new Set(['done', 'dropped']);
+
+// EPIC_WHERE are the places an epic can be: it is no work of its own, so
+// never in progress, blocked or in a column; its tasks are.
+export const EPIC_WHERE = WHERE.filter((w) => !['progress', 'blocked'].includes(w.key));
 
 // whereOf is where a task is now.
 export function whereOf(task) {
@@ -76,6 +81,7 @@ export function draftOf(task) {
     reason: task.status === 'blocked' || task.status === 'dropped' ? task.block_reason || '' : '',
     to: task.assignee?.agent_id || '',
     deps: [...(task.depends_on || [])],
+    parent: task.parent_id || '',
   };
 }
 
@@ -125,6 +131,12 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   if (addDeps.length) change.addDeps = addDeps;
   if (rmDeps.length) change.rmDeps = rmDeps;
   if (addDeps.length || rmDeps.length) names.push('dependencies');
+  // The epic it is in (edit --parent / --rm-parent).
+  const parent = draft.parent ?? (task.parent_id || '');
+  if (parent !== (task.parent_id || '')) {
+    if (parent) change.parent = parent; else change.clearParent = true;
+    names.push('epic');
+  }
   if (names.length) steps.push({ name: names.join(', '), run: (api) => api.edit(task.id, change) });
 
   // A custom column (In review, …) stands in next: the task is queued, then
@@ -185,7 +197,11 @@ export function editPlan(task, draft, { add = [], remove = [], bodyKnown = true 
   if (where === 'blocked' && (open || status !== 'blocked' || reason !== (task.block_reason || ''))) {
     steps.push({ name: 'block', run: (api) => api.status(task.id, 'blocked', reason) });
   }
-  if (where === 'done' && (open || status !== 'done')) steps.push({ name: 'done', run: (api) => api.status(task.id, 'done') });
+  // An epic closed here closes with tasks still open in it, which stay
+  // open (status --force); the form says so.
+  if (where === 'done' && (open || status !== 'done')) {
+    steps.push({ name: 'done', run: (api) => (isEpic(task) ? api.status(task.id, 'done', '', { force: true }) : api.status(task.id, 'done')) });
+  }
   if (where === 'dropped' && (open || status !== 'dropped')) steps.push({ name: 'drop', run: (api) => api.status(task.id, 'dropped', reason) });
 
   for (const id of remove) {
@@ -238,7 +254,7 @@ export async function runPlan(api, steps) {
   return { saved, refused };
 }
 
-function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current, columns = [] }) {
+function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, current, columns = [], epic = false }) {
   // In progress takes an assignee: only a viewer who may assign moves a task
   // there. Done and Dropped follow who may close it.
   const off = (key) => {
@@ -247,11 +263,17 @@ function WherePick({ value, onChange, wizard, disabled, canAssign, canClose, cur
     if (CLOSED.has(key) && !canClose) return 'not yours to close';
     return '';
   };
-  return html`<${StagePicker} id="taskboard-edit-where" value=${value} onChange=${(key) => { if (key) onChange(key); }} places=${WHERE}
-    columns=${columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Where it is" />`;
+  return html`<${StagePicker} id="taskboard-edit-where" value=${value} onChange=${(key) => { if (key) onChange(key); }} places=${epic ? EPIC_WHERE : WHERE}
+    columns=${epic ? [] : columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Where it is" />`;
 }
 
 function whereHint(draft, task) {
+  if (isEpic(task)) {
+    const open = (task.progress?.total || 0) - (task.progress?.done || 0);
+    if (draft.where === 'done' && task.status !== 'done') return open > 0 ? `closes the epic; its ${open} open task${open === 1 ? '' : 's'} stay open` : 'closes the epic';
+    if (draft.where === 'dropped' && task.status !== 'dropped') return 'drops the epic; its tasks stay on the board';
+    if (draft.where === 'next' && task.status === 'open' && task.stage === 'idea') return 'promotes it: it moves to the epic strip above the board';
+  }
   switch (draft.where) {
     case 'blocked': return 'the reason shows on the card';
     case 'dropped': return 'optional: why it is dropped (e.g. "parked in awb")';
@@ -267,8 +289,9 @@ function whereHint(draft, task) {
 // EditTaskDialog is the edit form. members are the ones a task can go to;
 // canAssign shows the assignee picker, canClose offers Done and Dropped.
 // onSaved runs after a Save (also a partial one), to read the board again.
+// onOpenTask(id), when given, opens another task's form (an epic's task).
 export function EditTaskDialog({ group, entry, task, api, canAssign = false, canClose = true, members = [], wizard = false,
-  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {}, dirtyRef = null }) {
+  nameOf = (actor) => actor, me = '', onClose, onSaved = () => {}, dirtyRef = null, onOpenTask = null }) {
   // The board's context carries no brief: the form reads the task in full,
   // and the brief field waits for it.
   const [brief, setBrief] = useState({ state: typeof task.body === 'string' && task.body ? 'ready' : 'loading', body: task.body || '' });
@@ -311,7 +334,10 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
     onAdded: (added, event) => { if (event?.target?.closest?.('.tb-edit-body')) briefEditor.current?.insertFiles(added.map((a) => a.name), event); } });
   const briefFiles = useMarkdownFiles(api, task, pending, draft.body);
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
-  const tasks = entry?.tasks || [];
+  const epic = isEpic(task);
+  // The board's epics, for the Epic picker (an epic is in none).
+  const epics = useContext(EpicBoard)?.epics || [];
+  const tasks = (entry?.tasks || []).filter((t) => !isEpic(t));
   const steps = editPlan(base, draft, { add: pending.map(({ file, name }) => ({ file, name })), remove: removed, bodyKnown: brief.state === 'ready' });
   const missing = missingOf(draft);
   // A comment being written counts too: closing the form would lose it.
@@ -365,6 +391,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   const row = (label, field, hint = null) => html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${label}</span>
     <span class="tb-new-field">${field}${hint && html`<span class="ui-hint tb-new-hint">${hint}</span>`}</span></div>`;
   const assignee = task.assignee?.agent_id;
+  const parentGone = draft.parent && !epics.some((e) => e.id === draft.parent);
   const meta = [
     `Created ${task.created_by ? `by ${nameOf(task.created_by)} ` : ''}${relTime(task.created_at)}`,
     assignee && `assigned to ${task.assignee?.name || nameOf(`agent:${assignee}`)}${task.assigned_by ? ` by ${nameOf(task.assigned_by)}` : ''}${task.assigned_at ? ` ${relTime(task.assigned_at)}` : ''}`,
@@ -376,7 +403,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
   // pastes are its own, not the form's Save or Files.
   const answerDialog = answering !== null && html`<${AnswerWith} task=${task} n=${answering} api=${api}
     askedBy=${nameOf(askerOf(task, answering))} onClose=${() => setAnswering(null)} onAnswered=${() => onSaved({ saved: ['answer'], refused: [] })} />`;
-  return html`<${Fragment}><${Dialog} id="taskboard-edit-modal" title=${html`${wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span><button data-ui-exempt type="button" class="tb-id-copy" title="Copy the id"
+  return html`<${Fragment}><${Dialog} id="taskboard-edit-modal" title=${html`${epic ? 'Edit epic' : wizard ? 'Edit quest' : 'Edit task'} · ${group.shownName || group.name} <span class="tb-id">${task.id}</span><button data-ui-exempt type="button" class="tb-id-copy" title="Copy the id"
       aria-label=${`Copy ${task.id}`} onClick=${async () => {
         if (await writeClipboard(task.id)) shellToast(`Copied ${task.id}`); else shellToast(`Could not copy ${task.id}`, true);
       }}>⧉</button>`}
@@ -400,12 +427,23 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       brief.state === 'failed' ? 'the brief could not be read, so Save leaves it as it is' : null)}
     ${row('Refs', html`<${RefsField} task=${base} draft=${draft} busy=${busy} looked=${looked}
       onChange=${(refs) => set('refs')(refs)} onNewRef=${set('newRef')} />`, refsHint(base, draft))}
-    ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []}
+    ${epic && row('Progress', html`<span class="tb-epic-progress-row"><${EpicProgress} epic=${task} large=${true} />
+      <span class="tb-epic-counts">${progressParts(task.progress).join(' · ')}</span></span>`)}
+    ${epic && row('Tasks', html`<${EpicChildren} epic=${task} api=${api} group=${group.name} tasks=${entry?.tasks || []} nameOf=${nameOf}
+      onOpen=${onOpenTask} columnLabel=${(slug) => columnLabel(COLUMN_STATE + slug, entry?.columns || [])}
+      onChanged=${() => onSaved({ saved: ['tasks'], refused: [] })} />`, 'a change here is made at once, not with Save')}
+    ${row('Where it is', html`<${WherePick} value=${draft.where} current=${start.where} wizard=${wizard} disabled=${busy} columns=${entry?.columns || []} epic=${epic}
       canAssign=${canAssign} canClose=${canClose} onChange=${(where) => setDraft((current) => setWhere(current, where))} />
       ${reasonRow && html`<${Textarea} class="tb-edit-reason" rows=${2} aria-label=${draft.where === 'blocked' ? 'Block reason' : 'Drop reason'} maxLength=${400}
         value=${draft.reason} disabled=${busy} placeholder=${draft.where === 'blocked' ? 'why it is blocked (required)' : 'why drop it (optional)'}
         onInput=${(event) => set('reason')(event.currentTarget.value)} />`}`, hint || null)}
-    ${(canAssign || assignee) && row('Assignee', canAssign
+    ${!epic && (epics.length > 0 || draft.parent) && row('Epic', html`<${Select} class="tb-edit-epic" aria-label="Epic" value=${draft.parent} disabled=${busy}
+        onChange=${(event) => set('parent')(event.currentTarget.value)}>
+        <option value="">— in no epic —</option>
+        ${epics.map((e) => html`<option key=${e.id} value=${e.id}>${e.title}</option>`)}
+        ${parentGone && html`<option value=${draft.parent}>${draft.parent}</option>`}
+      <//>`, draft.parent !== start.parent ? (draft.parent ? 'its chip shows the epic on the board' : 'it leaves the epic, and stays on the board') : null)}
+    ${!epic && (canAssign || assignee) && row('Assignee', canAssign
       ? html`<${Select} class="tb-edit-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy}
           onChange=${(event) => { const to = event.currentTarget.value; setDraft((current) => setAssignee(current, to)); }}>
           <option value="">— unassigned —</option>
@@ -416,7 +454,7 @@ export function EditTaskDialog({ group, entry, task, api, canAssign = false, can
       : html`<span>${task.assignee?.operator ? operatorOptionLabel(group) : task.assignee?.name || assignee}</span>`,
       canAssign && draft.to !== start.to ? (draft.to === 'operator' ? 'it waits on the operator, who closes it as done'
         : draft.to ? 'the brief goes to its inbox' : 'its assignee is told') : null)}
-    ${row('After', html`<${DepsPicker} taskId=${task.id} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
+    ${!epic && row('After', html`<${DepsPicker} taskId=${task.id} tasks=${tasks} closed=${entry?.closed || []} value=${draft.deps} disabled=${busy} onChange=${set('deps')} />`)}
     ${row('Files', html`<${TaskFiles} api=${api} task=${task} removed=${removed} pending=${pending} intake=${intake} busy=${busy}
       nameOf=${nameOf} onToggle=${(id) => setRemoved((before) => (before.includes(id) ? before.filter((x) => x !== id) : [...before, id]))} />`)}
     ${row('Activity', html`<${TaskActivity} api=${api} task=${task} me=${me} nameOf=${nameOf} onDraft=${setCommenting} onAnswer=${onAnswer} />`,

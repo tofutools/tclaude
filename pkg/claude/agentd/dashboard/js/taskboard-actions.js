@@ -194,8 +194,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // hold assigns `to` without starting the task: it waits in its stage in
     // their lane (tk_3826822a).
     // addRefs are its refs after the first (ref).
-    create(group, { title, body = '', ref = '', refLabel = '', addRefs = [], stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [] }) {
+    // kind 'epic' makes an epic; parent puts the new task in an epic.
+    create(group, { title, body = '', ref = '', refLabel = '', addRefs = [], stage = 'idea', after = [], resolveRef = false, status = '', blockReason = '', to = '', hold = false, files = [], kind = '', parent = '' }) {
       const payload = { title };
+      if (kind) payload.kind = kind;
+      if (parent) payload.parent = parent;
       if (body) payload.body = body;
       if (ref) payload.ref = ref;
       if (ref && refLabel) payload.ref_label = refLabel;
@@ -260,8 +263,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // addRefs and rmRefs add refs after the first and take refs off (by
     // URL or label); a node from before tasks had several refs ignores them.
     // firstRef moves a ref (one of the task's, or of addRefs) to the front.
-    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs, firstRef }) {
+    // parent moves the task into an epic, clearParent takes it out.
+    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs, firstRef, parent, clearParent = false }) {
       const payload = {};
+      if (clearParent) payload.clear_parent = true;
+      else if (parent) payload.parent = parent;
       if (rmRefs?.length) payload.rm_refs = rmRefs;
       if (addRefs?.length) payload.add_refs = addRefs;
       if (firstRef) payload.first_ref = firstRef;
@@ -307,8 +313,11 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     setColumnState(group, slug, state) {
       return call('POST', `${columnsPath(group, slug)}/state`, { state });
     },
-    status(id, status, reason = '') {
-      return call('POST', taskPath(id, '/status'), reason ? { status, reason } : { status });
+    // force closes an epic whose tasks are not all closed (they stay).
+    status(id, status, reason = '', { force = false } = {}) {
+      const payload = reason ? { status, reason } : { status };
+      if (force) payload.force = true;
+      return call('POST', taskPath(id, '/status'), payload);
     },
     // assign gives the task to a member (an idea is promoted first); the
     // assignee gets the brief in its inbox from the operator. With hold

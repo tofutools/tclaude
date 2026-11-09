@@ -17,7 +17,7 @@
 //                       `add --from-awb` and kin).
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button, Input, Menu, MenuItem, MenuSep, Select, Textarea } from './ui-components.js';
@@ -31,6 +31,7 @@ import { DepsPicker } from './groups-taskboard-deps.js';
 import { RefsField, draftRefs } from './groups-taskboard-refs-field.js';
 
 import { StagePicker, columnSlug } from './groups-taskboard-stage.js';
+import { EPIC, EpicBoard } from './groups-taskboard-epics.js';
 const html = htm.bind(h);
 
 // Members as groups-taskboard.js reads them: active agents with a stable id,
@@ -119,18 +120,23 @@ export function newTaskPlan(draft) {
   const ref = refs[0] || '';
   const addRefs = refs.slice(1);
   const after = draft.after || [];
+  // An epic starts in Ideas or Next with no assignee; a task may go in one.
+  if (draft.kind === EPIC) {
+    return { kind: 'add', task: { title, body, ref, ...(addRefs.length ? { addRefs } : {}), resolveRef: !!ref, kind: EPIC, stage: start === 'next' ? 'next' : 'idea', status: '', to: '' } };
+  }
+  const parent = draft.parent ? { parent: draft.parent } : {};
   const fields = startFields(start, { to: draft.to || '', reason: draft.reason || '' });
   // A title that is only a tracker id is an import, titled from the tracker,
   // when it starts in Ideas or Next unassigned. With any other start state
   // it is one add with the id as its ref (linked through its tracker), so
   // the state lands in the same call: an import cannot carry it.
-  if (!ref && isTrackerLine(title) && !fields.to && !fields.status && (start === 'idea' || start === 'next')) {
+  if (!ref && isTrackerLine(title) && !fields.to && !fields.status && !draft.parent && (start === 'idea' || start === 'next')) {
     return { kind: 'tracker', text: title, next, body, after };
   }
   if (!ref && isTrackerLine(title)) {
-    return { kind: 'add', task: { title, body, ref: title, after, resolveRef: true, ...fields } };
+    return { kind: 'add', task: { title, body, ref: title, after, resolveRef: true, ...fields, ...parent } };
   }
-  return { kind: 'add', task: { title, body, ref, ...(addRefs.length ? { addRefs } : {}), after, resolveRef: !!ref, ...fields } };
+  return { kind: 'add', task: { title, body, ref, ...(addRefs.length ? { addRefs } : {}), after, resolveRef: !!ref, ...fields, ...parent } };
 }
 
 // submitNewTask runs the plan. It resolves to { created, task, warning }:
@@ -229,6 +235,8 @@ export function NewTaskMenu({ group, entry, wizard = false, onChoose, cell = nul
         wizard ? 'Fill in the scroll: title, brief, ref, where it starts' : 'Fill in a form: title, brief, ref, where it starts')}
       ${item('data-taskboard-new-ask', choose('ask'), wizard ? 'Ask a hero' : 'Ask an agent',
         off || (wizard ? 'Tell it in your words; a hero scribes the quests' : 'Describe it; an agent writes the tasks'), !!off, off || undefined)}
+      ${!cell && item('data-taskboard-new-epic', choose('epic'), 'New epic',
+        'A container for a concern\'s tasks: its progress is theirs')}
       <${MenuSep} />
       ${item('data-taskboard-new-import', choose('import'), 'From a tracker…',
         wizard ? 'Paste a ticket URL (awb, Linear, GitHub…); the quest is named from it' : 'Paste a ticket URL (awb, Linear, GitHub…); the task is titled from it')}
@@ -247,7 +255,7 @@ function StartPick({ value, onChange, wizard, disabled, canAssign, listMode, col
     columns=${listMode ? [] : columns} wizard=${wizard} off=${off} disabled=${disabled} ariaLabel="Starts in" />`;
 }
 
-const EMPTY_DRAFT = { title: '', list: '', body: '', refs: [], newRef: '', start: 'idea', reason: '', after: [], to: '' };
+const EMPTY_DRAFT = { title: '', list: '', body: '', refs: [], newRef: '', start: 'idea', reason: '', after: [], to: '', parent: '' };
 
 // NewTaskDialog is "Write it myself". `canAssign` shows the assignee
 // picker; `members` are the ones a task can go to.
@@ -274,7 +282,9 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     onAdded: (added, event) => { if (event?.target?.closest?.('.tb-new-body')) briefEditor.current?.insertFiles(added.map((a) => a.name), event); } });
   const briefFiles = useMarkdownFiles(api, null, files);
   const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }));
-  const listMode = !!draft.list;
+  const epic = draft.kind === EPIC;
+  const epics = useContext(EpicBoard)?.epics || [];
+  const listMode = !epic && !!draft.list;
   const lines = captureLines(draft.list);
   const tasks = entry?.tasks || [];
   const hasRefs = draftRefs(draft).length > 0;
@@ -311,8 +321,8 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     setDraft((current) => ({ ...current, list: [current.title, pasted].filter((s) => s.trim()).join('\n'), title: '' }));
   };
   const noun = wizard ? 'quest' : 'task';
-  const heading = wizard ? `New quest · ${group.name}` : `New task · ${group.name}`;
-  const submitLabel = busy ? 'Adding…' : listMode ? `Add ${lines.length} ${noun}${lines.length === 1 ? '' : 's'}` : `Add ${noun}`;
+  const heading = epic ? `New epic · ${group.name}` : wizard ? `New quest · ${group.name}` : `New task · ${group.name}`;
+  const submitLabel = busy ? 'Adding…' : listMode ? `Add ${lines.length} ${noun}${lines.length === 1 ? '' : 's'}` : epic ? 'Add epic' : `Add ${noun}`;
   // A div, not a label: the stage and deps rows hold several controls, and
   // every control carries its own aria-label.
   const row = (label, field, hint = null) => html`<div class="cron-create-row tb-new-row"><span class="cron-create-label">${label}</span>
@@ -327,6 +337,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
     <div class="modal-meta">${listMode
       ? `One ${noun} per line; a line that is only an awb, Linear or GitHub id becomes that ref, titled from the tracker.${
         draft.body.trim() || hasRefs || draft.after.length || draft.to || files.length ? ' A list takes no brief, ref, dependencies, assignee or files: they are not used.' : ''}`
+      : epic ? 'An epic groups the tasks of one concern: its progress is theirs, and it has no assignee. As an idea it stays in Ideas; in Next it joins the epic strip above the board.'
       : wizard ? 'The quest lands among the visions unless you start it elsewhere.' : 'The task lands in the ideas unless you start it in another column.'}</div>
     ${listMode
       ? row('Tasks', html`<${Textarea} class="tb-new-list" rows="6" aria-label="Tasks, one per line" value=${draft.list} disabled=${busy}
@@ -347,13 +358,18 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
         ${row('Refs', html`<${RefsField} draft=${draft} busy=${busy || tracker} pending="linked when added"
           onChange=${set('refs')} onNewRef=${set('newRef')} />`,
           hasRefs ? 'the first is the task\'s ref for --ref and the List (↑ makes another first); a bare awb or Linear id is linked through its tracker' : null)}`}
-    ${row('Starts in', html`<${StartPick} value=${listMode && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
-      canAssign=${canAssign} listMode=${listMode} columns=${entry?.columns || []} onChange=${set('start')} />`, missing || null)}
+    ${row('Starts in', html`<${StartPick} value=${(listMode || epic) && draft.start !== 'next' ? 'idea' : draft.start} wizard=${wizard} disabled=${busy}
+      canAssign=${canAssign} listMode=${listMode || epic} columns=${entry?.columns || []} onChange=${set('start')} />`, missing || null)}
+    ${!listMode && !epic && epics.length > 0 && row('Epic', html`<${Select} class="tb-new-epic" aria-label="Epic" value=${draft.parent} disabled=${busy}
+        onChange=${(event) => set('parent')(event.currentTarget.value)}>
+        <option value="">— in no epic —</option>
+        ${epics.map((e) => html`<option key=${e.id} value=${e.id}>${e.title}</option>`)}
+      <//>`)}
     ${!listMode && draft.start === 'blocked' && row('Reason', html`<${Textarea} class="tb-new-reason" rows=${2} aria-label="Block reason" required maxLength=${400}
       value=${draft.reason} disabled=${busy} placeholder="why it is blocked (required)" onInput=${(event) => set('reason')(event.currentTarget.value)} />`)}
-    ${!listMode && row('After', html`<${DepsPicker} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
+    ${!listMode && !epic && row('After', html`<${DepsPicker} tasks=${tasks} value=${draft.after} disabled=${busy} onChange=${set('after')} />`)}
     ${!listMode && row('Files', html`<${FilesField} intake=${intake} attachments=${files} busy=${busy} />`)}
-    ${!listMode && canAssign && row('Assignee', html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
+    ${!listMode && !epic && canAssign && row('Assignee', html`<${Select} class="tb-new-assignee" aria-label="Assignee" value=${draft.to} disabled=${busy} onChange=${(event) => set('to')(event.currentTarget.value)}>
           <option value="">— unassigned —</option>
           <option value="operator">${operatorOptionLabel(group)}</option>
           ${members.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${member.title || member.agent_id}${member.online ? '' : ' (offline)'}</option>`)}

@@ -334,6 +334,17 @@ func seedSandboxTaskboard(s *sandboxSeeder) {
 	s.api(http.MethodPost, "/v1/taskboard/tasks/"+ids[8]+"/stage", map[string]any{"stage": "qa"}, nil)
 	// One done task is archived, so the archive has a row.
 	s.api(http.MethodPost, "/v1/taskboard/tasks/"+ids[15]+"/archive", map[string]any{}, nil)
+	// Epics (tk_0a821784): two open ones holding tasks, one still an idea.
+	var checkout, search sbTask
+	s.api(http.MethodPost, board+"/tasks", map[string]any{"title": "Checkout revamp", "kind": "epic", "stage": "next",
+		"body": "Make checkout fast and accessible on mobile before the 2.4 release."}, &checkout)
+	s.api(http.MethodPost, board+"/tasks", map[string]any{"title": "Search v2", "kind": "epic", "stage": "next"}, &search)
+	s.api(http.MethodPost, board+"/tasks", map[string]any{"title": "Storefront personalisation", "kind": "epic"}, nil)
+	for epic, children := range map[string][]string{checkout.ID: {ids[3], ids[4], ids[6], ids[13]}, search.ID: {ids[5], ids[7], ids[14]}} {
+		for _, id := range children {
+			s.api(http.MethodPatch, "/v1/taskboard/tasks/"+id, map[string]any{"parent": epic}, nil)
+		}
+	}
 
 	// A question for the operator, with choices.
 	var question sbTask

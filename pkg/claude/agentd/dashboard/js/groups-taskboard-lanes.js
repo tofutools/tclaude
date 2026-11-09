@@ -49,6 +49,7 @@ import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
+import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, isEpic } from './groups-taskboard-epics.js';
 
 const html = htm.bind(h);
 
@@ -425,10 +426,11 @@ function cardHint(task) {
 // question still to answer.
 export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null }) {
   const done = task.status === 'done';
+  const dim = epicDimmed(useContext(EpicBoard), task);
   // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
   const board = useContext(TaskLink);
   const menu = board && onEdit ? [...(given || []), copyLinkItem(task.id, board)] : given;
-  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}`}
+  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
       onContextMenu=${menu?.length ? (event) => openRowMenu(event, '.tb-card-more') : undefined}
@@ -437,6 +439,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     ${menu?.length > 0 && html`<span class="tb-card-menu"><${RowMenu} label=${task.title} items=${menu} buttonClass="tb-card-more" /></span>`}
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
+    ${(task.parent_id || isEpic(task)) && html`<div class="tb-card-epic-line"><${EpicMark} task=${task} /><${EpicChip} task=${task} /></div>`}
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
       <${QuestionTag} task=${task} askedBy=${nameOf && askerOf(task) ? nameOf(askerOf(task)) : ''} /></div>`}
     ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
