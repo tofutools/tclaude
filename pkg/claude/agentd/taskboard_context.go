@@ -305,6 +305,9 @@ var dashboardTaskboardRoutes = []struct {
 	{"POST /v1/taskboard/tasks/{id}/start", handleTaskboardTask(taskboardOwnGate, handleTaskboardStart)},
 	{"POST /v1/taskboard/tasks/{id}/answer", handleTaskboardTask(taskboardOwnGate, handleTaskboardAnswer)},
 	{"GET /v1/taskboard/tasks/{id}/answer", handleTaskboardTask(taskboardReadAccess, handleTaskboardAnswerGet)},
+	// A linked node's agent asks this node's operator on a task (the peer
+	// view's mux is this one); the operator's own ask is refused there.
+	{"POST /v1/taskboard/tasks/{id}/questions", handleTaskboardTask(taskboardOwnGate, handleTaskboardAskOperator)},
 	{"POST /v1/taskboard/tasks/{id}/questions/{n}/answer", handleTaskboardTask(taskboardOwnGate, handleTaskboardAnswer)},
 	{"GET /v1/taskboard/tasks/{id}/questions/{n}", handleTaskboardTask(taskboardReadAccess, handleTaskboardAnswerGet)},
 	{"GET /v1/groups/{name}/taskboard/writers", v1GroupRoute(handleTaskboardWritersGet)},

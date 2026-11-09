@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -67,6 +69,9 @@ type groupTaskQuestionSpec struct {
 	Multi     bool                      `json:"multi,omitempty"`
 	Options   []GroupTaskQuestionOption `json:"options,omitempty"`
 	Recommend string                    `json:"recommend,omitempty"`
+	// Attachments are the ids of the task's own files the question shows
+	// (tk_72dff9f8).
+	Attachments []int64 `json:"attachments,omitempty"`
 }
 
 // GroupTaskQuestion is one question on a task: what it asks, who asked, and
@@ -99,6 +104,11 @@ type GroupTaskQuestion struct {
 	EventID       int64            `json:"event_id,omitempty"`
 	AnswerEventID int64            `json:"answer_event_id,omitempty"`
 	ClosedAt      time.Time        `json:"closed_at,omitzero"`
+	// AttachmentIDs are the task's own files the question shows the
+	// operator, in order: files sent with it (`ask-operator --attach`) and
+	// files already on the task it names (--attach-existing). A file
+	// detached later drops out of the question's view.
+	AttachmentIDs []int64 `json:"attachment_ids,omitempty"`
 	// Source names where a mirrored question is answered too
 	// ("notify:<message id>", "approval:<request id>"); empty for one asked
 	// on the board. A mirrored question is answered through its source and
@@ -310,7 +320,7 @@ func askGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, q *GroupTaskQuestion, now 
 		return err
 	}
 	q.EventID, _ = res.LastInsertId()
-	spec, err := json.Marshal(groupTaskQuestionSpec{Kind: GroupTaskQuestionKind, Multi: q.Multi, Options: q.Options, Recommend: q.Recommend})
+	spec, err := q.specJSON()
 	if err != nil {
 		return err
 	}
@@ -321,16 +331,47 @@ func askGroupTaskQuestionTx(tx *sql.Tx, t *GroupTask, q *GroupTaskQuestion, now 
 	return err
 }
 
+func (q *GroupTaskQuestion) specJSON() (string, error) {
+	spec, err := json.Marshal(groupTaskQuestionSpec{Kind: GroupTaskQuestionKind, Multi: q.Multi, Options: q.Options,
+		Recommend: q.Recommend, Attachments: q.AttachmentIDs})
+	return string(spec), err
+}
+
+// GroupTaskQuestionAttachmentsMax caps the files one question shows.
+const GroupTaskQuestionAttachmentsMax = GroupTaskAttachmentsCap
+
 // AskGroupTaskQuestion asks the operator question q on live task id, as
 // q.AskedBy. With q.Blocks the task, which must be open, is blocked until
 // the question is answered or withdrawn.
 func AskGroupTaskQuestion(id string, q *GroupTaskQuestion) (*GroupTask, *GroupTaskQuestion, error) {
+	return AskGroupTaskQuestionWithFiles(id, q, nil, nil)
+}
+
+// AskGroupTaskQuestionWithFiles is AskGroupTaskQuestion that, in the same
+// transaction, attaches files to the task (as `taskboard attach` does) and
+// links them to the question, after the task's files that existing names
+// ("#13", "13" or a file name).
+func AskGroupTaskQuestionWithFiles(id string, q *GroupTaskQuestion, files []GroupTaskAttachment, existing []string) (*GroupTask, *GroupTaskQuestion, error) {
 	out, err := withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it to ask on it", id, t.Status)
 		}
 		if q.Blocks && t.Status != GroupTaskOpen {
 			return taskConflict("blocked", "task %s is blocked already; ask without blocking it", id)
+		}
+		ids, err := resolveTaskAttachmentNamesTx(tx, id, existing)
+		if err != nil {
+			return err
+		}
+		rows := append([]GroupTaskAttachment(nil), files...)
+		if err := insertGroupTaskAttachmentsTx(tx, id, 0, rows, q.AskedBy, now); err != nil {
+			return err
+		}
+		for _, a := range rows {
+			ids = append(ids, a.ID)
+		}
+		if q.AttachmentIDs, err = linkQuestionAttachments(nil, ids); err != nil {
+			return err
 		}
 		if err := askGroupTaskQuestionTx(tx, t, q, now); err != nil {
 			return err
@@ -361,7 +402,7 @@ func scanGroupTaskQuestion(s rowScanner) (string, *GroupTaskQuestion, error) {
 	}
 	var sp groupTaskQuestionSpec
 	_ = json.Unmarshal([]byte(spec), &sp)
-	q.Kind, q.Multi, q.Options, q.Recommend = GroupTaskQuestionKind, sp.Multi, sp.Options, sp.Recommend
+	q.Kind, q.Multi, q.Options, q.Recommend, q.AttachmentIDs = GroupTaskQuestionKind, sp.Multi, sp.Options, sp.Recommend, sp.Attachments
 	q.AskedAt, q.ClosedAt = asked.Time(), closed.Time()
 	if answer != "" {
 		var a GroupTaskAnswer
@@ -370,6 +411,78 @@ func scanGroupTaskQuestion(s rowScanner) (string, *GroupTaskQuestion, error) {
 		}
 	}
 	return taskID, &q, nil
+}
+
+// resolveTaskAttachmentNamesTx reads names of task id's own files ("#13",
+// "13" or a file name, case-insensitive) as their ids.
+func resolveTaskAttachmentNamesTx(tx taskTx, id string, names []string) ([]int64, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	files, err := listGroupTaskAttachmentsTx(tx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		var found []int64
+		if n, err := strconv.ParseInt(strings.TrimPrefix(name, "#"), 10, 64); err == nil {
+			for _, f := range files {
+				if f.ID == n {
+					found = append(found, f.ID)
+				}
+			}
+		}
+		if len(found) == 0 {
+			for _, f := range files {
+				if strings.EqualFold(f.Name, name) {
+					found = append(found, f.ID)
+				}
+			}
+		}
+		if len(found) != 1 {
+			return nil, taskConflict("no_attachment", "task %s has no file %q of its own (see `taskboard attachments %s`)", id, truncateUTF8(name, 80), id)
+		}
+		out = append(out, found[0])
+	}
+	return out, nil
+}
+
+// linkQuestionAttachments appends ids to have, each once, under the cap.
+func linkQuestionAttachments(have, ids []int64) ([]int64, error) {
+	out := append([]int64(nil), have...)
+	for _, id := range ids {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > GroupTaskQuestionAttachmentsMax {
+		return nil, taskConflict("attachment_cap", "a question shows at most %d files", GroupTaskQuestionAttachmentsMax)
+	}
+	return out, nil
+}
+
+// linkQuestionTaskFilesTx links a new question task's files to its first
+// question, so the answer dialog shows them as the question's.
+func linkQuestionTaskFilesTx(tx *sql.Tx, taskID string, q *GroupTaskQuestion, files []GroupTaskAttachment) error {
+	if len(files) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(files))
+	for _, f := range files {
+		ids = append(ids, f.ID)
+	}
+	var err error
+	if q.AttachmentIDs, err = linkQuestionAttachments(q.AttachmentIDs, ids); err != nil {
+		return err
+	}
+	spec, err := q.specJSON()
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE group_task_questions SET spec = ? WHERE task_id = ? AND n = ?`, spec, taskID, q.N)
+	return err
 }
 
 func getGroupTaskQuestionTx(q taskTx, taskID string, n int) (*GroupTaskQuestion, error) {

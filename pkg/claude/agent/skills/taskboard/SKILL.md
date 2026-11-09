@@ -120,6 +120,13 @@ comments on it come to you as mail too.
   Without options the operator answers in words. Withdraw an open question
   by deleting its entry (`comment rm tk_mine <#id>`). `ask-operator <group>
   "question?" [--blocks tk_mine]` makes a new task for the question instead.
+- To show the operator an image (a screenshot, a mock) with a question,
+  attach it: `ask-operator tk_mine "Which layout?" --attach a.png --attach
+  b.png --option A --option B`. The files land on the task and the Answer
+  dialog previews them with the question; `--attach-existing '#13'` names
+  one already on the task. Never paste a local path into the body instead:
+  the operator reads the board in the dashboard, maybe on another device,
+  and cannot open it.
 - Two steps work too: `add … --assignee operator`, then
   `block tk_mine --on tk_…`. A task blocked with a plain `--reason` is not
   reopened for you; you only get mail.

@@ -20,6 +20,7 @@ func TestRepeatableFlags_ACommaStaysInsideItsValue(t *testing.T) {
 	}{
 		{"ask-operator --option", taskboardAskOperatorCmd, "option"},
 		{"ask-operator --attach", taskboardAskOperatorCmd, "attach"},
+		{"ask-operator --attach-existing", taskboardAskOperatorCmd, "attach-existing"},
 		{"taskboard add --attach", taskboardAddCmd, "attach"},
 		{"taskboard ask --attach", taskboardAskCmd, "attach"},
 		{"taskboard comment add --attach", taskboardCommentAddCmd, "attach"},

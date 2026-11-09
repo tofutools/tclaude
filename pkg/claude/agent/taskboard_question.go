@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +44,9 @@ type taskboardQuestion struct {
 	State     string `json:"state,omitempty"`
 	Blocks    bool   `json:"blocks,omitempty"`
 	Waiting   bool   `json:"waiting,omitempty"`
-	Answer    *struct {
+	// AttachmentIDs are the task's files the question shows the operator.
+	AttachmentIDs []int64 `json:"attachment_ids,omitempty"`
+	Answer        *struct {
 		Picked     []string `json:"picked"`
 		Text       string   `json:"text,omitempty"`
 		AnsweredBy string   `json:"answered_by"`
@@ -121,6 +124,9 @@ func printTaskboardQuestion(stdout io.Writer, t taskboardTask) {
 		if q.Body != "" {
 			fmt.Fprintln(stdout, indentText(q.Body, "      "))
 		}
+		if len(q.AttachmentIDs) > 0 {
+			fmt.Fprintf(stdout, "    files: %s\n", questionFileNames(q, t.Attachments))
+		}
 		printQuestionOptions(stdout, q, "    ")
 		if lines := q.answerLines(); len(lines) > 0 {
 			fmt.Fprintf(stdout, "    answered by %s at %s\n", q.Answer.AnsweredBy, q.Answer.AnsweredAt)
@@ -165,7 +171,8 @@ type taskboardAskOperatorParams struct {
 	Blocks      string   `long:"blocks" optional:"true" help:"For a group: a task of the board (tk_…, typically yours) that waits on the new question task, blocked until it is answered"`
 	Wait        string   `long:"wait" optional:"true" help:"Wait this long for the answer (e.g. 10m) and print it; exit 6 if it does not come in time (the question stays open, the answer still comes by mail)"`
 	Idea        bool     `long:"idea" help:"For a group: put the question task in the operator's ideas, not waiting on them (not with --blocks or --wait)"`
-	Attach      []string `long:"attach" collection:"array" optional:"true" help:"For a group: attach a file you can read to the new task (repeatable; at most 10, 4 MiB each)"`
+	Attach      []string `long:"attach" collection:"array" optional:"true" help:"Show the operator a file with the question (a screenshot, a mock): it is attached to the task and previewed in the answer dialog. Repeatable; at most 10, 4 MiB each. Never paste a local path into the body instead: the operator may be on another device"`
+	Existing    []string `long:"attach-existing" collection:"array" optional:"true" help:"On a task: show the operator a file already on it with the question, by number (#13) or name (repeatable)"`
 	Peer        string   `long:"peer" optional:"true" help:"Ask the operator of a linked node, on its board, under the grants it gave this node"`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON        bool     `long:"json" help:"Output JSON"`
@@ -183,6 +190,9 @@ func taskboardAskOperatorCmd() *cobra.Command {
 			"you suggest. The operator answers in the dashboard or with `taskboard answer`; the answer comes to your " +
 			"inbox as `[taskboard] answered…` with the picks, the text and the answer as JSON, and is recorded under " +
 			"the question in the task's activity. --wait holds the command until the answer comes and prints it. " +
+			"To show the operator an image or any file, attach it with --attach (or name one already on the task " +
+			"with --attach-existing): the answer dialog previews it with the question. A local file path in the body " +
+			"is useless to the operator, who may be on another device. " +
 			"Withdraw an open question by deleting its entry (`taskboard comment rm <task> <#id>`). Asking on your own " +
 			"group's board needs taskboard.own. The board stays quiet: no popup, no Messages entry.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -241,8 +251,11 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	}
 	onTask := isTaskRef(p.Target)
 	switch {
-	case onTask && (p.Blocks != "" || p.Idea || len(p.Attach) > 0):
-		fmt.Fprintln(stderr, "Error: on a task, --blocks, --idea and --attach do not apply (--block blocks the task itself)")
+	case onTask && (p.Blocks != "" || p.Idea):
+		fmt.Fprintln(stderr, "Error: on a task, --blocks and --idea do not apply (--block blocks the task itself)")
+		return rcInvalidArg
+	case !onTask && len(p.Existing) > 0:
+		fmt.Fprintln(stderr, "Error: --attach-existing names a file already on the task; a new question task has none: use --attach")
 		return rcInvalidArg
 	case !onTask && p.Block:
 		fmt.Fprintln(stderr, "Error: --block is for a question on a task; for a group, --blocks names the task that waits")
@@ -255,6 +268,12 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
+	}
+	if len(p.Attach) == 0 && len(p.Existing) == 0 {
+		if path := localImagePath(body); path != "" {
+			fmt.Fprintf(stderr, "Warning: the body names a local image (%s), which the operator cannot open from the dashboard "+
+				"(they may be on another device). Attach it instead: --attach %s\n", path, path)
+		}
 	}
 	opts, err := parseQuestionOptions(p.Option, p.OptionsFile)
 	if err != nil {
@@ -323,6 +342,47 @@ func runTaskboardAskOperator(p *taskboardAskOperatorParams, stdin io.Reader, std
 	return waitTaskboardAnswer(p.Peer, t.ID, n, wait, p.JSON, stdout, stderr)
 }
 
+// questionFileNames names the files a question shows, "#13 a.png, #14
+// b.png", from the task's files; one detached since shows by number.
+func questionFileNames(q *taskboardQuestion, files []taskboardAttachment) string {
+	names := make([]string, 0, len(q.AttachmentIDs))
+	for _, id := range q.AttachmentIDs {
+		name := fmt.Sprintf("#%d", id)
+		for _, f := range files {
+			if f.ID == id {
+				name += " " + f.Name
+			}
+		}
+		names = append(names, name)
+	}
+	return strings.Join(names, ", ")
+}
+
+// filesNote says how many files a question shows, as " (2 files)".
+func filesNote(q *taskboardQuestion) string {
+	switch n := len(q.AttachmentIDs); n {
+	case 0:
+		return ""
+	case 1:
+		return " (1 file)"
+	default:
+		return fmt.Sprintf(" (%d files)", n)
+	}
+}
+
+// localImagePathRE finds an absolute or home-relative path to an image
+// file in a question's body; a URL's "//" is no path.
+var localImagePathRE = regexp.MustCompile(`(?i)(?:^|[\s(\[<"'` + "`" + `=:])((?:/[^/\s]|~/|[A-Z]:\\)[^\s()\[\]<>"'` + "`" + `]*\.(?:png|jpe?g|gif|webp|svg|bmp|avif))\b`)
+
+// localImagePath is the first local image path body names, or "": a path
+// the operator cannot open from the dashboard (ask-operator warns).
+func localImagePath(body string) string {
+	if m := localImagePathRE.FindStringSubmatch(body); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // taskboardAsked is POST …/questions's answer.
 type taskboardAsked struct {
 	Task     taskboardTask      `json:"task"`
@@ -332,8 +392,17 @@ type taskboardAsked struct {
 // askOperatorOnTask asks on an existing task: an entry of its activity.
 func askOperatorOnTask(p *taskboardAskOperatorParams, q map[string]any, body string, wait, ask time.Duration, stdout, stderr io.Writer) int {
 	q["title"], q["body"], q["block"] = p.Question, body, p.Block
+	if len(p.Existing) > 0 {
+		q["attach_existing"] = p.Existing
+	}
 	var out taskboardAsked
-	if err := remoteRequestOpts(p.Peer, http.MethodPost, taskboardPath(p.Target, "/questions"), q, &out, DaemonOpts{AskHuman: ask}); err != nil {
+	var err error
+	if path := taskboardPath(p.Target, "/questions"); len(p.Attach) > 0 {
+		err = taskboardUploadFiles(p.Peer, path, q, p.Attach, &out, ask)
+	} else {
+		err = remoteRequestOpts(p.Peer, http.MethodPost, path, q, &out, DaemonOpts{AskHuman: ask})
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -349,7 +418,7 @@ func askOperatorOnTask(p *taskboardAskOperatorParams, q map[string]any, body str
 		if p.Block {
 			blocked = "; the task is blocked until the answer"
 		}
-		fmt.Fprintf(stdout, "asked Q%d on %s: %s%s; %s\n", out.Question.N, out.Task.ID, out.Question.Title, blocked, answerWhere(p.Peer))
+		fmt.Fprintf(stdout, "asked Q%d on %s: %s%s%s; %s\n", out.Question.N, out.Task.ID, out.Question.Title, filesNote(out.Question), blocked, answerWhere(p.Peer))
 		return rcOK
 	}
 	if !p.JSON {

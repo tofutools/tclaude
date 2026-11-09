@@ -300,6 +300,7 @@ func servePeerTaskboardFile(w http.ResponseWriter, r *http.Request, v *peerView,
 var peerTaskboardUploads = []string{
 	"POST /v1/taskboard/tasks/{id}/attachments",
 	"POST /v1/taskboard/tasks/{id}/comments",
+	"POST /v1/taskboard/tasks/{id}/questions",
 	"POST /v1/groups/{name}/taskboard/tasks",
 	"POST /v1/groups/{name}/taskboard/transfer-in",
 	"POST /v1/groups/{name}/taskboard/ask",

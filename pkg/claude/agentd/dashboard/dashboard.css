@@ -19152,6 +19152,11 @@ span.tb-comment-count { color: #8b949e; font-size: 11.5px; }
 .tb-answer-context .tb-answer-md { font-size: 13px; }
 .tb-answer-context-hint { margin-bottom: 10px; }
 .tb-answer-files { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+/* A question's own files (tk_72dff9f8): images large enough to read, a
+   click opens the viewer to enlarge; other files keep their tiles. */
+.tb-files-large { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.tb-files-large .tb-file-thumb { height: auto; max-height: 360px; min-height: 64px; object-fit: contain; }
+.tb-files-large .tb-file-open { cursor: zoom-in; }
 .tb-answer-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .tb-answer-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .tb-answer-rec-line { font-size: 12px; color: #3fb950; }
