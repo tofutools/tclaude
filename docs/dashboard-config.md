@@ -327,7 +327,8 @@ is `tclaude service status|install|uninstall` and `tclaude service launch`.
   - The section compares the running daemon with the profile, or, for a unit
     tclaude did not write, with that unit. The tag says which. The differences
     table shows values only for variables that are not secret, and a peer with
-    restricted access sees names only. tclaude never changes a unit it did
+    restricted access sees names only. A viewer who is shown names only
+    cannot edit the profile, so its values are never saved back empty. tclaude never changes a unit it did
     not write, so a profile is not applied to one.
   - While a profile is set, **Start on login** writes the unit from it, and
     an update compares the restarted daemon against it.

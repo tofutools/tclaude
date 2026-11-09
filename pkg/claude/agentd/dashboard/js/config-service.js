@@ -98,6 +98,9 @@ export function ServicePanel({
   // profile is set it decides the unit's flags and environment, so install
   // sends neither.
   const [launch, setLaunch] = useState(null);
+  // launchReload reads the launch profile again after the daemon or its unit
+  // changed here, so its comparison is of what runs now.
+  const [launchReload, setLaunchReload] = useState(0);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -131,6 +134,7 @@ export function ServicePanel({
         if (!s?.restart_pending) {
           setService(s);
           setRestarting(false);
+          setLaunchReload((n) => n + 1);
           toast('agentd is back');
           return;
         }
@@ -188,6 +192,7 @@ export function ServicePanel({
       const s = await requestJSON(`${SERVICE_URL}/autostart`, { method: 'POST', body, fetchImpl });
       if (!alive.current) return;
       setService(s);
+      setLaunchReload((n) => n + 1);
       toast(action === 'install' ? 'Autostart installed' : 'Autostart removed');
     } catch (e) {
       if (!alive.current) return;
@@ -235,7 +240,7 @@ export function ServicePanel({
 
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launch-h">
       <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launch-h">Launch profile</h3>
-      <${LaunchProfile} open=${open} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
+      <${LaunchProfile} open=${open} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
     </div>
 
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-boot-h">

@@ -243,3 +243,17 @@ test('with a launch profile set, the unit is written from it: no serve flags or 
     await unmount();
   }
 });
+
+test('the launch profile reads again after an install, so its comparison is of what runs now', async (t) => {
+  const launch = { profile: null, suggested: { flags: [], env: [] }, owned: true, version: 'v1', access: 'full', comparison: { state: 'unconfigured', baseline: 'none', differences: [] } };
+  const { root, calls, until, click, unmount } = await setup(t, SYSTEMD, { launch });
+  try {
+    await until(() => root.querySelector('#cfg-launch'), 'the launch profile read');
+    const reads = () => calls.filter((c) => c.path === '/api/node/service/launch').length;
+    const before = reads();
+    await click('#cfg-svc-install');
+    await until(() => reads() > before, 'the launch profile read again');
+  } finally {
+    await unmount();
+  }
+});

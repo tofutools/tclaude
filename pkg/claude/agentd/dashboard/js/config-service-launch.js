@@ -109,10 +109,17 @@ export function rowErrors(errors, paths) {
 // also covers a name just typed, else as the daemon reported for the saved
 // profile.
 export function missingKeys(view, draft) {
+  // The daemon's own word for the saved profile's names; the running
+  // variables (suggested) only for a name the saved profile does not inherit.
+  const out = new Set(view?.missing || []);
   const running = view?.suggested?.env;
-  if (!Array.isArray(running)) return new Set(view?.missing || []);
+  if (!Array.isArray(running)) return out;
   const have = new Set(running.map((e) => e.key));
-  return new Set(draft.env.filter((r) => r.mode === INHERIT && r.key && !have.has(r.key)).map((r) => r.key));
+  const saved = new Set(view?.profile?.inherit_env || []);
+  for (const r of draft.env) {
+    if (r.mode === INHERIT && r.key && !saved.has(r.key) && !have.has(r.key)) out.add(r.key);
+  }
+  return out;
 }
 
 const BASELINE = { profile: 'compared with the profile', unit: 'compared with the unit' };
@@ -133,7 +140,7 @@ export function comparisonTag(comparison) {
 // never a redacted one.
 export function shownValue(diff, value, { secretKeys, restricted }) {
   if (value === undefined || value === null || value === '' || value === REDACTED) return null;
-  if (diff.kind === 'env' && (restricted || secretKeys.has(diff.name))) return null;
+  if (restricted || (diff.kind === 'env' && secretKeys.has(diff.name))) return null;
   return value;
 }
 
@@ -168,10 +175,11 @@ function ReadOnly({ view }) {
 }
 
 // LaunchProfile is the section. onView hands each read view up (the
-// autostart controls defer to a set profile). fetchImpl/confirm/toast are
+// autostart controls defer to a set profile); a new reload (the panel bumps
+// it after a restart, install or removal) reads it again, edits kept. fetchImpl/confirm/toast are
 // injectable for tests.
 export function LaunchProfile({
-  open = true, url = LAUNCH_URL, onView = () => {},
+  open = true, url = LAUNCH_URL, onView = () => {}, reload = 0,
   fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
 }) {
   const [view, setView] = useState(null);
@@ -183,6 +191,7 @@ export function LaunchProfile({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState('');
   const alive = useRef(true);
+  const dirtyRef = useRef(false);
   useEffect(() => () => { alive.current = false; }, []);
 
   const take = (next, { keepDraft = false } = {}) => {
@@ -197,13 +206,14 @@ export function LaunchProfile({
       const next = await requestJSON(url, { fetchImpl });
       if (!alive.current) return;
       setLoadError(null);
-      take(next, { keepDraft: dirty });
+      take(next, { keepDraft: dirtyRef.current });
     } catch (e) {
       if (alive.current) setLoadError(e);
     }
   };
   const dirty = !sameDraft(draft, saved);
-  useEffect(() => { if (open) void load(); }, [open]);
+  dirtyRef.current = dirty;
+  useEffect(() => { if (open) void load(); }, [open, reload]);
 
   const put = async (profile, paths, what) => {
     setBusy(what);
@@ -219,7 +229,10 @@ export function LaunchProfile({
       if (e?.status === 409 && e.code === 'launch_profile_conflict') {
         const current = e.body?.view || e.body;
         if (current?.version !== undefined) take(current, { keepDraft: true });
-        setNote('The profile was changed elsewhere meanwhile. Your edits are kept: Save again to replace it, or Discard to see the new one.');
+        else await load();
+        setNote(profile
+          ? 'The profile was changed elsewhere meanwhile. Your edits are kept: Save again to replace it, or Discard to see the new one.'
+          : 'The profile was changed elsewhere meanwhile, so it was not cleared. Look at the new one, then clear it again if you still want to.');
       } else if (e?.status === 400 && Array.isArray(e.body?.errors)) {
         setErrors(rowErrors(e.body.errors, paths));
       } else {
@@ -255,7 +268,9 @@ export function LaunchProfile({
   if (!view) return html`<p class="cfg-group-lede muted">Loading…</p>`;
 
   const restricted = !!view.redacted?.length;
-  const editable = view.access === 'full' || view.access === 'manage' || !view.access;
+  // Only a viewer who is shown the values may edit: one shown keys only
+  // would save its set variables back empty.
+  const editable = (view.access === 'full' || !view.access) && !restricted;
   const secretKeys = new Set([
     ...(view.suggested?.env || []).filter((e) => e.secret).map((e) => e.key),
     ...draft.env.filter((r) => r.secret).map((r) => r.key),
@@ -264,7 +279,8 @@ export function LaunchProfile({
   const tag = comparisonTag(view.comparison);
   const setFlag = (i, value) => setDraft({ ...draft, flags: draft.flags.map((f, j) => (j === i ? value : f)) });
   const setEnv = (i, patch) => setDraft({ ...draft, env: draft.env.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
-  const drop = (field, i) => setDraft({ ...draft, [field]: draft[field].filter((_, j) => j !== i) });
+  // A removed row shifts the ones after it, so the errors placed by index go.
+  const drop = (field, i) => { setDraft({ ...draft, [field]: draft[field].filter((_, j) => j !== i) }); setErrors({ ...errors, rows: {} }); };
   const any = !!busy;
   const rowError = (key) => errors.rows[key] && html`<div class="cfg-launch-row-note cfg-launch-err" role="alert">${errors.rows[key]}</div>`;
 
@@ -278,7 +294,9 @@ export function LaunchProfile({
       ${view.comparison?.differences?.length > 0 && html`<${Row} label="Differences"><${Differences} comparison=${view.comparison} secretKeys=${secretKeys} restricted=${restricted} /><//>`}
       ${view.owned === false && html`<${Row} label=""><div class="cfg-svc-warn" id="cfg-launch-unowned">${view.launcher?.unit ? html`The unit <code>${view.launcher.unit}</code>` : 'The unit'} was not written by tclaude, so tclaude never changes it and a profile is not applied to it.${view.comparison?.baseline === 'unit' ? ' The comparison is with the unit\'s own command and environment.' : ''}</div><//>`}
       ${!editable ? html`<${ReadOnly} view=${view} />
-        <${Row} label=""><span class="muted" id="cfg-launch-readonly">Changing it needs node.update.settings on that node.</span><//>` : html`
+        <${Row} label=""><span class="muted" id="cfg-launch-readonly">${view.access === 'read'
+          ? 'Changing it needs node.update.settings on that node.'
+          : 'Its values are hidden here, so it is changed only where they are shown: on that node, or with full access.'}</span><//>` : html`
       <${Row} label="Serve flags"><div class="cfg-launch-rows" id="cfg-launch-flags">
         ${draft.flags.map((flag, i) => html`<div key=${`f${i}`} class="cfg-launch-row" data-launch-row=${`f${i}`}>
           <div class="cfg-launch-fields"><input type="text" class=${`ui-input ui-sm cfg-launch-flag${errors.rows[`f${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off"

@@ -214,3 +214,52 @@ test('the comparison says its baseline; values only for keys that are not secret
     await peer.unmount();
   }
 });
+
+test('a viewer shown keys only cannot edit, so set values are never saved back empty', async (t) => {
+  const view = { ...SET_VIEW, access: 'manage', redacted: ['profile.env', 'suggested.env'], profile: { ...SET_VIEW.profile, env: [{ key: 'LANG' }] } };
+  const { root, puts, unmount } = await setup(t, view);
+  try {
+    assert.equal(root.querySelector('.cfg-launch-value'), null, 'no value boxes to save empty');
+    assert.equal(root.querySelector('#cfg-launch-save'), null);
+    assert.match(root.querySelector('#cfg-launch-readonly').textContent, /values are hidden here/);
+    assert.equal(puts().length, 0);
+  } finally {
+    await unmount();
+  }
+});
+
+test('a refused variable value lands on its row; removing a row clears the placed errors', async (t) => {
+  const put = () => ({ status: 400, body: { error: 'refused', errors: [{ path: 'profile.env[0].value', code: 'redacted_value', message: 'not a value' }, { path: 'profile.inherit_env[1]', code: 'bad', message: 'bad name' }] } });
+  const { root, click, type, until, unmount } = await setup(t, SET_VIEW, { put });
+  try {
+    await type(root.querySelectorAll('.cfg-launch-value')[0], 'C');
+    await click('#cfg-launch-save');
+    await until(() => root.querySelector('[data-launch-row="e0"] .cfg-launch-err'), 'the value error');
+    assert.match(root.querySelector('[data-launch-row="e0"] .cfg-launch-err').textContent, /not a value/);
+    assert.match(root.querySelector('[data-launch-row="e2"] .cfg-launch-err').textContent, /bad name/, 'inherit_env[1] is the third row');
+    await click('[data-launch-row="e0"] .cfg-launch-remove');
+    assert.equal(root.querySelector('.cfg-launch-err'), null, 'no error left on a shifted row');
+  } finally {
+    await unmount();
+  }
+});
+
+test('a conflict without a usable view reads again, edits kept; a refused clear says so', async (t) => {
+  let n = 0;
+  const put = () => { n += 1; return { status: 409, body: { error: 'changed', code: 'launch_profile_conflict' } }; };
+  const { root, click, type, calls, until, unmount } = await setup(t, SET_VIEW, { put });
+  try {
+    await type(root.querySelectorAll('.cfg-launch-flag')[0], '--quiet');
+    const before = calls.filter((c) => c.method === 'GET').length;
+    await click('#cfg-launch-save');
+    await until(() => root.querySelector('#cfg-launch-note'), 'the note');
+    assert.ok(calls.filter((c) => c.method === 'GET').length > before, 'read the current view again');
+    assert.equal(root.querySelectorAll('.cfg-launch-flag')[0].value, '--quiet', 'the edit is kept');
+    await click('#cfg-launch-discard');
+    await click('#cfg-launch-clear');
+    await until(() => /not cleared/.test(root.querySelector('#cfg-launch-note')?.textContent || ''), 'the clear note');
+    assert.equal(n, 2);
+  } finally {
+    await unmount();
+  }
+});
