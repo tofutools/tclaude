@@ -33,6 +33,8 @@ type selfUpdateSettingsView struct {
 	// Redacted lists settings withheld from a restricted peer; sending them
 	// back empty leaves them unchanged.
 	Redacted []string `json:"redacted,omitempty"`
+	// Access is what the caller may change: full | settings | read.
+	Access string `json:"access"`
 }
 
 // selfUpdateSettingsRequest is the PUT body. Switching to a package-manager
@@ -51,14 +53,14 @@ func handleDashboardNodeUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	serveNodeUpdateSettings(w, r, "operator", false)
+	serveNodeUpdateSettings(w, r, "operator", settingsAccessFull)
 }
 
 func handleLocalNodeUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage tclaude update settings") {
 		return
 	}
-	serveNodeUpdateSettings(w, r, "operator", false)
+	serveNodeUpdateSettings(w, r, "operator", settingsAccessFull)
 }
 
 // servePeerNodeUpdateSettings serves a peer: reading needs node.update and
@@ -70,8 +72,26 @@ func servePeerNodeUpdateSettings(w http.ResponseWriter, r *http.Request, v *peer
 		writeError(w, 403, "permission_denied", rule.requires+" is not shared")
 		return
 	}
-	serveNodeUpdateSettings(w, r, "operator@"+v.peer.InstanceID, !v.unrestricted())
+	access := settingsAccessRead
+	switch {
+	case v.unrestricted():
+		access = settingsAccessFull
+	case fedPeerHoldsUnscoped(v.peer.InstanceID, PermNodeUpdateSettings):
+		access = settingsAccessSettings
+	}
+	serveNodeUpdateSettings(w, r, "operator@"+v.peer.InstanceID, access)
 }
+
+// What the caller may change, reported on the settings view so a UI renders
+// read-only or restricted controls up front.
+const (
+	// settingsAccessFull: the node's operator or an unrestricted peer.
+	settingsAccessFull = "full"
+	// settingsAccessSettings: node.update.settings, under restrictedSettingsChange.
+	settingsAccessSettings = "settings"
+	// settingsAccessRead: node.update only.
+	settingsAccessRead = "read"
+)
 
 // settingsRefusal aborts a config.Update with an HTTP answer.
 type settingsRefusal struct {
@@ -138,7 +158,8 @@ func changedSelfUpdateFields(before, after config.SelfUpdateConfig) string {
 	return out
 }
 
-func serveNodeUpdateSettings(w http.ResponseWriter, r *http.Request, actor string, restricted bool) {
+func serveNodeUpdateSettings(w http.ResponseWriter, r *http.Request, actor, access string) {
+	restricted := access != settingsAccessFull
 	w.Header().Set("Cache-Control", "private, no-store")
 	if r.Method == http.MethodPut {
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
@@ -196,6 +217,7 @@ func serveNodeUpdateSettings(w http.ResponseWriter, r *http.Request, actor strin
 		recordFederationAudit("federation.node.update.settings", actor, "", "", changedSelfUpdateFields(previous, next), 200)
 	}
 	view := buildSelfUpdateSettingsView(r.URL.Query().Get("install_dir"))
+	view.Access = access
 	if restricted && view.Settings.Custom != nil && view.Settings.Custom.Command != "" {
 		// The command is the operator's free text and may carry secrets.
 		view.Settings.Custom.Command = ""

@@ -116,7 +116,7 @@ var pinnedFederationPeerSlugs = map[string]string{
 
 var pinnedFedInstancePeerSlugs = map[string]bool{
 	"config.offer": true, PermHostRead: true, PermApprovalsAnswer: true, PermNodeRead: true, PermFleetRead: true, PermProcessRunsRead: true, PermProcessRunsManage: true, PermNodeHarnessesRead: true,
-	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
+	PermNodeUpdate: true, PermNodeUpdateSettings: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true, PermGroupsImport: true,
 	// Usage sharing for fleet limits, and managing this node's usage rules.
