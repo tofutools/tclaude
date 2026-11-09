@@ -138,3 +138,49 @@ func TestGroupTaskReopenKeepsDistinctRank(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b", "c", "a"}, taskIDs(tasks))
 }
+
+// The board reads its live and recently closed parts separately; both keep
+// their dependencies and the stage filter, and the archive view keeps its
+// own.
+func TestGroupTaskListPartsKeepDepsAndStage(t *testing.T) {
+	setupTestDB(t)
+	gid, err := CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	add := func(title, stage string, deps ...string) *GroupTask {
+		task, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: title, Stage: stage, DependsOn: deps, Actor: "t"})
+		require.NoError(t, err)
+		return task
+	}
+	base := add("base", GroupTaskStageNext)
+	closedIdea := add("closed idea", GroupTaskStageIdea, base.ID)
+	archived := add("archived", GroupTaskStageNext, base.ID)
+	add("live", GroupTaskStageNext, closedIdea.ID)
+	for _, id := range []string{closedIdea.ID, archived.ID} {
+		_, err := SetGroupTaskStatus(id, GroupTaskDone, "", "t")
+		require.NoError(t, err)
+	}
+	_, err = ArchiveClosedGroupTasks(gid, []string{GroupTaskDone}, time.Time{}, "t")
+	require.NoError(t, err)
+	// Bring the idea back to the board's history; "archived" stays archived.
+	_, err = UnarchiveGroupTask(closedIdea.ID, "t")
+	require.NoError(t, err)
+
+	deps := func(tasks []*GroupTask) map[string][]string {
+		out := map[string][]string{}
+		for _, t := range tasks {
+			out[t.Title] = t.DependsOn
+		}
+		return out
+	}
+	all, err := ListGroupTasks(gid, GroupTaskListOpts{Closed: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"base", "live", "closed idea"}, taskIDs(all))
+	assert.Equal(t, map[string][]string{"base": nil, "live": {closedIdea.ID}, "closed idea": {base.ID}}, deps(all))
+	ideas, err := ListGroupTasks(gid, GroupTaskListOpts{Closed: true, Stage: GroupTaskStageIdea})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"closed idea"}, taskIDs(ideas))
+	arch, err := ListGroupTasks(gid, GroupTaskListOpts{Archived: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"archived"}, taskIDs(arch))
+	assert.Equal(t, []string{base.ID}, arch[0].DependsOn)
+}

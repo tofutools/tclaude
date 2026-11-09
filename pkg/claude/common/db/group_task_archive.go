@@ -78,7 +78,9 @@ func ArchiveClosedGroupTasks(groupID int64, statuses []string, closedBefore time
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	where := `group_id = ? AND status IN (` + strings.Join(marks, ", ") + `) AND archived_at IS NULL`
+	// The literal status and archived_at terms let idx_group_tasks_history
+	// serve this: only the group's closed, not yet archived tasks.
+	where := `group_id = ? AND archived_at IS NULL AND status IN ('done','dropped') AND status IN (` + strings.Join(marks, ", ") + `)`
 	args := []any{groupID}
 	for _, s := range statuses {
 		args = append(args, s)

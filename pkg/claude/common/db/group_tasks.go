@@ -716,33 +716,34 @@ func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error)
 	if err != nil {
 		return nil, err
 	}
-	where := `group_id = ? AND (status IN ('open','blocked')`
-	if opts.Closed {
-		where += ` OR archived_at IS NULL`
-	}
-	where += `)`
-	if opts.Archived {
-		where = `group_id = ? AND archived_at IS NOT NULL`
-	}
-	args := []any{groupID}
+	// Each read is one index range, so the board costs what it shows, not
+	// what the group has archived: the live tasks by idx_group_tasks_group,
+	// the recently closed ones by the partial idx_group_tasks_history. (An
+	// OR of the two narrowed to group_id only and walked every archived row.)
+	stage, stageArgs := "", []any{}
 	if opts.Stage != "" {
-		where += ` AND stage = ?`
-		args = append(args, opts.Stage)
+		stage, stageArgs = ` AND stage = ?`, []any{opts.Stage}
 	}
-	tasks, err := queryRows(d, scanGroupTask, `SELECT `+groupTaskCols+` FROM group_tasks WHERE `+where+`
-		ORDER BY CASE WHEN status IN ('open','blocked') THEN 0 ELSE 1 END,
-			CASE WHEN status IN ('open','blocked') THEN CASE stage WHEN 'next' THEN 0 ELSE 1 END ELSE 0 END,
-			CASE WHEN status IN ('open','blocked') THEN rank END,
-			closed_at DESC, id`, args...)
+	read := func(where, order string) ([]*GroupTask, error) {
+		return queryRows(d, scanGroupTask, `SELECT `+groupTaskCols+` FROM group_tasks WHERE `+where+stage+` ORDER BY `+order,
+			append([]any{groupID}, stageArgs...)...)
+	}
+	var tasks []*GroupTask
+	if opts.Archived {
+		tasks, err = read(`group_id = ? AND archived_at IS NOT NULL`, `closed_at DESC, id`)
+	} else {
+		tasks, err = read(`group_id = ? AND status IN ('open','blocked')`,
+			`CASE stage WHEN 'next' THEN 0 ELSE 1 END, rank, closed_at DESC, id`)
+		if err == nil && opts.Closed {
+			var closed []*GroupTask
+			closed, err = read(`group_id = ? AND archived_at IS NULL AND status IN ('done','dropped')`, `closed_at DESC, id`)
+			tasks = append(tasks, closed...)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	deps, err := queryRows(d, func(s rowScanner) ([2]string, error) {
-		var p [2]string
-		err := s.Scan(&p[0], &p[1])
-		return p, err
-	}, `SELECT d.task_id, d.depends_on FROM group_task_deps d JOIN group_tasks t ON t.id = d.task_id
-		WHERE t.group_id = ? ORDER BY d.task_id, d.depends_on`, groupID)
+	deps, err := groupTaskDepsOf(d, tasks)
 	if err != nil {
 		return nil, err
 	}
@@ -756,6 +757,30 @@ func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error)
 		}
 	}
 	return tasks, nil
+}
+
+// groupTaskDepsOf reads the dependencies of the given tasks only, as
+// (task, depends_on) pairs ordered by both.
+func groupTaskDepsOf(q taskTx, tasks []*GroupTask) ([][2]string, error) {
+	var out [][2]string
+	for i := 0; i < len(tasks); i += 500 {
+		chunk := tasks[i:min(i+500, len(tasks))]
+		args := make([]any, len(chunk))
+		for j, t := range chunk {
+			args[j] = t.ID
+		}
+		pairs, err := queryRows(q, func(s rowScanner) ([2]string, error) {
+			var p [2]string
+			err := s.Scan(&p[0], &p[1])
+			return p, err
+		}, `SELECT task_id, depends_on FROM group_task_deps WHERE task_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`)
+			ORDER BY task_id, depends_on`, args...)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pairs...)
+	}
+	return out, nil
 }
 
 // ListGroupTaskEvents is a task's history, oldest first.
@@ -1101,20 +1126,25 @@ func SweepGroupTasks(archiveBefore, purgeBefore time.Time) (archived, purged int
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now()
 	if !purgeBefore.IsZero() {
-		res, err := tx.Exec(`DELETE FROM group_tasks WHERE status IN ('done','dropped') AND closed_at IS NOT NULL
-			AND closed_at < ?`, dbTime(purgeBefore))
+		// By closed_at: only the tasks past retention are read. (By status
+		// the planner would walk every closed task.)
+		res, err := tx.Exec(`DELETE FROM group_tasks INDEXED BY idx_group_tasks_closed
+			WHERE status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ?`, dbTime(purgeBefore))
 		if err != nil {
 			return 0, 0, err
 		}
 		purged, _ = res.RowsAffected()
 	}
 	if !archiveBefore.IsZero() {
+		// Only the closed tasks not yet archived are candidates; the partial
+		// index holds exactly those, where idx_group_tasks_closed would walk
+		// every archived row closed before the bound as well.
 		ids, err := queryRows(tx, func(s rowScanner) (string, error) {
 			var id string
 			err := s.Scan(&id)
 			return id, err
-		}, `SELECT id FROM group_tasks WHERE status IN ('done','dropped') AND archived_at IS NULL
-			AND closed_at IS NOT NULL AND closed_at < ?`, dbTime(archiveBefore))
+		}, `SELECT id FROM group_tasks INDEXED BY idx_group_tasks_history
+			WHERE archived_at IS NULL AND status IN ('done','dropped') AND closed_at IS NOT NULL AND closed_at < ?`, dbTime(archiveBefore))
 		if err != nil {
 			return 0, 0, err
 		}
