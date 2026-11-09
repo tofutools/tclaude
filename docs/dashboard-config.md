@@ -299,10 +299,10 @@ when that directory comes after the package manager's copy on PATH. Methods
 that cannot run here are greyed out with the reason.
 ## Service
 
-`/config/service`: how agentd was started on this machine, and starting it when
-you log in. Nothing here is in `config.json`: the section reads the running
-daemon, and its buttons act at once. The CLI is
-`tclaude service status|install|uninstall`.
+`/config/service`: how agentd was started on this machine, what it should be
+started with, and starting it when you log in. The section reads the running
+daemon, and its buttons act at once, never through **Save changes…**. The CLI
+is `tclaude service status|install|uninstall` and `tclaude service launch`.
 
 - **Launcher** shows what started agentd (a systemd user or system unit,
   launchd, a tmux pane or a shell), the command and environment it runs with
@@ -310,11 +310,33 @@ daemon, and its buttons act at once. The CLI is
   **Restart agentd…** goes through that supervisor (`systemctl --user restart`,
   `launchctl kickstart -k`), so the unit's own arguments stay; without one,
   agentd re-runs itself with the same arguments.
+- **Launch profile** is what agentd should be started with: serve flags, and
+  environment variables, each either set to a value or inherited from
+  agentd's own environment when the unit is written. It is kept in
+  `config.json` as `service.launch`, but only through this section or the
+  CLI.
+  - **Use what's running now** fills the form from the running daemon. A
+    secret-looking flag is left out, with a note: pass the secret through an
+    inherited variable instead. A secret-looking variable is inherited, and
+    its value is never stored.
+  - An inherited name that agentd does not have now is flagged under its row,
+    because the unit would get it empty.
+  - **Save profile** sends the profile. A refused entry is marked on its row.
+    If the profile changed elsewhere meanwhile, your edits are kept, and Save
+    replaces it. **Clear profile…** removes it.
+  - The section compares the running daemon with the profile, or, for a unit
+    tclaude did not write, with that unit. The tag says which. The differences
+    table shows values only for variables that are not secret, and a peer with
+    restricted access sees names only. tclaude never changes a unit it did
+    not write, so a profile is not applied to one.
+  - While a profile is set, **Start on login** writes the unit from it, and
+    an update compares the restarted daemon against it.
 - **Start on login** writes a systemd user unit (Linux) or a LaunchAgent
   (macOS) for agentd, with `KillMode=process` so tmux sessions survive
-  restarts. By default it keeps the serve flags and environment agentd runs
-  with now. **use these** takes your own serve flags instead, which the daemon
-  checks one by one. The section compares the unit's command with the running
+  restarts. With a launch profile set, the unit gets the profile's flags and
+  environment. Without one, it keeps the serve flags and environment agentd
+  runs with now by default, and **use these** takes your own serve flags
+  instead, which the daemon checks one by one. The section compares the unit's command with the running
   one. Installing takes effect at the next login or boot. **Remove…** deletes
   only a unit tclaude wrote, and a unit you wrote yourself is shown read-only.
 - On Linux, agentd stops at logout unless lingering is on. That needs sudo, so

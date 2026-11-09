@@ -9640,6 +9640,25 @@ label.cfg-label { cursor: pointer; }
 .cfg-svc-args { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 560px; }
 .cfg-svc-args input[type=text] { width: 100%; }
 .cfg-svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Launch profile (config-service-launch.js): a row per flag and variable,
+   each note on a line of its own under its row, everything inside the card. */
+.cfg-launch { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cfg-launch-rows { display: flex; flex-direction: column; gap: 5px; width: 100%; max-width: 640px; min-width: 0; }
+.cfg-launch-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cfg-launch-fields { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.cfg-launch-flag { flex: 1 1 auto; min-width: 0; }
+.cfg-launch-key { flex: 0 1 34%; min-width: 0; }
+.cfg-launch-mode { flex: none; }
+.cfg-launch-value { flex: 1 1 auto; min-width: 0; }
+.cfg-launch-row-note { padding-left: 2px; overflow-wrap: break-word; }
+.cfg-launch-err { color: var(--ui-danger-text, #f85149); font-size: 12px; }
+.cfg-launch-fields .is-invalid { border-color: var(--ui-danger-text, #f85149); }
+.cfg-launch-actions { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; max-width: 640px; }
+.cfg-launch-clear { margin-left: auto; }
+.cfg-launch-cmp { display: inline-flex; align-items: center; gap: 6px; }
+.ui-tag.cfg-launch-same { border-color: #2e7d32; color: #7ee787; }
+.cfg-launch-diff { width: 100%; max-width: 640px; }
+.cfg-launch-diff td { overflow-wrap: anywhere; }
 .cfg-svc-cmd { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cfg-svc-warn { color: var(--ui-warn-text); font-size: 12px; line-height: 1.5; }
 /* Config › Updates (updates.self). Notes under a setting share its row

@@ -19,7 +19,7 @@ const SYSTEMD = {
   },
 };
 
-function daemon(initial, { getFails = 0, pendingReads = 0 } = {}) {
+function daemon(initial, { getFails = 0, pendingReads = 0, launch = null } = {}) {
   const calls = [];
   let state = structuredClone(initial);
   let failing = 0;
@@ -30,6 +30,8 @@ function daemon(initial, { getFails = 0, pendingReads = 0 } = {}) {
     const body = options.body ? JSON.parse(options.body) : null;
     calls.push({ path, method: options.method || 'GET', body });
     if ((options.method || 'GET') === 'GET') {
+      // The launch profile (config-service-launch.js): absent unless given.
+      if (path === '/api/node/service/launch') return launch ? reply(200, launch) : reply(404, {});
       if (failing > 0) { failing--; throw new TypeError('Failed to fetch'); }
       // The old daemon may still answer for a moment, reporting the restart.
       if (pending > 0) { pending--; return reply(200, { ...state, restart_pending: 'supervisor' }); }
@@ -51,10 +53,10 @@ function daemon(initial, { getFails = 0, pendingReads = 0 } = {}) {
   return { calls, fetchImpl };
 }
 
-async function setup(t, initial, { confirm = async () => true, getFails = 0, pendingReads = 0 } = {}) {
+async function setup(t, initial, { confirm = async () => true, getFails = 0, pendingReads = 0, launch = null } = {}) {
   const harness = await createPreactHarness(t);
   const { ServicePanel } = await harness.importDashboardModule('js/config-service.js');
-  const fake = daemon(initial, { getFails, pendingReads });
+  const fake = daemon(initial, { getFails, pendingReads, launch });
   const toasts = [];
   const confirms = [];
   const copied = [];
@@ -218,6 +220,25 @@ test('the unit and the daemon differ only by flags, not the program path', async
   try {
     assert.equal(root.querySelector('#cfg-svc-differs'), null, '/home/u/.local/bin/tclaude and tclaude run the same flags');
     assert.ok(!/(^|\s)0(\s|$)/.test(root.querySelector('#cfg-svc-configured').parentElement.textContent));
+  } finally {
+    await unmount();
+  }
+});
+
+test('with a launch profile set, the unit is written from it: no serve flags or env choice, install sends neither', async (t) => {
+  const launch = {
+    profile: { flags: ['--no-tray'], env: [], inherit_env: ['PATH'] }, suggested: { flags: [], env: [{ key: 'PATH', value: '/usr/bin' }] },
+    owned: true, version: 'v1', access: 'full', comparison: { state: 'identical', baseline: 'profile', differences: [] },
+  };
+  const { root, calls, confirms, until, click, unmount } = await setup(t, SYSTEMD, { launch });
+  try {
+    await until(() => root.querySelector('#cfg-svc-by-profile'), 'the launch profile read');
+    assert.equal(root.querySelector('#cfg-svc-serve-args'), null, 'no serve flags of its own');
+    assert.equal(root.querySelector('#cfg-svc-keep-env'), null, 'no env choice of its own');
+    await click('#cfg-svc-install');
+    await until(() => calls.some((c) => c.path === '/api/node/service/autostart'), 'the install');
+    assert.deepEqual(calls.find((c) => c.path === '/api/node/service/autostart').body, { action: 'install' });
+    assert.match(confirms[0].body, /launch profile's flags and environment/);
   } finally {
     await unmount();
   }
