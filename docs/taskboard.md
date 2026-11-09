@@ -1331,6 +1331,35 @@ when the daemon restarts, so a printed or mailed link works only until then.
 The task id beside it keeps working. To keep links working, fix the port with
 **Dashboard port** in [Config › Daemon & network](dashboard-config.md#daemon-network).
 
+### Epics on the board
+
+The board shows each open epic once, in the **epic strip** above the stage
+columns: its name in its colour, a progress bar (done, in progress, blocked)
+and its counts. An epic is never a card in a stage column, because it is not
+work of its own. An epic that is still an idea is a card in Ideas, marked
+◆ epic, until it is promoted.
+
+- Each task in an epic carries the epic's **chip**, in the epic's colour, on
+  its Lanes card and its List row. A click on the chip shows only that epic's
+  tasks; a second click shows every task again.
+- **Epic ▾** in the toolbar picks the epic to show, or *No epic* for the tasks
+  in none. The other tasks dim, or with *hide*, leave the board. The choice is
+  this viewer's, kept per group.
+- A click on an epic's name in the strip opens it in the edit form. In place
+  of the assignee and stage, the form shows its **progress** and its
+  **tasks**, each with where it is and who holds it. A click on a task opens
+  it. *+ add a task* adds a new task to the epic, *add an existing task* puts
+  in one of the board's tasks that is in no epic, and × takes a task out.
+  These changes are made at once, not with Save. An epic has no stage, only a
+  **Status**: open, done or dropped. Done on an epic with open tasks closes
+  the epic and leaves the tasks open (`done --force`). While an epic is an
+  idea, *Promote to open epic* moves it to Next, where its strip card shows.
+- A task's edit form, and the New task form, have an **Epic** picker.
+  *＋ ▾ → New epic* adds an epic, in Ideas or Next.
+- When every task in an epic is closed, its strip card asks **close epic?**:
+  *Close epic* closes it, and *Not yet* hides the question until another of
+  its tasks changes. Nothing closes an epic by itself.
+
 ### Swim lanes
 
 The *☰ List | ⇶ Lanes* switch in the section head picks the view (*Lanes*

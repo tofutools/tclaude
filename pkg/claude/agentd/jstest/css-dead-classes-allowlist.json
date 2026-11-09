@@ -4,6 +4,7 @@
     "cost-seg-h": "costs-model.js: 'cost-seg-h' + harness index, returned as a segment's class",
     "cost-series-": "costs-model.js / costs-island.js: `cost-series-${index % 8}`, returned as a segment's class",
     "route-status-": "groups-route-map.js: returns `route-status route-status-${status}`",
+    "tb-epic-c": "groups-taskboard-epics.js epicColour: `tb-epic-c${1..8}` from a hash of the epic's id",
     "tok-": "markdown-codemirror.js: classHighlighter gives highlighted Markdown tok-* classes at runtime",
     "ui-btn-": "ui-components.js uiButtonClass: `ui-btn-${variant}`"
   },

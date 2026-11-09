@@ -81,7 +81,7 @@ async function mountBoard(t, name, { api = fakeApi(), entry = board(name), group
   return { harness, c, api, click, choose, dialog, settle, refreshes: () => refreshes };
 }
 
-test('"+ New task" opens a menu of three ways to add, modelled on the Resources ＋ menu', async (t) => {
+test('"+ New task" opens a menu of the ways to add, modelled on the Resources ＋ menu', async (t) => {
   const { c, click } = await mountBoard(t, 'tbn-menu');
   const button = c.querySelector('[data-taskboard-new]');
   assert.equal(button.textContent.trim(), '＋▾', 'icon-only, as the Resources ＋');
@@ -93,7 +93,7 @@ test('"+ New task" opens a menu of three ways to add, modelled on the Resources 
   await click(button);
   assert.equal(c.querySelector('[data-taskboard-new]').getAttribute('aria-expanded'), 'true');
   const names = [...c.querySelectorAll('.tb-new-menu .gr-new-name')].map((el) => el.textContent);
-  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'From a tracker…']);
+  assert.deepEqual(names, ['Write it myself', 'Ask an agent', 'New epic', 'From a tracker…']);
   assert.equal(c.querySelector('[data-taskboard-new-ask]').disabled, false);
 });
 
