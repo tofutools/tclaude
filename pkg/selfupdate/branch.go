@@ -51,11 +51,17 @@ func (s *Service) branchMode(ctx context.Context, opts ApplyOptions) (bool, erro
 		return false, nil
 	}
 	git := checkoutGit(ctx, opts.Checkout.Path)
-	if out, err := git("fetch", "--quiet", "--tags", "origin"); err != nil {
-		return false, fmt.Errorf("git fetch in %s failed: %s", opts.Checkout.Path, tail([]byte(out), 512))
-	}
+	_, fetchErr := git("fetch", "--quiet", "--tags", "origin")
 	_, err := git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+opts.Checkout.Ref+"^{commit}")
-	return err == nil, nil
+	if err != nil {
+		// Not a branch on origin (a tag): the release flow, which needs no
+		// fetch, decides.
+		return false, nil
+	}
+	if fetchErr != nil {
+		return true, fmt.Errorf("git fetch in %s failed: %w", opts.Checkout.Path, fetchErr)
+	}
+	return true, nil
 }
 
 func shortRev(rev string) string {
@@ -77,9 +83,27 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 		return fmt.Errorf("cannot resolve origin/%s: %s", ref, tail([]byte(target), 256))
 	}
 	running := primary(s.binaries).Revision
+	// A build is behind when origin/<ref> contains its commit. A build that
+	// is ahead of or diverged from origin (an unpushed fix installed by
+	// hand) is never replaced with an older commit.
+	behind := func(rev string) (bool, bool) {
+		switch rev {
+		case "":
+			return true, false
+		case target:
+			return false, false
+		}
+		_, err := git("merge-base", "--is-ancestor", rev, target)
+		return err == nil, err != nil
+	}
 	stale := false
 	for _, b := range s.binaries {
-		stale = stale || b.Revision != target || b.Modified
+		isBehind, diverged := behind(b.Revision)
+		if diverged {
+			job.Warnings = append(job.Warnings, fmt.Sprintf("%s is built from %s, which is not on origin/%s (ahead or diverged); it is left as is", b.Name, shortRev(b.Revision), ref))
+			continue
+		}
+		stale = stale || isBehind || b.Revision == target && b.Modified
 	}
 	var commits []string
 	if running != "" && running != target {
@@ -96,7 +120,12 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 	now := time.Now().UTC()
 	job.Version = ref + "@" + shortRev(target)
 	job.Revision, job.Commits, job.UpdateAvailable = target, commits, &stale
+	if !stale {
+		commits = nil
+		job.Commits = nil
+	}
 	s.status.Branch, s.status.LatestRevision, s.status.PendingCommits, s.status.CheckedAt = ref, target, commits, &now
+	s.status.UpdateAvailable = &stale
 	err = s.saveJob(*job)
 	s.mu.Unlock()
 	if err != nil || req.Action != "apply" || !stale {
@@ -114,9 +143,10 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 		return fmt.Errorf("the checkout %s has uncommitted changes; commit or stash them first (tclaude never touches them)", path)
 	}
 	if head, _ := git("symbolic-ref", "--short", "-q", "HEAD"); head != ref {
-		if out, err := git("checkout", "--quiet", ref); err != nil {
-			return fmt.Errorf("git checkout %s failed: %s", ref, tail([]byte(out), 512))
+		if head == "" {
+			head = "a detached HEAD"
 		}
+		return fmt.Errorf("the checkout %s is on %s, not %s; tclaude does not switch branches for you", path, head, ref)
 	}
 	ahead, err := git("rev-list", "--count", remote+"..refs/heads/"+ref)
 	if err != nil || ahead != "0" {
@@ -172,5 +202,11 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 		}
 		targets = append(targets, t)
 	}
-	return s.install(ctx, Release{Tag: job.Version}, job, authorize, targets, nil, opts)
+	if err := s.install(ctx, Release{Tag: job.Version}, job, authorize, targets, nil, opts); err != nil {
+		return err
+	}
+	// The binaries on disk may already be at the target (updated by hand)
+	// while this daemon still runs the older build: restart into them.
+	job.RestartRequired = true
+	return nil
 }

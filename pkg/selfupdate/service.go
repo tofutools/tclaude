@@ -76,7 +76,14 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if readJSON(filepath.Join(dir, "status.json"), &saved) == nil {
 		s.status.LatestVersion = saved.LatestVersion
 		s.status.CheckedAt = saved.CheckedAt
-		s.status.Branch, s.status.LatestRevision, s.status.PendingCommits = saved.Branch, saved.LatestRevision, saved.PendingCommits
+		if saved.Branch != "" {
+			s.status.Branch, s.status.LatestRevision, s.status.PendingCommits, s.status.UpdateAvailable = saved.Branch, saved.LatestRevision, saved.PendingCommits, saved.UpdateAvailable
+			if len(binaries) > 0 && primary(binaries).Revision == saved.LatestRevision {
+				// This process runs the commit the last check found.
+				current := false
+				s.status.PendingCommits, s.status.UpdateAvailable = nil, &current
+			}
+		}
 		s.status.Job = saved.Job
 	}
 	if _, err := os.Stat(filepath.Join(dir, "backup.json")); err == nil {
@@ -115,6 +122,9 @@ func releaseNewerThanBuild(release, current string) bool {
 	return semver.Compare(release, current) > 0
 }
 func (s *Service) updateAvailable() {
+	if s.status.Branch != "" {
+		return // a branch check sets it from commits, not release versions
+	}
 	if semver.IsValid(s.status.CurrentVersion) && semver.IsValid(s.status.LatestVersion) {
 		v := releaseNewerThanBuild(s.status.LatestVersion, s.status.CurrentVersion)
 		s.status.UpdateAvailable = &v
@@ -251,6 +261,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 				s.status.LatestVersion = release.Tag
 				s.status.CheckedAt = &now
 			}
+			s.status.Branch, s.status.LatestRevision, s.status.PendingCommits = "", "", nil
 			s.updateAvailable()
 			err = s.saveJob(job)
 			s.mu.Unlock()
@@ -403,6 +414,9 @@ func (s *Service) verifyRestart(job Job) error {
 	}
 	if s.hooks.Supervised && job.Action == "apply" && manifest.ID != job.ID {
 		return fmt.Errorf("backup does not match pending update")
+	}
+	if !s.hooks.Supervised && job.Action == "apply" && job.Method != "" && manifest.ID != job.ID {
+		return nil // this update replaced nothing tclaude backed up
 	}
 	for _, e := range manifest.Entries {
 		expected := e.AfterHash
