@@ -72,12 +72,16 @@ var serveFlagsDenied = map[string]string{
 // planAutostart resolves the unit's argv and env from the observed launcher
 // and the request, with warnings for what it could not keep.
 func planAutostart(info launcher.Info, req AutostartRequest, ownEnvFile string) (launcher.AutostartSpec, []string, error) {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		// Without it, a launch profile could be silently ignored.
+		return launcher.AutostartSpec{}, nil, fmt.Errorf("config.json could not be read, so the launch profile is unknown: %w", err)
+	}
 	if profile := cfg.ServiceLaunch(); profile != nil {
 		if req.ServeArgs != nil || req.KeepEnv != nil {
 			return launcher.AutostartSpec{}, nil, errLaunchProfileSet
 		}
-		return profileAutostartSpec(info, profile)
+		return profileAutostartSpec(info, profile, ownEnvFile)
 	}
 	var warnings []string
 	exe, observedFlags, err := splitServeArgv(info.RawArgv())
@@ -178,7 +182,7 @@ func validateServeFlags(flags []string) error {
 			return fmt.Errorf("`--` is not a serve flag")
 		}
 	}
-	fs := serveCmd().Flags()
+	fs := serveFlagSet()
 	if err := fs.Parse(flags); err != nil {
 		return fmt.Errorf("invalid serve flags: %w", err)
 	}

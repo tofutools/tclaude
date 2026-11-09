@@ -34,9 +34,11 @@ KEY`, or row by row in the panel. `tclaude service launch show` prints it
 together with how the running daemon compares with it.
 
 - **Flags** are `agentd serve` flags, one `--name` or `--name=value` each,
-  checked against `serve`'s own flags. A flag whose value looks secret (a
-  token, a password) is refused. Pass the secret through an inherited
-  variable instead.
+  checked against `serve`'s own flags (and `--log-level`). A flag whose value
+  is a secret would be refused, so pass secrets through an inherited
+  variable. No `serve` flag takes a secret today:
+  `--persist-operator-token` and `--print-human-token` only say where the
+  token goes.
 - **Explicit variables** (`env`) hold a value in `config.json`, so they must
   not look secret.
 - **Inherited variables** (`inherit_env`) are stored by name only. When the
@@ -47,7 +49,9 @@ together with how the running daemon compares with it.
 
 With a profile set, `tclaude service install` writes the unit from it and
 refuses `--no-args`, `--no-keep-env` and flags after `--`; edit the profile
-instead. When agentd runs under a unit tclaude did not write (an
+instead. The profile describes the unit started at boot. The running daemon
+is compared with it only when it runs under the unit tclaude wrote. Started
+by hand (a shell, a tmux pane), it reports `not_applied`. When agentd runs under a unit tclaude did not write (an
 Ansible-managed system unit, say), the profile is only information:
 tclaude never rewrites that unit. Its comparison is then with that unit's own
 `ExecStart` and environment, which is what a restart uses.
@@ -61,7 +65,9 @@ The API is `GET`/`PUT /api/node/service/launch` (CLI `/v1/node/service/launch`;
 a peer's through `/api/peer/{instance_id}/node/service/launch`). `GET` returns
 the `profile`, its `version`, the `suggested` flags and variables (secrets
 redacted, marked `secret`), the `missing` inherited names, `owned`, and the
-`comparison` with its `baseline` (`profile`, `unit` or `none`). `PUT` takes
+`comparison` with its `baseline` (`profile`, `unit` or `none`) and `state`
+(`identical`, `differs`, `not_applied`, `unavailable` when the command line
+is not `agentd serve`, or `unconfigured`). `PUT` takes
 `{"profile": {...} | null, "version": "..."}`. A stale `version` is refused
 with HTTP 409 `launch_profile_conflict`. An invalid profile is refused with
 HTTP 400 and an `errors` list naming each field (`profile.env[2].key`). A peer

@@ -458,13 +458,6 @@ func validDomain(d string) bool {
 // SecretEnvKey reports whether an environment variable name looks secret.
 func SecretEnvKey(key string) bool { return secretRe.MatchString(key) }
 
-// SecretFlag reports whether a flag name (`--api-token`, with or without
-// its =value) carries a secret-looking value.
-func SecretFlag(flag string) bool {
-	name, _, _ := strings.Cut(flag, "=")
-	return secretFlagRe.MatchString(name)
-}
-
 // ValidEnvKey reports whether key is a usable environment variable name in
 // a unit file or plist.
 func ValidEnvKey(key string) bool { return envKeyRe.MatchString(key) }

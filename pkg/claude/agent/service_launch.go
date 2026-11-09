@@ -74,7 +74,7 @@ func serviceLaunchCmd() *cobra.Command {
 		Use:   "launch",
 		Short: "Show or set agentd's launch profile: the serve flags and environment the autostart unit runs with",
 		Long: "The launch profile (service.launch in config.json) is what `tclaude service install` writes into the autostart unit, and what agentd is expected to run with. " +
-			"Secret values are never stored: secret-looking variables are inherited by name (their value is read from agentd's environment when the unit is written, into the 0600 env file), and secret-looking flags are refused. " +
+			"Secret values are never stored: secret-looking variables are inherited by name (their value is read from the environment agentd started with when the unit is written, into the 0600 env file). " +
 			"Where a unit tclaude did not write starts agentd, the profile is information only and that unit is never rewritten.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -224,6 +224,8 @@ func printServiceLaunch(v serviceLaunchView, w io.Writer) {
 		}
 	case "unavailable":
 		fmt.Fprintf(w, "Running agentd:  not compared with the %s (its command line is not `agentd serve`)\n", termtext.Cell(c.Baseline))
+	case "not_applied":
+		fmt.Fprintln(w, "Running agentd:  started by hand, not from the unit; the profile applies to the unit started at boot")
 	}
 	for _, warning := range v.Warnings {
 		fmt.Fprintln(w, "Note:", termtext.Cell(warning))

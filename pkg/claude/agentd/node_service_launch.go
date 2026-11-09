@@ -101,6 +101,10 @@ type launchProfileRequest struct {
 // launch, whose environment is a whole shell's.
 var relevantEnvRe = regexp.MustCompile(`^(TCLAUDE_|ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|OPENCODE_|GEMINI_|GOOGLE_|COPILOT_|GH_|GITHUB_|AWS_|AZURE_|OLLAMA_|XDG_|LC_)|^(LANG|TZ|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE)$|^(?i:(https?|no|all)_proxy)$`)
 
+// sessionEnvRe are variables of the login session or of a tclaude pane:
+// stale or wrong in a unit started at boot, so never suggested.
+var sessionEnvRe = regexp.MustCompile(`^(SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_CONNECTION|SSH_CLIENT|SSH_TTY|DBUS_SESSION_BUS_ADDRESS|XDG_SESSION_.*|XDG_VTNR|XDG_SEAT|GNOME_KEYRING_.*|TMUX.*|WINDOWID|TERM_SESSION_ID|TCLAUDE_SESSION_ID|TCLAUDE_HUMAN_TOKEN|TCLAUDE_AGENTD_SOCKET|TCLAUDE_AGENT_.*|TCLAUDE_CONV_.*)$`)
+
 func launchProfileVersion(p *config.LaunchProfile) string {
 	if p == nil {
 		return "none"
@@ -191,8 +195,15 @@ func normalizeServeFlags(flags []string) ([]string, bool) {
 	return out, true
 }
 
+// secretServeFlags are the `agentd serve` flags whose value is a secret.
+// None today: --persist-operator-token and --print-human-token only say
+// where the token goes. A name-based guess would refuse those.
+var secretServeFlags = map[string]bool{}
+
+func secretServeFlag(name string) bool { return secretServeFlags[strings.TrimLeft(name, "-")] }
+
 func displayFlag(tok string) string {
-	if name, _, ok := strings.Cut(tok, "="); ok && launcher.SecretFlag(name) {
+	if name, _, ok := strings.Cut(tok, "="); ok && secretServeFlag(name) {
 		return name + "=" + launcher.Redacted
 	}
 	return tok
@@ -214,7 +225,7 @@ func suggestLaunch(info launcher.Info, argv []string, env map[string]string) (la
 				warnings = append(warnings, "Left out "+tok+": "+why+".")
 				continue
 			}
-			s.Flags = append(s.Flags, launchFlagSuggestion{Arg: displayFlag(tok), Name: name, Secret: launcher.SecretFlag(name)})
+			s.Flags = append(s.Flags, launchFlagSuggestion{Arg: displayFlag(tok), Name: name, Secret: secretServeFlag(name)})
 		}
 	} else {
 		warnings = append(warnings, "agentd's command line is not `agentd serve`; no flags are suggested.")
@@ -228,7 +239,7 @@ func suggestLaunch(info launcher.Info, argv []string, env map[string]string) (la
 		}
 	} else {
 		for k := range env {
-			if relevantEnvRe.MatchString(k) || launcher.SecretEnvKey(k) && !supervisorEnvKeys[k] {
+			if (relevantEnvRe.MatchString(k) || launcher.SecretEnvKey(k)) && !supervisorEnvKeys[k] && !sessionEnvRe.MatchString(k) {
 				keys[k] = true
 			}
 		}
@@ -325,6 +336,10 @@ func comparisonOf(baseline string, diffs []selfupdate.LaunchDifference) launchCo
 func compareLaunch(profile *config.LaunchProfile, owned bool, info launcher.Info, argv []string, env map[string]string) launchComparison {
 	running, ok := serveFlagTokens(argv)
 	switch {
+	case owned && profile != nil && !info.Supervised():
+		// agentd was started by hand; the profile describes the unit
+		// started at boot, which is not what runs now.
+		return launchComparison{Baseline: "profile", State: "not_applied"}
 	case owned && profile != nil:
 		if !ok {
 			return launchComparison{Baseline: "profile", State: "unavailable"}
@@ -442,7 +457,7 @@ func validateLaunchProfile(p *config.LaunchProfile) []launchFieldError {
 			add(path, "redacted_value", "%s carries a redacted placeholder, not its value", name)
 		case !strings.HasPrefix(f, "--") || name == "--":
 			add(path, "invalid_flag", "write each flag as --name or --name=value")
-		case launcher.SecretFlag(name):
+		case secretServeFlag(name):
 			add(path, "secret_flag", "%s carries a secret, which the profile never stores; pass it to agentd through an inherited environment variable instead", name)
 		default:
 			if err := validateServeFlags([]string{f}); err != nil {
@@ -651,7 +666,7 @@ func launchAuditLine(before, after *config.LaunchProfile) string {
 // the running daemon's executable and subcommand, the profile's flags, its
 // explicit variables, and the inherited ones read from agentd's environment
 // now. PATH is always captured.
-func profileAutostartSpec(info launcher.Info, p *config.LaunchProfile) (launcher.AutostartSpec, []string, error) {
+func profileAutostartSpec(info launcher.Info, p *config.LaunchProfile, ownEnvFile string) (launcher.AutostartSpec, []string, error) {
 	exe, _, err := splitServeArgv(info.RawArgv())
 	if err != nil {
 		return launcher.AutostartSpec{}, nil, err
@@ -660,6 +675,15 @@ func profileAutostartSpec(info launcher.Info, p *config.LaunchProfile) (launcher
 		return launcher.AutostartSpec{}, nil, fmt.Errorf("the launch profile is invalid at %s: %s", errs[0].Path, errs[0].Message)
 	}
 	var warnings []string
+	// The environment agentd started with, as the view's suggestion and
+	// "missing" read it, not what serve exported into it since.
+	_, environ := selfUpdateProcess()
+	env := environMap(environ)
+	for _, f := range info.EnvironmentFiles {
+		if f != ownEnvFile {
+			warnings = append(warnings, "The launch profile replaces the observed launch, so the unit no longer reads "+f+"; inherit the variables you need from it.")
+		}
+	}
 	spec := launcher.AutostartSpec{Argv: append(exe, p.Flags...)}
 	have := map[string]bool{}
 	for _, e := range p.Env {
@@ -671,7 +695,7 @@ func profileAutostartSpec(info launcher.Info, p *config.LaunchProfile) (launcher
 		inherit = append(inherit, "PATH")
 	}
 	for _, k := range inherit {
-		if v, ok := autostartLookupEnv(k); ok {
+		if v, ok := env[k]; ok {
 			spec.Env = append(spec.Env, launcher.EnvVar{Key: k, Value: v})
 		} else {
 			warnings = append(warnings, k+" is not set in agentd's environment, so the unit does not set it.")
@@ -693,7 +717,7 @@ func expectedLaunchAfterUpdate() *selfupdate.ExpectedLaunch {
 	info := currentLauncher(false)
 	argv, environ := selfUpdateProcess()
 	c := compareLaunch(cfg.ServiceLaunch(), launchOwned(info, autostartStatus()), info, argv, environMap(environ))
-	if c.Baseline == "none" || c.State == "unavailable" {
+	if c.State != "identical" && c.State != "differs" {
 		return nil
 	}
 	return &selfupdate.ExpectedLaunch{Baseline: c.Baseline, State: c.State, Differences: c.Differences}

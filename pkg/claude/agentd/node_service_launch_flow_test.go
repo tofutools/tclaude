@@ -52,13 +52,27 @@ func shellLaunch(t *testing.T, argv []string, env map[string]string) (*agentd.Me
 	return fs, auto
 }
 
+// managedUnitLaunch runs agentd under the systemd user unit tclaude wrote,
+// with argv and env as its process saw them.
+func managedUnitLaunch(t *testing.T, argv []string, env map[string]string) {
+	t.Helper()
+	lenv, probe := systemdUserEnvFor("process", "tclaude-agentd.service", "# Managed by tclaude\n", "# Managed by tclaude\nPATH=/usr/bin\n")
+	t.Cleanup(agentd.SetLauncherForTest(lenv, probe.run, (&recordedRunner{}).run, func() {}))
+	environ := []string{}
+	for k, v := range env {
+		environ = append(environ, k+"="+v)
+	}
+	t.Cleanup(agentd.SetSelfUpdateProcessForTest(argv, environ))
+}
+
 // The operator takes the running launch as the profile, edits it, and the
 // autostart unit is written from it; secrets stay out of config.json and the
 // unit, and only reach the 0600 env file.
 func TestLaunchProfileUseWhatIsRunningAndInstall(t *testing.T) {
 	f := newFlow(t)
-	argv := []string{"/usr/local/bin/tclaude", "agentd", "serve", "--no-tray", "-s", "/tmp/x.sock", "--dashboard-port", "8123"}
-	env := map[string]string{"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "sk-secret-1", "LANG": "C.UTF-8", "HOME": "/home/u", "RANDOM_SHELL_VAR": "1"}
+	argv := []string{"/usr/local/bin/tclaude", "agentd", "serve", "--no-tray", "-s", "/tmp/x.sock", "--dashboard-port", "8123", "--persist-operator-token", "--log-level", "debug"}
+	env := map[string]string{"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "sk-secret-1", "LANG": "C.UTF-8", "HOME": "/home/u", "RANDOM_SHELL_VAR": "1",
+		"SSH_AUTH_SOCK": "/tmp/ssh-x/agent.1", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus", "XDG_SESSION_ID": "3", "TCLAUDE_HUMAN_TOKEN": "op-tok", "TMUX_PANE": "%1"}
 	fs, auto := shellLaunch(t, argv, env)
 
 	v := getLaunch(t, f)
@@ -71,18 +85,29 @@ func TestLaunchProfileUseWhatIsRunningAndInstall(t *testing.T) {
 	for _, fl := range v.Suggested.Flags {
 		args = append(args, fl.Arg)
 	}
-	require.Equal(t, []string{"--no-tray", "--socket=/tmp/x.sock", "--dashboard-port=8123"}, args, "flags normalized to one token each")
+	require.Equal(t, []string{"--no-tray", "--socket=/tmp/x.sock", "--dashboard-port=8123", "--persist-operator-token", "--log-level=debug"}, args, "flags normalized to one token each; token-placement flags are not secrets")
+	for _, fl := range v.Suggested.Flags {
+		require.False(t, fl.Secret, fl.Name)
+	}
 	keys := []string{}
 	for _, e := range v.Suggested.Env {
 		keys = append(keys, e.Key+":"+e.Mode)
 	}
-	require.Equal(t, []string{"ANTHROPIC_API_KEY:inherit", "LANG:set", "PATH:inherit"}, keys, "only relevant variables, sorted, secrets and PATH inherited")
+	require.Equal(t, []string{"ANTHROPIC_API_KEY:inherit", "LANG:set", "PATH:inherit"}, keys, "only relevant variables, sorted, secrets and PATH inherited; never the login session's or a pane's")
+
+	// Every suggested flag is accepted as is.
+	rec := fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": map[string]any{"flags": args, "env": []any{}, "inherit_env": []any{}}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &v))
+	require.Equal(t, "not_applied", v.Comparison.State, "a daemon started by hand is not what the profile describes")
+	rec = fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": nil})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, launcher.Redacted, v.Suggested.Env[0].Value)
 	require.True(t, v.Suggested.Env[0].Secret)
 
 	// Every bad row is named by its path.
-	rec := fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": map[string]any{
-		"flags":       []string{"--no-tray", "--api-token=x", "--tui", "--bogus", "--terminal=<redacted>"},
+	rec = fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": map[string]any{
+		"flags":       []string{"--no-tray", "--wizard", "--tui", "--bogus", "--terminal=<redacted>"},
 		"env":         []map[string]string{{"key": "ANTHROPIC_API_KEY", "value": "sk"}, {"key": "LANG", "value": "C"}, {"key": "bad key", "value": "1"}},
 		"inherit_env": []string{"LANG", "HOME", "PATH"},
 	}})
@@ -94,7 +119,6 @@ func TestLaunchProfileUseWhatIsRunningAndInstall(t *testing.T) {
 		got[e.Path] = e.Code
 	}
 	require.Equal(t, map[string]string{
-		"profile.flags[1]":       "secret_flag",
 		"profile.flags[2]":       "invalid_flag",
 		"profile.flags[3]":       "invalid_flag",
 		"profile.flags[4]":       "redacted_value",
@@ -111,9 +135,16 @@ func TestLaunchProfileUseWhatIsRunningAndInstall(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &v))
 	require.NotEqual(t, "none", v.Version)
 	require.Equal(t, []string{"NOT_SET"}, v.Missing)
+	require.Equal(t, "not_applied", v.Comparison.State)
+
+	// Once agentd runs under the unit tclaude wrote, it is compared.
+	managedUnitLaunch(t, argv, env)
+	v = getLaunch(t, f)
 	require.Equal(t, "profile", v.Comparison.Baseline)
 	require.Equal(t, "differs", v.Comparison.State)
 	require.Equal(t, []selfupdate.LaunchDifference{
+		{Kind: "flag", Change: "added", Name: "--log-level", After: "--log-level=debug"},
+		{Kind: "flag", Change: "added", Name: "--persist-operator-token", After: "--persist-operator-token"},
 		{Kind: "flag", Change: "added", Name: "--socket", After: "--socket=/tmp/x.sock"},
 		{Kind: "env", Change: "removed", Name: "NOT_SET"},
 	}, v.Comparison.Differences)
@@ -144,14 +175,14 @@ func TestLaunchProfileUseWhatIsRunningAndInstall(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var st agentd.NodeService
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
-	require.Equal(t, []string{"/usr/local/bin/tclaude", "agentd", "serve", "--no-tray", "--dashboard-port=8123"}, st.Autostart.Argv)
-	require.True(t, containsSubstring(st.Autostart.Warnings, "NOT_SET is not set"), "%v", st.Autostart.Warnings)
+	require.Equal(t, []string{"/home/u/.local/bin/tclaude", "agentd", "serve", "--no-tray", "--dashboard-port=8123"}, st.Autostart.Argv, "the unit's own executable, the profile's flags")
 	unit, err := fs.ReadFile(auto.Paths.Unit)
 	require.NoError(t, err)
 	require.NotContains(t, string(unit), "sk-secret", "the unit carries no value inline")
 	envFile, err := fs.ReadFile(auto.Paths.EnvFile)
 	require.NoError(t, err)
-	require.Contains(t, string(envFile), `ANTHROPIC_API_KEY="sk-secret-1"`)
+	require.Contains(t, string(envFile), `ANTHROPIC_API_KEY="sk-secret-2"`, "inherited values come from the environment agentd started with")
+	require.Contains(t, string(envFile), `NOT_SET="1"`)
 	require.Contains(t, string(envFile), `LANG="C.UTF-8"`)
 	require.Equal(t, 0o600, int(fs.Modes[auto.Paths.EnvFile]))
 
@@ -242,7 +273,7 @@ func TestSelfUpdateRecordsTheProfileAsExpectedLaunch(t *testing.T) {
 	dir := testutil.CanonicalTempDir(t)
 	bin := fakeBinary(t, dir, "bin/tclaude", "v1.0.0")
 	argv := []string{bin, "agentd", "serve", "--no-tray"}
-	shellLaunch(t, argv, map[string]string{"PATH": "/usr/bin", "LANG": "C"})
+	managedUnitLaunch(t, argv, map[string]string{"PATH": "/usr/bin", "LANG": "C"})
 	svc := selfUpdateService(t, dir, []selfupdate.Binary{{Name: "tclaude", Path: bin, Version: "v1.0.0", Method: "release"}})
 	require.NoError(t, config.Save(&config.Config{Service: &config.ServiceConfig{Launch: &config.LaunchProfile{
 		Flags: []string{"--no-tray"}, Env: []config.LaunchEnv{{Key: "LANG", Value: "en_US.UTF-8"}}, InheritEnv: []string{}}}}))
