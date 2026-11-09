@@ -19,10 +19,11 @@ const SYSTEMD = {
   },
 };
 
-function daemon(initial, { getFails = 0 } = {}) {
+function daemon(initial, { getFails = 0, pendingReads = 0 } = {}) {
   const calls = [];
   let state = structuredClone(initial);
   let failing = 0;
+  let pending = 0;
   // Every answer is a fresh object, as a real response is.
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => structuredClone(body) });
   const fetchImpl = async (path, options = {}) => {
@@ -30,9 +31,12 @@ function daemon(initial, { getFails = 0 } = {}) {
     calls.push({ path, method: options.method || 'GET', body });
     if ((options.method || 'GET') === 'GET') {
       if (failing > 0) { failing--; throw new TypeError('Failed to fetch'); }
+      // The old daemon may still answer for a moment, reporting the restart.
+      if (pending > 0) { pending--; return reply(200, { ...state, restart_pending: 'supervisor' }); }
       return state ? reply(200, state) : reply(404, { error: 'not found' });
     }
     if (path === '/api/node/service/restart') {
+      pending = pendingReads;
       failing = getFails;
       return reply(202, { method: 'supervisor', launcher: 'systemd-user' });
     }
@@ -47,14 +51,14 @@ function daemon(initial, { getFails = 0 } = {}) {
   return { calls, fetchImpl };
 }
 
-async function setup(t, initial, { confirm = async () => true, getFails = 0 } = {}) {
+async function setup(t, initial, { confirm = async () => true, getFails = 0, pendingReads = 0 } = {}) {
   const harness = await createPreactHarness(t);
   const { ServicePanel } = await harness.importDashboardModule('js/config-service.js');
-  const fake = daemon(initial, { getFails });
+  const fake = daemon(initial, { getFails, pendingReads });
   const toasts = [];
   const confirms = [];
   const copied = [];
-  const timers = { setTimeout: (fn) => setTimeout(fn, 0) };
+  const timers = { setTimeout: (fn, ms) => setTimeout(fn, ms > 1000 ? ms : 0), clearTimeout };
   const mounted = await harness.mount(harness.html`<${ServicePanel} fetchImpl=${fake.fetchImpl}
     confirm=${async (o) => { confirms.push(o); return confirm(o); }} toast=${(m, bad) => toasts.push({ m, bad })}
     copy=${async (text) => { copied.push(text); }} timers=${timers} />`);
@@ -85,11 +89,13 @@ test('the launcher readout shows the unit, its command and its environment, secr
   }
 });
 
-test('restart goes through the supervisor and waits until agentd answers again', async (t) => {
-  const { root, calls, confirms, toasts, until, click, unmount } = await setup(t, SYSTEMD, { getFails: 2 });
+test('restart goes through the supervisor and waits until the new agentd answers', async (t) => {
+  const { root, calls, confirms, toasts, until, click, unmount } = await setup(t, SYSTEMD, { pendingReads: 2, getFails: 2 });
   try {
     await click('#cfg-svc-restart');
     await until(() => toasts.some((x) => x.m === 'agentd is back'), 'the daemon to come back');
+    const reads = calls.filter((c) => c.path === '/api/node/service?refresh=1');
+    assert.ok(reads.length >= 5, `an answer still reporting the restart is not "back" (reads: ${reads.length})`);
     assert.match(confirms[0].body, /through systemd user unit tclaude-agentd\.service/);
     assert.ok(calls.some((c) => c.path === '/api/node/service/restart' && c.method === 'POST'));
     assert.ok(calls.filter((c) => c.path === '/api/node/service?refresh=1').length >= 3, 'it kept reading through the restart');
@@ -158,10 +164,11 @@ test('a hand-written unit is read-only, and lingering is offered as a command on
 
 test('removing the unit asks first; declining sends nothing', async (t) => {
   let answer = false;
-  const { root, calls, until, click, unmount } = await setup(t, SYSTEMD, { confirm: async () => answer });
+  const { harness, root, calls, confirms, until, click, unmount } = await setup(t, SYSTEMD, { confirm: async () => answer });
   try {
     await click('#cfg-svc-uninstall');
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await until(() => confirms.length === 1, 'the question');
+    await harness.act(async () => { await Promise.resolve(); });
     assert.ok(!calls.some((c) => c.path === '/api/node/service/autostart'), 'declined: no request');
     answer = true;
     await click('#cfg-svc-uninstall');
@@ -184,6 +191,33 @@ test('a daemon without the service routes says so; one without autostart shows o
     assert.equal(root.querySelector('#cfg-svc-kind').textContent, 'a tmux pane');
     assert.equal(root.querySelector('#cfg-svc-observed').textContent, 'tclaude agentd serve');
     assert.ok(root.querySelector('#cfg-svc-autostart-absent'));
+  } finally {
+    await unmount();
+  }
+});
+
+test('custom serve flags left empty cannot be installed', async (t) => {
+  const { harness, root, unmount } = await setup(t, SYSTEMD);
+  try {
+    harness.fireEvent(root.querySelector('input[name="cfg-svc-args"][value="custom"]'), 'change');
+    await harness.act(() => {});
+    assert.ok(root.querySelector('#cfg-svc-install').hasAttribute('disabled'), 'nothing typed: Rewrite is off');
+    const args = root.querySelector('#cfg-svc-serve-args');
+    args.value = '--no-tray';
+    await harness.act(() => harness.fireEvent(args, 'input'));
+    assert.ok(!root.querySelector('#cfg-svc-install').hasAttribute('disabled'));
+  } finally {
+    await unmount();
+  }
+});
+
+test('the unit and the daemon differ only by flags, not the program path', async (t) => {
+  const shell = structuredClone(SYSTEMD);
+  shell.launcher = { kind: 'shell', process_argv: ['tclaude', 'agentd', 'serve'], restart_method: 'exec', warnings: [] };
+  const { root, unmount } = await setup(t, shell);
+  try {
+    assert.equal(root.querySelector('#cfg-svc-differs'), null, '/home/u/.local/bin/tclaude and tclaude run the same flags');
+    assert.ok(!/(^|\s)0(\s|$)/.test(root.querySelector('#cfg-svc-configured').parentElement.textContent));
   } finally {
     await unmount();
   }

@@ -21,6 +21,9 @@ export const SERVICE_URL = '/api/node/service';
 // is how long the panel waits for it to answer again before saying so.
 const RESTART_POLL_MS = 1000;
 const RESTART_WAIT_MS = 90000;
+// POLL_TIMEOUT_MS bounds one read during a restart, so a request a proxy
+// holds open cannot outlast the wait.
+const POLL_TIMEOUT_MS = 5000;
 
 const LAUNCHERS = {
   'systemd-user': 'systemd user unit',
@@ -36,6 +39,12 @@ export function launcherText(kind) { return LAUNCHERS[kind] || kind || 'unknown'
 // supervisor's command when there is one, else the process's own.
 export function observedArgv(launcher) {
   return launcher?.argv?.length ? launcher.argv : (launcher?.process_argv || []);
+}
+
+// sameFlags compares two commands without their program path: a daemon
+// started from a shell runs as "tclaude" where a unit names the full path.
+export function sameFlags(a, b) {
+  return (a || []).slice(1).join(' ') === (b || []).slice(1).join(' ');
 }
 
 // serveArgsOf splits the typed serve flags. They are passed to the daemon as
@@ -88,6 +97,10 @@ export function ServicePanel({
   useEffect(() => () => { alive.current = false; }, []);
 
   const read = (refresh = false) => requestJSON(refresh ? `${SERVICE_URL}?refresh=1` : SERVICE_URL, { fetchImpl });
+  const readBounded = () => new Promise((resolve, reject) => {
+    const t = timers.setTimeout(() => reject(new Error('timed out')), POLL_TIMEOUT_MS);
+    read(true).then(resolve, reject).finally(() => timers.clearTimeout?.(t));
+  });
   const load = async (refresh = false) => {
     try {
       const s = await read(refresh);
@@ -98,7 +111,9 @@ export function ServicePanel({
       if (alive.current) setError(e);
     }
   };
-  useEffect(() => { if (open && !service && !error) void load(); }, [open]);
+  // Each opening reads afresh, so a failed read or a restart made elsewhere
+  // does not stick; a running restart keeps its own polling.
+  useEffect(() => { if (open && !restarting) void load(true); }, [open]);
 
   // waitForDaemon polls until the restarted daemon answers again.
   const waitForDaemon = async () => {
@@ -106,7 +121,7 @@ export function ServicePanel({
     while (alive.current && Date.now() < deadline) {
       await new Promise((resolve) => timers.setTimeout(resolve, RESTART_POLL_MS));
       try {
-        const s = await read(true);
+        const s = await readBounded();
         if (!alive.current) return;
         if (!s?.restart_pending) {
           setService(s);
@@ -139,6 +154,7 @@ export function ServicePanel({
       setRestarting(true);
       void waitForDaemon();
     } catch (e) {
+      if (!alive.current) return;
       setActionError(e?.code === 'restart_unavailable' ? `Restart is not available here: ${errorText(e)}` : `Restart failed: ${errorText(e)}`);
     } finally {
       if (alive.current) setBusy('');
@@ -188,7 +204,8 @@ export function ServicePanel({
   const a = service.autostart;
   const observed = observedArgv(l);
   const configured = a?.installed ? a.argv : null;
-  const differs = configured && observed.length && configured.join(' ') !== observed.join(' ');
+  const differs = !!(configured && observed.length && !sameFlags(configured, observed));
+  const customEmpty = argsMode === 'custom' && serveArgsOf(argsText).length === 0;
   const any = busy || restarting;
   return html`<div class="cfg-svc" id="cfg-service">
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launcher-h">
@@ -212,7 +229,7 @@ export function ServicePanel({
       ${!a ? html`<p class="cfg-group-lede" id="cfg-svc-autostart-absent">This daemon cannot set up autostart yet. CLI: <code>tclaude service status</code>.</p>`
         : !a.supported ? html`<p class="cfg-group-lede" id="cfg-svc-autostart-unsupported">Autostart is not supported here.</p>`
         : html`
-        <p class="cfg-group-lede">tclaude writes a ${a.kind === 'launchd' ? 'LaunchAgent' : 'systemd user unit'} that starts agentd when you log in, with <code>KillMode=process</code> so tmux sessions survive restarts. Removing it removes only what tclaude wrote. CLI: <code>tclaude service install|uninstall|status</code>.</p>
+        <p class="cfg-group-lede">tclaude writes a ${a.kind === 'launchd' ? 'LaunchAgent' : 'systemd user unit'} that starts agentd when you log in${a.kind === 'launchd' ? '' : html`, with <code>KillMode=process</code> so tmux sessions survive restarts`}. Removing it removes only what tclaude wrote. CLI: <code>tclaude service install|uninstall|status</code>.</p>
         <div class="cfg-svc-dl">
           <${Row} label="Status"><span id="cfg-svc-autostart-state">${!a.installed ? 'not installed'
             : !a.managed ? html`<span class="cfg-svc-warn">installed by hand — tclaude leaves it alone</span>`
@@ -229,7 +246,7 @@ export function ServicePanel({
             </span><//>
             <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="cfg-svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>
             <${Row} label=""><span class="cfg-svc-actions">
-              <${Button} variant="primary" size="sm" id="cfg-svc-install" disabled=${!!any} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>
+              <${Button} variant="primary" size="sm" id="cfg-svc-install" disabled=${!!any || customEmpty} title=${customEmpty ? 'Type the serve flags, or keep the ones agentd runs with now' : undefined} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>
               ${a.installed && html`<${Button} variant="danger" size="sm" id="cfg-svc-uninstall" disabled=${!!any} busy=${busy === 'uninstall'} onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`}
             </span><//>`}
           ${restartAppliesAutostart(service) && differs && html`<${Row} label=""><span class="muted" id="cfg-svc-restart-hint">Restart agentd above to run with the unit's new settings now.</span><//>`}
