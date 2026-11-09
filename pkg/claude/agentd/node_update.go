@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -171,22 +169,22 @@ func configureSelfUpdateRestart(stop func()) {
 	updateRestartState.requested = false
 	updateRestartState.Unlock()
 }
+// requestSelfUpdateRestart is the self-updater's restart hook. It restarts
+// through the launcher (see RequestDaemonRestart), so a systemd or launchd
+// service keeps its own arguments.
 func requestSelfUpdateRestart() error {
-	updateRestartState.Lock()
-	defer updateRestartState.Unlock()
-	if updateRestartState.stop == nil || updateRestartState.path == "" {
-		return fmt.Errorf("restart hook unavailable; restart agentd manually")
-	}
-	updateRestartState.requested = true
 	// An update may have moved the daemon's binary (an install next to a
-	// package-managed copy, a new Homebrew Cellar version).
+	// package-managed copy, a new Homebrew Cellar version); an in-place
+	// re-exec must start the new location.
+	updateRestartState.Lock()
 	nodeUpdates.Lock()
-	if svc := nodeUpdates.service; svc != nil {
+	if svc := nodeUpdates.service; svc != nil && updateRestartState.path != "" {
 		updateRestartState.path = svc.RestartPath(updateRestartState.path)
 	}
 	nodeUpdates.Unlock()
-	time.AfterFunc(500*time.Millisecond, updateRestartState.stop)
-	return nil
+	updateRestartState.Unlock()
+	_, err := RequestDaemonRestart("self-update")
+	return err
 }
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()

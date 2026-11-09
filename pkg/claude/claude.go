@@ -56,6 +56,7 @@ func Cmd() *cobra.Command {
 		agent.ConfigCmd(),
 		agent.HarnessCmd(),
 		agent.UpdateCmd(),
+		agent.ServiceCmd(),
 	}
 	// The proxy lends the daemon's credentials to an agent, so keep the
 	// entire surface absent unless the operator has opted into it. Besides

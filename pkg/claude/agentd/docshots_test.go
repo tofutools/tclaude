@@ -22,6 +22,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -127,13 +128,24 @@ func TestDocShotsServe(t *testing.T) {
 	if !time.Now().Round(0).Equal(before.Round(0)) {
 		t.Fatal("the wall clock is not frozen: build through scripts/docs/screenshots.sh")
 	}
+	srv, page := seedDocFixture(t, os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"))
+	serveDocFixture(t, dir, srv, page, nil)
+}
+
+// seedDocFixture builds the named fixture's world in the isolated HOME newFlow
+// sets up and returns the dashboard handler that serves it, warmed so the first
+// frame is complete. page reports a fixture served on the popup handler, whose
+// pages need the listener's own URL (serveDocFixture sets it). TestSandboxServe
+// shares it, adding its own "full" fixture.
+func seedDocFixture(t *testing.T, fixture string) (mux http.Handler, page bool) {
+	t.Helper()
 	f := newFlow(t)
 	var (
 		repo string
 		prs  map[string]docPR
 	)
-	switch fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture {
-	case "fleet", "collab", "steward", "page", "collab-fleet", "collab-quiet":
+	switch fixture {
+	case "fleet", "collab", "steward", "page", "collab-fleet", "collab-quiet", sandboxFullFixture:
 		repo = docRepo
 		prs = map[string]docPR{
 			"checkout-redesign": {1482, "open", docChecks(14, 0)},
@@ -149,7 +161,7 @@ func TestDocShotsServe(t *testing.T) {
 			"more-tests":   {13, "open", docChecks(4, 2)},
 		}
 	default:
-		t.Fatalf("unknown TCLAUDE_DOCSHOTS_FIXTURE %q", fixture)
+		t.Fatalf("unknown fixture %q", fixture)
 	}
 	t.Cleanup(agentd.SetGitInfoResolverWithChecksForTest(
 		func(_, branch string) (string, string, int, string, string, string, bool) {
@@ -159,22 +171,26 @@ func TestDocShotsServe(t *testing.T) {
 			}
 			return repo, "main", pr.number, repo + "/pull/" + itoa(pr.number), pr.state, pr.checks, true
 		}))
-	if fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture == "collab-fleet" || fixture == "collab-quiet" {
+	if fixture == "collab-fleet" || fixture == "collab-quiet" {
 		seedCollabFleet(t, f, fixture == "collab-quiet")
 	} else if repo == docRepo {
 		seedDocFleet(t, f)
 	} else {
 		seedLearnTeam(t, f)
 	}
-	switch os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") {
+	switch fixture {
 	case "steward":
 		seedDocSteward(t, f)
 	case "page":
 		seedDocPage(t)
+	case sandboxFullFixture:
+		seedDocSteward(t, f)
+		seedSandboxFull(t, f)
 	}
 
-	mux := agentd.BuildDashboardHandlerForTest()
-	if os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") == "page" {
+	page = fixture == "page"
+	mux = agentd.BuildDashboardHandlerForTest()
+	if page {
 		// The page's origin is a *.ui.localhost host on this same listener.
 		mux = agentd.BuildPopupHandlerForTest()
 	}
@@ -187,10 +203,21 @@ func TestDocShotsServe(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 	_ = fetchDashSnapshot(t, mux)
 	restorePopup()
+	return mux, page
+}
 
-	srv := httptest.NewServer(mux)
+// serveDocFixture serves mux on ln (nil: a random loopback port), writes the
+// server's URL to <dir>/url and serves until a file named stop appears there.
+func serveDocFixture(t *testing.T, dir string, mux http.Handler, page bool, ln net.Listener) {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(mux)
+	if ln != nil {
+		_ = srv.Listener.Close()
+		srv.Listener = ln
+	}
+	srv.Start()
 	defer srv.Close()
-	if os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") == "page" {
+	if page {
 		// A page's origin names the dashboard's port.
 		t.Cleanup(agentd.SetPopupBaseURLForTest(srv.URL))
 	}

@@ -80,8 +80,18 @@ running depends on the unit's cgroup:
   expected here.
 
 For the policy, `Restart=on-failure` with a short `RestartSec` is the right
-default. `tclaude update --apply` re-executes `agentd` in place (same PID), so
-an update does not look like an exit to systemd.
+default.
+
+`tclaude service status` shows what the running `agentd` was started by: the
+unit, its `ExecStart` arguments, its environment (secret-looking values
+redacted), `KillMode`, and how a restart will be carried out. A restart, by
+`tclaude service restart` or after `tclaude update --apply`, goes through
+systemd (`systemctl --user --no-block restart <unit>`), so the unit's own
+arguments and environment apply to the new process. Two cases restart in place
+instead (same PID, same arguments and environment): a unit whose `KillMode`
+would also stop the tmux server and the agents (`control-group` or `mixed`),
+and a system unit while `agentd` is not root. Under launchd on macOS, the
+restart is `launchctl kickstart -k`.
 
 If the tmux server itself dies, or the machine reboots, the agents are gone.
 They show as offline. Resume them from the dashboard or with
