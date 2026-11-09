@@ -389,8 +389,12 @@ tclaude agent taskboard show tk_1a2b3c4d                        # the epic, its 
   are archived. A task taken out of the archive brings its epic out too.
   The retention purge deletes an epic only once none of its tasks is left,
   so a task never loses its epic.
+- Only an open epic takes new tasks; reopen a closed one first. Reopening an
+  epic brings it back with no assignee and in no column.
 - `move-to-group` takes a task out of its epic, because an epic holds only
-  tasks of its own group. An epic that still has tasks cannot move.
+  tasks of its own group. An epic that still has tasks cannot move, and an
+  epic never moves to another node. A clone of an epic is an epic, without
+  the tasks.
 
 Epics use the same routes and grants as tasks, so a linked node works with
 them under the `taskboard.read` and `taskboard.write` it was given.
