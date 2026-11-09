@@ -239,6 +239,10 @@ function twoStep(first, second) {
 }
 
 export function laneDrop(task, from, to, opts = {}) {
+  // An epic is no work of its own: it is never assigned, blocked, started
+  // or put in a column (the store refuses each), only moved between Ideas
+  // and Next in its own lane.
+  if (isEpic(task) && (to.lane !== from.lane || !['ideas', 'next'].includes(to.column))) return null;
   const drop = baseLaneDrop(task, from, to, opts);
   // A card in a custom column dropped onto Next or In progress leaves the
   // column too, whatever else the drop does (an assign, an unassign, an

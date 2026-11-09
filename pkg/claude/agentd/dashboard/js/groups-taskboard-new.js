@@ -110,7 +110,8 @@ export function startFields(start, { to = '', reason = '' } = {}) {
 export function newTaskPlan(draft) {
   const start = draft.start || 'idea';
   const next = start !== 'idea' && start !== 'done';
-  if (draft.list) {
+  // An epic is one: a list (one task per line) is never an epic's.
+  if (draft.list && draft.kind !== EPIC) {
     return { kind: 'lines', text: captureLines(draft.list).join('\n'), next: start === 'next' };
   }
   const title = String(draft.title || '').trim();
@@ -316,7 +317,7 @@ export function NewTaskDialog({ group, entry, api, canAssign = false, members = 
   // A pasted list turns the title into a list: one task per line.
   const onPaste = (event) => {
     const pasted = event.clipboardData?.getData('text') || '';
-    if (captureLines(pasted).length < 2) return;
+    if (epic || captureLines(pasted).length < 2) return;
     event.preventDefault();
     setDraft((current) => ({ ...current, list: [current.title, pasted].filter((s) => s.trim()).join('\n'), title: '' }));
   };

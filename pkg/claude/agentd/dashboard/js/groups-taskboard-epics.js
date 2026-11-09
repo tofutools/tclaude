@@ -58,12 +58,25 @@ export function stripEpics(entry) {
   return boardEpics(entry).filter((epic) => epic.stage !== 'idea');
 }
 
+// epicOf is the live epic a task is in, '' for none: a task whose epic
+// was closed with its tasks open (done --force) keeps parent_id, but is in
+// no epic the board shows. epics is a Set or Map of the live epics' ids.
+export function epicOf(task, epics) {
+  const parent = task?.parent_id || '';
+  return parent && (!epics || epics.has(parent)) ? parent : '';
+}
+
 // epicMatches reports whether a task is one the filter shows: '' every
 // task, NO_EPIC the tasks in no epic, an epic's id its tasks (and the epic).
-export function epicMatches(task, epic) {
+export function epicMatches(task, epic, epics = null) {
   if (!epic) return true;
-  if (epic === NO_EPIC) return !task.parent_id && !isEpic(task);
-  return task.parent_id === epic || task.id === epic;
+  if (epic === NO_EPIC) return !epicOf(task, epics) && !isEpic(task);
+  return epicOf(task, epics) === epic || task.id === epic;
+}
+
+// liveEpicIds are the ids of an entry's (or task list's) live epics.
+function liveEpicIds(tasks = []) {
+  return new Set(tasks.filter((task) => isEpic(task) && live(task)).map((task) => task.id));
 }
 
 // boardEntry is the entry the board's views draw: the epics out of the
@@ -72,7 +85,8 @@ export function epicMatches(task, epic) {
 export function boardEntry(entry, filter = {}) {
   if (!entry) return entry;
   const epic = filter.epic || '';
-  const keep = (task) => (!isEpic(task) || (task.stage === 'idea' && live(task))) && (!filter.hide || epicMatches(task, epic));
+  const epics = liveEpicIds(entry.tasks);
+  const keep = (task) => (!isEpic(task) || (task.stage === 'idea' && live(task))) && (!filter.hide || epicMatches(task, epic, epics));
   const tasks = (entry.tasks || []).filter(keep);
   const closed = (entry.closed || []).filter(keep);
   if (tasks.length === (entry.tasks || []).length && closed.length === (entry.closed || []).length) return entry;
@@ -112,7 +126,7 @@ export function useEpicBoard(group, entry) {
 
 // epicDimmed reports whether a card dims under the filter (dim mode).
 export function epicDimmed(board, task) {
-  return !!board?.filter?.epic && !board.filter.hide && !epicMatches(task, board.filter.epic);
+  return !!board?.filter?.epic && !board.filter.hide && !epicMatches(task, board.filter.epic, board.byId);
 }
 
 // EpicChip is the epic a task is in, in its colour; a click shows only that
@@ -245,7 +259,8 @@ export function childWhere(task) {
 // epicCandidates are the tasks an epic can take in: the board's live tasks
 // in no epic, not epics themselves.
 export function epicCandidates(tasks = []) {
-  return tasks.filter((task) => !isEpic(task) && !task.parent_id && live(task));
+  const epics = liveEpicIds(tasks);
+  return tasks.filter((task) => !isEpic(task) && !epicOf(task, epics) && live(task));
 }
 
 // EpicChildren is the epic's tasks in its edit form: each with where it is

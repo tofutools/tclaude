@@ -205,3 +205,35 @@ test('an idea epic is promoted to an open epic, not moved to a stage', async (t)
   await click(dialog.querySelector('#taskboard-edit-save'));
   assert.deepEqual(api.calls.find((call) => call[0] === 'stage'), ['stage', IDEA_EPIC.id, 'next']);
 });
+
+test('an epic is no work of its own: no assign, block or column in its menu or its drags, and no "+ more" for the strip', async (t) => {
+  const { harness, c, click } = await mountBoard(t, 'ep-work', { view: 'list' });
+  assert.doesNotMatch(c.textContent, /more · tclaude agent taskboard ls/, 'the strip\'s epics are on the board, not past its cap');
+  await click(c.querySelector(`tr[data-task-id="${IDEA_EPIC.id}"] .tb-act-more`));
+  const keys = [...c.querySelectorAll('[data-task-menu]')].map((el) => el.getAttribute('data-task-menu'));
+  for (const key of ['assign', 'block', 'move-to', 'start', 'hold']) assert.ok(!keys.includes(key), `no ${key} on an epic: ${keys}`);
+  await harness.act(async () => { harness.fireEvent(globalThis.document, 'keydown', { key: 'Escape' }); });
+  await click(c.querySelector('tr[data-task-id="tk_00000002"] .tb-act-more'));
+  assert.ok([...c.querySelectorAll('[data-task-menu]')].some((el) => el.getAttribute('data-task-menu') === 'assign'), 'a task still has Assign');
+
+  const { laneDrop } = await harness.importDashboardModule('js/groups-taskboard-lanes.js');
+  assert.equal(laneDrop(IDEA_EPIC, { lane: '', column: 'ideas' }, { lane: 'agt_dev', column: 'progress', member: true }), null, 'not onto an agent');
+  assert.equal(laneDrop(IDEA_EPIC, { lane: '', column: 'ideas' }, { lane: '', column: 'blocked' }), null, 'not blocked');
+  assert.ok(laneDrop(IDEA_EPIC, { lane: '', column: 'ideas' }, { lane: '', column: 'next' }), 'Ideas to Next still is a move');
+});
+
+test('a paste into the New epic title stays one epic', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { newTaskPlan } = await harness.importDashboardModule('js/groups-taskboard-new.js');
+  const plan = newTaskPlan({ kind: 'epic', title: 'Checkout', list: 'a\nb', start: 'idea' });
+  assert.notEqual(plan.kind, 'lines');
+});
+
+test('a task whose epic was closed with it open is in no epic', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { boardEntry, epicCandidates, NO_EPIC } = await harness.importDashboardModule('js/groups-taskboard-epics.js');
+  const entry = board('x');
+  entry.tasks.push(row('tk_00000004', 'Left open', { parent_id: 'tk_eclosed1' }));
+  assert.ok(boardEntry(entry, { epic: NO_EPIC, hide: true }).tasks.some((task) => task.id === 'tk_00000004'));
+  assert.ok(epicCandidates(entry.tasks).some((task) => task.id === 'tk_00000004'));
+});

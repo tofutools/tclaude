@@ -56,7 +56,7 @@ import {
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
-import { EpicBoard, EpicChip, EpicFilterMenu, EpicMark, EpicStrip, boardEntry, epicDimmed, useEpicBoard } from './groups-taskboard-epics.js';
+import { EpicBoard, EpicChip, EpicFilterMenu, EpicMark, EpicStrip, boardEntry, epicDimmed, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
 
@@ -335,6 +335,9 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
 function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
+  // An epic is no work of its own: no assign, block, column, start or hold
+  // (the store refuses each with "epic").
+  const work = !isEpic(task);
   const run = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
   const item = (key, label, title, rest) => ({ label, attrs: { 'data-task-menu': key, title }, ...rest });
   const items = [];
@@ -342,7 +345,7 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = nu
   if (canAnswer(task, actions)) {
     items.push(item('answer', 'Answer…', 'taskboard answer: pick an option and/or answer in words; the agent that asked gets it', { run: () => onForm('answer') }));
   }
-  if (canAssign(actions) && !closed && task.status === 'open') {
+  if (work && canAssign(actions) && !closed && task.status === 'open') {
     items.push(item('assign', 'Assign', `taskboard assign --to: give it to a member, the brief goes to its inbox${task.stage === 'idea' ? ' and the idea joins the queue' : ''} (or drag the row onto an agent)`, {
       children: () => {
         const members = assignableMembers(group);
@@ -372,14 +375,14 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = nu
   // Move to…, on a board with custom columns (In review, In CI): the stage
   // picker (groups-taskboard-stage.js) over Idea, Next and the columns,
   // `taskboard move --stage`.
-  if (!closed && task.status === 'open' && offeredColumns(columns).length) {
+  if (work && !closed && task.status === 'open' && offeredColumns(columns).length) {
     items.push(item('move-to', 'Move to…', 'taskboard move --stage <column>: Idea, Next or a column of the board\'s own (In review, …)', { run: () => onForm('move') }));
   }
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
-  else if (!closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
+  else if (work && !closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
   // A task its assignee holds starts (in progress); a started one is put
   // back, held in its stage (tk_3826822a).
-  if (task.status === 'open' && canAssign(actions) && task.assignee?.agent_id && typeof actions.api?.start === 'function') {
+  if (work && task.status === 'open' && canAssign(actions) && task.assignee?.agent_id && typeof actions.api?.start === 'function') {
     if (task.held) items.push(item('start', 'Start', 'taskboard start: in progress, the stall clock runs', { run: run('start', 'Start', (api) => api.start(task.id)) }));
     else items.push(item('hold', 'Not started', `taskboard hold: back to ${task.stage === 'idea' ? 'the ideas' : 'next'}, still held by its assignee`, { run: run('hold', 'Hold', (api) => api.hold(task.id, task.stage)) }));
   }
@@ -563,7 +566,7 @@ function useAgentOnTask(boardRef, group, node, tasks, actions) {
       const el = event.target?.closest?.('[data-task-id]');
       if (!el || !boardRef.current?.contains(el)) return null;
       const task = list.find((t) => t.id === el.getAttribute('data-task-id'));
-      if (!task || !(task.status === 'open' || isClosed(task))) return null;
+      if (!task || isEpic(task) || !(task.status === 'open' || isClosed(task))) return null;
       const member = assignableMembers(g).find((m) => m.agent_id === payload.agent);
       return member ? { el, task, member } : null;
     };
@@ -624,7 +627,7 @@ function useRowDrag(tasks, actions, group = null) {
     const state = agentDrop.current;
     // Only an open task can be assigned (a blocked one is refused); a closed
     // one is reopened with that agent.
-    const target = (event) => (dragged.current?.status === 'open' || isClosed(dragged.current)) && agentDropRow(event.target, group);
+    const target = (event) => !isEpic(dragged.current) && (dragged.current?.status === 'open' || isClosed(dragged.current)) && agentDropRow(event.target, group);
     const onOver = (event) => {
       const hit = target(event);
       if (!hit) { clearAgentTarget(state); return; }
@@ -854,7 +857,9 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const queue = tasks.filter((task) => task.stage !== 'idea' && shows(task));
   const ideas = tasks.filter((task) => task.stage === 'idea' && shows(task));
   const filtered = tasks.length - queue.length - ideas.length;
-  const more = (entry.counts?.live || 0) - tasks.length;
+  // Against the whole entry: the drawn one leaves out the strip's epics and
+  // what the Epic filter hides, which are on the board, not past its cap.
+  const more = (full.counts?.live || 0) - (full.tasks || []).length;
   const name = group.name;
   // ✎ opens the edit form; the row's ⋯ Block… and Drop… ask their reason
   // in the reason dialog (groups-taskboard-reason.js).
@@ -871,6 +876,13 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   // A click (✎, the title) opens the form where the task already is: no
   // jump to it, which is for a link (jumped below).
   const openEdit = (id) => { jumped.current = id; setEditing(id); openTaskRoute(routeOf(id)); };
+  // A task opened from the open form (an epic's Tasks) leaves it: unsaved
+  // input asks first, as Cancel does.
+  const openFromForm = async (id) => {
+    if (dirtyRef.current && !(await shellConfirmDiscard())) return;
+    dirtyRef.current = false;
+    openEdit(id);
+  };
   const closeEdit = () => { if (editing) closeTaskRoute(routeOf(editing)); setEditing(''); };
   const [moving, setMoving] = useState(null);
   const onForm = (id, mode) => {
@@ -958,7 +970,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
         ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
       </tbody>
     </table>` : null;
-  const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${full} task=${edited} onOpenTask=${openEdit}
+  const editDialog = edited && actions && html`<${EditTaskDialog} key=${edited.id} group=${group} entry=${full} task=${edited} onOpenTask=${openFromForm}
     me=${myAuthor(group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '')}
     api=${actions.api} canAssign=${canAssign(actions)} canClose=${canClose(edited, actions)} members=${assignableMembers(group)} wizard=${wizard}
     nameOf=${(actor) => actorLabel(actor, group, snapshot)} dirtyRef=${dirtyRef} onClose=${closeEdit} onSaved=${() => { void actions.refresh(); }} />`;
