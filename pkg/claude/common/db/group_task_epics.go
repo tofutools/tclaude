@@ -289,6 +289,10 @@ func GroupTaskEpicProgresses(ids []string) (map[string]*GroupTaskEpicProgress, e
 				p.Ideas += n
 			}
 		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
