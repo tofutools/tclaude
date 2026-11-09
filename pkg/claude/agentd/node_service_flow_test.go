@@ -31,10 +31,16 @@ func (r *recordedRunner) run(_ context.Context, name string, args ...string) ([]
 	if r.fail != nil {
 		return nil, r.fail
 	}
-	for prefix, out := range r.out {
-		if strings.HasPrefix(cmd, prefix) {
-			return []byte(out), nil
+	// Longest matching prefix wins: map order is random, and fixtures
+	// overlap ("systemctl --user" and "systemctl --user is-enabled").
+	best, found := "", false
+	for prefix := range r.out {
+		if strings.HasPrefix(cmd, prefix) && (!found || len(prefix) > len(best)) {
+			best, found = prefix, true
 		}
+	}
+	if found {
+		return []byte(r.out[best]), nil
 	}
 	return nil, errors.New("unexpected command " + cmd)
 }
