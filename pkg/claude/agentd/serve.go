@@ -811,6 +811,10 @@ func runServe(p *serveParams) error {
 	// workers still running. Shares the daemon-wide stop channel.
 	startExternalStewardExpiryWatch(cronStop)
 
+	// Says in Messages when agentd started without the login shell's
+	// environment (serve_login_env.go).
+	reportLoginEnvFailure()
+
 	// One cross-repository PR poll feeds the footer and every Groups PR badge.
 	// The GraphQL response carries open/recent state plus CI rollups into the
 	// canonical per-PR caches; the 2s snapshot only reads those shared caches.

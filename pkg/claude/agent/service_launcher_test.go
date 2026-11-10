@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -275,7 +276,7 @@ func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
 		t.Fatal(rc)
 	}
 	// macOS: no locale from anywhere, so a UTF-8 one is supplied.
-	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin\nLANG=en_US.UTF-8" {
+	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin\n"+launcher.LoginEnvErrorVar+"=/bin/zsh did not finish within 10s\nLANG=en_US.UTF-8" {
 		t.Errorf("env %v", f.servedEnv)
 	}
 	if !strings.Contains(out.String(), "without the login shell's environment: /bin/zsh did not finish") {
@@ -283,5 +284,13 @@ func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
 	}
 	if len(logged) != 1 || !strings.Contains(logged[0], "/bin/zsh did not finish") {
 		t.Errorf("log %q", logged)
+	}
+	// Nobody reads a launcher's output: a desktop notification, and agentd
+	// is handed the failure to show in Messages.
+	if len(f.notified) != 1 || !strings.Contains(f.notified[0], "login shell") {
+		t.Errorf("notified %q", f.notified)
+	}
+	if !slices.Contains(f.servedEnv, launcher.LoginEnvErrorVar+"=/bin/zsh did not finish within 10s") {
+		t.Errorf("env %v", f.servedEnv)
 	}
 }

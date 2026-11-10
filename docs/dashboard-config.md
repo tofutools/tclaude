@@ -407,12 +407,17 @@ and the API is `GET /api/node/launcher` and `POST
   shell), which reads the same profile files a terminal does. agentd, and
   every agent it starts, then gets what a terminal would give it. The
   launcher's own `PATH` stays on the end as a fallback, and the launch
-  profile's variables still win. If the shell gives no answer within 10
-  seconds, agentd starts with the launcher's environment, and
-  `launcher-agentd.log` says so. On macOS the locale usually comes from the
-  terminal app rather than your profile. When neither the launcher nor the
-  login shell names one, agentd gets `LANG=en_US.UTF-8`. The autostart unit is
-  not changed: it keeps its own environment.
+  profile's variables still win. The launcher waits only until the shell
+  answers, and at most 30 seconds. If the shell gives no answer by then, or
+  fails, agentd still starts, with the launcher's environment, so the
+  dashboard can tell you. A desktop notification says so. A notice in the
+  dashboard's Messages says agents may not start or may show offline, and
+  how to check (`time $SHELL -l -i -c true`). `launcher-agentd.log` has an
+  error line. On macOS, when the autostart unit (launchd) starts agentd,
+  agentd does this step itself (see [launchd](server/launchd.md)); a Linux
+  systemd unit keeps its own environment. On macOS the locale usually comes
+  from the terminal app rather than your profile. When neither the launcher nor the
+  login shell names one, agentd gets `LANG=en_US.UTF-8`.
 
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop

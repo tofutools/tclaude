@@ -30,8 +30,14 @@ import (
 const ShellEnvMarker = "tclaude-shell-env:"
 
 // ShellEnvTimeout bounds the login shell: a profile that waits for input
-// or hangs must not keep the launcher from starting agentd.
-const ShellEnvTimeout = 10 * time.Second
+// or hangs must not keep agentd from starting. The shell is waited for only
+// until it answers; this is the most it gets. Both the launcher and the
+// LaunchAgent re-exec use it.
+const ShellEnvTimeout = 30 * time.Second
+
+// LoginEnvErrorVar carries a failed login-shell step to the agentd it
+// starts, which reports it to the operator and drops the variable.
+const LoginEnvErrorVar = "TCLAUDE_AGENTD_LOGIN_ENV_ERROR"
 
 // LoginShell returns the user's login shell: $SHELL when it is an absolute
 // path, else the account's shell (dscl on macOS, getent elsewhere), else

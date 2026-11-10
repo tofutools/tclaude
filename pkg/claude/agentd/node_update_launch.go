@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/launcher"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
@@ -16,7 +17,11 @@ import (
 // paths. An in-place restart hands the new binary this environment, so it
 // starts as this one was started, and the update's before/after comparison
 // reads the same thing on both sides.
-var launchEnviron = os.Environ()
+// A login-shell failure the launcher handed over is reported once, by the
+// daemon it started, not again after every in-place restart.
+var launchEnviron = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+	return strings.HasPrefix(kv, launcher.LoginEnvErrorVar+"=")
+})
 
 // selfUpdateProcess returns this daemon's argv and launch environment; tests
 // swap it.

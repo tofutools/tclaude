@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -14,6 +15,7 @@ type loginEnvFixture struct {
 	deps   loginEnvDeps
 	asked  int
 	execed []string
+	failed []error
 }
 
 func newLoginEnvFixture(plist string) *loginEnvFixture {
@@ -37,8 +39,9 @@ func newLoginEnvFixture(plist string) *loginEnvFixture {
 			f.execed = env
 			return nil
 		},
-		Exe:  "/Users/u/go/bin/tclaude",
-		Args: []string{"/Users/u/go/bin/tclaude", "agentd", "serve"},
+		Failed: func(err error) { f.failed = append(f.failed, err) },
+		Exe:    "/Users/u/go/bin/tclaude",
+		Args:   []string{"/Users/u/go/bin/tclaude", "agentd", "serve"},
 	}
 	return f
 }
@@ -83,7 +86,7 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 		f := newLoginEnvFixture("")
 		mutate(&f.deps)
 		adoptLaunchdLoginEnv(f.deps)
-		if f.asked != 0 || f.execed != nil {
+		if f.asked != 0 || f.execed != nil || f.failed != nil {
 			t.Errorf("%s: asked %d, execed %v", name, f.asked, f.execed)
 		}
 	}
@@ -92,8 +95,41 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 	f := newLoginEnvFixture("")
 	f.deps.LoginEnv = func([]string) ([]string, error) { return nil, errors.New("timed out") }
 	adoptLaunchdLoginEnv(f.deps)
-	if f.execed != nil {
-		t.Errorf("execed %v", f.execed)
+	if f.execed != nil || len(f.failed) != 1 {
+		t.Errorf("execed %v, failed %v", f.execed, f.failed)
+	}
+
+	// The exec fails: start as is, and say so.
+	f = newLoginEnvFixture("")
+	f.deps.Exec = func(string, []string, []string) error { return errors.New("exec format error") }
+	adoptLaunchdLoginEnv(f.deps)
+	if len(f.failed) != 1 || !strings.Contains(f.failed[0].Error(), "exec format error") {
+		t.Errorf("failed %v", f.failed)
+	}
+}
+
+// A failed login-shell step reaches the operator as a Messages notice
+// once agentd is up, and agents do not inherit the variable carrying it.
+func TestReportLoginEnvFailure(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv(launcher.LoginEnvErrorVar, "/bin/zsh did not finish within 30s")
+	reportLoginEnvFailure()
+	if v, set := os.LookupEnv(launcher.LoginEnvErrorVar); set {
+		t.Errorf("variable left set: %q", v)
+	}
+	msgs, err := db.ListUnreadAndRecentHumanMessages(10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Subject, "login shell") ||
+		!strings.Contains(msgs[0].Body, "/bin/zsh did not finish within 30s") ||
+		!strings.Contains(msgs[0].Body, "time $SHELL -l -i -c true") {
+		t.Fatalf("messages %+v", msgs)
+	}
+	// Nothing to report: no notice.
+	reportLoginEnvFailure()
+	if msgs, _ := db.ListUnreadAndRecentHumanMessages(10, 10); len(msgs) != 1 {
+		t.Errorf("%d messages", len(msgs))
 	}
 }
 

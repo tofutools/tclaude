@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/user"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -30,8 +32,10 @@ type loginEnvDeps struct {
 	// LoginEnv asks the login shell for its environment.
 	LoginEnv func(environ []string) ([]string, error)
 	Exec     func(argv0 string, argv, env []string) error
-	Exe      string
-	Args     []string
+	// Failed is told when agentd starts without the login environment.
+	Failed func(error)
+	Exe    string
+	Args   []string
 }
 
 // adoptLaunchdLoginEnv re-executes agentd, in place, with the user's login
@@ -53,7 +57,7 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 	}
 	login, err := d.LoginEnv(d.Environ)
 	if err != nil {
-		slog.Warn("agentd: starting without the login shell's environment", "error", err)
+		d.Failed(err)
 		return
 	}
 	env := launcher.MergeLoginEnv(d.Environ, login)
@@ -69,7 +73,43 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 	env = launcher.WithDefaultLocale(env)
 	env = append(env, loginEnvAppliedVar+"=1")
 	if err := d.Exec(d.Exe, d.Args, env); err != nil {
-		slog.Warn("agentd: could not restart with the login shell's environment", "error", err)
+		d.Failed(fmt.Errorf("restarting with it: %w", err))
+	}
+}
+
+// loginEnvFailed hands a failed login-shell step to reportLoginEnvFailure,
+// which tells the operator once the daemon is up.
+func loginEnvFailed(err error) {
+	slog.Error("agentd: starting without the login shell's environment", "error", err)
+	_ = os.Setenv(launcher.LoginEnvErrorVar, err.Error())
+}
+
+// reportLoginEnvFailure tells the operator, in the dashboard's Messages,
+// that agentd started without the login shell's environment, whether the
+// LaunchAgent re-exec or the app launcher found it so. agentd still starts,
+// so the dashboard is there to say it. The variable is dropped so agents
+// do not inherit it.
+func reportLoginEnvFailure() {
+	msg := os.Getenv(launcher.LoginEnvErrorVar)
+	if msg == "" {
+		return
+	}
+	_ = os.Unsetenv(launcher.LoginEnvErrorVar)
+	slog.Error("agentd: running without the login shell's environment", "error", msg)
+	if _, err := db.InsertHumanMessage(loginEnvFailureMessage(msg)); err != nil {
+		slog.Warn("agentd: could not post the login shell notice", "error", err)
+	}
+}
+
+func loginEnvFailureMessage(msg string) *db.HumanMessage {
+	return &db.HumanMessage{
+		Subject: "agentd started without your login shell's environment",
+		Body: fmt.Sprintf("agentd asked your login shell for its environment (PATH, locale, TMUX_TMPDIR, your profile's variables), "+
+			"and it did not answer within %s: %s.\n\n"+
+			"agentd started anyway, with the bare environment it was given. Agents may not start, or may show offline.\n\n"+
+			"To check, time your shell's startup in a terminal: `time $SHELL -l -i -c true`. It should finish in a few seconds, "+
+			"without asking anything. Then see ~/.tclaude/data/output.log, and ~/.tclaude/data/launcher-agentd.log when the app launcher started agentd. "+
+			"Restart agentd once the shell answers quickly.", launcher.ShellEnvTimeout, msg),
 	}
 }
 
@@ -95,9 +135,10 @@ func productionLoginEnvDeps() loginEnvDeps {
 			}
 			return launcher.LoginShellEnv(ctx, argv, environ)
 		},
-		Exec: syscall.Exec,
-		Exe:  filepath.Clean(exe),
-		Args: os.Args,
+		Exec:   syscall.Exec,
+		Failed: loginEnvFailed,
+		Exe:    filepath.Clean(exe),
+		Args:   os.Args,
 	}
 }
 

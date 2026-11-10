@@ -273,7 +273,9 @@ func productionOpenDeps() openDeps {
 		Notify:           desktopNotify,
 		UseKeychainToken: useKeychainOperatorToken,
 		Sleep:            time.Sleep,
-		WaitFor:          30 * time.Second,
+		// agentd started by the LaunchAgent may first wait for the login
+		// shell, up to ShellEnvTimeout.
+		WaitFor: 30*time.Second + launcher.ShellEnvTimeout,
 	}
 }
 
@@ -351,8 +353,13 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 		if login, err := d.LoginEnv(env); err != nil {
 			envNote = "; without the login shell's environment: " + err.Error()
 			if d.LogNote != nil {
-				d.LogNote("tclaude launcher: starting agentd" + envNote)
+				d.LogNote("ERROR tclaude launcher: starting agentd" + envNote)
 			}
+			// Nobody watches a launcher's terminal: say it on the desktop,
+			// and have agentd say it in the dashboard's Messages.
+			d.Notify("tclaude: your login shell did not give agentd its environment within " +
+				launcher.ShellEnvTimeout.String() + ". agentd started anyway; agents may not start or may show offline. See Messages in the dashboard.")
+			env = append(env, launcher.LoginEnvErrorVar+"="+err.Error())
 		} else {
 			env = launcher.MergeLoginEnv(env, login)
 		}
