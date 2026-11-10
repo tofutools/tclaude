@@ -13,6 +13,7 @@ import (
 
 type loginEnvFixture struct {
 	deps   loginEnvDeps
+	setenv []string
 	asked  int
 	execed []string
 	failed []error
@@ -40,6 +41,7 @@ func newLoginEnvFixture(plist string) *loginEnvFixture {
 			return nil
 		},
 		Failed: func(err error) { f.failed = append(f.failed, err) },
+		Setenv: func(k, v string) error { f.setenv = append(f.setenv, k+"="+v); return nil },
 		Exe:    "/Users/u/go/bin/tclaude",
 		Args:   []string{"/Users/u/go/bin/tclaude", "agentd", "serve"},
 	}
@@ -86,7 +88,7 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 		f := newLoginEnvFixture("")
 		mutate(&f.deps)
 		adoptLaunchdLoginEnv(f.deps)
-		if f.asked != 0 || f.execed != nil || f.failed != nil {
+		if f.asked != 0 || f.execed != nil || f.failed != nil || f.setenv != nil {
 			t.Errorf("%s: asked %d, execed %v", name, f.asked, f.execed)
 		}
 	}
@@ -98,13 +100,26 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 	if f.execed != nil || len(f.failed) != 1 {
 		t.Errorf("execed %v, failed %v", f.execed, f.failed)
 	}
+	// Still a UTF-8 locale: without one the tmux client escapes the tab in
+	// its list-sessions output and every agent reads as offline.
+	if !slices.Equal(f.setenv, []string{"LANG=en_US.UTF-8"}) {
+		t.Errorf("setenv %v", f.setenv)
+	}
+	// A locale launchd did give is left alone.
+	f = newLoginEnvFixture("")
+	f.deps.Environ = append(f.deps.Environ, "LC_CTYPE=UTF-8")
+	f.deps.LoginEnv = func([]string) ([]string, error) { return nil, errors.New("timed out") }
+	adoptLaunchdLoginEnv(f.deps)
+	if f.setenv != nil {
+		t.Errorf("setenv %v", f.setenv)
+	}
 
 	// The exec fails: start as is, and say so.
 	f = newLoginEnvFixture("")
 	f.deps.Exec = func(string, []string, []string) error { return errors.New("exec format error") }
 	adoptLaunchdLoginEnv(f.deps)
-	if len(f.failed) != 1 || !strings.Contains(f.failed[0].Error(), "exec format error") {
-		t.Errorf("failed %v", f.failed)
+	if len(f.failed) != 1 || !strings.Contains(f.failed[0].Error(), "exec format error") || len(f.setenv) != 1 {
+		t.Errorf("failed %v, setenv %v", f.failed, f.setenv)
 	}
 }
 

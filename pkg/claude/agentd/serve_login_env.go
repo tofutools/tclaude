@@ -34,6 +34,7 @@ type loginEnvDeps struct {
 	Exec     func(argv0 string, argv, env []string) error
 	// Failed is told when agentd starts without the login environment.
 	Failed func(error)
+	Setenv func(key, value string) error
 	Exe    string
 	Args   []string
 }
@@ -58,6 +59,7 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 	login, err := d.LoginEnv(d.Environ)
 	if err != nil {
 		d.Failed(err)
+		defaultLocale(d)
 		return
 	}
 	env := launcher.MergeLoginEnv(d.Environ, login)
@@ -74,6 +76,17 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 	env = append(env, loginEnvAppliedVar+"=1")
 	if err := d.Exec(d.Exe, d.Args, env); err != nil {
 		d.Failed(fmt.Errorf("restarting with it: %w", err))
+		defaultLocale(d)
+	}
+}
+
+// defaultLocale gives this process a UTF-8 LANG when launchd gave it no
+// locale and the login shell could not supply one. Without a UTF-8 locale
+// the tmux client escapes the tab in `list-sessions -F` output, and every
+// agent reads as offline.
+func defaultLocale(d loginEnvDeps) {
+	if env := launcher.WithDefaultLocale(d.Environ); len(env) != len(d.Environ) {
+		_ = d.Setenv("LANG", envLookup(env, "LANG"))
 	}
 }
 
@@ -137,6 +150,7 @@ func productionLoginEnvDeps() loginEnvDeps {
 		},
 		Exec:   syscall.Exec,
 		Failed: loginEnvFailed,
+		Setenv: os.Setenv,
 		Exe:    filepath.Clean(exe),
 		Args:   os.Args,
 	}
