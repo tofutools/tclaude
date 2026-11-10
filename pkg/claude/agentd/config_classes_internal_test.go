@@ -115,3 +115,32 @@ func TestLocalConfigAccessAndPatch(t *testing.T) {
 	require.Equal(t, "debug", cfg.LogLevel)
 	require.Equal(t, "tok", cfg.Federation.Invite)
 }
+
+// A struct with its own JSON form is one key, not skipped.
+func TestConfigLeavesKeepTimeValues(t *testing.T) {
+	for _, want := range []string{"federation.away.since", "federation.away.until"} {
+		if _, ok := slices.BinarySearch(configLeafPaths(), want); !ok {
+			t.Errorf("%s is not a config key", want)
+		}
+	}
+}
+
+// A repeated or empty list identity cannot carry a withheld secret: a peer
+// change is refused rather than writing one element's value into another.
+func TestPeerConfigChangeRefusesAmbiguousIdentity(t *testing.T) {
+	current := config.DefaultConfig()
+	current.Service = &config.ServiceConfig{Launch: &config.LaunchProfile{Env: []config.LaunchEnv{{Key: "K", Value: "a"}, {Key: "K", Value: "b"}}}}
+	c := configCaller{actor: "operator@peer", peer: "peer", unrestricted: true}
+	raw, _, err := configViewRaw(current, c)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &m))
+	m["log_level"] = "debug"
+	body, err := json.Marshal(m)
+	require.NoError(t, err)
+	_, _, _, err = computeConfigChange(current, configChangeBody{Config: body, Base: raw}, false, c)
+	var refusal *configRefusal
+	require.ErrorAs(t, err, &refusal)
+	require.Equal(t, "ambiguous_identity", refusal.body["code"])
+	require.Equal(t, "a", current.Service.Launch.Env[0].Value)
+}

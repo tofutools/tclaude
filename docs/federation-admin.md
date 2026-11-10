@@ -338,10 +338,26 @@ own peer grant, so a grant for one class cannot be stretched to another.
 | network | `node.config.network` | dashboard bind and port, operator tokens, remote access, routes, federation tunables |
 | credentials | `node.config.credentials` | the credential proxies and their keys and tokens |
 | installation | `node.update.settings`, through its own endpoints | `updates.self`, `service` |
-| local | unrestricted trust only | shell commands (the notification command, update scripts and commands), the hub link and identity (`federation.enabled`, `hub_url`, `invite`, `hub_ca_file`, identity rotation, accepting remote scripts), the audit retention |
+| local | this node only, no peer | shell commands (the notification command, update scripts and commands), the hub link and identity (`federation.enabled`, `hub_url`, `invite`, `hub_ca_file`, identity rotation), accepting remote scripts, the audit retention |
 
 Every write grant also needs `node.config.read`. An unrestricted peer holds
-every class. The node checks each changed key against its class. If any key
+every class except local: no peer changes those keys, not even an unrestricted
+one. They run commands here or decide this node's trust, so an unrestricted
+peer reads them (with secrets withheld) but does not change them.
+
+**Credentials stay bound.** No peer sets a credential file path, such as a
+proxy's `header_value_file`, the awb `password_file`, the git proxy's key and
+token files or a Linear workspace's `api_key_file`. A peer keeps or removes
+the paths this node set. A peer also does not change where a withheld
+credential goes: changing a proxy's `url`, `header` or `environment_variable`,
+the awb `url` or `username`, or the git proxy's `gitlab_hosts` while the
+credential is kept is refused. To change one of these, send the secret again;
+a file credential is changed on this node itself.
+
+**Agent permissions.** With `node.config.agents`, a peer removes any slug from
+`agent.default_permissions` or `steward.default_permissions`. It adds no
+risky slug, and no `human.*`, `federation.*`, `permissions.*` or sudo slug.
+This node's operator adds those. The node checks each changed key against its class. If any key
 is refused, the whole change is refused with `403 permission_denied`, listing
 each refused key and the grant it needs. Nothing outside the changed keys is
 written. A change is validated as a local save is, and audited as
@@ -357,10 +373,13 @@ and the custom self-update command. A peer sees each one empty, and
 `redacted` says whether it is set. A secret sent back empty is kept. A secret
 sent with a value replaces it, and counts as a change of its key whatever the
 value, so a peer cannot confirm a guessed value. A secret named in `clear` is
-removed. Paths to key and token files are not secrets, so the tab shows them.
-
-Before this, an unrestricted peer reached `/api/config` as this node's own
-operator, raw secret values included. That is narrowed on purpose.
+removed. Serve flags (`service.launch.flags`, `service.launcher.serve_args`) are
+withheld as a whole, since a flag may carry a token. The service endpoints
+show them with only the secret flags withheld. Paths to key and token files
+are not secrets, so the tab shows them. A list element that holds a secret is
+matched by its name, such as an environment variable's key. A peer change is
+refused if a name is empty or repeated, or if a renamed element would drop its
+withheld secret.
 
 Config bundles stay separate. A bundle carries only portable keys, which a
 test keeps free of secrets. A peer exports a bundle's `config` and

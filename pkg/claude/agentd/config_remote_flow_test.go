@@ -160,7 +160,7 @@ func TestRemoteConfigGrantsSecretsAndDrift(t *testing.T) {
 		}))
 		require.Equal(t, http.StatusForbidden, code, guess)
 		require.Equal(t, "notifications.notification_command", refused.Denied[0].Path)
-		require.Equal(t, "unrestricted trust", refused.Denied[0].Requires)
+		require.Equal(t, "the node itself", refused.Denied[0].Requires)
 	}
 
 	// A change made against an older view is refused.
@@ -180,12 +180,15 @@ func TestRemoteConfigGrantsSecretsAndDrift(t *testing.T) {
 	v = get()
 	require.Equal(t, "write", v.Access.Classes["credentials"])
 	code, v, body = call("PATCH", "/api/config", map[string]any{"version": v.Version, "set": map[string]any{
-		"agent.http_proxies": map[string]any{"search": map[string]any{"url": "https://api2.example.com", "header": "Authorization"}},
+		"agent.http_proxies": map[string]any{"search": map[string]any{"url": "https://api.example.com", "header": "Authorization", "environment_variable": "SEARCH"}},
+	}})
+	require.Equal(t, http.StatusForbidden, code, "a withheld header is bound to where it goes: "+body)
+	code, v, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{
+		"agent.http_proxies": map[string]any{"search": map[string]any{"url": "https://api.example.com", "header": "Authorization", "model_policy": nil}},
 	}})
 	require.Equal(t, 200, code, body)
 	cfg, err = config.Load()
 	require.NoError(t, err)
-	require.Equal(t, "https://api2.example.com", cfg.Agent.HTTPProxies["search"].URL)
 	require.Equal(t, "hv-s3cret", cfg.Agent.HTTPProxies["search"].HeaderValue, "the withheld value is kept")
 	code, v, body = call("PATCH", "/api/config", map[string]any{"version": v.Version, "set": map[string]any{
 		"agent.http_proxies": map[string]any{"search": map[string]any{"url": "https://api2.example.com", "header": "Authorization", "header_value": "new-value"}},
@@ -203,19 +206,72 @@ func TestRemoteConfigGrantsSecretsAndDrift(t *testing.T) {
 	code, _, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "clear": []string{"federation.invite"}})
 	require.Equal(t, http.StatusForbidden, code, "the hub invite is federation trust: local")
 
-	// An unrestricted peer changes every class, and still reads no secret.
+	// The credential bindings: a kept secret goes nowhere new, and no peer
+	// points a credential at a file.
+	proxy := func(fields map[string]any) map[string]any {
+		entry := map[string]any{"url": "https://api2.example.com", "header": "Authorization"}
+		for k, val := range fields {
+			entry[k] = val
+		}
+		return map[string]any{"version": get().Version, "set": map[string]any{"agent.http_proxies": map[string]any{"search": entry}}}
+	}
+	code, _, body = call("PATCH", "/api/config", proxy(map[string]any{"header_value": "kept-again"}))
+	require.Equal(t, 200, code, body)
+	code, refused, _ = call("PATCH", "/api/config", proxy(map[string]any{"url": "https://attacker.example"}))
+	require.Equal(t, http.StatusForbidden, code, "a kept header does not follow a new URL")
+	require.Equal(t, "agent.http_proxies.search.url", refused.Denied[0].Path)
+	code, _, body = call("PATCH", "/api/config", proxy(map[string]any{"url": "https://attacker.example", "header_value": "the-peers-own"}))
+	require.Equal(t, 200, code, "a secret sent again may go anywhere: "+body)
+	code, refused, _ = call("PATCH", "/api/config", proxy(map[string]any{"header_value_file": "/home/op/.tclaude/data/operator-token"}))
+	require.Equal(t, http.StatusForbidden, code, "no peer sets a credential file")
+	require.Equal(t, "agent.http_proxies.search.header_value_file", refused.Denied[0].Path)
+	// Renaming an entry would drop its withheld secret: refused until sent.
+	code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{
+		"agent.http_proxies": map[string]any{"search2": map[string]any{"url": "https://attacker.example", "header": "Authorization"}},
+	}})
+	require.Equal(t, http.StatusBadRequest, code)
+	require.Equal(t, "secret_not_sent", refused.Code)
+	// A risky slug is never a peer's to hand every agent.
+	grant(agentd.PermNodeConfigAgents)
+	code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{"permissions.grant"}}})
+	require.Equal(t, http.StatusForbidden, code)
+	require.Equal(t, "permission_denied", refused.Code)
+	code, _, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{"agent.list"}}})
+	require.Equal(t, 200, code, body)
+
+	// An unrestricted peer changes every class but the node's own, and
+	// still reads no secret.
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	v = get()
 	require.Equal(t, "unrestricted", v.Access.Level)
 	for class, access := range v.Access.Classes {
-		require.Equal(t, "write", access, class)
+		want := "write"
+		if class == "local" {
+			want = "read"
+		}
+		require.Equal(t, want, access, class)
 	}
 	require.NotEmpty(t, v.Path)
-	code, _, body = call("PATCH", "/api/config", map[string]any{"version": v.Version, "set": map[string]any{"audit.retention_days": 400}})
+	code, _, body = call("PATCH", "/api/config", map[string]any{"version": v.Version, "set": map[string]any{"agent.dashboard_port": 9123}})
 	require.Equal(t, 200, code, body)
 	cfg, err = config.Load()
 	require.NoError(t, err)
-	require.Equal(t, 400, cfg.Audit.RetentionDays)
+	require.Equal(t, 9123, cfg.Agent.DashboardPort)
+	// Shell commands, remote scripts, the hub link and the audit trail are
+	// the node's own: no peer changes them, unrestricted included.
+	for path, value := range map[string]any{
+		"federation.scripts.accept_remote_scripts": true,
+		"notifications.notification_command":       []string{"sh", "-c", "curl attacker"},
+		"federation.hub_url":                       "wss://attacker.example",
+		"audit.retention_days":                     1,
+	} {
+		code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{path: value}})
+		require.Equal(t, http.StatusForbidden, code, path)
+		require.Equal(t, "the node itself", refused.Denied[0].Requires, path)
+	}
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Federation.Scripts != nil && cfg.Federation.Scripts.AcceptRemoteScripts)
 	require.Equal(t, "deploy-s3cret", cfg.SelfUpdate().Custom.Command)
 
 	// Every change and refusal is audited under the peer, without values.

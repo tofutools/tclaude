@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"encoding"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
@@ -51,16 +53,17 @@ const (
 	// (node_update_settings.go, node_service_launch.go), never here.
 	configClassInstallation configClass = "installation"
 	// configClassLocal: shell commands agentd runs, the hub link and trust,
-	// and the audit retention. Only this node's operator or an unrestricted
-	// peer changes them; no grant opens them.
+	// accepting remote scripts, and the audit retention. Only this node's
+	// own operator changes them: no peer does, unrestricted included, and no
+	// grant opens them.
 	configClassLocal configClass = "local"
 )
 
 // configClasses lists every class in display order.
 var configClasses = []configClass{configClassGeneral, configClassAgents, configClassNetwork, configClassCredentials, configClassInstallation, configClassLocal}
 
-// configClassSlug is the peer grant that writes a class; "" is unrestricted
-// trust only.
+// configClassSlug is the peer grant that writes a class; a class without one
+// is the node's own (local) or unrestricted trust's (installation).
 var configClassSlug = map[configClass]string{
 	configClassGeneral:     PermNodeConfigWrite,
 	configClassAgents:      PermNodeConfigAgents,
@@ -157,13 +160,17 @@ var configKeyClasses = []struct {
 	{"updates.self.package_manager_ack", configClassLocal},
 	{"service", configClassInstallation},
 
-	{"snapshots", configClassGeneral},
+	// Retention deletes snapshots past it.
+	{"snapshots", configClassAgents},
 	{"routes", configClassNetwork},
 	{"claude_resume", configClassGeneral},
 	// Claude Code deletes transcripts older than this.
 	{"claude_cleanup_period_days", configClassAgents},
 	{"processes", configClassAgents},
 	{"taskboard", configClassGeneral},
+	// Retention deletes done tasks and their history.
+	{"taskboard.archive_after_days", configClassAgents},
+	{"taskboard.retention_days", configClassAgents},
 	{"dashboard", configClassGeneral},
 	{"session", configClassGeneral},
 	// Joining a group hands an agent the group's grants.
@@ -189,6 +196,34 @@ var configSecretPaths = []string{
 	"updates.scripts[name].update",
 	"updates.harnesses.*.update",
 	"updates.self.custom.command",
+	// Serve flags may carry a token (--token=…); the service endpoints show
+	// them with only the secret ones withheld.
+	"service.launch.flags",
+	"service.launcher.serve_args",
+}
+
+// configCredentialBindings tie a credential to where it is sent. No peer,
+// unrestricted included, sets a credential's source file (it could point one
+// at any file this node can read): it keeps or removes one the node set. No
+// peer changes where a credential it did not send goes (it could send a kept
+// one to its own server): a new destination needs the secret value sent
+// again, or a file credential changed on the node itself.
+var configCredentialBindings = []struct {
+	object  string   // dotted path; "*" is every key of a map
+	secrets []string // secret value fields (configSecretPaths)
+	files   []string // credential file fields
+	dests   []string // where the credential goes
+}{
+	{"agent.http_proxies.*", []string{"header_value"}, []string{"header_value_file"}, []string{"url", "header", "environment_variable"}},
+	{"agent.awb_proxy", nil, []string{"password_file"}, []string{"url", "username"}},
+	{"agent.git_proxy", nil, []string{"ssh_key", "github_token_file", "gitlab_token_file"}, []string{"gitlab_hosts"}},
+	{"agent.linear_proxy", nil, []string{"api_key_file"}, nil},
+}
+
+// configCredentialFileLists are list leaves whose elements name credential
+// files: a peer keeps or removes those the node set, and adds none.
+var configCredentialFileLists = map[string]string{
+	"agent.linear_proxy.workspaces": "api_key_file",
 }
 
 // configKeyClass returns the class of a dotted leaf path.
@@ -213,11 +248,18 @@ var configLeaves = sync.OnceValue(func() []string {
 // non-struct field, with a list or map counted whole.
 func configLeafPaths() []string { return configLeaves() }
 
+var (
+	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
+)
+
 func walkConfigLeaves(t reflect.Type, prefix string, seen map[reflect.Type]bool, out *[]string) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if t.Kind() != reflect.Struct || seen[t] {
+	// A struct with its own JSON form (time.Time) is one value.
+	if t.Kind() != reflect.Struct || seen[t] || t.Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType) ||
+		t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType) {
 		*out = append(*out, prefix)
 		return
 	}
@@ -277,13 +319,19 @@ func configSecretPathRoot(p string) string {
 
 // secretSite is one place a secret value sits in a decoded config tree.
 type secretSite struct {
-	path   string
-	leaf   string
-	parent map[string]any
-	key    string
+	path      string
+	leaf      string
+	parent    map[string]any
+	key       string
+	ambiguous bool
 }
 
-func (s secretSite) value() any { return s.parent[s.key] }
+func (s secretSite) value() any {
+	if s.parent == nil {
+		return nil
+	}
+	return s.parent[s.key]
+}
 
 // configSecretSites lists every place a secret value can sit in tree,
 // including a leaf key its parent omits.
@@ -317,13 +365,22 @@ func collectSecretSites(node map[string]any, segs []string, prefix, leaf string,
 	}
 	if name, field, ok := strings.Cut(seg, "["); ok {
 		field = strings.TrimSuffix(field, "]")
+		// Elements go by their field. A repeated or empty one names no
+		// element for sure: it is marked ambiguous, and a peer change of a
+		// config that holds one is refused.
 		list, _ := node[name].([]any)
+		seen := map[string]bool{}
 		for _, el := range list {
 			child, ok := el.(map[string]any)
 			if !ok {
 				continue
 			}
 			id, _ := child[field].(string)
+			if id == "" || seen[id] {
+				*out = append(*out, secretSite{path: join(name + "[" + id + "]"), leaf: leaf, ambiguous: true})
+				continue
+			}
+			seen[id] = true
 			collectSecretSites(child, segs[1:], join(name+"["+id+"]"), leaf, out)
 		}
 		return

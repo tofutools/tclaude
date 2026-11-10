@@ -52,7 +52,13 @@ func (c configCaller) mayRead() bool {
 }
 
 func (c configCaller) mayWrite(class configClass) bool {
-	if c.local || c.unrestricted {
+	switch {
+	case c.local:
+		return true
+	case class == configClassLocal:
+		// The node's own, whatever the peer's trust.
+		return false
+	case c.unrestricted:
 		return true
 	}
 	slug := configClassSlug[class]
@@ -298,8 +304,12 @@ func serveConfigChange(w http.ResponseWriter, r *http.Request, c configCaller) {
 	}
 	var refusal *configRefusal
 	if errors.As(err, &refusal) {
-		if !dryRun {
-			recordFederationAudit("federation.node.config", c.actor, "", "", "refused: "+refusal.Error(), refusal.status)
+		label := "refused: "
+		if dryRun {
+			label = "refused (dry run): "
+		}
+		if !c.local {
+			recordFederationAudit("federation.node.config", c.actor, "", "", label+refusal.Error(), refusal.status)
 		}
 		writeJSON(w, refusal.status, refusal.body)
 		return
@@ -317,7 +327,9 @@ func serveConfigChange(w http.ResponseWriter, r *http.Request, c configCaller) {
 		writeJSON(w, http.StatusOK, map[string]any{"raw": raw, "changed": changed, "secrets_changed": secretsChanged})
 		return
 	}
-	recordFederationAudit("federation.node.config", c.actor, "", "", "changed: "+strings.Join(changed, ","), http.StatusOK)
+	if !c.local {
+		recordFederationAudit("federation.node.config", c.actor, "", "", "changed: "+strings.Join(changed, ","), http.StatusOK)
+	}
 	_ = session.SyncClaudeCleanupPeriod(result)
 	tellStewardsNewName(&previous, result)
 	if len(stewardConvs()) > 0 {
@@ -363,10 +375,17 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 	// replaces; clear removes. Each one sent or cleared is a change of its
 	// key, whatever the value.
 	touched := map[string]bool{}
+	kept := map[string]bool{}
 	var secretsChanged []string
 	if !c.local {
+		curSites, subSites := configSecretSites(curTree), configSecretSites(submitted)
+		for _, site := range append(slices.Clone(curSites), subSites...) {
+			if site.ambiguous {
+				return nil, nil, nil, configRefuse(http.StatusBadRequest, "ambiguous_identity", site.path+" is empty or repeated, so a withheld secret cannot be matched to it; give each element its own name (on the node itself if the node's config holds it)")
+			}
+		}
 		current := map[string]any{}
-		for _, site := range configSecretSites(curTree) {
+		for _, site := range curSites {
 			current[site.path] = site.value()
 		}
 		clear := map[string]bool{}
@@ -376,7 +395,9 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 			}
 			clear[p] = true
 		}
-		for _, site := range configSecretSites(submitted) {
+		submittedPaths := map[string]bool{}
+		for _, site := range subSites {
+			submittedPaths[site.path] = true
 			switch {
 			case clear[site.path]:
 				delete(site.parent, site.key)
@@ -384,6 +405,7 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 			case secretValueSet(site.value()):
 			case secretValueSet(current[site.path]):
 				site.parent[site.key] = current[site.path]
+				kept[site.path] = true
 				continue
 			default:
 				continue
@@ -394,12 +416,29 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 		for p := range clear {
 			return nil, nil, nil, configRefuse(http.StatusBadRequest, "invalid_arg", "clear names "+p+", which the change removes")
 		}
+		// A renamed element would lose its withheld secret silently: an
+		// element with a secret that goes, beside a new one without, is
+		// refused until the secret is sent again (or the old one cleared).
+		for _, gone := range curSites {
+			if submittedPaths[gone.path] || !secretValueSet(gone.value()) {
+				continue
+			}
+			for _, site := range subSites {
+				if site.leaf == gone.leaf && current[site.path] == nil && !secretValueSet(site.value()) {
+					return nil, nil, nil, configRefuse(http.StatusBadRequest, "secret_not_sent", gone.path+" is withheld and its element is renamed or replaced by "+site.path+": send the secret for "+site.path+" again")
+				}
+			}
+		}
 	} else if len(body.Clear) > 0 {
 		return nil, nil, nil, configRefuse(http.StatusBadRequest, "invalid_arg", "clear is for a peer; the node's operator sets the value")
 	}
 
 	var changed []string
 	var denied []configDenied
+	if !c.local {
+		// Before the merge below, which rewrites curTree.
+		denied = configCredentialRefusals(curTree, submitted, kept)
+	}
 	for _, leaf := range configLeafPaths() {
 		before, hadBefore := treeLookup(curTree, leaf)
 		after, hasAfter := treeLookup(submitted, leaf)
@@ -410,7 +449,10 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 		class, _ := configKeyClass(leaf)
 		if !c.mayWrite(class) {
 			requires := configClassSlug[class]
-			if requires == "" {
+			switch {
+			case class == configClassLocal:
+				requires = "the node itself"
+			case requires == "":
 				requires = "unrestricted trust"
 			}
 			denied = append(denied, configDenied{Path: leaf, Class: class, Requires: requires})
@@ -422,11 +464,7 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 		}
 	}
 	if len(denied) > 0 {
-		paths := make([]string, len(denied))
-		for i, d := range denied {
-			paths[i] = d.Path + " (" + d.Requires + ")"
-		}
-		ref := configRefuse(http.StatusForbidden, "permission_denied", "not yours to change here: "+strings.Join(paths, ", "))
+		ref := configRefuse(http.StatusForbidden, "permission_denied", "not yours to change here: "+deniedPaths(denied))
 		ref.body["denied"] = denied
 		return nil, nil, nil, ref
 	}
@@ -444,6 +482,22 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 		}
 	}
 	config.Normalize(result)
+	if !c.local {
+		// After Normalize, which renames legacy slugs to their current names.
+		before, err := configToTree(current)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		after, err := configToTree(result)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if denied := configDefaultPermissionRefusals(before, after); len(denied) > 0 {
+			ref := configRefuse(http.StatusForbidden, "permission_denied", "a peer cannot add these to the permissions agents start with: "+deniedPaths(denied))
+			ref.body["denied"] = denied
+			return nil, nil, nil, ref
+		}
+	}
 	if c.local || slices.ContainsFunc(changed, func(p string) bool { return strings.HasPrefix(p, "notifications.") }) {
 		result.Notifications.MarkNotifyTypesKnown()
 	}
@@ -537,4 +591,144 @@ func configValueEqual(a, b any) bool {
 	ra, errA := json.Marshal(a)
 	rb, errB := json.Marshal(b)
 	return errA == nil && errB == nil && bytes.Equal(ra, rb)
+}
+
+// configCredentialRefusals holds every peer, unrestricted included, to the
+// credential bindings (configCredentialBindings): no credential file it set,
+// and no new destination for a credential it did not send.
+func configCredentialRefusals(curTree, submitted map[string]any, kept map[string]bool) []configDenied {
+	var denied []configDenied
+	deny := func(path, why string) {
+		denied = append(denied, configDenied{Path: path, Class: configClassCredentials, Requires: why})
+	}
+	for _, b := range configCredentialBindings {
+		parent, star := strings.CutSuffix(b.object, ".*")
+		objects := map[string][2]map[string]any{}
+		if star {
+			cur, _ := treeLookup(curTree, parent)
+			sub, _ := treeLookup(submitted, parent)
+			curMap, _ := cur.(map[string]any)
+			subMap, _ := sub.(map[string]any)
+			for k, v := range subMap {
+				o, _ := v.(map[string]any)
+				c, _ := curMap[k].(map[string]any)
+				objects[parent+"."+k] = [2]map[string]any{c, o}
+			}
+		} else {
+			cur, _ := treeLookup(curTree, b.object)
+			sub, _ := treeLookup(submitted, b.object)
+			c, _ := cur.(map[string]any)
+			o, _ := sub.(map[string]any)
+			objects[b.object] = [2]map[string]any{c, o}
+		}
+		for path, pair := range objects {
+			cur, sub := pair[0], pair[1]
+			if sub == nil {
+				continue
+			}
+			credentialKept := false
+			for _, f := range b.files {
+				v := sub[f]
+				if !secretValueSet(v) {
+					continue
+				}
+				if cur == nil || !configValueEqual(cur[f], v) {
+					deny(path+"."+f, "the node itself (credential files are set there)")
+					continue
+				}
+				credentialKept = true
+			}
+			if cur == nil {
+				continue
+			}
+			for _, f := range b.secrets {
+				credentialKept = credentialKept || kept[path+"."+f]
+			}
+			if !credentialKept {
+				continue
+			}
+			for _, d := range b.dests {
+				if !configValueEqual(cur[d], sub[d]) {
+					deny(path+"."+d, "the credential sent again (its destination changes)")
+				}
+			}
+		}
+	}
+	for leaf, field := range configCredentialFileLists {
+		known := map[string]bool{}
+		cur, _ := treeLookup(curTree, leaf)
+		curList, _ := cur.([]any)
+		for _, el := range curList {
+			if m, ok := el.(map[string]any); ok {
+				if f, _ := m[field].(string); f != "" {
+					known[f] = true
+				}
+			}
+		}
+		sub, _ := treeLookup(submitted, leaf)
+		subList, _ := sub.([]any)
+		for i, el := range subList {
+			if m, ok := el.(map[string]any); ok {
+				if f, _ := m[field].(string); f != "" && !known[f] {
+					deny(fmt.Sprintf("%s[%d].%s", leaf, i, field), "the node itself (credential files are set there)")
+				}
+			}
+		}
+	}
+	slices.SortFunc(denied, func(a, b configDenied) int { return strings.Compare(a.Path, b.Path) })
+	return denied
+}
+
+// configPermissionLeaves are the lists of slugs every new agent (or Steward)
+// starts with.
+var configPermissionLeaves = []string{"agent.default_permissions", "steward.default_permissions"}
+
+// configDefaultPermissionRefusals keeps a peer from handing this node's
+// agents what reaches past their own work: a risky slug, the human's
+// channels, federation administration or the power to grant. The node's
+// operator adds those; a peer may remove any.
+func configDefaultPermissionRefusals(curTree, submitted map[string]any) []configDenied {
+	var denied []configDenied
+	for _, leaf := range configPermissionLeaves {
+		cur, _ := treeLookup(curTree, leaf)
+		sub, _ := treeLookup(submitted, leaf)
+		had := map[string]bool{}
+		curList, _ := cur.([]any)
+		for _, v := range curList {
+			if s, ok := v.(string); ok {
+				had[s] = true
+			}
+		}
+		subList, _ := sub.([]any)
+		for _, v := range subList {
+			slug, _ := v.(string)
+			if had[slug] || !peerUnassignableSlug(slug) {
+				continue
+			}
+			denied = append(denied, configDenied{Path: leaf + " (" + slug + ")", Class: configClassAgents, Requires: "the node itself"})
+		}
+	}
+	return denied
+}
+
+func peerUnassignableSlug(slug string) bool {
+	base, _, _ := strings.Cut(slug, ":")
+	base = strings.TrimSpace(base)
+	if slices.Contains(riskySlugs, base) {
+		return true
+	}
+	for _, prefix := range []string{"human.", "federation.", "permissions.", "sudo", "*"} {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func deniedPaths(denied []configDenied) string {
+	paths := make([]string, len(denied))
+	for i, d := range denied {
+		paths[i] = d.Path + " (" + d.Requires + ")"
+	}
+	return strings.Join(paths, ", ")
 }
