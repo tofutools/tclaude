@@ -48,34 +48,6 @@ func (LiveTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", TmuxArgs(args...)...)
 }
 
-// ListSessions forks one tmux list-sessions command and returns session names
-// whose active pane is not retained-dead. Non-zero exit (typically
-// "no server running on …" when the tmux server is down) collapses to
-// an empty set with nil error — the snapshot semantics are the same as
-// "every session is offline".
-func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
-	out, err := l.Command("list-sessions", "-F", "#{session_name}\t#{pane_dead}").Output()
-	if err != nil {
-		// `tmux ls` exits non-zero when there is no server. Treat that
-		// as the empty set rather than an error — it is the normal
-		// "nothing is running" state, not a probe failure.
-		if _, ok := err.(*exec.ExitError); ok {
-			return map[string]struct{}{}, nil
-		}
-		return nil, err
-	}
-	alive := map[string]struct{}{}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
-		name := fields[0]
-		if name == "" || (len(fields) == 2 && fields[1] == "1") {
-			continue
-		}
-		alive[name] = struct{}{}
-	}
-	return alive, nil
-}
-
 // tmuxCounterKey names a tmux invocation by its subcommand for the perfstats
 // subprocess table ("tmux list-sessions"), so hot polling paths stand out.
 func tmuxCounterKey(args []string) string {
