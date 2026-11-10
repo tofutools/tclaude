@@ -120,10 +120,11 @@ function Row({ label, children }) {
 // ServicePanel reads the service state while open and drives restart and
 // autostart. base names the node (NODE_BASE, or a peer's base); a read-only
 // caller (access "read") gets no buttons. onRead is told after each read,
-// once the part has its height. fetchImpl/confirm/toast/copy/timers
+// once the part has its height. idp prefixes its element ids ('cfg-' in
+// Config), so a second copy (the Fleet node dialog) does not repeat them. fetchImpl/confirm/toast/copy/timers
 // are injectable for tests.
 export function ServicePanel({
-  open = true, base = NODE_BASE, onRead = () => {}, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
+  open = true, base = NODE_BASE, idp = 'cfg-', onRead = () => {}, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
   copy = writeClipboard, timers = globalThis,
 }) {
   const [service, setService] = useState(null);
@@ -253,12 +254,13 @@ export function ServicePanel({
 
   if (error) {
     const absent = error instanceof RequestError && error.status === 404;
-    return html`<${InstallPart} id="service" title="Start automatically" state="unknown"
-      status=${html`<span class="muted" role="alert" id="cfg-service">${absent
+    return html`<${InstallPart} idp=${idp} id="service" title="Start automatically" state="unknown"
+      status=${html`<span class="muted" role="alert" id="${idp}service">${absent
         ? 'This daemon does not report how it was started yet.'
+        : error?.status === 403 ? 'You may not see how this node starts (it needs node.read there).'
         : `Could not read the service state: ${errorText(error)}`}</span>`} />`;
   }
-  if (!service) return html`<${InstallPart} id="service" title="Start automatically" state="unknown" status=${html`<span class="muted" id="cfg-service">Loading…</span>`} />`;
+  if (!service) return html`<${InstallPart} idp=${idp} id="service" title="Start automatically" state="unknown" status=${html`<span class="muted" id="${idp}service">Loading…</span>`} />`;
 
   const l = service.launcher || {};
   const a = service.autostart;
@@ -270,71 +272,71 @@ export function ServicePanel({
   const any = busy || restarting;
   const readOnly = service.access === 'read';
   const status = serviceStatus(service);
-  const actions = readOnly ? html`<span class="muted" id="cfg-svc-readonly">Read only: you may see how this node starts, not change it.</span>`
+  const actions = readOnly ? html`<span class="muted" id="${idp}svc-readonly">Read only: you may see how this node starts, not change it.</span>`
     : status.action === 'install' && (!a?.installed || a.managed)
-    ? html`<${Button} variant="primary" size="sm" id="cfg-install-service-on" disabled=${!!any || customEmpty} busy=${busy === 'install'}
+    ? html`<${Button} variant="primary" size="sm" id="${idp}install-service-on" disabled=${!!any || customEmpty} busy=${busy === 'install'}
         onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>`
     : status.action === 'uninstall'
-      ? html`<${Button} variant="danger" size="sm" id="cfg-install-service-off" disabled=${!!any} busy=${busy === 'uninstall'}
+      ? html`<${Button} variant="danger" size="sm" id="${idp}install-service-off" disabled=${!!any} busy=${busy === 'uninstall'}
           onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`
       : null;
-  return html`<${InstallPart} id="service" title="Start automatically" state=${status.state} collapsed=${collapsed} onToggle=${toggle}
+  return html`<${InstallPart} idp=${idp} id="service" title="Start automatically" state=${status.state} collapsed=${collapsed} onToggle=${toggle}
     status=${html`<span>${status.text}</span>`} actions=${html`${actions}${actionError && collapsed ? html`<span class="cfg-svc-warn" role="alert">${actionError}</span>` : ''}`}>
-  <div class="cfg-svc" id="cfg-service">
-    <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launcher-h">
-      <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launcher-h">Launcher</h3>
+  <div class="cfg-svc" id="${idp}service">
+    <div class="cfg-section" role="group" aria-labelledby="${idp}svc-launcher-h">
+      <h3 class="ui-eyebrow ui-eyebrow-section" id="${idp}svc-launcher-h">Launcher</h3>
       <p class="cfg-group-lede">Detected from the running daemon. A restart goes through its supervisor, so the unit's own arguments stay.</p>
       <div class="cfg-svc-dl">
-        <${Row} label="Running under"><strong id="cfg-svc-kind">${launcherText(l.kind)}</strong>${l.unit || l.label ? html` <code>${l.unit || l.label}</code>` : ''}${l.managed_by_tclaude ? html` <span class="muted">· written by tclaude</span>` : ''}<//>
+        <${Row} label="Running under"><strong id="${idp}svc-kind">${launcherText(l.kind)}</strong>${l.unit || l.label ? html` <code>${l.unit || l.label}</code>` : ''}${l.managed_by_tclaude ? html` <span class="muted">· written by tclaude</span>` : ''}<//>
         ${(l.unit_path || l.domain) && html`<${Row} label="Unit">${l.unit_path ? html`<code>${l.unit_path}</code>` : ''}${l.domain ? html` <span class="muted">${l.domain}</span>` : ''}<//>`}
-        <${Row} label="Command"><${Argv} id="cfg-svc-observed" argv=${observed} /><//>
+        <${Row} label="Command"><${Argv} id="${idp}svc-observed" argv=${observed} /><//>
         <${Row} label="Environment"><${EnvList} env=${l.env} />${(l.environment_files || []).map((f) => html` <span key=${f} class="muted">· from <code>${f}</code></span>`)}<//>
         ${(l.restart_policy || l.kill_mode) && html`<${Row} label="Policy"><span class="muted">${[l.restart_policy && `Restart=${l.restart_policy}`, l.kill_mode && `KillMode=${l.kill_mode}`].filter(Boolean).join(' · ')}</span><//>`}
         <${Row} label="Restart"><span>${l.restart_method === 'supervisor' ? 'through the supervisor' : 'agentd re-runs itself with the same arguments'}</span>
-          ${!readOnly && html`<${Button} size="sm" id="cfg-svc-restart" disabled=${!!any} busy=${busy === 'restart' || restarting} onClick=${() => { void restart(); }}>${restarting ? 'Restarting…' : 'Restart agentd…'}<//>`}<//>
+          ${!readOnly && html`<${Button} size="sm" id="${idp}svc-restart" disabled=${!!any} busy=${busy === 'restart' || restarting} onClick=${() => { void restart(); }}>${restarting ? 'Restarting…' : 'Restart agentd…'}<//>`}<//>
       </div>
       ${(l.warnings || []).map((w) => html`<div key=${w} class="cfg-svc-warn">${w}</div>`)}
-      ${service.restart_pending && html`<div class="cfg-svc-warn" id="cfg-svc-restart-pending">A restart (${service.restart_pending}) is pending.</div>`}
+      ${service.restart_pending && html`<div class="cfg-svc-warn" id="${idp}svc-restart-pending">A restart (${service.restart_pending}) is pending.</div>`}
     </div>
 
-    <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launch-h">
-      <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launch-h">Launch profile</h3>
-      <${LaunchProfile} open=${open} url=${`${serviceUrl}/launch`} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
+    <div class="cfg-section" role="group" aria-labelledby="${idp}svc-launch-h">
+      <h3 class="ui-eyebrow ui-eyebrow-section" id="${idp}svc-launch-h">Launch profile</h3>
+      <${LaunchProfile} idp=${idp} open=${open} url=${`${serviceUrl}/launch`} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
     </div>
 
-    <div class="cfg-section" role="group" aria-labelledby="cfg-svc-boot-h">
-      <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-boot-h">Start on login</h3>
-      ${!a ? html`<p class="cfg-group-lede" id="cfg-svc-autostart-absent">This daemon cannot set up autostart yet. CLI: <code>tclaude service status</code>.</p>`
-        : !a.supported ? html`<p class="cfg-group-lede" id="cfg-svc-autostart-unsupported">Autostart is not supported here.</p>`
+    <div class="cfg-section" role="group" aria-labelledby="${idp}svc-boot-h">
+      <h3 class="ui-eyebrow ui-eyebrow-section" id="${idp}svc-boot-h">Start on login</h3>
+      ${!a ? html`<p class="cfg-group-lede" id="${idp}svc-autostart-absent">This daemon cannot set up autostart yet. CLI: <code>tclaude service status</code>.</p>`
+        : !a.supported ? html`<p class="cfg-group-lede" id="${idp}svc-autostart-unsupported">Autostart is not supported here.</p>`
         : html`
         <p class="cfg-group-lede">tclaude writes a ${a.kind === 'launchd' ? 'LaunchAgent' : 'systemd user unit'} that starts agentd when you log in${a.kind === 'launchd' ? '' : html`, with <code>KillMode=process</code> so tmux sessions survive restarts`}. Removing it removes only what tclaude wrote. CLI: <code>tclaude service install|uninstall|status</code>.</p>
         <div class="cfg-svc-dl">
-          <${Row} label="Status"><span id="cfg-svc-autostart-state">${!a.installed ? 'not installed'
+          <${Row} label="Status"><span id="${idp}svc-autostart-state">${!a.installed ? 'not installed'
             : !a.managed ? html`<span class="cfg-svc-warn">installed by hand — tclaude leaves it alone</span>`
             : a.enabled ? 'installed and enabled' : 'installed, not enabled'}</span>${a.path ? html` <code>${a.path}</code>` : ''}<//>
-          ${configured && html`<${Row} label="Unit runs"><${Argv} id="cfg-svc-configured" argv=${configured} />
-            ${differs && html`<div class="cfg-svc-warn" id="cfg-svc-differs">Differs from what agentd runs with now.</div>`}<//>`}
+          ${configured && html`<${Row} label="Unit runs"><${Argv} id="${idp}svc-configured" argv=${configured} />
+            ${differs && html`<div class="cfg-svc-warn" id="${idp}svc-differs">Differs from what agentd runs with now.</div>`}<//>`}
           ${configured && html`<${Row} label="Unit environment"><${EnvList} env=${a.env} />${a.env_file ? html` <span class="muted">· from <code>${a.env_file}</code></span>` : ''}<//>`}
-          ${(!a.installed || a.managed) && byProfile && html`<${Row} label="Flags and env"><span class="muted" id="cfg-svc-by-profile">from the launch profile above</span><//>`}
+          ${(!a.installed || a.managed) && byProfile && html`<${Row} label="Flags and env"><span class="muted" id="${idp}svc-by-profile">from the launch profile above</span><//>`}
           ${!readOnly && (!a.installed || a.managed) && html`
             ${!byProfile && html`<${Row} label="Serve flags"><span class="cfg-svc-args">
-              <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="keep" checked=${argsMode === 'keep'} onChange=${() => setArgsMode('keep')} /> keep the flags agentd runs with now</label>
-              <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="custom" checked=${argsMode === 'custom'} onChange=${() => setArgsMode('custom')} /> use these:</label>
-              <input type="text" class="ui-input ui-sm" id="cfg-svc-serve-args" spellcheck="false" autocomplete="off" aria-label="agentd serve flags"
+              <label class="cfg-inline"><input type="radio" name="${idp}svc-args" value="keep" checked=${argsMode === 'keep'} onChange=${() => setArgsMode('keep')} /> keep the flags agentd runs with now</label>
+              <label class="cfg-inline"><input type="radio" name="${idp}svc-args" value="custom" checked=${argsMode === 'custom'} onChange=${() => setArgsMode('custom')} /> use these:</label>
+              <input type="text" class="ui-input ui-sm" id="${idp}svc-serve-args" spellcheck="false" autocomplete="off" aria-label="agentd serve flags"
                 placeholder="--no-tray --dashboard-port 7878" disabled=${argsMode !== 'custom'} value=${argsText} onInput=${(e) => setArgsText(e.currentTarget.value)} />
             </span><//>
-            <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="cfg-svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>`}
+            <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="${idp}svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>`}
             <${Row} label=""><span class="cfg-svc-actions">
-              <${Button} variant="primary" size="sm" id="cfg-svc-install" disabled=${!!any || customEmpty} title=${customEmpty ? 'Type the serve flags, or keep the ones agentd runs with now' : undefined} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>
-              ${a.installed && html`<${Button} variant="danger" size="sm" id="cfg-svc-uninstall" disabled=${!!any} busy=${busy === 'uninstall'} onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`}
+              <${Button} variant="primary" size="sm" id="${idp}svc-install" disabled=${!!any || customEmpty} title=${customEmpty ? 'Type the serve flags, or keep the ones agentd runs with now' : undefined} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>
+              ${a.installed && html`<${Button} variant="danger" size="sm" id="${idp}svc-uninstall" disabled=${!!any} busy=${busy === 'uninstall'} onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`}
             </span><//>`}
-          ${restartAppliesAutostart(service) && differs && html`<${Row} label=""><span class="muted" id="cfg-svc-restart-hint">Restart agentd above to run with the unit's new settings now.</span><//>`}
+          ${restartAppliesAutostart(service) && differs && html`<${Row} label=""><span class="muted" id="${idp}svc-restart-hint">Restart agentd above to run with the unit's new settings now.</span><//>`}
           ${a.linger && html`<${Row} label="After logout">${a.linger.enabled ? 'keeps running (lingering is on)'
             : html`<span class="cfg-svc-warn">stops when you log out.</span> To keep it running, lingering needs sudo, which tclaude never runs for you:
-              <span class="cfg-svc-cmd"><code id="cfg-svc-linger">${a.linger.command}</code> <${Button} size="sm" variant="ghost" onClick=${() => { void copy(a.linger.command); }}>Copy<//></span>`}<//>`}
+              <span class="cfg-svc-cmd"><code id="${idp}svc-linger">${a.linger.command}</code> <${Button} size="sm" variant="ghost" onClick=${() => { void copy(a.linger.command); }}>Copy<//></span>`}<//>`}
         </div>
         ${(a.warnings || []).map((w) => html`<div key=${w} class="cfg-svc-warn">${w}</div>`)}`}
-      ${actionError && html`<div class="cfg-svc-warn" role="alert" id="cfg-svc-error">${actionError}</div>`}
+      ${actionError && html`<div class="cfg-svc-warn" role="alert" id="${idp}svc-error">${actionError}</div>`}
     </div>
   </div>
   <//>`;

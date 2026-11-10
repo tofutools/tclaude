@@ -17514,6 +17514,12 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-grant-launch input, .fa-grant-launch select:where(:not(.ui-select)) { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
 .fa-cli-note { font-size: 12px; }
 /* Fleet › node update dialog: the node's auto-update settings (updates.self). */
+/* The Fleet node dialog's Installation view: the version, then the same
+   parts as Config › Installation. */
+.cron-create-modal.fa-installation-modal { width: min(900px, calc(100vw - 32px)); max-width: none; }
+.fa-installation { margin-top: 16px; }
+.fa-installation .cfg-inst-part { margin-bottom: 18px; }
+.fa-installation .nus { margin-top: 0; padding-top: 0; border-top: 0; }
 .nus { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--ui-line); font-size: 12.5px; }
 .nus-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .nus-head b { color: var(--ui-text-strong); font-weight: 600; }

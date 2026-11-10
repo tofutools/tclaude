@@ -163,7 +163,7 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSet
     <span><span class="fa-k">This node</span> <b>${self.name}</b></span>
     <span><span class="fa-k">Instance</span> <code>${self.id}</code></span>
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>
-    <span><span class="fa-k">tclaude</span> <${Button} size="sm" variant="link" id="fleet-node-update-open" class="fa-link" onClick=${onUpdate}>version & updates…<//></span>
+    <span><span class="fa-k">tclaude</span> <${Button} size="sm" variant="link" id="fleet-node-update-open" class="fa-link" onClick=${onUpdate}>installation…<//></span>
     <span><${AwayControl} confirm=${confirm} toast=${toast} /></span>
     <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span>${' '}<${Button} size="sm" variant="link" id="fleet-node-settings-open" class="fa-link" title="Hub connection and node labels" onClick=${onSettings}>${self.hubURL ? 'settings…' : 'connect…'}<//></span>
     ${self.enabled

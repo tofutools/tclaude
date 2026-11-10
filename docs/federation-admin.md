@@ -53,27 +53,38 @@ these Fleet release checks; explicit local update and harness-install requests
 still fetch metadata on demand.
 
 In the dashboard, each fleet map card shows the node's tclaude version and ↑
-when a newer release is known; its update…/manage… link opens that node's
-update dialog (the Fleet page's identity bar opens it for this node). The
-dialog shows the version, install method, latest release, binaries and
-warnings, and offers Check now, Update to the latest and Roll back; update and
-rollback confirm that the binaries are replaced and the daemon restarts. It
-follows the job through the status read, so the restart does not lose it. A
-peer that has not granted you `node.update` says so.
+when a newer release is known; its update…/installation… link opens that
+node's **Installation** dialog (the Fleet page's identity bar opens it for this
+node). It is the node's counterpart of Config › Installation. At the top it
+shows the version, install method, latest release, binaries and warnings, and
+offers Check now, Update to the latest and Roll back; update and rollback
+confirm that the binaries are replaced and the daemon restarts. It follows the
+job through the status read, so the restart does not lose it. A peer that has
+not granted you `node.update` says so.
 
-Below the version, **Auto-update settings** shows the node's `updates.self`
-(see [How tclaude updates itself](#how-tclaude-updates-itself)): method,
-schedule, update on daemon start and post-update setup, with **Save
-settings**. How much you can change depends on the node:
+Below the version are the same parts as Config › Installation, each with a
+status line (On, Off or Needs attention) and its main action:
 
-- This node, or a peer that trusts you unrestricted: everything, including the
-  checkout path, a custom command, the package-manager acknowledgement and
-  switching to a package-manager method (which asks you to confirm).
-- A peer that granted `node.update.settings`: the schedule, start-up updates,
-  post-update setup and a switch among the methods that need no free text. A
-  custom command shows as hidden.
-- A peer that granted only `node.update`: read-only, naming the grant it
-  lacks.
+- **Start automatically** reads the node's service routes: how its agentd was
+  started, its launch profile, and starting it on login, with Restart, Start
+  on login and Remove. Reading a peer's needs its `node.read` grant; acting
+  needs `node.update.settings` too, and a peer with only `node.read` sees it
+  read-only.
+- **Updates** shows the node's `updates.self`
+  (see [How tclaude updates itself](#how-tclaude-updates-itself)): method,
+  schedule, update on daemon start and post-update setup, with **Save
+  settings**. Its main action (Choose an update method…, Update daily, Turn
+  off) edits the settings below, which you then save. How much you can change
+  depends on the node:
+
+  - This node, or a peer that trusts you unrestricted: everything, including
+    the checkout path, a custom command, the package-manager acknowledgement
+    and switching to a package-manager method (which asks you to confirm).
+  - A peer that granted `node.update.settings`: the schedule, start-up
+    updates, post-update setup and a switch among the methods that need no
+    free text. A custom command shows as hidden.
+  - A peer that granted only `node.update`: read-only, naming the grant it
+    lacks.
 
 When a package manager owns the node's tclaude and a tclaude-driven method is
 picked, the dialog shows the untrack command. Only the node itself or an
@@ -84,7 +95,7 @@ show|set --node <peer>`.
 
 Self-updating is opt-in. Nothing prompts you, and nothing updates on its own
 until you choose an update method and turn on a schedule or update on start.
-Set it in the Config tab's Updates section or with the CLI:
+Set it in Config › Installation › Updates or with the CLI:
 
 ```bash
 tclaude update config show            # settings, detected install, methods

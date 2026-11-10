@@ -143,7 +143,7 @@ export function shownValue(diff, value, { secretKeys, restricted }) {
 
 function sameDraft(a, b) { return JSON.stringify(profileOf(a).profile) === JSON.stringify(profileOf(b).profile); }
 
-function Differences({ comparison, secretKeys, restricted }) {
+function Differences({ comparison, secretKeys, restricted, idp }) {
   const diffs = comparison?.differences || [];
   if (!diffs.length) return null;
   const side = BASELINE_SIDE[comparison.baseline] || 'Expected';
@@ -151,7 +151,7 @@ function Differences({ comparison, secretKeys, restricted }) {
     const shown = shownValue(d, v, { secretKeys, restricted });
     return shown === null ? html`<span class="muted">—</span>` : html`<code>${shown}</code>`;
   };
-  return html`<table class="ui-compact cfg-launch-diff" id="cfg-launch-diff"><thead><tr><th>What</th><th>Change</th><th>Name</th><th>Running now</th><th>${side}</th></tr></thead>
+  return html`<table class="ui-compact cfg-launch-diff" id="${idp}launch-diff"><thead><tr><th>What</th><th>Change</th><th>Name</th><th>Running now</th><th>${side}</th></tr></thead>
     <tbody>${diffs.map((d, i) => html`<tr key=${i} data-launch-diff=${`${d.kind}:${d.name}`}><td>${d.kind}</td><td>${d.change}</td><td><code>${d.name}</code></td>
       <td>${cell(d, d.before)}</td><td>${cell(d, d.after)}</td></tr>`)}</tbody></table>`;
 }
@@ -174,9 +174,10 @@ function ReadOnly({ view }) {
 // LaunchProfile is the section. onView hands each read view up (the
 // autostart controls defer to a set profile); a new reload (the panel bumps
 // it after a restart, install or removal) reads it again, edits kept. fetchImpl/confirm/toast are
-// injectable for tests.
+// injectable for tests. idp prefixes its element ids ('cfg-' in Config), so
+// a second copy (the Fleet node dialog) does not repeat them.
 export function LaunchProfile({
-  open = true, url = LAUNCH_URL, onView = () => {}, reload = 0,
+  open = true, url = LAUNCH_URL, idp = 'cfg-', onView = () => {}, reload = 0,
   fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
 }) {
   const [view, setView] = useState(null);
@@ -258,7 +259,7 @@ export function LaunchProfile({
 
   if (loadError) {
     const absent = loadError instanceof RequestError && loadError.status === 404;
-    return html`<p class="cfg-group-lede" id="cfg-launch-absent">${absent
+    return html`<p class="cfg-group-lede" id="${idp}launch-absent">${absent
       ? 'This daemon has no launch profile yet: update it to set one.'
       : html`<span role="alert">Could not read the launch profile: ${loadError.message || String(loadError)}</span>`}</p>`;
   }
@@ -281,31 +282,31 @@ export function LaunchProfile({
   const any = !!busy;
   const rowError = (key) => errors.rows[key] && html`<div class="cfg-launch-row-note cfg-launch-err" role="alert">${errors.rows[key]}</div>`;
 
-  return html`<div class="cfg-launch" id="cfg-launch">
+  return html`<div class="cfg-launch" id="${idp}launch">
     <p class="cfg-group-lede">What tclaude starts agentd with when it writes the autostart unit, and what an update compares the restarted daemon against. Not set: the unit keeps what agentd runs with now. CLI: <code>tclaude service launch</code>.</p>
     <div class="cfg-svc-dl">
-      <${Row} label="Profile" id="cfg-launch-state">
-        <span>${dirty ? html`<span class="ui-tag ui-tag-accent" id="cfg-launch-dirty">unsaved changes</span>` : view.profile ? 'set' : 'not set'}</span>
-        ${tag && html`<span class="cfg-launch-cmp"><span class=${tag.cls} id="cfg-launch-cmp">${tag.text}</span>${tag.baseline && html` <span class="muted" id="cfg-launch-baseline">${tag.baseline}</span>`}</span>`}
+      <${Row} label="Profile" id="${idp}launch-state">
+        <span>${dirty ? html`<span class="ui-tag ui-tag-accent" id="${idp}launch-dirty">unsaved changes</span>` : view.profile ? 'set' : 'not set'}</span>
+        ${tag && html`<span class="cfg-launch-cmp"><span class=${tag.cls} id="${idp}launch-cmp">${tag.text}</span>${tag.baseline && html` <span class="muted" id="${idp}launch-baseline">${tag.baseline}</span>`}</span>`}
       <//>
-      ${view.comparison?.differences?.length > 0 && html`<${Row} label="Differences"><${Differences} comparison=${view.comparison} secretKeys=${secretKeys} restricted=${restricted} /><//>`}
+      ${view.comparison?.differences?.length > 0 && html`<${Row} label="Differences"><${Differences} comparison=${view.comparison} secretKeys=${secretKeys} restricted=${restricted} idp=${idp} /><//>`}
       ${(view.warnings || []).map((w) => html`<${Row} key=${w} label=""><div class="cfg-svc-warn" data-launch-warning="">${w}</div><//>`)}
-      ${view.owned === false && !view.warnings?.length && html`<${Row} label=""><div class="cfg-svc-warn" id="cfg-launch-unowned">${view.launcher?.unit ? html`The unit <code>${view.launcher.unit}</code>` : 'The unit'} was not written by tclaude, so tclaude never changes it and a profile is not applied to it.${view.comparison?.baseline === 'unit' ? ' The comparison is with the unit\'s own command and environment.' : ''}</div><//>`}
+      ${view.owned === false && !view.warnings?.length && html`<${Row} label=""><div class="cfg-svc-warn" id="${idp}launch-unowned">${view.launcher?.unit ? html`The unit <code>${view.launcher.unit}</code>` : 'The unit'} was not written by tclaude, so tclaude never changes it and a profile is not applied to it.${view.comparison?.baseline === 'unit' ? ' The comparison is with the unit\'s own command and environment.' : ''}</div><//>`}
       ${!editable ? html`<${ReadOnly} view=${view} />
-        <${Row} label=""><span class="muted" id="cfg-launch-readonly">${view.access === 'read'
+        <${Row} label=""><span class="muted" id="${idp}launch-readonly">${view.access === 'read'
           ? 'Changing it needs node.update.settings on that node.'
           : 'Its values are hidden here, so it is changed only where they are shown: on that node, or with full access.'}</span><//>` : html`
-      <${Row} label="Serve flags"><div class="cfg-launch-rows" id="cfg-launch-flags">
+      <${Row} label="Serve flags"><div class="cfg-launch-rows" id="${idp}launch-flags">
         ${draft.flags.map((flag, i) => html`<div key=${`f${i}`} class="cfg-launch-row" data-launch-row=${`f${i}`}>
           <div class="cfg-launch-fields"><input type="text" class=${`ui-input ui-sm cfg-launch-flag${errors.rows[`f${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off"
             aria-label=${`Serve flag ${i + 1}`} placeholder="--no-tray" value=${flag} disabled=${any} onInput=${(e) => setFlag(i, e.currentTarget.value)} />
           <${Button} size="sm" variant="ghost" class="cfg-launch-remove" title="Remove this flag" aria-label="Remove this flag" disabled=${any} onClick=${() => drop('flags', i)}>×<//></div>
           ${rowError(`f${i}`)}
         </div>`)}
-        <div><${Button} size="sm" variant="link" id="cfg-launch-add-flag" disabled=${any} onClick=${() => setDraft({ ...draft, flags: [...draft.flags, ''] })}>+ flag<//></div>
-        ${dropped.length > 0 && html`<div class="cfg-svc-warn" id="cfg-launch-dropped">Left out ${dropped.map((name, i) => html`${i ? ', ' : ''}<code key=${name}>${name}</code>`)}: a secret is not stored in the profile. Pass it through an inherited environment variable instead.</div>`}
+        <div><${Button} size="sm" variant="link" id="${idp}launch-add-flag" disabled=${any} onClick=${() => setDraft({ ...draft, flags: [...draft.flags, ''] })}>+ flag<//></div>
+        ${dropped.length > 0 && html`<div class="cfg-svc-warn" id="${idp}launch-dropped">Left out ${dropped.map((name, i) => html`${i ? ', ' : ''}<code key=${name}>${name}</code>`)}: a secret is not stored in the profile. Pass it through an inherited environment variable instead.</div>`}
       </div><//>
-      <${Row} label="Environment"><div class="cfg-launch-rows" id="cfg-launch-env">
+      <${Row} label="Environment"><div class="cfg-launch-rows" id="${idp}launch-env">
         ${draft.env.map((row, i) => html`<div key=${`e${i}`} class="cfg-launch-row" data-launch-row=${`e${i}`}>
           <div class="cfg-launch-fields">
             <input type="text" class=${`ui-input ui-sm cfg-launch-key${errors.rows[`e${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off" aria-label=${`Variable ${i + 1} name`}
@@ -324,16 +325,16 @@ export function LaunchProfile({
           ${row.mode === INHERIT && row.key && missing.has(row.key) && html`<div class="cfg-launch-row-note cfg-svc-warn" data-launch-missing=${row.key}>agentd has no ${row.key} now: the unit would get it empty.</div>`}
           ${rowError(`e${i}`)}
         </div>`)}
-        <div><${Button} size="sm" variant="link" id="cfg-launch-add-env" disabled=${any} onClick=${() => setDraft({ ...draft, env: [...draft.env, { key: '', mode: SET, value: '' }] })}>+ variable<//></div>
+        <div><${Button} size="sm" variant="link" id="${idp}launch-add-env" disabled=${any} onClick=${() => setDraft({ ...draft, env: [...draft.env, { key: '', mode: SET, value: '' }] })}>+ variable<//></div>
       </div><//>
       <${Row} label=""><div class="cfg-launch-actions">
-        <${Button} size="sm" id="cfg-launch-use-running" disabled=${any || !view.suggested} title="Fill the form with the flags and environment agentd runs with now" onClick=${useRunning}>Use what's running now<//>
-        <${Button} size="sm" variant="primary" id="cfg-launch-save" disabled=${any || !dirty} busy=${busy === 'save'} onClick=${save}>Save profile<//>
-        <${Button} size="sm" variant="ghost" id="cfg-launch-discard" disabled=${any || !dirty} onClick=${discard}>Discard changes<//>
-        ${view.profile && html`<${Button} size="sm" variant="danger" id="cfg-launch-clear" class="cfg-launch-clear" disabled=${any} busy=${busy === 'clear'} onClick=${() => { void clear(); }}>Clear profile…<//>`}
+        <${Button} size="sm" id="${idp}launch-use-running" disabled=${any || !view.suggested} title="Fill the form with the flags and environment agentd runs with now" onClick=${useRunning}>Use what's running now<//>
+        <${Button} size="sm" variant="primary" id="${idp}launch-save" disabled=${any || !dirty} busy=${busy === 'save'} onClick=${save}>Save profile<//>
+        <${Button} size="sm" variant="ghost" id="${idp}launch-discard" disabled=${any || !dirty} onClick=${discard}>Discard changes<//>
+        ${view.profile && html`<${Button} size="sm" variant="danger" id="${idp}launch-clear" class="cfg-launch-clear" disabled=${any} busy=${busy === 'clear'} onClick=${() => { void clear(); }}>Clear profile…<//>`}
       </div><//>`}
     </div>
-    ${note && html`<div class="cfg-svc-warn" role="status" id="cfg-launch-note">${note}</div>`}
+    ${note && html`<div class="cfg-svc-warn" role="status" id="${idp}launch-note">${note}</div>`}
     ${errors.general.map((text) => html`<div key=${text} class="cfg-svc-warn cfg-launch-err" role="alert">${text}</div>`)}
   </div>`;
 }
