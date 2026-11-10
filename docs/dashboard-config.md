@@ -346,6 +346,40 @@ is `tclaude service status|install|uninstall` and `tclaude service launch`.
   **Update when the daemon starts** in [Updates](#updates), and is saved with
   **Save changes…**.
 
+### App launcher
+
+The app launcher adds tclaude to the desktop's app menu. Picking it opens the
+dashboard. The CLI is `tclaude service launcher status|install|uninstall`
+(`--no-start-daemon`, `--node <peer>`), and the API is `GET
+/api/node/launcher` and `POST /api/node/launcher/install|uninstall`.
+
+- **Linux:** it writes a desktop entry,
+  `$XDG_DATA_HOME/applications/tclaude.desktop` (default
+  `~/.local/share/applications`), its icon under
+  `icons/hicolor/scalable/apps/`, and a launcher script in
+  `$XDG_DATA_HOME/tclaude/`.
+- **macOS:** it writes `~/Applications/tclaude.app` and registers it with
+  Launch Services, so Spotlight and Launchpad find it straight away. The
+  bundle holds a shell script and is not signed. It is marked as native on
+  Apple Silicon (`LSArchitecturePriority` arm64 first, and
+  `LSRequiresNativeExecution`), so macOS does not offer Rosetta for it.
+- The launcher runs the tclaude binary that agentd runs, with agentd's
+  `PATH`. When that binary moves, or an update changes it, agentd rewrites the
+  launcher the next time it starts. The status shows a launcher that is out of
+  date.
+- **Start agentd if it is not running** (on by default) starts it first:
+  - through the autostart unit, when **Start on login** installed one;
+  - otherwise as `tclaude agentd serve` with the launch profile's flags,
+    logging to `~/.tclaude/data/launcher-agentd.log`.
+
+  The launcher waits for agentd to answer before it opens the dashboard. If
+  agentd does not start, or the dashboard does not open, a desktop
+  notification says why.
+- **Remove…** deletes only a launcher tclaude wrote. A launcher you made
+  yourself at the same path is reported and left alone.
+- Peers with `node.update.settings` can install and remove the launcher on
+  this node. With `node.read` they can see it.
+
 ## Logs & housekeeping
 
 `/config/logs`: log verbosity and rotation, and cleanup of retired agents.

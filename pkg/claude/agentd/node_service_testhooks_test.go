@@ -27,7 +27,22 @@ func InstallLauncherTestDefaults() {
 			Paths: launcher.AutostartPaths("linux", "/nonexistent-test-home", ""), Run: refuse, FS: NewMemFS()}
 	}
 	autostartLookupEnv = func(string) (string, bool) { return "", false }
+	appLauncherFactory = func() launcher.AppLauncher {
+		return launcher.AppLauncher{GOOS: "linux", Paths: launcher.AppLauncherPathsFor("linux", "/nonexistent-test-home", ""),
+			Run: refuse, FS: NewMemFS(), Current: launcher.AppLauncherSpec{Exe: "/nonexistent-test-home/bin/tclaude", Version: "v0.0.0-test"}}
+	}
 }
+
+// SetAppLauncherForTest swaps the AppLauncher (paths, FS, runner and the
+// binary an install writes).
+func SetAppLauncherForTest(l launcher.AppLauncher) func() {
+	prev := appLauncherFactory
+	appLauncherFactory = func() launcher.AppLauncher { return l }
+	return func() { appLauncherFactory = prev }
+}
+
+// RefreshStaleAppLauncherForTest runs what serve runs at start.
+func RefreshStaleAppLauncherForTest() { refreshStaleAppLauncher(context.Background()) }
 
 // SetLauncherForTest swaps the process context and both supervisor runners,
 // clearing the cached detection and any pending restart. stop stands in for
