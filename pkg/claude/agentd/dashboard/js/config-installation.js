@@ -1,6 +1,6 @@
 // config-installation.js — Config › Installation: how tclaude is installed,
 // started and updated on this machine. The section stacks its parts (Start
-// automatically, Updates) on one page. Each part opens with a status line —
+// automatically, App launcher, Updates) on one page. Each part opens with a status line —
 // on, off, or needs attention — and its main action right there, so what is
 // set up and what is not reads at a glance; the detail sits below and folds
 // away when the part is already set up and healthy.

@@ -14,6 +14,7 @@ import { ExternalStewardManager } from './config-external-stewards.js';
 import { RelaunchPolicyTable } from './relaunch-policy-table.js';
 import { RemoteAdminPanel } from './remote-admin.js';
 import { ServicePanel } from './config-service.js';
+import { LauncherPanel } from './config-launcher.js';
 import { UpdatesPart, afterRender } from './config-installation.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -1237,6 +1238,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <${Panel} id="installation" active=${shown}>
       <${ServicePanel} open=${shown === 'installation'} onRead=${() => afterRender(scrollToPart)} />
+      <${LauncherPanel} open=${shown === 'installation'} />
       <${UpdatesPart}>
         <${UpdatesPanel} open=${shown === 'installation'} />
       <//>

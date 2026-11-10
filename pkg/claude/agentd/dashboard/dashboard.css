@@ -9649,6 +9649,13 @@ label.cfg-label { cursor: pointer; }
 .cfg-layout[data-cfg-searching] .cfg-inst-body[data-collapsed] { display: flex; }
 .cfg-layout[data-cfg-searching] .cfg-inst-toggle { display: none; }
 .cfg-svc { display: flex; flex-direction: column; gap: 14px; }
+.cfg-launcher-flags { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 10px; font-size: 12.5px; }
+.cfg-launcher-flag { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.cfg-launcher-flag input[type=checkbox] { margin-top: 3px; }
+.cfg-launcher-flag-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.cfg-launcher-flag-text input[type=number] { width: 8em; margin-top: 2px; }
+.cfg-launcher-other { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding-bottom: 6px; }
+.cfg-launcher-other input { min-width: 280px; }
 .cfg-svc-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; font-size: 12.5px; padding: 6px 0; }
 .cfg-svc-k { color: var(--ui-muted-text); }
 .cfg-svc-v { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
