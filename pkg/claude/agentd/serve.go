@@ -61,7 +61,13 @@ func serveCmd() *cobra.Command {
 		Short:       "Run the agent daemon in the foreground",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
-			// Returns only when no re-exec happened.
+			// Returns only when no re-exec happened. It must stay here,
+			// before runServe: an exec after systray.Run (Cocoa), the
+			// singleton lock, the sockets or the DB would carry them into
+			// the new image broken (a re-exec after Cocoa init loses the
+			// tray icon). Only the root pre-run (config read, log setup)
+			// precedes it, and Go opens those files close-on-exec.
+			// TestLaunchdLoginEnvReExecsBeforeServeStarts pins this.
 			adoptLaunchdLoginEnv(productionLoginEnvDeps())
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)

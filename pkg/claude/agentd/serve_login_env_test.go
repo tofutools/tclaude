@@ -96,3 +96,32 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 		t.Errorf("execed %v", f.execed)
 	}
 }
+
+// TestLaunchdLoginEnvReExecsBeforeServeStarts pins where the re-exec runs:
+// in serve's RunFunc before runServe, which starts the tray (Cocoa), takes
+// the singleton lock and opens the sockets and the DB; an exec after any of
+// them would carry it broken into the new image. It reads serve.go, as
+// the other serve wiring tests do.
+func TestLaunchdLoginEnvReExecsBeforeServeStarts(t *testing.T) {
+	source, err := os.ReadFile("serve.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "\nfunc serveCmd(")
+	if start < 0 {
+		t.Fatal("serveCmd has moved")
+	}
+	body := text[start+1:]
+	if end := strings.Index(body, "\nfunc "); end >= 0 {
+		body = body[:end]
+	}
+	adopt := strings.Index(body, "adoptLaunchdLoginEnv(")
+	serve := strings.Index(body, "runServe(p)")
+	if adopt < 0 || serve < 0 || adopt > serve {
+		t.Fatalf("adoptLaunchdLoginEnv must be called before runServe in serveCmd (at %d, runServe at %d)", adopt, serve)
+	}
+	if n := strings.Count(text, "adoptLaunchdLoginEnv("); n != 1 {
+		t.Errorf("serve.go calls adoptLaunchdLoginEnv %d times; only serveCmd may, before runServe", n)
+	}
+}
