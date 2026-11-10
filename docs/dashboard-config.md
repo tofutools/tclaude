@@ -343,7 +343,8 @@ agentd if it is not running**, then the serve flags: one control per default
 flag (and **No tray icon**), each saying what it does, the other flags as
 text, and the command they make. **Rewrite launcher…** applies them, and
 **Back to tclaude's defaults…** clears the launcher's own setting. When the
-launch profile is set, the part says it decides the flags. The CLI is `tclaude service launcher status|install|uninstall`
+launch profile is set, the part says it decides the flags and shows them
+read-only; change them in the launch profile. The CLI is `tclaude service launcher status|install|uninstall`
 (`--no-start-daemon`, `--node <peer>`), and the API is `GET
 /api/node/launcher` and `POST /api/node/launcher/install|uninstall`.
 

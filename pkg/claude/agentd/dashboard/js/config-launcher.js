@@ -38,30 +38,53 @@ const SOURCES = {
   default: 'tclaude\'s defaults',
 };
 
+// controlOf reads a serve flag a control can show: a bare known flag, or
+// --dashboard-port=<port>. Anything else (--persist-operator-token=false, a
+// bare --dashboard-port, an unknown flag) is "other", kept as typed.
+function controlOf(token) {
+  const [name, value] = token.split(/=(.*)/s);
+  if (!KNOWN.has(name)) return null;
+  if (name === '--dashboard-port') return /^\d+$/.test(value || '') ? { name, port: value } : null;
+  return value === undefined ? { name } : null;
+}
+
 // flagsDraft splits serve flags into the controls: which known flags are on,
-// the dashboard port, and the other flags as typed text.
+// the dashboard port, and the other flags as text. It keeps the flags it was
+// made from, so an untouched draft gives them back token for token.
 export function flagsDraft(args) {
+  const base = [...(args || [])];
   const on = {};
   let port = '';
   const other = [];
-  for (const a of args || []) {
-    const [name, value] = a.split(/=(.*)/s);
-    if (!KNOWN.has(name)) { other.push(a); continue; }
-    if (name === '--dashboard-port') port = value || '';
-    on[name] = true;
+  for (const a of base) {
+    const c = controlOf(a);
+    if (!c) { other.push(a); continue; }
+    on[c.name] = true;
+    if (c.port) port = c.port;
   }
-  return { on, port, other: other.join(' ') };
+  const text = other.join(' ');
+  return { on, port, other: text, base, otherBase: text };
 }
 
-// draftArgs is the serve flags a draft stands for, known flags first in the
-// order the part lists them.
+// draftArgs is the serve flags a draft stands for: the flags it was made
+// from, in their order, less the controls turned off (and with the port as
+// set), then the controls turned on, then any other flags typed anew.
 export function draftArgs(d) {
+  const base = d.base || [];
+  const otherEdited = (d.other || '') !== (d.otherBase || '');
   const out = [];
-  for (const f of LAUNCHER_FLAGS) {
-    if (!d.on[f.name]) continue;
-    out.push(f.value ? `${f.name}=${String(d.port).trim() || DEFAULT_PORT}` : f.name);
+  const seen = new Set();
+  const flagToken = (f) => (f.value ? `${f.name}=${String(d.port).trim() || DEFAULT_PORT}` : f.name);
+  for (const a of base) {
+    const c = controlOf(a);
+    if (!c) { if (!otherEdited) out.push(a); continue; }
+    if (seen.has(c.name) || !d.on[c.name]) continue;
+    seen.add(c.name);
+    out.push(flagToken(LAUNCHER_FLAGS.find((f) => f.name === c.name)));
   }
-  return [...out, ...String(d.other || '').trim().split(/\s+/).filter(Boolean)];
+  for (const f of LAUNCHER_FLAGS) if (d.on[f.name] && !seen.has(f.name)) out.push(flagToken(f));
+  if (otherEdited) out.push(...String(d.other || '').trim().split(/\s+/).filter(Boolean));
+  return out;
 }
 
 const same = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
@@ -145,8 +168,11 @@ export function LauncherPanel({
   const full = !st.access || st.access === 'full';
   const canAct = !readOnly && st.supported && (!st.installed || st.managed);
   const args = draftArgs(draft);
-  const flagsChanged = !same(args, st.serve_args);
   const byProfile = st.serve_args_source === 'profile';
+  // While a launch profile is set the API reports its flags, not the
+  // launcher's own setting, so the controls only show them: an edit here
+  // would replace that setting with the profile's flags.
+  const flagsChanged = !byProfile && !same(args, st.serve_args);
   // A peer without full access may send only the flags with a control, so
   // it cannot change flags that hold others (the node would refuse them).
   const otherLocked = !full && !!draft.other;
@@ -209,6 +235,7 @@ export function LauncherPanel({
 
   const setOn = (name, on) => { setDraft((d) => ({ ...d, on: { ...d.on, [name]: on } })); expand(); };
   const disabled = !canAct || !!busy;
+  const flagsDisabled = disabled || byProfile;
   return html`<${InstallPart} idp=${idp} id="launcher" title=${title} state=${status.state} collapsed=${collapsed} onToggle=${st.supported ? toggle : null}
     status=${html`<span>${status.text}</span>`} actions=${actions}>
     ${st.supported && html`<div class="cfg-svc" id="${idp}launcher">
@@ -230,19 +257,19 @@ export function LauncherPanel({
     <div class="cfg-section" role="group" aria-labelledby="${idp}launcher-flags-h">
       <h3 class="ui-eyebrow ui-eyebrow-section" id="${idp}launcher-flags-h">Serve flags</h3>
       <p class="cfg-group-lede">What the launcher starts <code>agentd serve</code> with when agentd is not running. In effect now: <span id="${idp}launcher-source">${SOURCES[st.serve_args_source] || st.serve_args_source || 'unknown'}</span>.</p>
-      ${byProfile && html`<div class="cfg-svc-warn" id="${idp}launcher-by-profile">The launch profile (under Start automatically) is set, so it decides these flags. Flags saved here are kept, and take over once the profile is cleared.</div>`}
+      ${byProfile && html`<div class="cfg-svc-warn" id="${idp}launcher-by-profile">The launch profile (under Start automatically) is set, so it decides these flags: change them there. The launcher's own setting is kept, and takes over once the profile is cleared.</div>`}
       <div class="cfg-launcher-flags">
         ${LAUNCHER_FLAGS.map((f) => html`<label key=${f.name} class="cfg-launcher-flag">
-          <input type="checkbox" data-launcher-flag=${f.name} checked=${!!draft.on[f.name]} disabled=${disabled} onChange=${(e) => setOn(f.name, e.currentTarget.checked)} />
+          <input type="checkbox" data-launcher-flag=${f.name} checked=${!!draft.on[f.name]} disabled=${flagsDisabled} onChange=${(e) => setOn(f.name, e.currentTarget.checked)} />
           <span class="cfg-launcher-flag-text"><span>${f.label} <code class="cfg-key">${f.name}${f.value ? '=<port>' : ''}</code></span>
             <span class="muted">${f.meaning}</span>
             ${f.value && draft.on[f.name] && html`<span><input type="number" class="ui-input ui-sm" id="${idp}launcher-port" min="1" max="65535" placeholder=${DEFAULT_PORT} aria-label="Dashboard port"
-              value=${draft.port} disabled=${disabled} onInput=${(e) => { const v = e.currentTarget.value; setDraft((d) => ({ ...d, port: v })); }} /></span>`}</span>
+              value=${draft.port} disabled=${flagsDisabled} onInput=${(e) => { const v = e.currentTarget.value; setDraft((d) => ({ ...d, port: v })); }} /></span>`}</span>
         </label>`)}
       </div>
       ${full && html`<label class="cfg-inline cfg-launcher-other">Other flags
         <input type="text" class="ui-input ui-sm" id="${idp}launcher-other" spellcheck="false" autocomplete="off" aria-label="Other agentd serve flags"
-          placeholder="--dashboard-bind 127.0.0.1" value=${draft.other} disabled=${disabled} onInput=${(e) => { const v = e.currentTarget.value; setDraft((d) => ({ ...d, other: v })); }} /></label>`}
+          placeholder="--dashboard-bind 127.0.0.1" value=${draft.other} disabled=${flagsDisabled} onInput=${(e) => { const v = e.currentTarget.value; setDraft((d) => ({ ...d, other: v })); }} /></label>`}
       ${!full && !readOnly && draft.other && html`<div class="muted" id="${idp}launcher-other-locked">Also: <code>${draft.other}</code>. Only the node itself or an unrestricted peer can change the flags while they include these.</div>`}
       <div class="cfg-svc-dl">
         <${Row} label="Starts with"><code id="${idp}launcher-args">agentd serve ${args.join(' ')}</code><//>

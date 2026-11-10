@@ -78,13 +78,23 @@ async function setup(t, initial, { base, idp, confirm = async () => true } = {})
   return { ...fake, m, harness, root, q, confirms, toasts, until, click, tick, type, unmount: mounted.unmount };
 }
 
-test('serve flags split into the controls and back, keeping flags it has no control for', async (t) => {
+test('serve flags split into the controls and back, token for token until edited', async (t) => {
   const harness = await createPreactHarness(t);
   const { flagsDraft, draftArgs } = await harness.importDashboardModule('js/config-launcher.js');
-  const d = flagsDraft(['--dashboard-bind=127.0.0.1', '--dashboard-port=9000', '--no-tray', '--persist-operator-token']);
-  assert.deepEqual(d, { on: { '--dashboard-port': true, '--no-tray': true, '--persist-operator-token': true }, port: '9000', other: '--dashboard-bind=127.0.0.1' });
-  assert.deepEqual(draftArgs(d), ['--persist-operator-token', '--dashboard-port=9000', '--no-tray', '--dashboard-bind=127.0.0.1']);
-  assert.deepEqual(draftArgs({ on: { '--dashboard-port': true }, port: '', other: '' }), ['--dashboard-port=7878'], 'an empty port is the default');
+  const stored = ['--dashboard-bind=127.0.0.1', '--dashboard-port=9000', '--no-tray', '--persist-operator-token'];
+  const d = flagsDraft(stored);
+  assert.deepEqual(d.on, { '--dashboard-port': true, '--no-tray': true, '--persist-operator-token': true });
+  assert.equal(d.port, '9000');
+  assert.equal(d.other, '--dashboard-bind=127.0.0.1');
+  assert.deepEqual(draftArgs(d), stored, 'untouched: the stored order is kept');
+  assert.deepEqual(draftArgs({ ...d, on: { ...d.on, '--no-tray': false, '--no-print-human-token': true }, port: '9100' }),
+    ['--dashboard-bind=127.0.0.1', '--dashboard-port=9100', '--persist-operator-token', '--no-print-human-token'], 'an edit keeps the rest in place');
+  // A flag a control cannot show is kept as typed, never flipped.
+  const odd = flagsDraft(['--persist-operator-token=false', '--dashboard-port', '--log-dir=/a b']);
+  assert.deepEqual(odd.on, {});
+  assert.deepEqual(draftArgs(odd), ['--persist-operator-token=false', '--dashboard-port', '--log-dir=/a b'], 'values with spaces survive');
+  assert.deepEqual(draftArgs({ ...odd, other: '--no-tray-x' }), ['--no-tray-x'], 'typed other flags replace the old ones');
+  assert.deepEqual(draftArgs({ ...flagsDraft([]), on: { '--dashboard-port': true } }), ['--dashboard-port=7878'], 'an empty port is the default');
 });
 
 test('not installed: the status says so and Add to app menu… installs, naming the files it writes', async (t) => {
@@ -110,6 +120,7 @@ test('changed flags are sent with the install, and the defaults can be restored'
   const { q, calls, click, tick, type, until, unmount } = await setup(t, launcher({ installed: true, managed: true, exe: '/home/u/.local/bin/tclaude', installed_serve_args: DEFAULTS }));
   try {
     assert.equal(q('#P-install-launcher-body').hasAttribute('data-collapsed'), true, 'installed and healthy: the detail folds');
+    assert.equal(q('#P-launcher-discard'), null, 'nothing changed on load');
     await tick('--no-print-human-token', false);
     await tick('--no-tray', true);
     await type('#P-launcher-port', '9000');
@@ -129,11 +140,15 @@ test('changed flags are sent with the install, and the defaults can be restored'
   }
 });
 
-test('with a launch profile set the part says the profile decides the flags', async (t) => {
-  const { q, unmount } = await setup(t, launcher({ serve_args_source: 'profile', serve_args: ['--no-tray'] }));
+test('with a launch profile set the part says the profile decides the flags, and never sends them', async (t) => {
+  const { q, root, calls, click, until, unmount } = await setup(t, launcher({ serve_args_source: 'profile', serve_args: ['--no-tray'] }));
   try {
     assert.match(q('#P-launcher-source').textContent, /from the launch profile, which overrides/);
     assert.ok(q('#P-launcher-by-profile'));
+    assert.ok(root.querySelector('[data-launcher-flag="--no-tray"]').disabled, 'the profile\'s flags are shown, not edited here');
+    await click('#P-install-launcher-on');
+    await until(() => calls.some((c) => c.method === 'POST'), 'the install');
+    assert.deepEqual(calls.find((c) => c.method === 'POST').body, { start_daemon: true }, 'the launcher\'s own setting is left alone');
   } finally {
     await unmount();
   }
