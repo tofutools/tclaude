@@ -306,6 +306,67 @@ change and refusal appears in the federation audit as
 `federation.node.update.settings`, with the peer as actor and the changed
 keys.
 
+## Remote Config tab
+
+A trusted peer administers this node's Config tab through the peer view:
+`GET`, `POST` and `PATCH /api/peer/{instance_id}/api/config` answer as this
+node's own `/api/config` does, so the dashboard's tab works the same against
+either node.
+
+- `GET` returns the config as canonical JSON, with every secret value
+  withheld. It also returns `version`, `redacted` (each withheld path, and
+  whether it is set) and `access`: the caller's level (`local`,
+  `unrestricted` or `restricted`), `write` or `read` for each key class, and
+  the class of each config key.
+- `POST` (`?dry_run=1` to preview) takes the tab's whole edited config with
+  the `base` it was loaded from, plus an optional `clear` list of secret
+  paths.
+- `PATCH` takes `{version, set: {"dotted.key": value}, clear: [...]}`.
+
+A peer must name the view its change was made against (`base` or `version`).
+If the config changed since then, the change is refused with `409
+config_drift`. If this node's config file is corrupt, it can only be repaired
+here.
+
+**Key classes.** Every config key belongs to one class, and each class has its
+own peer grant, so a grant for one class cannot be stretched to another.
+
+| Class | Grant | What it covers |
+|---|---|---|
+| general | `node.config.write` | display, terminals, notifications, context, costs, logs, task board |
+| agents | `node.config.agents` | default and Steward permissions, sudo, spawn guardrails, capacity, sandbox choices, teleports, data-deleting retention |
+| network | `node.config.network` | dashboard bind and port, operator tokens, remote access, routes, federation tunables |
+| credentials | `node.config.credentials` | the credential proxies and their keys and tokens |
+| installation | `node.update.settings`, through its own endpoints | `updates.self`, `service` |
+| local | unrestricted trust only | shell commands (the notification command, update scripts and commands), the hub link and identity (`federation.enabled`, `hub_url`, `invite`, `hub_ca_file`, identity rotation, accepting remote scripts), the audit retention |
+
+Every write grant also needs `node.config.read`. An unrestricted peer holds
+every class. The node checks each changed key against its class. If any key
+is refused, the whole change is refused with `403 permission_denied`, listing
+each refused key and the grant it needs. Nothing outside the changed keys is
+written. A change is validated as a local save is, and audited as
+`federation.node.config`, with the peer as actor and the changed keys but
+never their values. The class table is code (`config_classes.go`), and a test
+requires every config key to have a class.
+
+**Secrets never leave the node.** No peer reads a secret value, not even an
+unrestricted one: to read a secret, the operator logs in to that machine.
+Secrets are the hub invite, HTTP proxy header values, launch environment
+values, the notification command, update script and harness update commands,
+and the custom self-update command. A peer sees each one empty, and
+`redacted` says whether it is set. A secret sent back empty is kept. A secret
+sent with a value replaces it, and counts as a change of its key whatever the
+value, so a peer cannot confirm a guessed value. A secret named in `clear` is
+removed. Paths to key and token files are not secrets, so the tab shows them.
+
+Before this, an unrestricted peer reached `/api/config` as this node's own
+operator, raw secret values included. That is narrowed on purpose.
+
+Config bundles stay separate. A bundle carries only portable keys, which a
+test keeps free of secrets. A peer exports a bundle's `config` and
+`default-permissions` sections under `config.export` with `node.config.read`.
+Importing a bundle is this node's own action.
+
 ## Custom update scripts
 
 Every machine is kept up to date its own way — OS packages, dotfiles, a

@@ -58,8 +58,11 @@ func handleDashboardConfigAPI(w http.ResponseWriter, r *http.Request) {
 		handleDashboardConfigGet(w, r)
 	case http.MethodPost:
 		handleDashboardConfigPost(w, r)
+	case http.MethodPatch:
+		// A partial update, as a peer makes one (config_remote.go).
+		serveConfigChange(w, r, localConfigCaller())
 	default:
-		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		http.Error(w, "GET, POST or PATCH only", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -89,6 +92,10 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	resp := map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),
+		// The same shape a peer gets (config_remote.go), so the tab's code
+		// is shared: the node's operator may change every class.
+		"version": configVersion(string(raw)),
+		"access":  localConfigCaller().access(),
 	}
 	if loadErr != nil {
 		resp["malformed"] = true

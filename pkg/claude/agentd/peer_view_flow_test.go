@@ -152,9 +152,10 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"triggers_enabled":true`)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/triggers", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	// This node's configuration, its federation administration, the peer
-	// proxy and unmapped routes stay local even for unrestricted trust.
-	for _, path := range []string{"/api/config", "/api/new-endpoint", "/api/federation/grants", "/api/peer/inst_abcd/snapshot", "/api/node/run/settings"} {
+	// This node's federation administration, the peer proxy and unmapped
+	// routes stay local even for unrestricted trust. (Its Config tab is
+	// served under its own rules: config_remote_flow_test.go.)
+	for _, path := range []string{"/api/new-endpoint", "/api/federation/grants", "/api/peer/inst_abcd/snapshot", "/api/node/run/settings"} {
 		rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", path, nil))
 		require.Equal(t, 403, rec.Code, path)
 	}

@@ -119,6 +119,8 @@ var pinnedFedInstancePeerSlugs = map[string]bool{
 	PermNodeUpdate: true, PermNodeUpdateSettings: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true, PermGroupsImport: true,
+	// The Config tab, read and changed per key class (config_remote.go).
+	PermNodeConfigRead: true, PermNodeConfigWrite: true, PermNodeConfigAgents: true, PermNodeConfigNetwork: true, PermNodeConfigCredentials: true,
 	// Usage sharing for fleet limits, and managing this node's usage rules.
 	PermUsageRead: true, PermUsageRulesManage: true,
 	// This node's libraries, authored from a peer's dashboard (peer_library.go).
