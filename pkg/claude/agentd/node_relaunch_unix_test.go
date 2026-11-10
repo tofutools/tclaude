@@ -86,8 +86,8 @@ func TestRelaunchWaitForwardsSignals(t *testing.T) {
 	}
 	sigs := make(chan os.Signal, 1)
 	sigs <- syscall.SIGTERM
-	code, sig := relaunchWaitChild(cmd, sigs)
-	if code != 7 || sig != 0 {
+	code, sig, forwarded := relaunchWaitChild(cmd, sigs)
+	if code != 7 || sig != 0 || forwarded != syscall.SIGTERM {
 		t.Fatalf("code=%d sig=%v, want 7 from the forwarded SIGTERM", code, sig)
 	}
 }
@@ -98,7 +98,7 @@ func TestRelaunchWaitReportsAChildKilledBySignal(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if code, sig := relaunchWaitChild(cmd, make(chan os.Signal)); sig != syscall.SIGKILL {
+	if code, sig, _ := relaunchWaitChild(cmd, make(chan os.Signal)); sig != syscall.SIGKILL {
 		t.Fatalf("code=%d sig=%v, want SIGKILL", code, sig)
 	}
 }
@@ -170,6 +170,34 @@ func TestRelaunchWaitStartsAgentdAgainOnHandBack(t *testing.T) {
 	want := strconv.Itoa(os.Getpid()) + " " + strconv.Itoa(os.Getpid())
 	if len(lines) != 2 || lines[0] != want || lines[1] != want {
 		t.Fatalf("runs = %q, want two runs told the helper PID and parented by it (%q)", lines, want)
+	}
+}
+
+// TestRelaunchHandBackHelperProcess is the waiting helper when the test
+// binary is re-run as one (TCLAUDE_TEST_RELAUNCH_HANDBACK set): its agentd
+// is sent SIGINT while it stops for a restart, ignores it, and hands back.
+func TestRelaunchHandBackHelperProcess(t *testing.T) {
+	if os.Getenv("TCLAUDE_TEST_RELAUNCH_HANDBACK") == "" {
+		return
+	}
+	sh, _ := exec.LookPath("sh")
+	script := `echo run >> "$1"; trap '' INT; kill -INT $PPID; sleep 0.5; exit ` + strconv.Itoa(relaunchHandBackExit)
+	os.Exit(runRelaunch(relaunchWait, sh, []string{"sh", "-c", script, "sh", os.Getenv("TCLAUDE_TEST_RELAUNCH_HANDBACK")}))
+}
+
+func TestRelaunchWaitStopsOnASignalDuringTheHandBack(t *testing.T) {
+	runs := filepath.Join(testutil.CanonicalTempDir(t), "runs")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRelaunchHandBackHelperProcess$")
+	cmd.Env = append(os.Environ(), "TCLAUDE_TEST_RELAUNCH_HANDBACK="+runs)
+	err := cmd.Run()
+	ws, _ := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	// Dying of the re-raised SIGINT, or 128+SIGINT if the exit wins.
+	stoppedOnINT := ws.Signaled() && ws.Signal() == syscall.SIGINT || ws.ExitStatus() == 128+int(syscall.SIGINT)
+	if err == nil || !stoppedOnINT {
+		t.Fatalf("helper: err=%v status=%v, want it to stop on the SIGINT", err, cmd.ProcessState)
+	}
+	if data, _ := os.ReadFile(runs); strings.Count(string(data), "run") != 1 {
+		t.Fatalf("agentd ran %d times, want once (no restart after Ctrl+C)", strings.Count(string(data), "run"))
 	}
 }
 

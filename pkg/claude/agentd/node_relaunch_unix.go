@@ -43,17 +43,23 @@ func runRelaunch(mode, exe string, argv []string) int {
 			_ = cmd.Process.Release()
 			return 0
 		}
-		code, sig := relaunchWaitChild(cmd, sigs)
+		code, sig, forwarded := relaunchWaitChild(cmd, sigs)
 		if sig == 0 && code == relaunchHandBackExit {
 			// agentd restarted and handed back (relaunchHandBack). A
-			// signal that came while it stopped was meant for it: stop
-			// as it would have.
-			select {
-			case s := <-sigs:
-				sig, _ = s.(syscall.Signal)
-			default:
+			// signal sent while it stopped for the restart (Ctrl+C) was
+			// meant to stop it, which its shutdown took as a no-op: stop
+			// instead of starting it again.
+			if forwarded == 0 {
+				select {
+				case s := <-sigs:
+					forwarded, _ = s.(syscall.Signal)
+				default:
+				}
+			}
+			if forwarded == 0 {
 				continue
 			}
+			sig = forwarded
 		}
 		if sig != 0 {
 			// Die of the same signal, so the shell reports what agentd did.
@@ -88,29 +94,37 @@ func relaunchCommand(mode, exe string, argv []string) *exec.Cmd {
 }
 
 // relaunchWaitChild forwards sigs to the started cmd until it exits, and
-// returns its exit code, or the signal that ended it.
-func relaunchWaitChild(cmd *exec.Cmd, sigs <-chan os.Signal) (int, syscall.Signal) {
+// returns its exit code, or the signal that ended it, and the last signal
+// it forwarded (0 for none).
+func relaunchWaitChild(cmd *exec.Cmd, sigs <-chan os.Signal) (code int, sig, forwarded syscall.Signal) {
 	done := make(chan struct{})
+	stopped := make(chan syscall.Signal)
 	go func() {
+		var last syscall.Signal
 		for {
 			select {
 			case s := <-sigs:
 				_ = cmd.Process.Signal(s)
+				if ss, ok := s.(syscall.Signal); ok {
+					last = ss
+				}
 			case <-done:
+				stopped <- last
 				return
 			}
 		}
 	}()
 	err := cmd.Wait()
 	close(done)
+	forwarded = <-stopped
 	if err == nil {
-		return 0, 0
+		return 0, 0, forwarded
 	}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
 		if ws.Signaled() {
-			return 0, ws.Signal()
+			return 0, ws.Signal(), forwarded
 		}
-		return ws.ExitStatus(), 0
+		return ws.ExitStatus(), 0, forwarded
 	}
-	return 1, 0
+	return 1, 0, forwarded
 }
