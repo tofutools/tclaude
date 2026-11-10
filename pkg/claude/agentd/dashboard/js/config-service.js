@@ -37,9 +37,17 @@ const LAUNCHERS = {
   launchd: 'launchd',
   tmux: 'a tmux pane',
   shell: 'a shell',
+  detached: 'a detached process (no terminal)',
   unknown: 'an unknown launcher',
 };
 export function launcherText(kind) { return LAUNCHERS[kind] || kind || 'unknown'; }
+
+// restartText says how a restart is carried out, by restart_method.
+export function restartText(method) {
+  if (method === 'supervisor') return 'through the supervisor';
+  if (method === 'relaunch') return 'agentd starts again in a new process, with the same arguments';
+  return 'agentd re-runs itself with the same arguments';
+}
 
 // observedArgv is what the running daemon was started with: the
 // supervisor's command when there is one, else the process's own.
@@ -200,7 +208,7 @@ export function ServicePanel({
       title: 'Restart agentd?',
       body: viaSupervisor
         ? `agentd restarts through ${launcherText(l.kind)}${l.unit || l.label ? ` ${l.unit || l.label}` : ''}, with that unit's own arguments. Agent sessions keep running; the dashboard reconnects.`
-        : 'agentd restarts itself with the same arguments. Agent sessions keep running; the dashboard reconnects.',
+        : `${l.restart_method === 'relaunch' ? 'agentd starts again in a new process' : 'agentd restarts itself'} with the same arguments. Agent sessions keep running; the dashboard reconnects.`,
       okLabel: 'Restart',
     })) return;
     setBusy('restart');
@@ -295,7 +303,7 @@ export function ServicePanel({
         <${Row} label="Command"><${Argv} id="${idp}svc-observed" argv=${observed} /><//>
         <${Row} label="Environment"><${EnvList} env=${l.env} />${(l.environment_files || []).map((f) => html` <span key=${f} class="muted">· from <code>${f}</code></span>`)}<//>
         ${(l.restart_policy || l.kill_mode) && html`<${Row} label="Policy"><span class="muted">${[l.restart_policy && `Restart=${l.restart_policy}`, l.kill_mode && `KillMode=${l.kill_mode}`].filter(Boolean).join(' · ')}</span><//>`}
-        <${Row} label="Restart"><span>${l.restart_method === 'supervisor' ? 'through the supervisor' : 'agentd re-runs itself with the same arguments'}</span>
+        <${Row} label="Restart"><span>${restartText(l.restart_method)}</span>
           ${!readOnly && html`<${Button} size="sm" id="${idp}svc-restart" disabled=${!!any} busy=${busy === 'restart' || restarting} onClick=${() => { void restart(); }}>${restarting ? 'Restarting…' : 'Restart agentd…'}<//>`}<//>
       </div>
       ${(l.warnings || []).map((w) => html`<div key=${w} class="cfg-svc-warn">${w}</div>`)}

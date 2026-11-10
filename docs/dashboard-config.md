@@ -323,11 +323,16 @@ needs attention when the unit is not enabled, or runs a different command
 from the running daemon.
 
 - **Launcher** shows what started agentd (a systemd user or system unit,
-  launchd, a tmux pane or a shell), the command and environment it runs with
+  launchd, a tmux pane, a shell, or a detached process with no terminal, such
+  as one the app launcher started), the command and environment it runs with
   (secret-looking values hidden), and the unit's restart policy.
   **Restart agentd…** goes through that supervisor (`systemctl --user restart`,
   `launchctl kickstart -k`), so the unit's own arguments stay; without one,
-  agentd re-runs itself with the same arguments.
+  agentd re-runs itself with the same arguments. On macOS with the tray icon
+  showing, it starts again in a new process instead, because the icon does
+  not come back after a re-run in the same process: a detached daemon is
+  started detached again, and a daemon in a shell or tmux pane stays the
+  foreground job there, so Ctrl+C still stops it.
 - **Launch profile** is what agentd should be started with: serve flags, and
   environment variables, each either set to a value or inherited from
   agentd's own environment when the unit is written. It is kept in

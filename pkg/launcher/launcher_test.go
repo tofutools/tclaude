@@ -366,3 +366,45 @@ func TestProcCgroupProcsWalksSubgroups(t *testing.T) {
 		t.Fatalf("own pid %d not in own cgroup's procs %v", os.Getpid(), pids)
 	}
 }
+
+func TestDetectInteractiveUsesTheControllingTerminal(t *testing.T) {
+	// A shell's TERM and SHLVL are inherited by a daemon it detached.
+	shellVars := map[string]string{"TERM": "xterm", "SHLVL": "1"}
+	for _, tc := range []struct {
+		name     string
+		goos     string
+		vars     map[string]string
+		stdinTTY bool
+		ctty     func() (bool, error)
+		ppid     int
+		tray     bool
+		kind     string
+		method   string
+	}{
+		{name: "detached, reparented", goos: "linux", vars: shellVars, ctty: func() (bool, error) { return false, nil }, ppid: 1, kind: KindDetached, method: RestartExec},
+		{name: "no terminal, a parent waits", goos: "linux", vars: shellVars, ctty: func() (bool, error) { return false, nil }, ppid: 77, kind: KindUnknown, method: RestartExec},
+		{name: "detached from tmux", goos: "linux", vars: map[string]string{"TMUX": "/tmp/t,1,0"}, ctty: func() (bool, error) { return false, nil }, ppid: 1, kind: KindDetached, method: RestartExec},
+		{name: "shell, stdin redirected", goos: "linux", vars: shellVars, ctty: func() (bool, error) { return true, nil }, ppid: 77, kind: KindShell, method: RestartExec},
+		{name: "cannot tell: environment decides", goos: "linux", vars: shellVars, ctty: func() (bool, error) { return false, errors.New("EIO") }, ppid: 1, kind: KindShell, method: RestartExec},
+		{name: "no probe: environment decides", goos: "linux", vars: shellVars, ppid: 1, kind: KindShell, method: RestartExec},
+		{name: "stdin tty wins", goos: "linux", stdinTTY: true, ctty: func() (bool, error) { return false, nil }, ppid: 1, kind: KindShell, method: RestartExec},
+		{name: "mac detached, tray", goos: "darwin", vars: shellVars, ctty: func() (bool, error) { return false, nil }, ppid: 1, tray: true, kind: KindDetached, method: RestartRelaunch},
+		{name: "mac shell, tray", goos: "darwin", vars: shellVars, stdinTTY: true, ppid: 77, tray: true, kind: KindShell, method: RestartRelaunch},
+		{name: "mac tmux, tray", goos: "darwin", vars: map[string]string{"TMUX": "/tmp/t,1,0"}, stdinTTY: true, ppid: 77, tray: true, kind: KindTmux, method: RestartRelaunch},
+		{name: "mac detached, no tray", goos: "darwin", vars: shellVars, ctty: func() (bool, error) { return false, nil }, ppid: 1, kind: KindDetached, method: RestartExec},
+		{name: "linux tray", goos: "linux", vars: shellVars, stdinTTY: true, ppid: 77, tray: true, kind: KindShell, method: RestartExec},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeRun{}
+			env := testEnv(tc.goos, tc.vars, nil)
+			env.StdinTTY, env.ControllingTTY, env.PPID, env.Tray = tc.stdinTTY, tc.ctty, tc.ppid, tc.tray
+			info := Detect(context.Background(), env, f.run)
+			if info.Kind != tc.kind || info.RestartMethod != tc.method {
+				t.Fatalf("kind=%s method=%s, want %s %s", info.Kind, info.RestartMethod, tc.kind, tc.method)
+			}
+			if _, _, ok := RestartCommand(info); ok {
+				t.Fatal("no supervisor command outside a unit")
+			}
+		})
+	}
+}
