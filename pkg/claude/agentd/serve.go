@@ -61,6 +61,8 @@ func serveCmd() *cobra.Command {
 		Short:       "Run the agent daemon in the foreground",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
+			// Returns only when no re-exec happened.
+			adoptLaunchdLoginEnv(productionLoginEnvDeps())
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				if errors.Is(err, errAgentdAlreadyRunning) {

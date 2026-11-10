@@ -590,3 +590,13 @@ func sortedEnv(env []EnvVar) []EnvVar {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
 }
+
+// LaunchdUnitEnv returns the EnvironmentVariables of a launchd plist
+// tclaude wrote, nil for any other file.
+func LaunchdUnitEnv(data []byte) []EnvVar {
+	if !bytes.Contains(data, []byte(ManagedMarker)) {
+		return nil
+	}
+	_, env := parseOwnPlist(data)
+	return env
+}

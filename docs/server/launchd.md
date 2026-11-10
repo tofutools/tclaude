@@ -84,6 +84,19 @@ shows what you have. Agent panes inherit the environment of whatever started
 the tmux server, normally `agentd`, so this `PATH` is theirs too.
 `tclaude harness ls` shows what the daemon finds.
 
+**Login shell environment.** When launchd starts the job tclaude wrote
+(label `com.tofutools.tclaude.agentd`), `agentd serve` asks your login shell
+for its environment and restarts itself with it, under the same PID. It runs
+`$SHELL -l -i` with no terminal and gives up after 10 seconds. That brings
+in what a terminal has: your profile's variables, `TMUX_TMPDIR`, proxies,
+and API keys. Without them, the job may run agents in another environment
+than a terminal-started agentd, or fail to reach their tmux server. The
+plist's own variables still win, and its `PATH` is kept after the shell's.
+When no locale is set anywhere, agentd gets `LANG=en_US.UTF-8`. If the shell
+gives no answer, agentd starts with the plist's environment, and
+`output.log` says why. A plist you wrote yourself, under another label, is
+left as it is.
+
 **Restarts.** `KeepAlive` with `SuccessfulExit` set to false restarts
 `agentd` when it crashes, but not after a clean exit. `AbandonProcessGroup`
 keeps launchd from cleaning up the job's processes when `agentd` stops. That
