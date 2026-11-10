@@ -1,6 +1,8 @@
 // node-update-settings.js — a node's auto-update settings (updates.self)
-// inside the Fleet node update dialog: this node's own, or a peer's through
-// the peer proxy.
+// as the Updates part of the Fleet node dialog's Installation view: this
+// node's own, or a peer's through the peer proxy. Like Config › Installation
+// › Updates it opens with a status line and its main action; the settings
+// are below, saved with Save settings.
 //
 // The daemon's GET says how much the caller may change ("access"): full (the
 // node's own operator, or an unrestricted peer), settings (a peer holding
@@ -9,10 +11,11 @@
 // The node re-checks every save; this only draws what it will accept.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { errText } from './cell-format.js';
+import { InstallPart, afterRender, updatesStatus, useFold } from './config-installation.js';
 import { SELF_UPDATE_METHODS, SETUP_FLAGS, SETUP_HARNESSES, TCLAUDE_DRIVEN, WEEKDAYS, managerName } from './config-self-update.js';
 
 const html = htm.bind(h);
@@ -63,6 +66,17 @@ export function meaningful(v) {
   return v === false || v === '' || v === null ? undefined : v;
 }
 
+// statusDraft is the shape updatesStatus reads, from updates.self.
+export function statusDraft(settings) {
+  const sched = settings?.schedule || {};
+  return {
+    method: settings?.method || '', frequency: sched.frequency || 'off', weekday: sched.weekday || 'monday',
+    windowStart: sched.window_start || '', windowEnd: sched.window_end || '', onStart: !!settings?.update_on_start,
+  };
+}
+
+const IDP = 'fleet-';
+
 // NodeUpdateSettings reads and edits one node's updates.self. actions is
 // createNodeUpdateActions(); confirm asks before opting in to a package
 // manager.
@@ -74,7 +88,14 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
   const [saveError, setSaveError] = useState('');
   const [showFlags, setShowFlags] = useState(false);
 
-  const adopt = (v) => { setView(v); setDraft(clone(v?.settings)); setSaveError(''); };
+  // reads counts the settings reads, so the part folds afresh after each.
+  const [reads, setReads] = useState(0);
+  const root = useRef(null);
+  const adopt = (v) => { setView(v); setDraft(clone(v?.settings)); setSaveError(''); setReads((n) => n + 1); };
+  const st = view && draft ? updatesStatus(statusDraft(draft), view) : null;
+  const [collapsed, toggle, expand] = useFold(st?.state === 'on', reads);
+  const part = (state, status, actions, body) => html`<div ref=${root}><${InstallPart} idp=${IDP} id="updates" title="Updates" state=${state}
+    status=${status} actions=${actions} collapsed=${collapsed} onToggle=${body ? toggle : null}>${body}<//></div>`;
   useEffect(() => {
     let off = false;
     actions.settings(node).then((v) => { if (!off) adopt(v); }).catch((e) => { if (!off) setError(e); });
@@ -86,30 +107,29 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
     // A peer on a build before peer-reachable settings serves the route to
     // its own operator only (peer_view_local_only): likewise no block.
     if (error?.status === 404 || error?.code === 'peer_view_local_only') return null;
-    return html`<div class="nus" id="fleet-node-update-settings"><div class="nus-head"><b>Auto-update settings</b></div>
-      <div class="muted" role="alert">${error?.status === 403 ? `${node.label} does not let you read its update settings (needs node.update).` : `Could not read the update settings: ${errText(error)}`}</div></div>`;
+    return part('unknown', html`<span class="muted" role="alert" id="fleet-node-update-settings">${error?.status === 403 ? `${node.label} does not let you read its update settings (needs node.update).` : `Could not read the update settings: ${errText(error)}`}</span>`);
   }
-  if (!view || !draft) return html`<div class="nus" id="fleet-node-update-settings"><div class="nus-head"><b>Auto-update settings</b></div><div class="muted">Loading…</div></div>`;
+  if (!view || !draft) return part('unknown', html`<span class="muted" id="fleet-node-update-settings">Loading…</span>`);
 
   const access = view.access || (node.local ? 'full' : 'read');
   const s = view.settings || {};
   const d = view.detected || {};
   const where = node.local ? 'this node' : node.label;
-  const head = html`<div class="nus-head"><b>Auto-update settings</b>
+  const head = html`<div class="nus-head"><b>Settings</b>
     <span class="muted" id="fleet-node-update-settings-access">${access === 'read' ? 'read-only' : access === 'settings' ? 'limited' : `stored on ${where}`}</span></div>`;
   const pmNote = d.managed_by && TCLAUDE_DRIVEN.includes((draft || s).method) && html`<div class="nus-alert" id="fleet-node-update-settings-pm">
     ${managerName(d.managed_by)} still owns tclaude on ${where}${d.untrack_command ? html`; untrack it there with <code>${d.untrack_command}</code>` : ''}.
     ${access !== 'full' && html` Only ${node.local ? 'this node' : `${node.label} itself`} or an unrestricted peer can acknowledge that${(draft || s).package_manager_ack ? ' (acknowledged)' : ' — not acknowledged, so its updates stay refused until then'}.`}</div>`;
 
   if (access === 'read') {
-    return html`<div class="nus" id="fleet-node-update-settings">${head}
+    return part(st.state, html`<span>${st.text}</span>`, html`<span class="muted">Read only.</span>`, html`<div class="nus" id="fleet-node-update-settings">${head}
       <div class="nus-alert">You can read these settings but not change them. Changing them needs the <code>node.update.settings</code> grant on ${node.label} (unrestricted also works).</div>
       ${pmNote}
       <div class="fa-dl nus-ro">
         <span class="fa-k">Method</span><span id="fleet-node-update-settings-method">${methodLabel(view, s.method)}${s.method === 'source_checkout' && s.source_checkout?.path ? html` · <code>${s.source_checkout.path}</code>` : ''}</span>
         <span class="fa-k">Schedule</span><span id="fleet-node-update-settings-schedule">${scheduleText(s.schedule, s.update_on_start)}</span>
         <span class="fa-k">After update</span><span>${setupText(s.post_update_setup)}</span>
-      </div></div>`;
+      </div></div>`);
   }
 
   const full = access === 'full';
@@ -143,7 +163,23 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
     }
   };
 
-  return html`<div class="nus" id="fleet-node-update-settings">${head}
+  const mainAction = st.action === 'choose'
+    ? html`<${Button} variant="primary" size="sm" id="fleet-install-updates-choose" onClick=${() => {
+        expand();
+        afterRender(() => {
+          const select = root.current?.querySelector('#fleet-nus-method');
+          select?.scrollIntoView?.({ block: 'center' });
+          select?.focus?.();
+        });
+      }}>Choose an update method…<//>`
+    : st.action === 'schedule'
+      ? html`<${Button} variant="primary" size="sm" id="fleet-install-updates-on" title="A daily update in the 03:00–05:00 window; change it below, then Save settings."
+          onClick=${() => { expand(); set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'daily' }; }); }}>Update daily<//>`
+      : html`<${Button} size="sm" id="fleet-install-updates-off" title="Turns off scheduled and start-up updates and keeps the method; then Save settings."
+          onClick=${() => { expand(); set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'off' }; n.update_on_start = false; }); }}>Turn off<//>`;
+  // The main actions unfold the settings: Save settings is down there.
+  const status = html`<span>${st.text}</span>${dirty ? html` <span class="fa-warn" id="fleet-install-updates-unsaved">Not saved yet: Save settings below.</span>` : ''}`;
+  return part(st.state, status, mainAction, html`<div class="nus" id="fleet-node-update-settings">${head}
     ${access === 'settings' && html`<div class="nus-note">🔒 The checkout path, a custom command, the package-manager acknowledgement and switching to a package-manager, custom or checkout method can be set only on ${node.label} itself or by an unrestricted peer.</div>`}
     <div class="nus-grid">
       <label class="fa-k" for="fleet-nus-method">Method</label>
@@ -208,5 +244,5 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
       ${dirty && html`<${Button} size="sm" variant="ghost" id="fleet-nus-revert" disabled=${busy} onClick=${() => adopt(view)}>Revert<//>`}
       <span class="muted">CLI: <code>tclaude update config set${node.local ? '' : ` --node ${node.id}`} …</code></span>
     </div>
-  </div>`;
+  </div>`);
 }

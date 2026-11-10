@@ -6,6 +6,7 @@ import { Dialog, DialogClose } from './ui-dialog.js';
 import { RequestError, requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
 import { NodeUpdateSettings } from './node-update-settings.js';
+import { ServicePanel } from './config-service.js';
 
 const html = htm.bind(h);
 
@@ -20,6 +21,13 @@ const HUB_UPDATE_POLL_MS = 2000;
 export function updateBase(node) {
   if (node?.hub) return '/api/federation/hub/update';
   return node?.local ? '/api/node/update' : `/api/peer/${encodeURIComponent(node.id)}/node/update`;
+}
+
+// serviceBase is the node API base the Start automatically part reads
+// <base>/service under: this node's, or a peer's through the peer proxy
+// (which needs node.read there, and node.update.settings to act).
+export function serviceBase(node) {
+  return node?.local ? '/api/node' : `/api/peer/${encodeURIComponent(node.id)}/node`;
 }
 
 // updateJobActive reports whether a self-update job is still going.
@@ -73,6 +81,9 @@ const UPDATE_REFUSALS = {
 export function createNodeUpdateActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
   const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl, ErrorClass: NodeUpdateError });
   return Object.freeze({
+    // fetchImpl serves the Start automatically part, which reads and acts
+    // through the node's service routes itself (serviceBase).
+    fetchImpl,
     status: (node) => call('GET', updateBase(node)),
     start: (node, action, version) => call('POST', updateBase(node), version ? { action, version } : { action }),
     // The node's auto-update settings (updates.self); a peer's needs
@@ -103,8 +114,11 @@ function accessText(error, node) {
   return `Could not read ${node.label}'s update status: ${errText(error)}`;
 }
 
-// NodeUpdateDialog shows one node's tclaude version and lets the operator
-// check for, apply or roll back an update. Apply and rollback confirm with the
+// NodeUpdateDialog is a node's Installation view, as Config › Installation
+// is this node's: its tclaude version, where the operator checks for, applies
+// or rolls back an update, then the Start automatically and Updates parts
+// (the hub has only the version). The parts read their own routes under
+// their own grants, so they show whether or not the version read works. Apply and rollback confirm with the
 // consequence (binaries replaced, daemon restarts); a source build warns that
 // the official release replaces it.
 export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defaultActions(), timers = globalThis }) {
@@ -172,7 +186,8 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
     okLabel: 'Roll back',
   }).then((ok) => ok && start('rollback'));
 
-  return html`<${Dialog} id="fleet-node-update-modal" title=${node.hub ? 'tclaude-hub' : `tclaude on ${node.label}`} onClose=${onClose} busy=${busy}
+  return html`<${Dialog} id="fleet-node-update-modal" title=${node.hub ? 'tclaude-hub' : `Installation on ${node.label}`}
+    dialogClass=${node.hub ? undefined : 'cron-create-modal fa-installation-modal'} onClose=${onClose} busy=${busy}
     footerStart=${status && html`<${Button} id="fleet-node-update-check" disabled=${busy || active} onClick=${() => start('check')}>Check now</${Button}>
       ${v.update && html`<${Button} variant="primary" id="fleet-node-update-apply" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</${Button}>`}
       ${status.rollback_available && html`<${Button} variant="danger" id="fleet-node-update-rollback" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</${Button}>`}`}
@@ -192,6 +207,10 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
       </div>`}
       ${job && launchView(job.launch) && ((l) => html`<div id="fleet-node-update-launch" class=${l.ok ? 'muted' : 'fa-warn'}>${l.text}${l.details && html`<ul>${l.details.map((d) => html`<li key=${d}>${d}</li>`)}</ul>`}</div>`)(launchView(job.launch))}
-      ${!node.hub && actions.settings && html`<${NodeUpdateSettings} node=${node} actions=${actions} confirm=${confirm} toast=${toast} />`}`}
+`}
+    ${!node.hub && html`<div class="fa-installation">
+      ${actions.fetchImpl && html`<${ServicePanel} idp="fleet-" base=${serviceBase(node)} fetchImpl=${actions.fetchImpl} confirm=${confirm} toast=${toast} timers=${timers} />`}
+      ${actions.settings && html`<${NodeUpdateSettings} node=${node} actions=${actions} confirm=${confirm} toast=${toast} />`}
+    </div>`}
   </${Dialog}>`;
 }

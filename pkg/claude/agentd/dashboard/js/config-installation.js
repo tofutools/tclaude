@@ -19,16 +19,17 @@ const STATE_LABELS = { on: 'On', off: 'Off', warn: 'Needs attention', unknown: '
 // state, one-line status, main actions, a details toggle) over its detail.
 // The detail stays mounted while folded, so its Config inputs still load and
 // save, and a settings search shows it whatever the fold says.
-export function InstallPart({ id, title, state = 'unknown', status, actions = null, collapsed = false, onToggle = null, children }) {
-  const bodyId = `cfg-install-${id}-body`;
-  return html`<div class="cfg-inst-part" id=${`cfg-install-${id}`} data-cfg-install-part=${id} data-cfg-inst-state=${state}>
-    <div class="cfg-section cfg-inst-head" role="group" aria-labelledby=${`cfg-install-${id}-title`}>
-      <h3 class="cfg-inst-title" id=${`cfg-install-${id}-title`}>${title}
-        <span class="ui-tag cfg-inst-state" data-state=${state} id=${`cfg-install-${id}-state`}>${STATE_LABELS[state] || state}</span></h3>
-      <div class="cfg-inst-status" id=${`cfg-install-${id}-status`}>${status}</div>
+// idp prefixes its element ids ('cfg-' in Config).
+export function InstallPart({ idp = 'cfg-', id, title, state = 'unknown', status, actions = null, collapsed = false, onToggle = null, children }) {
+  const bodyId = `${idp}install-${id}-body`;
+  return html`<div class="cfg-inst-part" id=${`${idp}install-${id}`} data-cfg-install-part=${id} data-cfg-inst-state=${state}>
+    <div class="cfg-section cfg-inst-head" role="group" aria-labelledby=${`${idp}install-${id}-title`}>
+      <h3 class="cfg-inst-title" id=${`${idp}install-${id}-title`}>${title}
+        <span class="ui-tag cfg-inst-state" data-state=${state} id=${`${idp}install-${id}-state`}>${STATE_LABELS[state] || state}</span></h3>
+      <div class="cfg-inst-status" id=${`${idp}install-${id}-status`}>${status}</div>
       ${(actions || (children && onToggle)) && html`<div class="cfg-inst-actions">
         ${actions}
-        ${children && onToggle && html`<${Button} size="sm" variant="ghost" class="cfg-inst-toggle" id=${`cfg-install-${id}-toggle`}
+        ${children && onToggle && html`<${Button} size="sm" variant="ghost" class="cfg-inst-toggle" id=${`${idp}install-${id}-toggle`}
           aria-expanded=${String(!collapsed)} aria-controls=${bodyId} onClick=${onToggle}>${collapsed ? 'Show details' : 'Hide details'}<//>`}
       </div>`}
     </div>

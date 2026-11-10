@@ -556,7 +556,7 @@ test('node self-update: the card shows the version and an available update; the 
   const q = (s) => mounted.container.ownerDocument.querySelector(s);
   const selfCard = mounted.container.querySelector('[aria-label="desk node"]');
   assert.match(selfCard.textContent, /v1\.2\.0 ↑ v1\.3\.0 update…/);
-  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 manage…/);
+  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 installation…/);
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await harness.act(() => selfCard.querySelector('[data-fleet="node-update"]').click());
   await settle();

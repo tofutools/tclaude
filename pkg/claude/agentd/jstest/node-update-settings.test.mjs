@@ -1,4 +1,6 @@
-// Tests for the auto-update settings inside the Fleet node update dialog:
+// Tests for the Fleet node dialog's Installation view: its Start automatically
+// part on the node's own service routes, and its Updates part — the status
+// line and main action, and the auto-update settings below them:
 // what each access level ("full", "settings", "read") can see and change,
 // the PUT body, the opt-in confirmation for a package-manager method, and
 // a node without the settings route.
@@ -36,14 +38,15 @@ function settingsView(access, overrides = {}) {
   };
 }
 
-async function open(t, view, { node = { id: 'peer-1', label: 'maria-laptop' }, confirm = async () => true, save } = {}) {
+async function open(t, view, { node = { id: 'peer-1', label: 'maria-laptop' }, confirm = async () => true, save, fetchImpl, statusError = null } = {}) {
   const harness = await createPreactHarness(t);
   const { NodeUpdateDialog } = await harness.importDashboardModule('js/node-update.js');
   const puts = [];
   const confirms = [];
   const toasts = [];
   const actions = {
-    status: async () => ({ current_version: 'v0.42.0', latest_version: 'v0.43.1', update_available: true }),
+    ...(fetchImpl ? { fetchImpl } : {}),
+    status: async () => statusError ? Promise.reject(statusError) : ({ current_version: 'v0.42.0', latest_version: 'v0.43.1', update_available: true }),
     start: async () => { throw new Error('not in these tests'); },
     settings: async () => { if (view instanceof Error) throw view; return structuredClone(view); },
     saveSettings: async (n, body) => {
@@ -58,7 +61,7 @@ async function open(t, view, { node = { id: 'peer-1', label: 'maria-laptop' }, c
   const flush = () => harness.act(() => new Promise((r) => setTimeout(r, 10)));
   // The settings block mounts once the status is read, then reads its own.
   const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && (!q('#fleet-node-update-modal .fa-dl') || /Loading/.test(q('#fleet-node-update-modal').textContent))) await flush();
+  while (Date.now() < deadline && (!(statusError ? q('#fleet-node-update-modal [role=alert]') : q('#fleet-node-update-modal .fa-dl')) || /Loading/.test(q('#fleet-node-update-modal').textContent))) await flush();
   const change = async (sel, value) => {
     const el = q(sel);
     if (el.type === 'checkbox') el.checked = value;
@@ -216,4 +219,78 @@ test('a limited peer can switch a custom-command node back to manual, keeping wh
   assert.equal(sent.custom.timeout_seconds, 1800, 'and the timeout unchanged');
   assert.deepEqual(sent.source_checkout, { path: '~/src/tclaude', ref: '' });
   assert.equal(sent.package_manager_ack, true, 'the acknowledgement is left as it was');
+});
+
+test('the Updates part says what the node does, and its main action edits the settings to save', async (t) => {
+  const { q, flush, puts } = await open(t, settingsView('settings', { method: 'release', schedule: { frequency: 'off' }, update_on_start: false }));
+  const state = () => q('#fleet-install-updates-state').getAttribute('data-state');
+  assert.equal(state(), 'off');
+  assert.match(q('#fleet-install-updates-status').textContent, /The method is Release download, but no schedule or start-up update is on/);
+  assert.equal(q('#fleet-install-updates-body').hasAttribute('data-collapsed'), false, 'not set up: the settings are open');
+  q('#fleet-install-updates-on').click();
+  await flush();
+  assert.equal(state(), 'on');
+  assert.match(q('#fleet-install-updates-status').textContent, /Updates itself with Release download: daily/);
+  assert.ok(q('#fleet-install-updates-unsaved'), 'the edit is not saved yet');
+  assert.ok(q('#fleet-nus-start'), 'the settings below follow: the time window shows');
+  q('#fleet-nus-save').click();
+  await flush();
+  assert.equal(puts[0].body.settings.schedule.frequency, 'daily');
+  assert.equal(q('#fleet-install-updates-unsaved'), null);
+  assert.equal(q('#fleet-install-updates-body').hasAttribute('data-collapsed'), true, 'saved and set up: the settings fold');
+  q('#fleet-install-updates-off').click();
+  await flush();
+  assert.equal(q('#fleet-install-updates-body').hasAttribute('data-collapsed'), false, 'Turn off unfolds the settings, where Save settings is');
+  assert.equal(state(), 'off');
+  assert.equal(q('#fleet-nus-start'), null, 'the schedule is off below too');
+});
+
+test('read access shows the Updates status with no action', async (t) => {
+  const { q } = await open(t, settingsView('read'));
+  assert.equal(q('#fleet-install-updates-state').getAttribute('data-state'), 'on');
+  assert.match(q('#fleet-install-updates-status').textContent, /Updates itself with Build from a checkout: every Sunday 02:00–04:00/);
+  for (const id of ['choose', 'on', 'off']) assert.equal(q(`#fleet-install-updates-${id}`), null, `no ${id} action`);
+});
+
+test('a peer\'s Start automatically part reads the peer\'s service routes, with ids of its own', async (t) => {
+  const paths = [];
+  const service = {
+    access: 'manage',
+    launcher: { kind: 'shell', process_argv: ['tclaude', 'agentd', 'serve'], restart_method: 'self', warnings: [] },
+    autostart: { supported: true, kind: 'systemd-user', path: '~/.config/systemd/user/tclaude-agentd.service', installed: false, managed: false, enabled: false },
+  };
+  const fetchImpl = async (path, options = {}) => {
+    paths.push(`${options.method || 'GET'} ${path}`);
+    if (path.endsWith('/service/launch')) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => structuredClone(service) };
+  };
+  const { q, flush } = await open(t, settingsView('settings'), { fetchImpl });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !q('#fleet-install-service-on')) await flush();
+  assert.match(q('#fleet-install-service-status').textContent, /Not started automatically/);
+  assert.ok(paths.includes('GET /api/peer/peer-1/node/service?refresh=1'), paths.join(', '));
+  assert.ok(paths.includes('GET /api/peer/peer-1/node/service/launch'), paths.join(', '));
+  assert.ok(paths.every((p) => p.includes('/api/peer/peer-1/node/')), 'nothing reaches this node');
+  assert.ok(q('#fleet-svc-restart'), 'manage access restarts');
+  assert.ok(q('#fleet-svc-keep-env'), 'manage access chooses the environment');
+  assert.equal(q('#fleet-svc-serve-args'), null, 'but not the serve flags, which only full access may name');
+  assert.equal(q('#cfg-svc-restart'), null, 'no Config ids in the dialog');
+  assert.match(q('#fleet-node-update-modal-title, #fleet-node-update-title').textContent, /Installation on maria-laptop/);
+});
+
+test('the Installation parts show even when the version read is refused', async (t) => {
+  const paths = [];
+  const fetchImpl = async (path) => {
+    paths.push(path);
+    if (path.endsWith('/service/launch')) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ access: 'read', launcher: { kind: 'shell', process_argv: ['tclaude', 'agentd', 'serve'], warnings: [] },
+      autostart: { supported: true, kind: 'systemd-user', installed: false } }) };
+  };
+  const refused = Object.assign(new Error('permission denied'), { status: 403 });
+  const { q, flush } = await open(t, settingsView('read'), { fetchImpl, statusError: refused });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !/Not started automatically/.test(q('#fleet-install-service-status')?.textContent || '')) await flush();
+  assert.match(q('#fleet-node-update-modal [role=alert]').textContent, /needs node\.update/);
+  assert.match(q('#fleet-install-service-status').textContent, /Not started automatically/, 'Start automatically still reads under node.read');
+  assert.ok(q('#fleet-install-updates-status'), 'and the Updates part reads its own route');
 });

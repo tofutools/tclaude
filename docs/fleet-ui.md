@@ -141,11 +141,13 @@ and whether it already trusts this node; the top bar counts the requests.
 **Dismiss** forgets a request. **Ask to be trusted…** on any other untrusted
 card sends this node's own request, with an optional note.
 
-To update a node: click **update…** (or **manage…**) on its card, check the
+To update a node: click **update…** (or **installation…**) on its card, check the
 version and warnings, then **Update to vX…** and confirm. The node replaces its
 binaries (keeping the old ones for **Roll back…**) and restarts its daemon;
 agent sessions keep running and the dialog follows the job through the
-restart. Updating a peer needs its `node.update` grant. CLI:
+restart. Updating a peer needs its `node.update` grant. The same dialog
+shows how the node starts and its update settings; see
+[Updating local and linked nodes](federation-admin.md#updating-local-and-linked-nodes). CLI:
 `tclaude update [--node PEER] --check|--apply|--rollback`.
 
 ## A peer's dashboard (remote node view)
@@ -470,7 +472,7 @@ items. Accepting grants nothing beyond them.
 or "Fleet administration" in the command palette) manages this
 node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
-the hub connection with **Disconnect** or **Reconnect**, **version & updates…** for this
+the hub connection with **Disconnect** or **Reconnect**, **installation…** for this
 node, and away cover: **away…** picks a trusted peer's operator (and an
 optional end) who, while you are away, receives your agents' access requests
 as they arise (and may answer each once; the first answer wins), every
