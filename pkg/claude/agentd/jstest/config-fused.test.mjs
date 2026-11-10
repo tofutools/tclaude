@@ -21,7 +21,7 @@ const NODES = [
   { id: 'inst_forge', name: 'forge', color: '#f0883e', local: false },
 ];
 
-async function mountFused(t) {
+async function mountFused(t, { gate = null } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter, { setConfigPanel }, access] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'),
@@ -36,6 +36,7 @@ async function mountFused(t) {
   const fetchImpl = async (path, init = {}) => {
     calls.push(`${init.method || 'GET'} ${path}`);
     const peer = path.startsWith('/api/peer/inst_forge/config');
+    if (peer && gate && init.method !== 'POST') await gate;
     if (peer || path.startsWith('/api/config')) {
       const raw = JSON.stringify({ log_level: peer ? 'debug' : 'info', notifications: { enabled: true, cooldown_seconds: 5 } }, null, 2);
       const body = { raw, version: peer ? 'p1' : 'l1', access: peer ? PEER : LOCAL, redacted: [], ...(peer ? {} : { path: '/home/me/.tclaude/config.json' }) };
@@ -118,4 +119,17 @@ test('a peer’s installation panel points to its own page', async (t) => {
   const link = [...f.root.querySelectorAll('.cfg-on-peer-page a')].find((a) => a.getAttribute('href').includes('/config/installation'));
   assert.ok(link, 'the installation panel links to the peer’s page');
   assert.match(link.getAttribute('href'), /node=inst_forge/);
+});
+
+test('a save while the picked node is still loading is refused: one node’s form never goes to another', async (t) => {
+  let open;
+  const f = await mountFused(t, { gate: new Promise((r) => { open = r; }) });
+  await f.harness.act(() => f.access.setConfigNodes(NODES));
+  await f.settle();
+  await f.access.pickConfigNode('inst_forge');
+  await f.adapter.saveConfig();
+  assert.ok(!f.calls.some((c) => c.startsWith('POST')), f.calls.join('\n'));
+  open();
+  await f.settle();
+  assert.equal(f.header(), 'forge’s config (remote)');
 });

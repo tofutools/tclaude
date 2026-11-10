@@ -171,9 +171,17 @@ test('Config in a fused view picks the node it edits, this node by default', asy
   access.setConfigSwitchHook(async () => false);
   await harness.act(async () => { harness.fireEvent(btn('inst_self'), 'click'); await new Promise((r) => setTimeout(r)); });
   assert.equal(access.configTarget.value.id, 'inst_forge');
-  // Off the Config tab there is no picker, and Config edits this node again.
+  // Another tab hides the picker but keeps the pick (and the form's edits).
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(c.querySelector('.scope-config-node'), null);
+  assert.equal(access.configTarget.value.id, 'inst_forge');
+  await harness.act(() => { activeTab.value = 'config'; });
+  assert.equal(btn('inst_forge').getAttribute('aria-pressed'), 'true');
+  // This node is listed even when unticked.
+  await harness.act(() => { state.setFused(['inst_forge', 'inst_lab']); });
+  assert.deepEqual([...c.querySelectorAll('.scope-config-node')].map((b) => b.textContent), ['⌂ desk (this node)', 'forge', 'lab']);
+  // Leaving the fused view leaves Config on this node.
+  await harness.act(() => { state.setFused(null); });
   assert.equal(access.configTarget.value, null);
   await mounted.unmount(); state.dispose();
 });

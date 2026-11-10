@@ -60,6 +60,10 @@ const configTargetID = () => configPeerTarget()?.id || '';
 let configObj = null;     // last loaded full config object (clone source)
 let configBaseRaw = '';   // canonical JSON of the config currently on disk
 let configLoaded = false;
+// configLoadedFor is the node the form holds (configTargetID): a save while
+// a picked node's config is still loading is refused, so one node's form
+// (and its secrets) never goes to another.
+let configLoadedFor = '';
 let configFileMalformed = false; // on-disk file is corrupt → form shows defaults
 let configBindingEpoch = 0;
 let configPath = '';      // the loaded config's file path ('' when the node does not name it)
@@ -1773,13 +1777,14 @@ function applyConfigFilter() {
 // row: the one control and the new base, so other unsaved edits stay and the next
 // Save isn't refused as drift.
 async function followSourceChoice() {
-  if (!configLoaded) return;
+  const target = configTargetID();
+  if (!configLoaded || configLoadedFor !== target) return;
   const bindingEpoch = configBindingEpoch;
   try {
     const r = await configFetch()('/api/config', { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
-    if (bindingEpoch !== configBindingEpoch || !data.raw) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID() || !data.raw) return;
     configBaseRaw = data.raw;
     configObj = JSON.parse(configBaseRaw);
     setSelectValue($('#cfg-steward-source-download'), (configObj.steward || {}).source_download || 'ask');
@@ -1815,6 +1820,7 @@ async function loadConfigTab() {
     setConfigAccess(data);
     populateConfigForm(configObj);
     configLoaded = true;
+    configLoadedFor = target;
     const notices = [];
     if (data.warning) notices.push(data.warning);
     if (data.unknown_keys && data.unknown_keys.length) {
@@ -1892,7 +1898,7 @@ async function reportConfigHTTPError(resp) {
 
 async function saveConfig() {
   const bindingEpoch = configBindingEpoch;
-  if (!configLoaded) { configDependencies.toast('Config not loaded yet', true); return; }
+  if (!configLoaded || configLoadedFor !== configTargetID()) { configDependencies.toast('Config not loaded yet', true); return; }
   clearConfigErrors();
   let edited;
   try {

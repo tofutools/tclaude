@@ -393,11 +393,15 @@ export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis
   const current = state.view.value;
   const fleet = current.fleet;
   const shown = !!fleet && !!current.fused && !current.topLevel && !FUSED_TABS.has(current.activeTab);
-  const configNodes = shown && current.activeTab === 'config' ? tickedNodes(fleet, current.fused) : [];
-  useEffect(() => { setConfigNodes(configNodes.length > 1 ? configNodes : []); });
+  // The Config tab's nodes are published for the whole fused view, not only
+  // while Config shows, so a look at another tab keeps the picked node and
+  // its unsaved edits. This node is always first, ticked or not; a fleet
+  // briefly unknown (a status refresh) leaves the list as it is.
+  const configNodes = fleet && current.fused ? configPickList(fleet, current.fused) : [];
+  useEffect(() => { if (fleet || !current.fused) setConfigNodes(configNodes.length > 1 ? configNodes : []); });
   useEffect(() => () => setConfigNodes([]), []);
   if (!shown) return null;
-  if (configNodes.length > 1) return html`<${ConfigNodePicker} nodes=${configNodes} />`;
+  if (current.activeTab === 'config' && configNodes.length > 1) return html`<${ConfigNodePicker} nodes=${configNodes} />`;
   const self = fleet.self;
   const tab = current.activeTab;
   const label = doc?.querySelector?.(`nav [data-tab="${tab}"] .tab-label-regular`)?.textContent?.trim() || 'This tab';
@@ -413,6 +417,13 @@ export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis
         : html`<span key=${peer.id} class="scope-pill scope-peer-locked" style=${`--nc:${peer.color}`}>${peer.name}<${LockReason} why=${reach.why} /></span>`;
     })}</span>` : null}
   </div>`;
+}
+
+// configPickList is the nodes the fused view's Config tab can edit: this
+// node, then each ticked peer.
+function configPickList(fleet, fused) {
+  const self = fleetNodes(fleet).find((n) => n.local);
+  return [...(self ? [self] : []), ...tickedNodes(fleet, fused).filter((n) => !n.local)];
 }
 
 // ConfigNodePicker tops the Config tab in a fused view over several nodes:
