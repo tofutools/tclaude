@@ -344,9 +344,10 @@ flag (and **No tray icon**), each saying what it does, the other flags as
 text, and the command they make. **Rewrite launcher…** applies them, and
 **Back to tclaude's defaults…** clears the launcher's own setting. When the
 launch profile is set, the part says it decides the flags and shows them
-read-only; change them in the launch profile. The CLI is `tclaude service launcher status|install|uninstall`
-(`--no-start-daemon`, `--node <peer>`), and the API is `GET
-/api/node/launcher` and `POST /api/node/launcher/install|uninstall`.
+read-only; change them in the launch profile. The CLI is `tclaude service
+launcher status|install|uninstall` (`--no-start-daemon`, `--node <peer>`),
+and the API is `GET /api/node/launcher` and `POST
+/api/node/launcher/install|uninstall`.
 
 - **Linux:** it writes a desktop entry,
   `$XDG_DATA_HOME/applications/tclaude.desktop` (default
