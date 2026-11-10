@@ -12,6 +12,11 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 - **More…** on a row shows the full explanation.
 - **Save changes…** shows a line diff before writing anything. Dots on the rail mark
   sections with unsaved changes. **Reload** throws away your edits.
+- **A linked node's config.** A trusted peer can read and change this tab
+  through the peer view, under its `node.config.*` grants, with every secret
+  withheld. From the CLI, `tclaude config get|set|clear --node <peer>` does the
+  same. See
+  [Remote Config tab](federation-admin.md#remote-config-tab).
 - **Badges** on a row say when a change takes effect or what it covers:
   `agentd restart`, `refresh` (next dashboard refresh), `next launch`, `Claude Code`
   (that harness only), `deprecated`, `irreversible`.
@@ -155,7 +160,7 @@ Everything still lands in [Messages](dashboard-messages.md). See
 | Permissions | Default permissions | `agent.default_permissions` | empty |
 
 The two terminal startup keys and `agent.spawn_label_from_name` can also be read and changed from the CLI:
-`tclaude config get` and `tclaude config set <key> true|false|default`.
+`tclaude config get`, `tclaude config set <key> true|false|default` and `tclaude config clear <key>`.
 
 ## Launch
 

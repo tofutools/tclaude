@@ -394,6 +394,43 @@ test keeps free of secrets. A peer exports a bundle's `config` and
 `default-permissions` sections under `config.export` with `node.config.read`.
 Importing a bundle is this node's own action.
 
+### Changing a linked node's config
+
+`tclaude config get|set|clear --node <peer>` reads and changes a linked node's
+config from the command line. `<peer>` is the peer's label or instance ID, as
+for other `--node` commands. The commands are human-only, and the linked node
+checks every change under the grants it gave you, as it does for the tab.
+
+```bash
+tclaude config get --node bob               # every key set there
+tclaude config get agent --node bob         # agent and the keys under it
+tclaude config set log_level warn --node bob
+tclaude config set capacity.max_live_agents 12 --node bob
+tclaude config clear log_level --node bob   # back to its default
+tclaude config clear agent.http_proxies.search.header_value --node bob
+```
+
+- `get` prints each key as `key = value  [class, write|read]`: its class and
+  whether you may change it. A secret prints as `(withheld: set)` or
+  `(withheld: not set)`, never its value. The first line names your trust
+  level there. `--json` prints the node's answer, or with a key the rows
+  shown.
+- `set` takes a JSON value (`true`, `8080`, `["a","b"]`, `"text"`) or else a
+  plain string. `default` is sent as the string `"default"`, so use `clear`
+  for the default. A secret inside a map or list, such as a proxy's header
+  value, is replaced by setting the whole map or list: a secret left empty
+  in it is kept, one given a value replaces the stored one. `set` reads the
+  config first and sends the change with its `version`.
+- `clear` puts a key back to its default, or removes a withheld secret.
+- If the config changed between the read and the change, the change is
+  refused: re-read it with `get` and run the command again.
+- If a key is not yours to change, the change is refused, and each key is
+  listed with its class and the grant it needs, or `the node itself` for a
+  node-only key.
+
+Without `--node`, `tclaude config get|set|clear` changes only the terminal
+launch settings on this node, as before.
+
 ## Custom update scripts
 
 Every machine is kept up to date its own way — OS packages, dotfiles, a
