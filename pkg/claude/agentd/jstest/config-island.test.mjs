@@ -1156,7 +1156,8 @@ test('picking a Config section is a navigation; a history location shows it', as
     harness.importDashboardModule('js/config-form-markup.js'), harness.importDashboardModule('js/nav-history-core.js'),
     harness.importDashboardModule('js/config-panel.js'),
   ]);
-  assert.deepEqual(new Set(CONFIG_PANELS.map((p) => p.id)), core.KNOWN_SUBTABS.config, 'every section has a route');
+  assert.deepEqual(new Set([...CONFIG_PANELS.map((p) => p.id), ...Object.keys(panel.CONFIG_PANEL_ALIASES)]), core.KNOWN_SUBTABS.config,
+    'every section has a route, and so does every alias');
   const navigated = [];
   const onNav = (e) => navigated.push(e.detail.location);
   harness.document.addEventListener('tclaude:navigated', onNav);
@@ -1174,6 +1175,13 @@ test('picking a Config section is a navigation; a history location shows it', as
   assert.equal(link('logs').getAttribute('aria-current'), 'page');
   assert.equal(mounted.container.querySelector('[data-cfg-panel="logs"]').getAttribute('data-cfg-current'), 'true');
   assert.equal(navigated.length, 1);
+  // The retired Service and Updates routes open Installation.
+  for (const alias of ['service', 'updates']) {
+    await harness.act(() => { panel.setConfigPanel(alias); });
+    assert.equal(link('installation').getAttribute('aria-current'), 'page', `/config/${alias} shows Installation`);
+    assert.equal(mounted.container.querySelector('[data-cfg-panel="installation"]').getAttribute('data-cfg-current'), 'true');
+    assert.ok(mounted.container.querySelector(`#cfg-install-${alias}`), `Installation has the ${alias} part to scroll to`);
+  }
   await mounted.unmount();
 });
 

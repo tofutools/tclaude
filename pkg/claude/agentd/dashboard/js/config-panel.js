@@ -23,6 +23,17 @@ function storedPanel() {
 // re-entering Config lands on the section that was open.
 export const configPanel = signal(storedPanel());
 
+// CONFIG_PANEL_ALIASES are routes that name a part of a section rather than a
+// section: /config/service and /config/updates were sections of their own
+// and now open Installation scrolled to that part. The alias stays in the
+// URL, so the link keeps pointing at the part.
+export const CONFIG_PANEL_ALIASES = Object.freeze({ service: 'installation', updates: 'installation' });
+
+// configSection is the rail section a route shows.
+export function configSection(id) {
+  return CONFIG_PANEL_ALIASES[id] || id;
+}
+
 export function configLocation(panel = configPanel.value) {
   return { tab: CONFIG_TAB, subtab: panel };
 }

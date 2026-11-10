@@ -1,12 +1,12 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
-import { useContext, useState } from 'preact/hooks';
+import { useContext, useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { pickDirectory } from './helpers.js';
 import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
-import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
+import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
@@ -14,6 +14,7 @@ import { ExternalStewardManager } from './config-external-stewards.js';
 import { RelaunchPolicyTable } from './relaunch-policy-table.js';
 import { RemoteAdminPanel } from './remote-admin.js';
 import { ServicePanel } from './config-service.js';
+import { UpdatesPart, afterRender } from './config-installation.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -206,7 +207,8 @@ function GitLabHostList({ values = [], onChange }) {
 // ===================================================================
 
 // Their ids are the /config/<section> routes: keep KNOWN_SUBTABS in
-// nav-history-core.js in step.
+// nav-history-core.js in step. /config/service and /config/updates open
+// Installation at that part (CONFIG_PANEL_ALIASES in config-panel.js).
 export const CONFIG_PANELS = Object.freeze([
   { id: 'appearance', icon: '🎨', title: 'Appearance', lede: 'How the dashboard looks: activity bots, which tabs show, and header and row chrome.' },
   { id: 'terminals', icon: '🖥️', title: 'Terminals & windows', lede: 'Which terminal opens, how agent windows are focused and tiled, and how web terminals attach.' },
@@ -221,8 +223,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'steward', icon: '✦', title: 'Steward', lede: 'Whether you have a Steward, your helper in the companion window, and what it may do without asking.' },
   { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
-  { id: 'updates', icon: '⬆️', title: 'Updates', lede: 'How tclaude updates itself on this machine. Everything here is opt-in: nothing runs on its own until you choose a method and turn on a schedule or start-up updates.' },
-  { id: 'service', icon: '🛎️', title: 'Service', lede: 'How agentd was started on this machine (systemd, launchd or a shell), a restart that keeps its arguments, and starting it when you log in.' },
+  { id: 'installation', icon: '📦', title: 'Installation', lede: 'How tclaude is installed, started and updated on this machine. Each part says whether it is set up, with its main action next to it. Nothing here runs on its own until you turn it on.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'processes', icon: '🔁', title: 'Processes', lede: 'Policy for process workflows shared as .pwf files.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -264,7 +265,7 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
   </div>`;
 }
 
-// UpdatesPanel is Config › Updates: updates.self. The inputs are ordinary
+// UpdatesPanel is Config › Installation › Updates: updates.self. The inputs are ordinary
 // uncontrolled Config fields; the notes around them read the daemon's
 // install detection (config-self-update.js) and the adapter's draft mirror.
 function UpdatesPanel({ open }) {
@@ -474,6 +475,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
   // The open section lives in configPanel so the history router can read and
   // restore it; picking one on the rail is a navigation (a history entry).
   const active = configPanel.value;
+  // shown is the rail section: an alias route (/config/service) shows its
+  // section and scrolls to its part.
+  const shown = configSection(active);
+  const scrollToPart = () => {
+    if (!Object.hasOwn(CONFIG_PANEL_ALIASES, configPanel.peek())) return;
+    globalThis.document?.getElementById(`cfg-install-${configPanel.peek()}`)?.scrollIntoView?.({ block: 'start' });
+  };
+  useEffect(scrollToPart, [active]);
   const select = (id) => {
     if (!setConfigPanel(id)) return;
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
@@ -484,7 +493,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <h2 class="cfg-wizard-title" aria-hidden="true">📜 The Wizard's Almanac</h2>
     <div class="cfg-layout" id="cfg-layout">
-    <${ConfigRail} active=${active} select=${select} dirtyPanels=${dirtyPanels} />
+    <${ConfigRail} active=${shown} select=${select} dirtyPanels=${dirtyPanels} />
     <div class="cfg-main">
 
     <p class="cfg-intro">
@@ -496,7 +505,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
     <div class="cfg-filter-empty ui-empty-block" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
 
-    <${Panel} id="appearance" active=${active}>
+    <${Panel} id="appearance" active=${shown}>
       <${Group} title="Activity bots">
         <${Setting} title="Regular mode" forId="cfg-dashboard-activity-bots-regular" k="dashboard.activity_bots.regular"
           summary="Robot icons in each group header and the top bar, one per status present."
@@ -637,7 +646,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="terminals" active=${active}>
+    <${Panel} id="terminals" active=${shown}>
       <${Group} title="Terminal">
         <${Setting} title="Terminal" forId="cfg-terminal" k="terminal"
           summary="Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.">
@@ -763,7 +772,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="voice" active=${active}>
+    <${Panel} id="voice" active=${shown}>
       <${Group} title="Phrases" lede="What you can say. Dictation listens in your browser's language, so pick phrases in that language: an English phrase may not be heard on another one.">
         ${VOICE_ACTIONS.map(({ action, title, summary, more }) => html`<${Setting} key=${action} title=${title} forId=${`cfg-voice-on-${action}`} k="dashboard.voice.phrases"
           summary=${summary} more=${more}>
@@ -810,7 +819,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <div class="cfg-hint ui-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
       </${Group}>
     </${Panel}>
-    <${Panel} id="notifications" active=${active}>
+    <${Panel} id="notifications" active=${shown}>
       <${Group} title="Delivery">
         <${Setting} title="Desktop notifications" forId="cfg-notif-enabled" k="notifications.enabled"
           summary="Master switch for notification banners.">
@@ -874,7 +883,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="agents" active=${active}>
+    <${Panel} id="agents" active=${shown}>
       <${Group} title="Terminal startup groups">
         <${Setting} title="Auto-join" forId="cfg-session-auto-join-group" k="session.auto_join_group"
           summary=${html`a bare <code>tclaude</code> joins the group configured for its directory`}
@@ -930,7 +939,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="launch" active=${active}>
+    <${Panel} id="launch" active=${shown}>
       <${Group} title="Relaunch policy" lede=${html`One answer per configurable row, for every agent. Re-resolve reads the
         current value; Reuse keeps the one stored at the agent's last launch. The other rows follow their layer. See${' '}
         <code>docs/launch-resolution.md</code>, or <code>tclaude agent relaunch-policy show</code>.`}>
@@ -938,7 +947,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="context" active=${active}>
+    <${Panel} id="context" active=${shown}>
       <${Group} title="Compaction">
         <${Setting} title="Pre-compact guard" wide k="pre_compact_guard" badges=${['claude']}
           summary="Refuse automatic compaction until used context reaches a per-window floor."
@@ -976,7 +985,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="costs" active=${active}>
+    <${Panel} id="costs" active=${shown}>
       <${Group} title="Usage limits">
         <${Setting} title="Limits & budgets"
           summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
@@ -1048,7 +1057,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="assistants" active=${active}>
+    <${Panel} id="assistants" active=${shown}>
       <${Group} title="tclaude ask">
         <${Setting} title="Ask — profile" forId="ask-profile" k="ask.profile"
           summary="Run fresh tclaude ask questions on a saved spawn profile's harness, model and effort."
@@ -1084,7 +1093,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="git" active=${active}>
+    <${Panel} id="git" active=${shown}>
       <${Group} title="Proxy access" lede=${html`Agents without credentials of their own fetch, push and use GitHub and
         GitLab through <code>tclaude proxy</code>; agentd runs the call with the key or token below. See
         <code>docs/proxies.md</code>.`}>
@@ -1147,7 +1156,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="daemon" active=${active}>
+    <${Panel} id="daemon" active=${shown}>
       <${Group} title="Startup">
         <${Setting} title="Auto-launch dashboard" forId="cfg-agent-autolaunch" k="agent.auto_launch_dashboard"
           summary=${html`open the dashboard when <code>agentd serve</code> starts`}>
@@ -1226,21 +1235,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${RemoteAdminPanel} />
     </${Panel}>
 
-    <${Panel} id="updates" active=${active}>
-      <${UpdatesPanel} open=${active === 'updates'} />
+    <${Panel} id="installation" active=${shown}>
+      <${ServicePanel} open=${shown === 'installation'} onRead=${() => afterRender(scrollToPart)} />
+      <${UpdatesPart}>
+        <${UpdatesPanel} open=${shown === 'installation'} />
+      <//>
     </${Panel}>
 
-    <${Panel} id="service" active=${active}>
-      <${ServicePanel} open=${active === 'service'} />
-      <${Group} title="Update on boot">
-        <${Setting} title="Update when the daemon starts" forId="cfg-selfupdate-on-start-svc" k="updates.self.update_on_start"
-          summary=${html`Each time agentd starts, check for an update and apply it with the method chosen in Config › Updates. The same setting as there; it does nothing until a method is chosen.`}>
-          <${Toggle} id="cfg-selfupdate-on-start-svc" />
-        </${Setting}>
-      </${Group}>
-    </${Panel}>
-
-    <${Panel} id="logs" active=${active}>
+    <${Panel} id="logs" active=${shown}>
       <${Group} title="Logging">
         <${Setting} title="Log level" forId="cfg-log-level" k="log_level" summary="Verbosity of agentd's output.log.">
           <${ConfigSelect} id="cfg-log-level" aria-label="Log level">
@@ -1290,7 +1292,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="steward" active=${active}>
+    <${Panel} id="steward" active=${shown}>
       <${Group} title="Stewards">
         <${Setting} title="Stewards" forId="cfg-steward-enabled" k="steward.disabled" badges=${['refresh']}
           summary=${html`a Steward in the companion window, and external stewards if allowed below`}
@@ -1358,7 +1360,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${ExternalStewardGroup} loads=${loads} />
     </${Panel}>
 
-    <${Panel} id="processes" active=${active}>
+    <${Panel} id="processes" active=${shown}>
       <${Group} title="Workflow files">
         <${Setting} title="Refuse unsigned workflows" forId="cfg-processes-refuse-unsigned" k="processes.refuse_unsigned_imports"
           summary=${html`refuse to import a <code>.pwf</code> workflow file without a valid signature`}
@@ -1368,7 +1370,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="experimental" active=${active}>
+    <${Panel} id="experimental" active=${shown}>
       <${Group} title="Feature flags"
         lede=${html`Opt-in flags for features under active development. Most ship dark on
           <code>main</code> — off by default and invisible in normal use — so they can land in
@@ -1406,12 +1408,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="keyboard" active=${active}>
+    <${Panel} id="keyboard" active=${shown}>
       <${KeyboardShortcutList} Setting=${Setting} drafts=${lists[KEYBINDINGS_LIST]}
         onChange=${(values) => onListChange(KEYBINDINGS_LIST, values)} />
     </${Panel}>
 
-    <${Panel} id="advanced" active=${active}>
+    <${Panel} id="advanced" active=${shown}>
       <${Group} title="Sudo configuration">
         <${Setting} title="Sudo (raw JSON)" wide k="agent.sudo"
           summary=${html`The <code>agent.sudo</code> block (time-bounded permission elevations, with optional

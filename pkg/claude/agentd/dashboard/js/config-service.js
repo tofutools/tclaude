@@ -1,6 +1,7 @@
-// config-service.js — Config › Service: how this node's agentd was started
-// (systemd, launchd, tmux, a shell), what it was started with, a restart that
-// goes through the supervisor, and starting agentd at login or boot.
+// config-service.js — Config › Installation › Start automatically: how this
+// node's agentd was started (systemd, launchd, tmux, a shell), what it was
+// started with, a restart that goes through the supervisor, and starting
+// agentd at login or boot.
 //
 // Unlike the rest of the Config form this is not config.json: it reads
 // GET /api/node/service and acts at once through its POST routes, so its
@@ -14,10 +15,14 @@ import { RequestError, requestJSON } from './request-json.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { writeClipboard } from './insecure-origin.js';
 import { LaunchProfile } from './config-service-launch.js';
+import { InstallPart, useFold } from './config-installation.js';
 
 const html = htm.bind(h);
 
 export const SERVICE_URL = '/api/node/service';
+// NODE_BASE is this node's API base. A peer's is /api/peer/<id>/node; the
+// service part reads <base>/service and its launch profile <base>/service/launch.
+export const NODE_BASE = '/api/node';
 // RESTART_POLL_MS paces the reads while the daemon restarts; RESTART_WAIT_MS
 // is how long the panel waits for it to answer again before saying so.
 const RESTART_POLL_MS = 1000;
@@ -62,6 +67,38 @@ export function restartAppliesAutostart(service) {
   return !!(l && a?.installed && a.managed && l.managed_by_tclaude && l.kind === a.kind);
 }
 
+const SUPERVISORS = new Set(['systemd-user', 'systemd-system', 'launchd']);
+
+// serviceStatus is the Start automatically part's status: state, a sentence,
+// its main action ('install' or 'uninstall', or none), and whether the part
+// is set up and healthy enough to fold its detail away.
+export function serviceStatus(service) {
+  const l = service?.launcher || {};
+  const a = service?.autostart;
+  const name = l.unit || l.label;
+  const runs = `agentd runs under ${launcherText(l.kind)}${name ? ` ${name}` : ''}`;
+  if (!a) return { state: 'unknown', text: `${runs}. This daemon cannot set up starting on login.` };
+  if (!a.supported) return { state: 'unknown', text: `${runs}. Starting on login is not supported here.` };
+  const unitKind = a.kind === 'launchd' ? 'LaunchAgent' : 'systemd user unit';
+  if (!a.installed) {
+    if (SUPERVISORS.has(l.kind)) {
+      return { state: 'on', text: `${runs}, which tclaude did not write, so that unit decides when it starts. tclaude's own start-on-login is not installed.` };
+    }
+    return { state: 'off', text: `Not started automatically. ${runs}; it stops when you log out or reboot.`, action: 'install' };
+  }
+  const where = a.path ? ` ${a.path}` : '';
+  if (!a.managed) return { state: 'on', text: `Starts on login from${where || ' a unit'}, which tclaude did not write, so tclaude leaves it alone.` };
+  if (!a.enabled) return { state: 'warn', text: `tclaude wrote the ${unitKind}${where}, but it is not enabled, so agentd does not start on login.`, action: 'install' };
+  const observed = observedArgv(l);
+  const differs = !!(a.argv && observed.length && !sameFlags(a.argv, observed));
+  const now = l.managed_by_tclaude && l.kind === a.kind ? '' : ` agentd runs under ${launcherText(l.kind)} now; the unit starts it from the next login.`;
+  const linger = a.linger && !a.linger.enabled ? ' It stops when you log out (lingering is off).' : '';
+  if (differs || (a.warnings || []).length) {
+    return { state: 'warn', text: `Starts on login with the ${unitKind}${where}, written by tclaude, but ${differs ? 'its command differs from what agentd runs with now' : 'see the warnings below'}.${linger}`, action: 'uninstall' };
+  }
+  return { state: 'on', text: `Starts on login with the ${unitKind}${where}, written by tclaude.${now}${linger}`, action: 'uninstall', healthy: true };
+}
+
 function errorText(e) {
   return e?.message || String(e);
 }
@@ -81,9 +118,12 @@ function Row({ label, children }) {
 }
 
 // ServicePanel reads the service state while open and drives restart and
-// autostart. fetchImpl/confirm/toast/copy/timers are injectable for tests.
+// autostart. base names the node (NODE_BASE, or a peer's base); a read-only
+// caller (access "read") gets no buttons. onRead is told after each read,
+// once the part has its height. fetchImpl/confirm/toast/copy/timers
+// are injectable for tests.
 export function ServicePanel({
-  open = true, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
+  open = true, base = NODE_BASE, onRead = () => {}, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
   copy = writeClipboard, timers = globalThis,
 }) {
   const [service, setService] = useState(null);
@@ -103,8 +143,12 @@ export function ServicePanel({
   const [launchReload, setLaunchReload] = useState(0);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+  // reads counts the service reads, so the part folds afresh after each.
+  const [reads, setReads] = useState(0);
+  const [collapsed, toggle] = useFold(!!(service && serviceStatus(service).healthy), reads);
 
-  const read = (refresh = false) => requestJSON(refresh ? `${SERVICE_URL}?refresh=1` : SERVICE_URL, { fetchImpl });
+  const serviceUrl = `${base}/service`;
+  const read = (refresh = false) => requestJSON(refresh ? `${serviceUrl}?refresh=1` : serviceUrl, { fetchImpl });
   const readBounded = () => new Promise((resolve, reject) => {
     const t = timers.setTimeout(() => reject(new Error('timed out')), POLL_TIMEOUT_MS);
     read(true).then(resolve, reject).finally(() => timers.clearTimeout?.(t));
@@ -115,6 +159,8 @@ export function ServicePanel({
       if (!alive.current) return;
       setService(s);
       setError(null);
+      setReads((n) => n + 1);
+      onRead();
     } catch (e) {
       if (alive.current) setError(e);
     }
@@ -159,7 +205,7 @@ export function ServicePanel({
     setBusy('restart');
     setActionError('');
     try {
-      await requestJSON(`${SERVICE_URL}/restart`, { method: 'POST', body: {}, fetchImpl });
+      await requestJSON(`${serviceUrl}/restart`, { method: 'POST', body: {}, fetchImpl });
       setRestarting(true);
       void waitForDaemon();
     } catch (e) {
@@ -189,7 +235,7 @@ export function ServicePanel({
     setBusy(action);
     setActionError('');
     try {
-      const s = await requestJSON(`${SERVICE_URL}/autostart`, { method: 'POST', body, fetchImpl });
+      const s = await requestJSON(`${serviceUrl}/autostart`, { method: 'POST', body, fetchImpl });
       if (!alive.current) return;
       setService(s);
       setLaunchReload((n) => n + 1);
@@ -207,11 +253,12 @@ export function ServicePanel({
 
   if (error) {
     const absent = error instanceof RequestError && error.status === 404;
-    return html`<div class="cfg-svc" id="cfg-service"><span class="muted" role="alert">${absent
-      ? 'This daemon does not report how it was started yet.'
-      : `Could not read the service state: ${errorText(error)}`}</span></div>`;
+    return html`<${InstallPart} id="service" title="Start automatically" state="unknown"
+      status=${html`<span class="muted" role="alert" id="cfg-service">${absent
+        ? 'This daemon does not report how it was started yet.'
+        : `Could not read the service state: ${errorText(error)}`}</span>`} />`;
   }
-  if (!service) return html`<div class="cfg-svc" id="cfg-service"><span class="muted">Loading…</span></div>`;
+  if (!service) return html`<${InstallPart} id="service" title="Start automatically" state="unknown" status=${html`<span class="muted" id="cfg-service">Loading…</span>`} />`;
 
   const l = service.launcher || {};
   const a = service.autostart;
@@ -221,7 +268,19 @@ export function ServicePanel({
   const byProfile = !!launch?.profile;
   const customEmpty = !byProfile && argsMode === 'custom' && serveArgsOf(argsText).length === 0;
   const any = busy || restarting;
-  return html`<div class="cfg-svc" id="cfg-service">
+  const readOnly = service.access === 'read';
+  const status = serviceStatus(service);
+  const actions = readOnly ? html`<span class="muted" id="cfg-svc-readonly">Read only: you may see how this node starts, not change it.</span>`
+    : status.action === 'install' && (!a?.installed || a.managed)
+    ? html`<${Button} variant="primary" size="sm" id="cfg-install-service-on" disabled=${!!any || customEmpty} busy=${busy === 'install'}
+        onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>`
+    : status.action === 'uninstall'
+      ? html`<${Button} variant="danger" size="sm" id="cfg-install-service-off" disabled=${!!any} busy=${busy === 'uninstall'}
+          onClick=${() => { void autostart('uninstall'); }}>Remove…<//>`
+      : null;
+  return html`<${InstallPart} id="service" title="Start automatically" state=${status.state} collapsed=${collapsed} onToggle=${toggle}
+    status=${html`<span>${status.text}</span>`} actions=${html`${actions}${actionError && collapsed ? html`<span class="cfg-svc-warn" role="alert">${actionError}</span>` : ''}`}>
+  <div class="cfg-svc" id="cfg-service">
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launcher-h">
       <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launcher-h">Launcher</h3>
       <p class="cfg-group-lede">Detected from the running daemon. A restart goes through its supervisor, so the unit's own arguments stay.</p>
@@ -232,7 +291,7 @@ export function ServicePanel({
         <${Row} label="Environment"><${EnvList} env=${l.env} />${(l.environment_files || []).map((f) => html` <span key=${f} class="muted">· from <code>${f}</code></span>`)}<//>
         ${(l.restart_policy || l.kill_mode) && html`<${Row} label="Policy"><span class="muted">${[l.restart_policy && `Restart=${l.restart_policy}`, l.kill_mode && `KillMode=${l.kill_mode}`].filter(Boolean).join(' · ')}</span><//>`}
         <${Row} label="Restart"><span>${l.restart_method === 'supervisor' ? 'through the supervisor' : 'agentd re-runs itself with the same arguments'}</span>
-          <${Button} size="sm" id="cfg-svc-restart" disabled=${!!any} busy=${busy === 'restart' || restarting} onClick=${() => { void restart(); }}>${restarting ? 'Restarting…' : 'Restart agentd…'}<//><//>
+          ${!readOnly && html`<${Button} size="sm" id="cfg-svc-restart" disabled=${!!any} busy=${busy === 'restart' || restarting} onClick=${() => { void restart(); }}>${restarting ? 'Restarting…' : 'Restart agentd…'}<//>`}<//>
       </div>
       ${(l.warnings || []).map((w) => html`<div key=${w} class="cfg-svc-warn">${w}</div>`)}
       ${service.restart_pending && html`<div class="cfg-svc-warn" id="cfg-svc-restart-pending">A restart (${service.restart_pending}) is pending.</div>`}
@@ -240,7 +299,7 @@ export function ServicePanel({
 
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-launch-h">
       <h3 class="ui-eyebrow ui-eyebrow-section" id="cfg-svc-launch-h">Launch profile</h3>
-      <${LaunchProfile} open=${open} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
+      <${LaunchProfile} open=${open} url=${`${serviceUrl}/launch`} reload=${launchReload} fetchImpl=${fetchImpl} confirm=${confirm} toast=${toast} onView=${setLaunch} />
     </div>
 
     <div class="cfg-section" role="group" aria-labelledby="cfg-svc-boot-h">
@@ -257,7 +316,7 @@ export function ServicePanel({
             ${differs && html`<div class="cfg-svc-warn" id="cfg-svc-differs">Differs from what agentd runs with now.</div>`}<//>`}
           ${configured && html`<${Row} label="Unit environment"><${EnvList} env=${a.env} />${a.env_file ? html` <span class="muted">· from <code>${a.env_file}</code></span>` : ''}<//>`}
           ${(!a.installed || a.managed) && byProfile && html`<${Row} label="Flags and env"><span class="muted" id="cfg-svc-by-profile">from the launch profile above</span><//>`}
-          ${(!a.installed || a.managed) && html`
+          ${!readOnly && (!a.installed || a.managed) && html`
             ${!byProfile && html`<${Row} label="Serve flags"><span class="cfg-svc-args">
               <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="keep" checked=${argsMode === 'keep'} onChange=${() => setArgsMode('keep')} /> keep the flags agentd runs with now</label>
               <label class="cfg-inline"><input type="radio" name="cfg-svc-args" value="custom" checked=${argsMode === 'custom'} onChange=${() => setArgsMode('custom')} /> use these:</label>
@@ -277,5 +336,6 @@ export function ServicePanel({
         ${(a.warnings || []).map((w) => html`<div key=${w} class="cfg-svc-warn">${w}</div>`)}`}
       ${actionError && html`<div class="cfg-svc-warn" role="alert" id="cfg-svc-error">${actionError}</div>`}
     </div>
-  </div>`;
+  </div>
+  <//>`;
 }
