@@ -409,8 +409,10 @@ and the API is `GET /api/node/launcher` and `POST
   launcher's own `PATH` stays on the end as a fallback, and the launch
   profile's variables still win. If the shell gives no answer within 10
   seconds, agentd starts with the launcher's environment, and
-  `launcher-agentd.log` says so. The autostart unit is not changed: it keeps
-  its own environment.
+  `launcher-agentd.log` says so. On macOS the locale usually comes from the
+  terminal app rather than your profile. When neither the launcher nor the
+  login shell names one, agentd gets `LANG=en_US.UTF-8`. The autostart unit is
+  not changed: it keeps its own environment.
 
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop
