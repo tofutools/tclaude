@@ -64,6 +64,10 @@ func TestWithLocale(t *testing.T) {
 	if got := WithLocale([]string{"LANG=C"}, "en_GB.UTF-8"); !slices.Equal(got, []string{"LANG=C", "LC_CTYPE=en_GB.UTF-8"}) {
 		t.Errorf("LANG=C: %v", got)
 	}
+	// A non-UTF-8 LC_CTYPE outranks LANG: it is the one to replace.
+	if got := WithLocale([]string{"LC_CTYPE=C"}, "en_GB.UTF-8"); !slices.Equal(got, []string{"LC_CTYPE=C", "LC_CTYPE=en_GB.UTF-8"}) {
+		t.Errorf("LC_CTYPE=C: %v", got)
+	}
 	if got := WithLocale([]string{"LANG=C"}, ""); !slices.Equal(got, []string{"LANG=C"}) {
 		t.Errorf("blank: %v", got)
 	}

@@ -48,3 +48,58 @@ func productionLocaleDeps() localeDeps {
 		Setenv:  os.Setenv,
 	}
 }
+
+// syncTmuxServerLocale gives a running tclaude tmux server agentd's UTF-8
+// locale when the server's global environment has none. Panes take their
+// environment from the server, not from agentd, and the server outlives
+// agentd: one an earlier, locale-less agentd started (or one an external
+// unit owns) would otherwise start every new agent without a locale. No
+// server running: nothing to do, the one agentd starts inherits its env.
+func syncTmuxServerLocale(environ []string, run func(args ...string) ([]byte, error)) {
+	value, key := launcherEffectiveLocale(environ)
+	if value == "" || !strings.Contains(strings.ToLower(strings.ReplaceAll(value, "-", "")), "utf8") {
+		return
+	}
+	out, err := run("show-environment", "-g")
+	if err != nil {
+		return // no server
+	}
+	var server []string
+	for _, line := range strings.Split(string(out), "\n") {
+		// "-NAME" marks a variable removed from the environment.
+		if line != "" && !strings.HasPrefix(line, "-") {
+			server = append(server, line)
+		}
+	}
+	if v, _ := launcherEffectiveLocale(server); v != "" {
+		return // the server has a locale; it was chosen for it
+	}
+	if _, err := run("set-environment", "-g", key, value); err != nil {
+		slog.Info("agentd: could not give the tmux server a locale", "error", err)
+		return
+	}
+	slog.Info("agentd: gave the running tmux server a UTF-8 locale for new agents", "key", key, "value", value)
+}
+
+// launcherEffectiveLocale returns the first set of LC_ALL, LC_CTYPE and
+// LANG in environ, and its name (LANG when LC_ALL decides it, as LC_ALL
+// is not one to plant in a server).
+func launcherEffectiveLocale(environ []string) (value, key string) {
+	get := func(k string) string {
+		for i := len(environ) - 1; i >= 0; i-- {
+			if kk, v, ok := strings.Cut(environ[i], "="); ok && kk == k {
+				return v
+			}
+		}
+		return ""
+	}
+	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := get(k); v != "" {
+			if k == "LC_ALL" {
+				k = "LANG"
+			}
+			return v, k
+		}
+	}
+	return "", ""
+}

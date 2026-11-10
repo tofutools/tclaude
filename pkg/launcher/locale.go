@@ -101,18 +101,23 @@ func ChooseLocale(env, login []string, s LocaleSources) (value, source string) {
 	return "", ""
 }
 
-// WithLocale returns env with value as its locale: LANG when env has none,
-// else LC_CTYPE, which overrides a non-UTF-8 LANG for the character set.
-// A blank value returns env unchanged.
+// WithLocale returns env with value as its locale: LANG when env names no
+// locale at all, else LC_CTYPE, which outranks LANG (and replaces a
+// non-UTF-8 LC_CTYPE) for the character set. A blank value returns env
+// unchanged.
 func WithLocale(env []string, value string) []string {
 	if value == "" {
 		return env
 	}
-	key := "LANG"
-	if lookup(env, "LANG") != "" {
-		key = "LC_CTYPE"
+	return append(env, LocaleKey(env)+"="+value)
+}
+
+// LocaleKey is the variable WithLocale sets in env.
+func LocaleKey(env []string) string {
+	if lookup(env, "LANG") != "" || lookup(env, "LC_CTYPE") != "" {
+		return "LC_CTYPE"
 	}
-	return append(env, key+"="+value)
+	return "LANG"
 }
 
 // effectiveLocale returns the locale env's character set comes from: the
