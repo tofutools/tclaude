@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -146,5 +148,104 @@ func TestRelaunchWaitKeepsSignalsIgnoredAtStart(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "alive") {
 		t.Fatalf("relaunched child did not keep SIGHUP ignored: err=%v out=%q", err, out)
+	}
+}
+
+func TestRelaunchWaitStartsAgentdAgainOnHandBack(t *testing.T) {
+	sh := shellPath(t)
+	dir := testutil.CanonicalTempDir(t)
+	runs := filepath.Join(dir, "runs")
+	// The first agentd hands back (as relaunchHandBack makes it); the one
+	// the helper starts in its place exits 5. Each records the helper PID
+	// it was told and its parent.
+	script := `echo "$` + relaunchHelperVar + ` $PPID" >> "$1"; [ "$(wc -l < "$1")" -ge 2 ] && exit 5; exit ` + strconv.Itoa(relaunchHandBackExit)
+	if code := runRelaunch(relaunchWait, sh, []string{"sh", "-c", script, "sh", runs}); code != 5 {
+		t.Fatalf("exit status = %d, want 5 from the agentd started after the hand-back", code)
+	}
+	data, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want := strconv.Itoa(os.Getpid()) + " " + strconv.Itoa(os.Getpid())
+	if len(lines) != 2 || lines[0] != want || lines[1] != want {
+		t.Fatalf("runs = %q, want two runs told the helper PID and parented by it (%q)", lines, want)
+	}
+}
+
+func TestRelaunchCommandTellsOnlyAWaitedForAgentdTheHelper(t *testing.T) {
+	prev := launchEnviron
+	t.Cleanup(func() { launchEnviron = prev })
+	launchEnviron = []string{"HOME=/h"}
+	helperVars := func(env []string) []string {
+		var out []string
+		for _, kv := range env {
+			if strings.HasPrefix(kv, relaunchHelperVar+"=") {
+				out = append(out, kv)
+			}
+		}
+		return out
+	}
+	wait := relaunchCommand(relaunchWait, "/x", []string{"x"})
+	if got, want := helperVars(wait.Env), []string{relaunchHelperVar + "=" + strconv.Itoa(os.Getpid())}; !slices.Equal(got, want) {
+		t.Errorf("wait env helper vars = %q, want %q", got, want)
+	}
+	if got := helperVars(relaunchCommand(relaunchDetach, "/x", []string{"x"}).Env); len(got) != 0 {
+		t.Errorf("a detached agentd has nothing to hand back to, got %q", got)
+	}
+	if !slices.Equal(launchEnviron, []string{"HOME=/h"}) {
+		t.Errorf("relaunchCommand changed launchEnviron: %q", launchEnviron)
+	}
+}
+
+func TestRelaunchHandBackDecision(t *testing.T) {
+	prevPID, prevParent := relaunchHelperPID, relaunchParentPID
+	t.Cleanup(func() { relaunchHelperPID, relaunchParentPID = prevPID, prevParent })
+	for _, tc := range []struct {
+		name            string
+		helper, parent  int
+		path, startPath string
+		want            bool
+	}{
+		{"started by a waiting helper", 864, 864, "/bin/tclaude", "/bin/tclaude", true},
+		{"no helper (started from the shell)", 0, 5638, "/bin/tclaude", "/bin/tclaude", false},
+		{"helper gone, reparented", 864, 1, "/bin/tclaude", "/bin/tclaude", false},
+		{"variable inherited from elsewhere", 864, 4242, "/bin/tclaude", "/bin/tclaude", false},
+		{"self-update moved the binary", 864, 864, "/new/tclaude", "/bin/tclaude", false},
+	} {
+		relaunchHelperPID = tc.helper
+		relaunchParentPID = func() int { return tc.parent }
+		if got := relaunchHandBack(tc.path, tc.startPath); got != tc.want {
+			t.Errorf("%s: relaunchHandBack = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRelaunchRestartHandsBackToItsHelper(t *testing.T) {
+	prevPID, prevParent, prevExit := relaunchHelperPID, relaunchParentPID, restartExit
+	updateRestartState.Lock()
+	prevState := struct {
+		requested       bool
+		path, startPath string
+		plan            restartPlan
+	}{updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan}
+	updateRestartState.requested, updateRestartState.path, updateRestartState.startPath = true, "/bin/tclaude", "/bin/tclaude"
+	updateRestartState.plan = restartPlan{relaunch: true}
+	updateRestartState.Unlock()
+	t.Cleanup(func() {
+		relaunchHelperPID, relaunchParentPID, restartExit = prevPID, prevParent, prevExit
+		updateRestartState.Lock()
+		updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan = prevState.requested, prevState.path, prevState.startPath, prevState.plan
+		updateRestartState.Unlock()
+	})
+	relaunchHelperPID = 864
+	relaunchParentPID = func() int { return 864 }
+	exited, code := false, 0
+	restartExit = func(c int) { exited, code = true, c }
+	if err := performSelfUpdateRestart(); err != nil {
+		t.Fatal(err)
+	}
+	if !exited || code != relaunchHandBackExit {
+		t.Fatalf("exited=%v code=%d, want an exit with %d (hand back, no second helper)", exited, code, relaunchHandBackExit)
 	}
 }

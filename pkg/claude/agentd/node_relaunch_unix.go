@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
+	"strconv"
 	"syscall"
 )
 
@@ -31,33 +33,54 @@ func runRelaunch(mode, exe string, argv []string) int {
 		}
 		defer signal.Stop(sigs)
 	}
-	cmd := relaunchCommand(mode, exe, argv)
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
-		return 1
+	for {
+		cmd := relaunchCommand(mode, exe, argv)
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
+			return 1
+		}
+		if mode == relaunchDetach {
+			_ = cmd.Process.Release()
+			return 0
+		}
+		code, sig := relaunchWaitChild(cmd, sigs)
+		if sig == 0 && code == relaunchHandBackExit {
+			// agentd restarted and handed back (relaunchHandBack). A
+			// signal that came while it stopped was meant for it: stop
+			// as it would have.
+			select {
+			case s := <-sigs:
+				sig, _ = s.(syscall.Signal)
+			default:
+				continue
+			}
+		}
+		if sig != 0 {
+			// Die of the same signal, so the shell reports what agentd did.
+			signal.Stop(sigs)
+			signal.Reset(sig)
+			_ = syscall.Kill(os.Getpid(), sig)
+			return 128 + int(sig)
+		}
+		return code
 	}
-	if mode == relaunchDetach {
-		_ = cmd.Process.Release()
-		return 0
-	}
-	code, sig := relaunchWaitChild(cmd, sigs)
-	if sig != 0 {
-		// Die of the same signal, so the shell reports what agentd did.
-		signal.Stop(sigs)
-		signal.Reset(sig)
-		_ = syscall.Kill(os.Getpid(), sig)
-		return 128 + int(sig)
-	}
-	return code
 }
 
 // relaunchCommand builds the agentd process: the helper's launch
 // environment (the old daemon's, captured before startup changed anything)
 // and stdio, in its own session when
 // detached, otherwise in the helper's process group, so Ctrl+C and job
-// control reach it as before.
+// control reach it as before. A waited-for agentd is told the helper's
+// PID, so its next restart hands back here (relaunchHandBack).
 func relaunchCommand(mode, exe string, argv []string) *exec.Cmd {
-	cmd := &exec.Cmd{Path: exe, Args: argv, Env: launchEnviron, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
+	env := launchEnviron
+	if mode == relaunchDetach {
+		// Nothing waits for a detached daemon to hand back.
+		env = slices.Clip(env)
+	} else {
+		env = append(slices.Clip(env), relaunchHelperVar+"="+strconv.Itoa(os.Getpid()))
+	}
+	cmd := &exec.Cmd{Path: exe, Args: argv, Env: env, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
 	if mode == relaunchDetach {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	}
