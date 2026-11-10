@@ -332,7 +332,9 @@ from the running daemon.
   showing, it starts again in a new process instead, because the icon does
   not come back after a re-run in the same process: a detached daemon is
   started detached again, and a daemon in a shell or tmux pane stays the
-  foreground job there, so Ctrl+C still stops it.
+  foreground job there, so Ctrl+C still stops it. There a small helper
+  process keeps the job and starts each new agentd, so `ps` shows one helper
+  however often agentd restarts, and the old icon leaves the menu bar.
 - **Launch profile** is what agentd should be started with: serve flags, and
   environment variables, each either set to a value or inherited from
   agentd's own environment when the unit is written. It is kept in

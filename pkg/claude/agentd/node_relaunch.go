@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -98,4 +99,43 @@ func relaunchCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// Hand-back. A daemon the waiting helper started does not exec into a
+// second helper when it restarts: that would nest one helper per restart in
+// the shell job. It exits with relaunchHandBackExit instead, and its helper
+// starts agentd again. The helper says it takes the hand-back by setting
+// relaunchHelperVar to its PID in the environment it starts agentd with; a
+// helper from an older binary does not, and the daemon then relaunches
+// through a helper of its own, as before.
+const (
+	relaunchHelperVar    = "TCLAUDE_AGENTD_RELAUNCH_HELPER"
+	relaunchHandBackExit = 76
+)
+
+// relaunchHelperPID is the PID of the waiting helper that started this
+// process, 0 when none did. Read once, at startup: init removes the
+// variable from the environment, so the agents and processes agentd starts
+// do not inherit it, and launchEnviron leaves it out, so a restart's launch
+// comparison does not see it come and go.
+var relaunchHelperPID = func() int {
+	pid, err := strconv.Atoi(os.Getenv(relaunchHelperVar))
+	if err != nil || pid <= 1 {
+		return 0
+	}
+	return pid
+}()
+
+func init() { _ = os.Unsetenv(relaunchHelperVar) }
+
+// relaunchParentPID is this process's parent; tests swap it.
+var relaunchParentPID = os.Getppid
+
+// relaunchHandBack reports whether a relaunch restart should hand back to
+// the waiting helper that started this daemon: that helper is still the
+// parent (not exited, the daemon reparented), and it would start the same
+// binary path (a self-update that moved the binary relaunches through a new
+// helper, which starts the new path).
+func relaunchHandBack(path, startPath string) bool {
+	return relaunchHelperPID != 0 && relaunchParentPID() == relaunchHelperPID && path != "" && path == startPath
 }

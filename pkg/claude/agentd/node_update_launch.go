@@ -18,9 +18,11 @@ import (
 // starts as this one was started, and the update's before/after comparison
 // reads the same thing on both sides.
 // A login-shell failure the launcher handed over is reported once, by the
-// daemon it started, not again after every in-place restart.
+// daemon it started, not again after every in-place restart. The relaunch
+// helper's PID (relaunchHelperVar) is this process's own, not a launch
+// parameter.
 var launchEnviron = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-	return strings.HasPrefix(kv, launcher.LoginEnvErrorVar+"=")
+	return strings.HasPrefix(kv, launcher.LoginEnvErrorVar+"=") || strings.HasPrefix(kv, relaunchHelperVar+"=")
 })
 
 // selfUpdateProcess returns this daemon's argv and launch environment; tests
