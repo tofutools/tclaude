@@ -118,6 +118,24 @@ func TestConfigNodeCLI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "info", cfg.LogLevel, "log_level back to its default")
 
+	// A secret inside a map is replaced by setting the map: empty keeps it,
+	// a value replaces it.
+	h.grant(t, agentd.PermNodeConfigCredentials, "")
+	proxy := func(hv string) string {
+		return `{"search":{"url":"https://api.example.com","header":"Authorization","header_value":"` + hv + `"}}`
+	}
+	rc, out, errOut = run(2, "set", "agent.http_proxies", proxy(""), "--node", "bob")
+	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "hv-s3cret", cfg.Agent.HTTPProxies["search"].HeaderValue, "a withheld secret sent back empty is kept")
+	rc, out, errOut = run(2, "set", "agent.http_proxies", proxy("hv-new"), "--node", "bob")
+	require.Equal(t, 0, rc, "out=%s err=%s", out, errOut)
+	assert.Contains(t, out, "agent.http_proxies")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "hv-new", cfg.Agent.HTTPProxies["search"].HeaderValue)
+
 	// The node-only class stays the node's, whatever the grants.
 	rc, out, errOut = run(2, "clear", "federation.invite", "--node", "bob")
 	assert.Equal(t, 5, rc, "out=%s err=%s", out, errOut)

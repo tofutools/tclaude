@@ -257,9 +257,10 @@ func runNodeConfigGet(node, key string, asJSON bool, stdout, stderr io.Writer) i
 }
 
 // nodeConfigValue is a set value: JSON if it parses as JSON, else a string.
-// A secret is always a string, so a numeric token is not sent as a number.
-func nodeConfigValue(value string, secret bool) json.RawMessage {
-	if json.Valid([]byte(value)) && (!secret || strings.HasPrefix(strings.TrimSpace(value), `"`)) {
+// A secret inside a map or list (a proxy's header value, a launch env value)
+// is replaced by setting that whole map or list leaf.
+func nodeConfigValue(value string) json.RawMessage {
+	if json.Valid([]byte(value)) {
 		return json.RawMessage(value)
 	}
 	raw, _ := json.Marshal(value)
@@ -282,11 +283,7 @@ func runNodeConfigChange(node, key string, value *string, stdout, stderr io.Writ
 	body := map[string]any{"version": view.Version}
 	switch {
 	case value != nil:
-		secret := false
-		for _, k := range view.Access.Keys {
-			secret = secret || k.Path == key && k.Secret
-		}
-		body["set"] = map[string]json.RawMessage{key: nodeConfigValue(*value, secret)}
+		body["set"] = map[string]json.RawMessage{key: nodeConfigValue(*value)}
 	default:
 		secret := false
 		for _, r := range view.Redacted {

@@ -413,10 +413,14 @@ tclaude config clear agent.http_proxies.search.header_value --node bob
 - `get` prints each key as `key = value  [class, write|read]`: its class and
   whether you may change it. A secret prints as `(withheld: set)` or
   `(withheld: not set)`, never its value. The first line names your trust
-  level there. `--json` prints the node's answer.
+  level there. `--json` prints the node's answer, or with a key the rows
+  shown.
 - `set` takes a JSON value (`true`, `8080`, `["a","b"]`, `"text"`) or else a
-  plain string. A secret value is always a string, and replaces the stored
-  one. `set` reads the config first and sends the change with its `version`.
+  plain string. `default` is sent as the string `"default"`, so use `clear`
+  for the default. A secret inside a map or list, such as a proxy's header
+  value, is replaced by setting the whole map or list: a secret left empty
+  in it is kept, one given a value replaces the stored one. `set` reads the
+  config first and sends the change with its `version`.
 - `clear` puts a key back to its default, or removes a withheld secret.
 - If the config changed between the read and the change, the change is
   refused: re-read it with `get` and run the command again.

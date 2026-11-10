@@ -96,7 +96,7 @@ type configGetParams struct {
 
 type configSetParams struct {
 	Key   string `pos:"true" help:"Config key to set"`
-	Value string `pos:"true" help:"true, false, or default (clear the explicit value); with --node, a JSON value or a plain string"`
+	Value string `pos:"true" help:"true, false, or default (clear the explicit value); with --node, a JSON value or a plain string (use clear for the default)"`
 	Node  string `long:"node" optional:"true" help:"Trusted peer label or instance ID: change that node's config (needs node.config.read and the key class's grant)"`
 }
 
@@ -154,7 +154,7 @@ func configSetCmd() *cobra.Command {
 	return boa.CmdT[configSetParams]{
 		Use:         "set",
 		Short:       "Change a terminal-launch setting (e.g. session.auto_join_group), or a linked node's config with --node",
-		Long:        "Set a supported config key to true or false, or to default to clear the explicit value. The same settings are in the dashboard under Config › Agents › Terminal startup groups. Human-only: a managed agent cannot change the operator config." + configNodeLong + " The value is JSON (true, 8080, [\"a\",\"b\"], \"text\") or else a plain string; a secret is always a string and replaces the stored one.",
+		Long:        "Set a supported config key to true or false, or to default to clear the explicit value. The same settings are in the dashboard under Config › Agents › Terminal startup groups. Human-only: a managed agent cannot change the operator config." + configNodeLong + " The value is JSON (true, 8080, [\"a\",\"b\"], \"text\") or else a plain string; default is the string \"default\" there, so use config clear --node to go back to the default. A secret inside a map or list is replaced by setting that whole map or list; one left empty is kept.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *configSetParams, _ *cobra.Command, _ []string) {
 			configExit(runConfigSet(p, cliStdout, cliStderr))
