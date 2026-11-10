@@ -126,3 +126,10 @@ export function registerPanelKey(panel, k) {
 export function panelRowKeys(panel) {
   return [...(panelKeys.get(panel) || [])].filter(Boolean);
 }
+
+// configNodeName names the node a peer's page edits ('' on this node's own
+// page), so the header and the save confirmation say whose config it is.
+export function configNodeName(remote = globalThis.__tclaudeRemoteNode, doc = globalThis.document) {
+  if (!remote?.id) return '';
+  return doc?.documentElement?.dataset?.remoteNodeName || remote.id.slice(0, 13);
+}

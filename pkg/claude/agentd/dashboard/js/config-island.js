@@ -7,6 +7,7 @@ import { Dialog } from './ui-dialog.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
 import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
 import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
+import { configNodeName } from './config-access.js';
 
 const html = htm.bind(h);
 
@@ -17,10 +18,11 @@ function ConfigDiffModal({ model, close }) {
   const adds = diff.filter(line => line.t === 'add').length;
   const dels = diff.filter(line => line.t === 'del').length;
   const sign = { add: '+', del: '-', ctx: ' ' };
-  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title="Confirm config changes"
+  const node = configNodeName();
+  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title=${node ? `Confirm config changes on ${node} (remote)` : 'Confirm config changes'}
     initialFocusRef=${confirmRef} onClose=${() => close(false)} cancel="Cancel"
     footer=${html`<${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
-      onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}<//>`}>
+      onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : node ? `Save to ${node}` : 'Save to config.json'}<//>`}>
     ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
     <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
     ${model.secrets?.length ? html`<p id="config-diff-secrets" class="cfg-diff-sub">Withheld secrets this save sets or clears (their values are never shown): ${model.secrets.join(', ')}</p>` : null}

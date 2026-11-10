@@ -10,7 +10,7 @@ import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 import { shellConfirm } from './shell-state.js';
-import { clearedSecrets, setConfigAccess } from './config-access.js';
+import { clearedSecrets, configNodeName, setConfigAccess } from './config-access.js';
 import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
@@ -1793,8 +1793,9 @@ async function loadConfigTab() {
     configBaseRaw = data.raw || '{}';
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = !!data.malformed;
-    // A restricted peer does not name its home directory.
-    $('#cfg-path').textContent = data.path || 'the node’s config.json';
+    // On a peer's page, name the node, so nobody saves into the wrong one.
+    const node = configNodeName();
+    $('#cfg-path').textContent = node ? `${node}’s config (remote)` : data.path || 'config.json';
     // What the viewer may change, before the form renders it (a peer's page:
     // read-only rows and withheld secrets, config-access.js).
     setConfigAccess(data);
@@ -1892,7 +1893,10 @@ async function saveConfig() {
     // replaces the corrupt file — don't skip it then.
     if (after === configBaseRaw && !configFileMalformed && !secrets.length) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
 
-    // Phase 2: human confirms the diff before the real write.
+    // Phase 2: human confirms the diff before the real write. A peer's page
+    // names the node again: the fleet may have named it since the load.
+    const node = configNodeName();
+    if (node) $('#cfg-path').textContent = `${node}’s config (remote)`;
     const ok = await configDependencies.confirmDiff(
       configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent, secrets,
     );

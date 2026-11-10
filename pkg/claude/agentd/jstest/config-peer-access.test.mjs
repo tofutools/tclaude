@@ -22,8 +22,13 @@ function restricted(classes) {
   return { level: 'restricted', classes: { general: 'read', agents: 'read', network: 'read', credentials: 'read', installation: 'read', local: 'read', ...classes }, slugs: SLUGS, keys: KEYS };
 }
 
-async function mountConfig(t, response) {
+async function mountConfig(t, response, { node = null } = {}) {
   const harness = await createPreactHarness(t);
+  if (node) {
+    globalThis.__tclaudeRemoteNode = { id: node.id };
+    globalThis.document.documentElement.dataset.remoteNodeName = node.name;
+    t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  }
   const [{ createConfigState }, { ConfigApp }, adapter, { setConfigPanel }] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'),
     harness.importDashboardModule('js/config-island.js'),
@@ -59,7 +64,8 @@ test('a peer page makes the rows the viewer may not change read-only, with the r
   const { row, root } = await mountConfig(t, {
     raw: RAW, version: 'v1', access: restricted({ general: 'write' }),
     redacted: [{ path: 'notifications.notification_command', set: true }],
-  });
+  }, { node: { id: 'inst_bobbobbobbob1234', name: 'bob-laptop' } });
+  assert.equal(root.querySelector('#cfg-path').textContent, 'bob-laptop’s config (remote)', 'the header names the node it edits');
   assert.equal(row('log_level').dataset.cfgAccess, 'write');
   assert.equal(locked(row('log_level').querySelector('fieldset.cfg-row-ctl')), false);
   const perms = row('agent.default_permissions');
@@ -82,7 +88,7 @@ test('a writable withheld secret can be replaced or cleared, and a save sends th
   const { row, harness, adapter, posts, confirms } = await mountConfig(t, {
     raw: RAW, version: 'v1', access: restricted({ general: 'write', local: 'write' }),
     redacted: [{ path: 'notifications.notification_command', set: true }],
-  });
+  }, { node: { id: 'inst_bobbobbobbob1234', name: 'bob-laptop' } });
   const cmd = row('notifications.notification_command');
   assert.equal(locked(cmd.querySelector('fieldset.cfg-row-ctl')), true, 'withheld until Replace');
   await harness.act(() => cmd.querySelector('[data-cfg-secret-act="replace"]').click());
@@ -97,6 +103,7 @@ test('a writable withheld secret can be replaced or cleared, and a save sends th
   assert.deepEqual(posts[0].body.clear, ['notifications.notification_command']);
   assert.equal(posts[0].body.base, RAW);
   assert.deepEqual(confirms[0]?.[4], ['notifications.notification_command'], 'the confirmation names the secret the save clears');
+  assert.equal(confirms[0]?.[3], 'bob-laptop’s config (remote)', 'the confirmation names the node it writes to');
 });
 
 test('this node’s own page keeps every row as it was', async (t) => {

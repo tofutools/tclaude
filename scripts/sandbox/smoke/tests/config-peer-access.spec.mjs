@@ -19,6 +19,18 @@ test.afterEach(() => {
 });
 
 async function asRestrictedPeer(page) {
+  // The page names the peer it shows as remote-node.js does; requests stay
+  // on the sandbox, whose answer is narrowed below.
+  await page.addInitScript(() => {
+    window.__tclaudeRemoteNode = { id: 'inst_bobbobbobbob1234', localFetch: (...a) => fetch(...a), route: (raw) => raw };
+  });
+  // The peer shares the Config tab (node.config) and its groups.
+  await page.route(/\/api\/snapshot(\?|$)/, async (route) => {
+    const res = await route.fetch();
+    const data = await res.json();
+    data.peer_view = { peer: { instance_id: 'inst_bobbobbobbob1234', name: 'bob-laptop' }, level: 'restricted', included: ['groups', 'node.config'], omitted: [] };
+    await route.fulfill({ response: res, json: data });
+  });
   await page.route(/\/api\/config(\?|$)/, async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     const res = await route.fetch();
@@ -40,6 +52,12 @@ test('a restricted peer sees what it may change, and why the rest is read-only',
   await page.setViewportSize({ width: 1400, height: 1000 });
   await page.goto('/config/agents');
   const perms = page.locator('[data-cfg-key="agent.default_permissions"]');
+  // The page names its node once the fleet knows it (fleet-island.js);
+  // there is no live peer here, so name it and reload the form.
+  await expect(page.locator('#cfg-path')).toHaveText(/’s config \(remote\)$/);
+  await page.evaluate(() => { document.documentElement.dataset.remoteNodeName = 'bob-laptop'; });
+  await page.locator('#cfg-reload').click();
+  await expect(page.locator('#cfg-path')).toHaveText('bob-laptop’s config (remote)');
   await expect(perms).toHaveAttribute('data-cfg-access', 'read');
   await expect(perms.locator('.cfg-access-note')).toContainText('Needs node.config.agents on this node');
   await expect(perms.locator('fieldset.cfg-row-ctl')).toHaveAttribute('disabled', '');
@@ -55,4 +73,13 @@ test('a restricted peer sees what it may change, and why the rest is read-only',
   await expect(page.locator('[data-cfg-key="notifications.enabled"]')).toHaveAttribute('data-cfg-access', 'write');
   await cmd.scrollIntoViewIfNeeded();
   await shot(page, 'config-peer-notifications');
+
+  // The save confirmation names the node it writes to.
+  await page.locator('[data-cfg-key="notifications.cooldown_seconds"] input').fill('7');
+  await page.locator('#cfg-save').click();
+  const dialog = page.locator('#config-diff-modal');
+  await expect(dialog).toContainText('Confirm config changes on bob-laptop (remote)');
+  await expect(dialog.locator('#config-diff-confirm')).toHaveText('Save to bob-laptop');
+  await shot(page, 'config-peer-confirm');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 });
