@@ -215,7 +215,15 @@ func pendingRestart() string {
 
 // scheduleExecRestart arms the graceful stop + in-place re-exec that
 // performSelfUpdateRestart carries out once serve returns.
-func scheduleExecRestart() error { return armRestart(restartPlan{}) }
+func scheduleExecRestart() error {
+	if runtime.GOOS == "darwin" && trayShown.Load() {
+		// A fallback from a supervisor restart, or a relocated binary: an
+		// exec in place would lose the tray icon. The waiting helper keeps
+		// this PID, which a launchd job is tracked by.
+		return armRestart(restartPlan{relaunch: true})
+	}
+	return armRestart(restartPlan{})
+}
 
 // scheduleRelaunchRestart arms the graceful stop + relaunch in a fresh
 // process (launcher.RestartRelaunch); detach starts it detached.

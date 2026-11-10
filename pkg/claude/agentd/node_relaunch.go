@@ -86,13 +86,16 @@ func relaunchCmd() *cobra.Command {
 		Short:              "Start agentd again in a fresh process after a restart (internal)",
 		DisableFlagParsing: true,
 		PersistentPreRunE:  func(*cobra.Command, []string) error { return nil },
-		Run: func(_ *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+				return cmd.Help()
+			}
 			mode, exe, argv, err := parseRelaunchArgs(args)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error:", err)
-				os.Exit(2)
+				return err
 			}
 			os.Exit(runRelaunch(mode, exe, argv))
+			return nil
 		},
 	}
 }

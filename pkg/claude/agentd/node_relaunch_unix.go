@@ -13,6 +13,9 @@ import (
 // relaunchSignals are forwarded from the waiting helper to agentd. The
 // terminal's SIGINT/SIGQUIT/SIGHUP reach agentd too (it stays in the same
 // process group); agentd's shutdown handling takes a second one as a no-op.
+// A signal the helper was started with ignored (nohup's SIGHUP, a
+// background job's SIGINT) is left alone: handling it would reset it to
+// the default in agentd, which an exec in place keeps ignored.
 var relaunchSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT}
 
 // runRelaunch starts argv with the binary exe in a fresh process and
@@ -21,7 +24,12 @@ func runRelaunch(mode, exe string, argv []string) int {
 	sigs := make(chan os.Signal, 4)
 	if mode == relaunchWait {
 		// Before the child exists, so no signal is missed or kills the helper.
-		signal.Notify(sigs, relaunchSignals...)
+		for _, s := range relaunchSignals {
+			if !signal.Ignored(s) {
+				signal.Notify(sigs, s)
+			}
+		}
+		defer signal.Stop(sigs)
 	}
 	cmd := relaunchCommand(mode, exe, argv)
 	if err := cmd.Start(); err != nil {
@@ -35,6 +43,7 @@ func runRelaunch(mode, exe string, argv []string) int {
 	code, sig := relaunchWaitChild(cmd, sigs)
 	if sig != 0 {
 		// Die of the same signal, so the shell reports what agentd did.
+		signal.Stop(sigs)
 		signal.Reset(sig)
 		_ = syscall.Kill(os.Getpid(), sig)
 		return 128 + int(sig)

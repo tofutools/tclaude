@@ -126,3 +126,25 @@ func TestRelaunchDetachStartsTheChildInItsOwnSession(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestRelaunchHelperProcess is the waiting helper when the test binary is
+// re-run as one (TCLAUDE_TEST_RELAUNCH_HELPER set); a no-op otherwise.
+func TestRelaunchHelperProcess(t *testing.T) {
+	if os.Getenv("TCLAUDE_TEST_RELAUNCH_HELPER") == "" {
+		return
+	}
+	sh, _ := exec.LookPath("sh")
+	os.Exit(runRelaunch(relaunchWait, sh, []string{"sh", "-c", "kill -HUP $$; echo alive"}))
+}
+
+func TestRelaunchWaitKeepsSignalsIgnoredAtStart(t *testing.T) {
+	sh := shellPath(t)
+	// nohup's SIGHUP ignore must reach the relaunched daemon, as an exec in
+	// place keeps it: the child signals itself and must survive.
+	cmd := exec.Command(sh, "-c", `trap '' HUP; exec "$0" -test.run='^TestRelaunchHelperProcess$'`, os.Args[0])
+	cmd.Env = append(os.Environ(), "TCLAUDE_TEST_RELAUNCH_HELPER=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "alive") {
+		t.Fatalf("relaunched child did not keep SIGHUP ignored: err=%v out=%q", err, out)
+	}
+}
