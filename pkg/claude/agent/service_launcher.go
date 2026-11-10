@@ -356,6 +356,9 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 		} else {
 			env = launcher.MergeLoginEnv(env, login)
 		}
+		if d.GOOS == "darwin" {
+			env = launcher.WithDefaultLocale(env)
+		}
 	}
 	profile, err := d.Profile()
 	if err != nil {

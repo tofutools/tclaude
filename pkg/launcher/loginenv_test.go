@@ -74,11 +74,11 @@ func TestLoginShellCommand(t *testing.T) {
 }
 
 func TestParseShellEnv(t *testing.T) {
-	env, err := ParseShellEnv([]byte("Welcome!\n" + ShellEnvMarker + `["A=1"]` + "\nnoise\n" + ShellEnvMarker + `["B=2","C=x=y"]` + "\n"))
-	if err != nil || !slices.Equal(env, []string{"B=2", "C=x=y"}) {
+	env, err := ParseShellEnv([]byte("Welcome!\n" + ShellEnvMarker + `["A=1"]` + "\nnoise\n" + ShellEnvMarker + `["B=2","C=x=y","D=` + ShellEnvMarker + `[]"]` + "\n"))
+	if err != nil || !slices.Equal(env, []string{"B=2", "C=x=y", "D=" + ShellEnvMarker + "[]"}) {
 		t.Fatalf("%v %v", env, err)
 	}
-	for _, out := range []string{"", "no marker", ShellEnvMarker + "[]", ShellEnvMarker + "{"} {
+	for _, out := range []string{"", "no marker", "\n" + ShellEnvMarker + "[]", "\n" + ShellEnvMarker + "{", "x" + ShellEnvMarker + `["A=1"]`} {
 		if _, err := ParseShellEnv([]byte(out)); err == nil {
 			t.Errorf("%q parsed", out)
 		}
@@ -136,5 +136,16 @@ func TestLoginShellEnvRunsTheProfile(t *testing.T) {
 	argv[len(argv)-1] = "exit 0"
 	if _, err := LoginShellEnv(context.Background(), argv, environ); err == nil {
 		t.Error("no dump, no error")
+	}
+}
+
+func TestWithDefaultLocale(t *testing.T) {
+	if got := WithDefaultLocale([]string{"PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin", "LANG=en_US.UTF-8"}) {
+		t.Errorf("none: %v", got)
+	}
+	for _, kv := range []string{"LANG=sv_SE.UTF-8", "LC_ALL=C.UTF-8", "LC_CTYPE=UTF-8"} {
+		if got := WithDefaultLocale([]string{kv}); !slices.Equal(got, []string{kv}) {
+			t.Errorf("%s: %v", kv, got)
+		}
 	}
 }

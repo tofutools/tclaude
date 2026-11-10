@@ -93,6 +93,9 @@ func LoginShellEnv(ctx context.Context, argv, environ []string) ([]string, error
 	cmd.WaitDelay = time.Second
 	setNewSession(cmd)
 	err := cmd.Run()
+	// Whatever the profile left running in the shell's session (a `foo &`
+	// in ~/.zshrc) has no owner now; real daemons start their own session.
+	killSession(cmd)
 	if env, perr := ParseShellEnv(out.Bytes()); perr == nil {
 		return env, nil
 	}
@@ -107,12 +110,15 @@ func LoginShellEnv(ctx context.Context, argv, environ []string) ([]string, error
 
 // ParseShellEnv reads the environment after the last ShellEnvMarker.
 func ParseShellEnv(out []byte) ([]string, error) {
-	i := bytes.LastIndex(out, []byte(ShellEnvMarker))
+	// Anchored at a line start, as PrintShellEnv writes it, so a value
+	// holding the marker text cannot be taken for it.
+	marker := []byte("\n" + ShellEnvMarker)
+	i := bytes.LastIndex(out, marker)
 	if i < 0 {
 		return nil, errors.New("no environment marker")
 	}
 	var env []string
-	if err := json.NewDecoder(bytes.NewReader(out[i+len(ShellEnvMarker):])).Decode(&env); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(out[i+len(marker):])).Decode(&env); err != nil {
 		return nil, err
 	}
 	if len(env) == 0 {
@@ -188,6 +194,19 @@ func mergePATH(first, fallback string) string {
 		}
 	}
 	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// WithDefaultLocale returns env with LANG set to a UTF-8 locale when it
+// names none (no LANG, LC_ALL or LC_CTYPE). On macOS the terminal app, not
+// the shell profile, sets the locale, so a login shell started from an app
+// usually has none, and harnesses then run in the C locale.
+func WithDefaultLocale(env []string) []string {
+	for _, k := range []string{"LANG", "LC_ALL", "LC_CTYPE"} {
+		if envValue(env, k) != "" {
+			return env
+		}
+	}
+	return append(env, "LANG=en_US.UTF-8")
 }
 
 func envValue(environ []string, key string) string {

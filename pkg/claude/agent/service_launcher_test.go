@@ -274,7 +274,8 @@ func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
 	if rc := runLauncherOpen(true, f.deps, &out, io.Discard); rc != rcOK {
 		t.Fatal(rc)
 	}
-	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin" {
+	// macOS: no locale from anywhere, so a UTF-8 one is supplied.
+	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin\nLANG=en_US.UTF-8" {
 		t.Errorf("env %v", f.servedEnv)
 	}
 	if !strings.Contains(out.String(), "without the login shell's environment: /bin/zsh did not finish") {
