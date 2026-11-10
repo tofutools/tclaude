@@ -498,10 +498,11 @@ type conn struct {
 	ready      chan error
 	readyOnce  sync.Once
 	finished   chan struct{}
+	inflight   chan struct{}
 }
 
 func newConn(c *Client, p Process) *conn {
-	cn := &conn{c: c, p: p, ready: make(chan error, 1), finished: make(chan struct{})}
+	cn := &conn{c: c, p: p, ready: make(chan error, 1), finished: make(chan struct{}), inflight: make(chan struct{}, 1)}
 	go cn.readLoop()
 	return cn
 }
@@ -529,6 +530,20 @@ func (cn *conn) setLostReason(r string) {
 
 func (cn *conn) do(line string, timeout time.Duration) ([]string, error) {
 	req := &request{done: make(chan result, 1)}
+	// One request in flight at a time. Replies are matched by position, so
+	// with nothing else outstanding a forged block (should anything ever
+	// smuggle %begin/%end lines into the stream) has no request to land on
+	// and is dropped, instead of being handed to the next caller.
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case cn.inflight <- struct{}{}:
+	case <-t.C:
+		return nil, fmt.Errorf("%w: waiting for an earlier request", ErrNotConnected)
+	case <-cn.finished:
+		return nil, fmt.Errorf("%w: connection closed", ErrNotConnected)
+	}
+	defer func() { <-cn.inflight }()
 	cn.writeMu.Lock()
 	cn.mu.Lock()
 	if cn.dead {
@@ -545,8 +560,13 @@ func (cn *conn) do(line string, timeout time.Duration) ([]string, error) {
 		cn.shutdown(fmt.Errorf("write: %w", werr))
 	}
 
-	t := time.NewTimer(timeout)
-	defer t.Stop()
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(timeout)
 	select {
 	case r := <-req.done:
 		return r.lines, r.err
@@ -591,6 +611,12 @@ func (cn *conn) fail(err error) {
 	for _, r := range pending {
 		r.done <- result{err: fmt.Errorf("%w: %v", ErrConnectionLost, err)}
 	}
+}
+
+func (cn *conn) hasPending() bool {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	return len(cn.pending) > 0
 }
 
 func (cn *conn) popPending() *request {
@@ -668,6 +694,10 @@ func (cn *conn) read() error {
 		}
 
 		if g, ok := blockEnd(line, "%begin"); ok {
+			if !startup && !cn.hasPending() {
+				cn.c.cfg.Logger.Debug("tmux control mode: ignoring a reply block nothing is waiting for", "module", "tmuxctl")
+				continue
+			}
 			inBlock = true
 			guard = g
 			lines = nil
@@ -699,6 +729,9 @@ func (cn *conn) read() error {
 			}
 			cn.markReady(errors.New("control client exited during startup"))
 			return errors.New("control client got %exit")
+		}
+		if name == "begin" || name == "end" || name == "error" {
+			continue // a stray framing line, not a notification
 		}
 		cn.c.publish(Notification{Name: name, Args: args})
 		if name == "sessions-changed" && cn.c.cfg.ExitWhenAlone && !startup {

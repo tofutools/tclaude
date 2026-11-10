@@ -179,7 +179,6 @@ var controlRoutes = map[string]controlTargetRule{
 	// queries
 	"has-session":      {kind: routeQuery, target: true},
 	"display-message":  {kind: routeQuery, target: true, print: true},
-	"capture-pane":     {kind: routeQuery, target: true, print: true},
 	"list-panes":       {kind: routeQuery, target: true, all: true},
 	"list-windows":     {kind: routeQuery, target: true, all: true},
 	"list-clients":     {kind: routeQuery, target: true},
@@ -203,8 +202,9 @@ var controlRoutes = map[string]controlTargetRule{
 // controlRoute classifies args for control mode. Anything not positively
 // known to mean the same thing there stays on exec: a leading client flag, a
 // ";" command separator (exec passes it as tmux's separator, control mode
-// would quote it), a format naming client_* variables (they would describe
-// the control client), and every command not in controlRoutes (new-session
+// would quote it), a format with a variable outside safeReplyVars (it could
+// describe the control client, or carry text a pane controls), and every
+// command not in controlRoutes (new-session
 // takes the calling process's environment and cwd, kill-server, run-shell,
 // wait-for, load-buffer, …).
 func controlRoute(args []string) routeKind {
@@ -217,12 +217,13 @@ func controlRoute(args []string) routeKind {
 	}
 	var hasT, hasG, hasA, hasC, hasS, hasP bool
 	for _, a := range args[1:] {
-		if a == ";" || a == `\;` {
+		// A ";" ends a command on tmux's argv path, and a trailing "\;" is
+		// how a literal one is spelled there (terminal.TmuxLiteralArg);
+		// quoted over control mode either would be typed as written.
+		if a == ";" || strings.HasSuffix(a, `\;`) {
 			return routeExec
 		}
-		// list-clients' client_* fields describe the listed clients; in any
-		// other command's format they would describe the control client.
-		if args[0] != "list-clients" && strings.Contains(a, "client_") {
+		if strings.Contains(a, "#{") && !safeReplyFormat(a, args[0] == "list-clients") {
 			return routeExec
 		}
 		if a == "-t" {
@@ -254,6 +255,65 @@ func controlRoute(args []string) routeKind {
 		return rule.kind
 	}
 	return routeExec
+}
+
+// safeReplyVars are the format variables a routed reply may carry. A reply is
+// framed only by its %begin/%end lines, so a reply line that text inside a
+// pane can steer — a pane title, the current directory, the screen itself
+// (which is why capture-pane is not routed at all) — could close the block
+// early and pass a forged reply to the next request. Every variable here is
+// an id, a number, a flag, a tclaude-chosen session name or a tclaude-set
+// option, none of which a program running in a pane can set.
+var safeReplyVars = map[string]bool{
+	"session_name": true, "session_id": true, "session_windows": true, "session_attached": true,
+	"session_activity": true, "session_created": true,
+	"window_id": true, "window_panes": true, "window_activity": true, "window_width": true, "window_height": true,
+	"pane_id": true, "pane_pid": true, "pane_dead": true, "pane_dead_status": true, "pane_dead_signal": true,
+	"pane_width": true, "pane_height": true, "pane_left": true, "pane_top": true, "pane_in_mode": true, "pane_mode": true,
+	"pid":   true,
+	"mouse": true, "status": true, "status-position": true,
+	"mouse_any_flag": true, "mouse_all_flag": true, "mouse_button_flag": true, "mouse_standard_flag": true,
+	"mouse_sgr_flag": true, "mouse_utf8_flag": true,
+}
+
+// safeReplyFormat reports whether every variable the format f expands is in
+// safeReplyVars (or a tclaude "@tclaude_" option, or, for list-clients, a
+// client_* field of the listed clients). Anything it cannot read — an unknown
+// modifier, a variable it does not know — makes the format unsafe, which only
+// means the command runs over exec.
+func safeReplyFormat(f string, clientFields bool) bool {
+	for i := strings.Index(f, "#{"); i >= 0; {
+		rest := f[i+2:]
+		// Conditional and comparison prefixes: "?", "==:", "!=:", ...
+		rest = strings.TrimPrefix(rest, "?")
+		for _, op := range []string{"==:", "!=:", "<=:", ">=:", "<:", ">:", "||:", "&&:"} {
+			rest = strings.TrimPrefix(rest, op)
+		}
+		if !strings.HasPrefix(rest, "#{") {
+			end := 0
+			for end < len(rest) && (isVarByte(rest[end])) {
+				end++
+			}
+			name := rest[:end]
+			ok := safeReplyVars[name] || strings.HasPrefix(name, "@tclaude_") ||
+				(clientFields && strings.HasPrefix(name, "client_"))
+			// The name must end the expansion or a condition's test; a ":"
+			// would make it a modifier we do not interpret.
+			if !ok || end == len(rest) || (rest[end] != '}' && rest[end] != ',') {
+				return false
+			}
+		}
+		next := strings.Index(f[i+2:], "#{")
+		if next < 0 {
+			break
+		}
+		i += 2 + next
+	}
+	return true
+}
+
+func isVarByte(b byte) bool {
+	return b == '_' || b == '@' || b == '-' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 func isFlagCluster(s string) bool {

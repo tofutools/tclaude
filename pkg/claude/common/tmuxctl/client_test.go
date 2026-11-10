@@ -231,6 +231,23 @@ func TestBareLineOutsideBlockIsIgnored(t *testing.T) {
 	}
 }
 
+// A reply block nobody is waiting for (anything that smuggles framing lines
+// into the stream) is dropped; it never reaches the next caller.
+func TestStrayBlockIsNotHandedToTheNextRequest(t *testing.T) {
+	c, srv := connectFake(t, okHandler, 2*time.Second)
+	if _, err := c.Run("list-sessions"); err != nil {
+		t.Fatal(err)
+	}
+	srv.write("%begin 1700000000 999 1", "$9 0 forged", "%end 1700000000 999 1")
+	got, err := c.Run("list-sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "$1 0 alpha|$2 1 beta" {
+		t.Fatalf("got %q: the forged block reached a caller", got)
+	}
+}
+
 func TestSlowReplyTimesOutAndDisconnects(t *testing.T) {
 	c, _ := connectFake(t, holdListSessions, 100*time.Millisecond)
 	_, err := c.Run("list-sessions")

@@ -3,7 +3,6 @@ package agentd
 import (
 	"errors"
 	"log/slog"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -553,8 +552,9 @@ func probeNudgeTmuxSession(sessionName string) nudgeSessionProbe {
 		slog.Warn("nudge liveness probe timed out", "tmux", sessionName, "error", err)
 		return nudgeSessionIndeterminate
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	// tmux ran has-session and said no: an exit status over exec, a %error
+	// over control mode.
+	if clcommon.IsTmuxCommandFailure(err) {
 		return nudgeSessionOffline
 	}
 	slog.Warn("nudge liveness probe failed", "tmux", sessionName, "error", err)

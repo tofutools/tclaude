@@ -254,7 +254,7 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 	if out, err := TmuxCombinedOutput("kill-session", "-t", "=nope"); err == nil || len(out) == 0 {
 		t.Fatalf("kill-session missing: %q, %v", out, err)
 	}
-	if st := ct.Status(); st.Routed["capture-pane"] == 0 || st.Routed["set-option"] == 0 || st.Routed["has-session"] == 0 {
+	if st := ct.Status(); st.Routed["display-message"] == 0 || st.Routed["set-option"] == 0 || st.Routed["has-session"] == 0 {
 		t.Fatalf("not routed over control mode: %v", st.Routed)
 	}
 

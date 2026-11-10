@@ -301,12 +301,18 @@ tclaude hides it everywhere it lists sessions. Don't attach to it.
 ### Control mode
 
 agentd sends its tmux queries and commands (session liveness, pane state,
-captures, options, hooks, kills, keystrokes) over one long-lived `tmux -C`
-control-mode connection instead of starting a tmux process for each one. A
-command that would mean something different there stays a tmux process: one
-with no explicit target (it would act on the control client's own session),
-`new-session` (it takes the caller's environment and directory),
-`kill-server`, and key bindings. Terminals you attach are ordinary tmux clients,
+options, hooks, kills, keystrokes) over one long-lived `tmux -C` control-mode
+connection instead of starting a tmux process for each one. Some commands still
+start a tmux process:
+
+- A command with no explicit target, because over control mode it would act on
+  the control client's own session.
+- `new-session`, because it takes the caller's environment and directory.
+- `kill-server` and key bindings.
+- A query whose answer contains text a program in a pane can set (screen
+  captures, the pane title, the current directory). A reply in control mode is
+  framed only by marker lines, so text like that could be made to look like the
+  end of the reply. Terminals you attach are ordinary tmux clients,
 as before, and short-lived `tclaude` commands still run tmux directly. The connection
 attaches to the hidden `__tclaude-control` session. It never starts a tmux
 server: it connects only after a tclaude session exists, and it leaves once its

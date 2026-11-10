@@ -13,7 +13,14 @@ func TestControlRoute(t *testing.T) {
 		{[]string{"display-message", "-t", "=a:", "hi"}, routeExec},                  // no -p: status-line message
 		{[]string{"display-message", "-p", "-t", "=a:", "#{client_tty}"}, routeExec}, // client_* = the control client
 		{[]string{"list-clients", "-t", "=a", "-F", "#{client_tty}"}, routeQuery},    // client_* of the listed clients
-		{[]string{"capture-pane", "-p", "-J", "-S", "-40", "-t", "%3"}, routeQuery},
+		{[]string{"capture-pane", "-p", "-J", "-S", "-40", "-t", "%3"}, routeExec},   // screen text a pane controls
+		{[]string{"display-message", "-p", "-t", "=a:", "#{pane_current_path}"}, routeExec},
+		{[]string{"display-message", "-p", "-t", "=a:", "#{q:pane_title}"}, routeExec},
+		{[]string{"display-message", "-p", "-t", "=a:", "#{pane_id}\t#{window_id}"}, routeQuery},
+		{[]string{"display-message", "-p", "-t", "%1", "#{==:#{pane_mode},copy-mode}"}, routeQuery},
+		{[]string{"display-message", "-p", "-t", "%1", "#{?mouse_all_flag,1,0} #{@tclaude_exit_generation}"}, routeQuery},
+		{[]string{"list-sessions", "-F", "#{session_name}\t#{pane_current_path}"}, routeExec},
+		{[]string{"send-keys", "-t", "%1", "-l", "--", `ls\;`}, routeExec}, // argv spelling of a literal ";"
 		{[]string{"list-panes", "-a", "-F", "#{pane_id}"}, routeQuery},
 		{[]string{"list-panes", "-F", "#{pane_id}"}, routeExec},
 		{[]string{"list-sessions", "-F", "#{session_name}"}, routeQuery},
