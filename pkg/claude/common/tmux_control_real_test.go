@@ -169,3 +169,28 @@ func assertAlive(t *testing.T, got map[string]struct{}, want ...string) {
 		}
 	}
 }
+
+// A hook that prints (as many tmux plugins' hooks do) fires for the hidden
+// session too; its output must not drop the control connection.
+func TestControlTmuxToleratesPrintingHook(t *testing.T) {
+	ct, command := realControlTmux(t)
+	if out, err := command("new-session", "-d", "-s", "a", "sleep", "300", ";",
+		"set-hook", "-g", "session-created", "display-message -p created").CombinedOutput(); err != nil {
+		t.Fatalf("setup: %v %s", err, out)
+	}
+	if _, err := ct.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "control connection", ct.client.Connected)
+	if err := command("new-session", "-d", "-s", "b", "sleep", "300").Run(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "b over control mode", func() bool {
+		got, err := ct.ListSessions()
+		_, ok := got["b"]
+		return err == nil && ok
+	})
+	if st := ct.client.State(); !st.Connected || st.Connects != 1 {
+		t.Fatalf("state = %+v, want one steady connection", st)
+	}
+}

@@ -211,21 +211,23 @@ func waitDisconnected(t *testing.T, c *Client) State {
 	return State{}
 }
 
-func TestGarbageLineDisconnectsLoudly(t *testing.T) {
-	c, srv := connectFake(t, holdListSessions, 2*time.Second)
-	errc := make(chan error, 1)
-	go func() { _, err := c.Run("list-sessions"); errc <- err }()
-	waitCmd(t, srv, "list-sessions")
-	srv.write("this is not control mode")
-	if err := <-errc; !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("pending request err = %v, want ErrNotConnected", err)
+// A bare line outside a reply block (a hook's output) is ignored: the
+// connection stays up and the pending request still gets its own reply.
+func TestBareLineOutsideBlockIsIgnored(t *testing.T) {
+	var srv *fakeServer
+	c, srv := connectFake(t, func(cmd string) ([]string, bool, bool) {
+		if strings.HasPrefix(cmd, "list-sessions") {
+			srv.write("created by a hook")
+			return []string{"$1 0 alpha"}, false, false
+		}
+		return nil, false, false
+	}, 2*time.Second)
+	got, err := c.Run("list-sessions")
+	if err != nil || strings.Join(got, "|") != "$1 0 alpha" {
+		t.Fatalf("got %q, %v", got, err)
 	}
-	st := waitDisconnected(t, c)
-	if !strings.Contains(st.Reason, "protocol error") {
-		t.Fatalf("reason = %q", st.Reason)
-	}
-	if _, err := c.Run("list-sessions"); !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("Run after disconnect = %v", err)
+	if !c.Connected() {
+		t.Fatal("a hook line dropped the connection")
 	}
 }
 

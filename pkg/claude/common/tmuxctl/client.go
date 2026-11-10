@@ -61,8 +61,6 @@ var (
 	// connection is torn down with it, because replies are positional: a late
 	// reply would otherwise be handed to the next caller.
 	ErrTimeout = errors.New("tmux control mode: reply timeout")
-	// ErrProtocol marks a line that is not valid control-mode output.
-	ErrProtocol = errors.New("tmux control mode: protocol error")
 )
 
 // CommandError is a command tmux ran and rejected (%error). Lines holds the
@@ -633,7 +631,10 @@ func (cn *conn) read() error {
 			if raw == "" {
 				if errors.Is(err, io.EOF) {
 					cn.setLostReasonIfEmpty("server exited")
-					return errors.New("control client exited")
+					cn.mu.Lock()
+					reason := cn.lostReason
+					cn.mu.Unlock()
+					return fmt.Errorf("control client exited: %s", reason)
 				}
 				return err
 			}
@@ -664,15 +665,21 @@ func (cn *conn) read() error {
 			continue
 		}
 		if !strings.HasPrefix(line, "%") {
-			// tmux prints the reason it refused to start (e.g. "no server
-			// running on ...") as a plain line before exiting.
+			// A bare line outside a reply block is not framing. Before the
+			// startup reply it is usually why tmux refused to start ("no
+			// server running on ..."), which the EOF that follows reports.
+			// After it, it is output a hook printed (a user's
+			// session-created hook firing for the hidden session, say).
+			// Neither may end the connection: block matching by guard keeps
+			// replies correct, and dropping the connection over a chatty
+			// hook would only recreate the hidden session and fire the hook
+			// again.
 			if startup {
-				cn.setLostReasonIfEmpty(line)
-				return fmt.Errorf("control client refused to start: %s", line)
+				cn.setLostReasonIfEmpty(truncate(line, 200))
+			} else {
+				cn.c.cfg.Logger.Debug("tmux control mode: ignoring a line outside a reply", "line", truncate(line, 200), "module", "tmuxctl")
 			}
-			cn.c.cfg.Logger.Warn("tmux control mode: unparsable line, reconnecting", "line", truncate(line, 200), "module", "tmuxctl")
-			cn.setLostReasonIfEmpty("protocol error: unexpected line")
-			return fmt.Errorf("%w: unexpected line %q", ErrProtocol, truncate(line, 200))
+			continue
 		}
 		name, args, _ := strings.Cut(line[1:], " ")
 		if name == "exit" {

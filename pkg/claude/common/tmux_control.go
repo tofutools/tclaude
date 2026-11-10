@@ -137,7 +137,22 @@ type ControlTmux struct {
 	connecting  bool
 	lastAttempt time.Time
 	lastErr     string
+	lastWarn    time.Time
 	now         func() time.Time
+}
+
+// warnUnreadable logs an unreadable control-mode listing at most once a
+// minute; the call itself falls back to exec.
+func (t *ControlTmux) warnUnreadable(err error) {
+	t.mu.Lock()
+	due := t.now().Sub(t.lastWarn) >= time.Minute
+	if due {
+		t.lastWarn = t.now()
+	}
+	t.mu.Unlock()
+	if due {
+		slog.Warn("tmux control mode: unreadable list-sessions reply, using exec for it", "error", err, "module", "tmuxctl")
+	}
 }
 
 // NewControlTmux returns a ControlTmux over the tclaude socket.
@@ -200,8 +215,10 @@ func (t *ControlTmux) ListSessions() (map[string]struct{}, error) {
 			if perr == nil {
 				return aliveSessions(entries), nil
 			}
-			slog.Warn("tmux control mode: unreadable list-sessions reply, reconnecting", "error", perr, "module", "tmuxctl")
-			t.client.Disconnect("protocol error: unreadable list-sessions reply")
+			// Fall back for this call only: dropping the connection would
+			// not make the next reply more readable, just churn the hidden
+			// session.
+			t.warnUnreadable(perr)
 		} else if !errors.Is(err, tmuxctl.ErrNotConnected) {
 			slog.Debug("tmux control mode: list-sessions failed, using exec", "error", err, "module", "tmuxctl")
 		}
@@ -220,7 +237,9 @@ func (t *ControlTmux) ListSessions() (map[string]struct{}, error) {
 // failure.
 func (t *ControlTmux) maybeConnect() {
 	t.mu.Lock()
-	if t.connecting || t.client.Connected() || (t.lastErr != "" && t.now().Sub(t.lastAttempt) < controlReconnectBackoff) {
+	// Every attempt is rate-limited, not only failed ones: a connection that
+	// comes up and dies straight away must not reconnect on every listing.
+	if t.connecting || t.client.Connected() || (!t.lastAttempt.IsZero() && t.now().Sub(t.lastAttempt) < controlReconnectBackoff) {
 		t.mu.Unlock()
 		return
 	}
