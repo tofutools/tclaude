@@ -227,10 +227,13 @@ in a terminal outside any sandbox. There are four ways to keep it running:
 - **App launcher.** `tclaude service launcher install` adds tclaude to your
   desktop's app menu (a `.desktop` entry on Linux, `~/Applications/tclaude.app`
   on macOS). Picking it starts agentd if it is not running, through the login
-  unit when there is one, and opens the dashboard. It signs in the way
-  `tclaude agent dashboard` does, so it needs the operator token in its file
-  (`--persist-operator-token`; see [The operator token](#4-the-operator-token)).
-  See [App launcher](dashboard-config.md#app-launcher).
+  unit when there is one, and opens the dashboard. To sign you in, it needs a
+  persisted operator token, in the file or the keychain (see
+  [The operator token](#4-the-operator-token)). `tclaude service launcher
+  status` and `install` warn when the running daemon's token is not
+  persisted, or when the flags the launcher would start agentd with lack
+  `--persist-operator-token`. See
+  [App launcher](dashboard-config.md#app-launcher).
 - **A service on a server.** For a headless machine, see
   [Running tclaude on a server](server/index.md).
 
@@ -245,7 +248,7 @@ tclaude agentd serve --dashboard-port 7878 --persist-operator-token --no-print-h
 |---|---|---|
 | `--dashboard-port 7878` | `agent.dashboard_port` | A fixed dashboard port, so bookmarks and SSH tunnels keep working. The default picks a new free port each start. A port already in use fails startup. |
 | `--persist-operator-token` (`-p`) | `agent.persist_operator_token` | Keeps the same operator token across restarts, in a 0600 file the CLI reads itself. The default mints a new one each start. |
-| `--persist-operator-token-keychain` | `agent.persist_operator_token_keychain` | Keeps it in the OS keychain instead of the file. The CLI does not read the keychain. |
+| `--persist-operator-token-keychain` | `agent.persist_operator_token_keychain` | Keeps it in the OS keychain instead of the file. Terminal commands do not read the keychain; only the app launcher does. |
 | `--no-print-human-token` | | Does not print the token at startup. It is still minted and accepted. The default, `--print-human-token=auto`, prints it only when stdout and stderr are terminals. Never use `always` under a supervisor: it writes the token to the journal or log file. |
 | `--no-tray` (`-n`) | `agent.disable_tray` | No system tray icon, for headless hosts. On a desktop, the tray's **Open dashboard** is a way in that needs no token. |
 | `--dashboard-bind <host>` | `agent.dashboard_bind` | Also serves the dashboard on another interface. The default is loopback only. Its only gate is a cookie plus the operator token, so bind only to a network you trust; see [Operating remotely](remote.md). |
