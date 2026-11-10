@@ -70,6 +70,10 @@ status line (On, Off or Needs attention) and its main action:
   on login and Remove. Reading a peer's needs its `node.read` grant; acting
   needs `node.update.settings` too, and a peer with only `node.read` sees it
   read-only.
+- **App launcher** reads the node's launcher routes the same way: whether
+  tclaude is in its app menu, with Add, Reinstall and Remove and the serve
+  flags the launcher starts agentd with. A peer without full access sets
+  only the flags with a control; other flags are set on the node itself.
 - **Updates** shows the node's `updates.self`
   (see [How tclaude updates itself](#how-tclaude-updates-itself)): method,
   schedule, update on daemon start and post-update setup, with **Save

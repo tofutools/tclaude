@@ -7,6 +7,7 @@ import { RequestError, requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
 import { NodeUpdateSettings } from './node-update-settings.js';
 import { ServicePanel } from './config-service.js';
+import { LauncherPanel } from './config-launcher.js';
 
 const html = htm.bind(h);
 
@@ -116,7 +117,7 @@ function accessText(error, node) {
 
 // NodeUpdateDialog is a node's Installation view, as Config › Installation
 // is this node's: its tclaude version, where the operator checks for, applies
-// or rolls back an update, then the Start automatically and Updates parts
+// or rolls back an update, then the Start automatically, App launcher and Updates parts
 // (the hub has only the version). The parts read their own routes under
 // their own grants, so they show whether or not the version read works. Apply and rollback confirm with the
 // consequence (binaries replaced, daemon restarts); a source build warns that
@@ -210,6 +211,7 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
 `}
     ${!node.hub && html`<div class="fa-installation">
       ${actions.fetchImpl && html`<${ServicePanel} idp="fleet-" base=${serviceBase(node)} fetchImpl=${actions.fetchImpl} confirm=${confirm} toast=${toast} timers=${timers} />`}
+      ${actions.fetchImpl && html`<${LauncherPanel} idp="fleet-" base=${serviceBase(node)} fetchImpl=${actions.fetchImpl} confirm=${confirm} toast=${toast} />`}
       ${actions.settings && html`<${NodeUpdateSettings} node=${node} actions=${actions} confirm=${confirm} toast=${toast} />`}
     </div>`}
   </${Dialog}>`;

@@ -273,8 +273,8 @@ Certificate management is below the Remote access group. See
 ## Installation
 
 `/config/installation`: how tclaude is installed, started and updated on this
-machine. Its parts are stacked on one page: **Start automatically**, then
-**Updates**. Each opens with a status line, tagged On, Off or Needs
+machine. Its parts are stacked on one page: **Start automatically**, **App
+launcher**, then **Updates**. Each opens with a status line, tagged On, Off or Needs
 attention, and its main action. A part that is set up and healthy folds its
 detail away; **Show details** opens it, and a settings search shows it
 anyway. `/config/service` and `/config/updates`, the sections these parts
@@ -335,9 +335,19 @@ from the running daemon.
 ### App launcher
 
 The app launcher adds tclaude to the desktop's app menu. Picking it opens the
-dashboard. The CLI is `tclaude service launcher status|install|uninstall`
-(`--no-start-daemon`, `--node <peer>`), and the API is `GET
-/api/node/launcher` and `POST /api/node/launcher/install|uninstall`.
+dashboard. The part's status line says whether it is installed, out of date,
+or made by hand, next to **Add to app menu…** (**Add to Applications…** on
+macOS), **Reinstall…** or **Remove…**; each confirm names the files written
+or removed. Below it, the launcher's files, the binary it runs and **Start
+agentd if it is not running**, then the serve flags: one control per default
+flag (and **No tray icon**), each saying what it does, the other flags as
+text, and the command they make. **Rewrite launcher…** applies them, and
+**Back to tclaude's defaults…** clears the launcher's own setting. When the
+launch profile is set, the part says it decides the flags and shows them
+read-only; change them in the launch profile. The CLI is `tclaude service
+launcher status|install|uninstall` (`--no-start-daemon`, `--node <peer>`),
+and the API is `GET /api/node/launcher` and `POST
+/api/node/launcher/install|uninstall`.
 
 - **Linux:** it writes a desktop entry,
   `$XDG_DATA_HOME/applications/tclaude.desktop` (default
