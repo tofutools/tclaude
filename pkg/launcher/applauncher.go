@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -54,8 +56,11 @@ type AppLauncherSpec struct {
 	Version string
 	// PATH is exported by the launcher script, so a daemon it starts from
 	// a desktop session (macOS gives apps a bare PATH) finds the harnesses.
-	PATH    string
-	Options AppLauncherOptions
+	PATH string
+	// ServeArgs are the `agentd serve` flags the launcher starts agentd
+	// with when no autostart unit does; baked into the script.
+	ServeArgs []string
+	Options   AppLauncherOptions
 }
 
 // AppLauncherStatus is GET /api/node/launcher's launcher part.
@@ -79,10 +84,13 @@ type AppLauncherStatus struct {
 	CurrentVersion string `json:"current_version,omitempty"`
 	// Stale: a managed launcher that runs another binary (or, on macOS,
 	// names another version) than this tclaude; agentd rewrites it at start.
-	Stale       bool               `json:"stale"`
-	StaleReason string             `json:"stale_reason,omitempty"`
-	Options     AppLauncherOptions `json:"options"`
-	Warnings    []string           `json:"warnings"`
+	// InstalledServeArgs are the serve flags the installed launcher starts
+	// agentd with.
+	InstalledServeArgs []string           `json:"installed_serve_args,omitempty"`
+	Stale              bool               `json:"stale"`
+	StaleReason        string             `json:"stale_reason,omitempty"`
+	Options            AppLauncherOptions `json:"options"`
+	Warnings           []string           `json:"warnings"`
 }
 
 // AppLauncherPaths is where the launcher lives.
@@ -190,7 +198,7 @@ func (l AppLauncher) Status() AppLauncherStatus {
 		st.Stale, st.StaleReason = true, "the launcher script is missing"
 		return st
 	}
-	st.Exe, st.Options = parseLauncherScript(script)
+	st.Exe, st.InstalledServeArgs, st.Options = parseLauncherScript(script)
 	if l.GOOS == "darwin" {
 		st.Version = plistString(main, "TclaudeVersion")
 	}
@@ -201,6 +209,8 @@ func (l AppLauncher) Status() AppLauncherStatus {
 		st.Stale, st.StaleReason = true, "the launcher runs "+st.Exe+", not "+l.Current.Exe
 	case l.GOOS == "darwin" && l.Current.Version != "" && st.Version != l.Current.Version:
 		st.Stale, st.StaleReason = true, "the bundle names version "+st.Version+", not "+l.Current.Version
+	case l.Current.ServeArgs != nil && !slices.Equal(st.InstalledServeArgs, l.Current.ServeArgs):
+		st.Stale, st.StaleReason = true, "the launcher starts agentd with other serve flags than are configured now"
 	}
 	return st
 }
@@ -220,6 +230,13 @@ func (l AppLauncher) Install(ctx context.Context, spec AppLauncherSpec) error {
 	}
 	if err := ValidateAppLauncherSpec(spec); err != nil {
 		return err
+	}
+	for _, f := range l.files() {
+		// The paths come from HOME / XDG_DATA_HOME and land in the desktop
+		// entry's Exec and Icon lines unescaped.
+		if plainText(f, 4096) != nil || strings.ContainsAny(f, launcherUnsafe) {
+			return fmt.Errorf("the launcher path %q holds characters a desktop entry cannot carry", f)
+		}
 	}
 	for _, f := range l.markedFiles() {
 		if data, err := l.FS.ReadFile(f); err == nil && !bytes.Contains(data, []byte(ManagedMarker)) {
@@ -336,6 +353,15 @@ func ValidateAppLauncherSpec(spec AppLauncherSpec) error {
 	if err := plainText(spec.Version, 256); err != nil {
 		return fmt.Errorf("version: %w", err)
 	}
+	if len(spec.ServeArgs) > 48 {
+		return fmt.Errorf("too many serve flags")
+	}
+	for _, a := range spec.ServeArgs {
+		// Each flag is single-quoted in the script.
+		if a == "" || plainText(a, 4096) != nil || strings.Contains(a, "'") {
+			return fmt.Errorf("serve flag %q: empty, or holds a quote or control character", a)
+		}
+	}
 	return nil
 }
 
@@ -349,20 +375,29 @@ func RenderLauncherScript(spec AppLauncherSpec) []byte {
 	b.WriteString("# tclaude rewrites or removes this file; to take it over, delete this line.\n")
 	fmt.Fprintf(&b, "# tclaude-exe: %s\n", spec.Exe)
 	fmt.Fprintf(&b, "# start-daemon: %t\n", spec.Options.StartDaemon)
+	args, _ := json.Marshal(append([]string{}, spec.ServeArgs...))
+	fmt.Fprintf(&b, "# serve-args: %s\n", args)
 	if spec.PATH != "" {
 		fmt.Fprintf(&b, "PATH='%s'\nexport PATH\n", spec.PATH)
 	}
-	args := "service launcher open"
+	cmd := "service launcher open"
 	if spec.Options.StartDaemon {
-		args += " --start-daemon"
+		cmd += " --start-daemon"
+		if len(spec.ServeArgs) > 0 {
+			cmd += " --"
+			for _, a := range spec.ServeArgs {
+				cmd += " '" + a + "'"
+			}
+		}
 	}
-	fmt.Fprintf(&b, "exec '%s' %s \"$@\"\n", spec.Exe, args)
+	fmt.Fprintf(&b, "exec '%s' %s\n", spec.Exe, cmd)
 	return []byte(b.String())
 }
 
 // parseLauncherScript reads back the binary and options a script names.
-func parseLauncherScript(data []byte) (string, AppLauncherOptions) {
+func parseLauncherScript(data []byte) (string, []string, AppLauncherOptions) {
 	var exe string
+	var args []string
 	var opts AppLauncherOptions
 	for _, line := range strings.Split(string(data), "\n") {
 		if v, ok := strings.CutPrefix(line, "# tclaude-exe: "); ok {
@@ -371,8 +406,11 @@ func parseLauncherScript(data []byte) (string, AppLauncherOptions) {
 		if v, ok := strings.CutPrefix(line, "# start-daemon: "); ok {
 			opts.StartDaemon = v == "true"
 		}
+		if v, ok := strings.CutPrefix(line, "# serve-args: "); ok {
+			_ = json.Unmarshal([]byte(v), &args)
+		}
 	}
-	return exe, opts
+	return exe, args, opts
 }
 
 // RenderDesktopEntry renders the freedesktop.org desktop entry. StartupNotify
@@ -395,9 +433,11 @@ func RenderDesktopEntry(spec AppLauncherSpec, p AppLauncherPaths) []byte {
 // The executable is a shell script, which carries no architecture, and
 // Launch Services on Apple Silicon has been seen to take such a bundle for
 // an Intel one and offer to install Rosetta. LSArchitecturePriority listing
-// arm64 first is the reported fix, LSRequiresNativeExecution forbids
-// translation outright, and the bundle identifier is one no earlier build
-// used, so no cached "Intel" verdict applies to it.
+// arm64 first is the reported fix, and the bundle identifier is one no
+// earlier build used, so no cached "Intel" verdict applies to it.
+// LSRequiresNativeExecution is left out: on an executable with no Mach-O
+// slices its effect is undocumented, and refusing to launch would be worse
+// than the prompt.
 func RenderAppBundlePlist(spec AppLauncherSpec) []byte {
 	short := bundleVersionRe.FindString(strings.TrimPrefix(spec.Version, "v"))
 	if short == "" {
@@ -423,7 +463,6 @@ func RenderAppBundlePlist(spec AppLauncherSpec) []byte {
 	str("LSMinimumSystemVersion", "11.0")
 	str("LSApplicationCategoryType", "public.app-category.developer-tools")
 	b.WriteString("\t<key>LSArchitecturePriority</key>\n\t<array>\n\t\t<string>arm64</string>\n\t\t<string>x86_64</string>\n\t</array>\n")
-	flag("LSRequiresNativeExecution")
 	flag("NSHighResolutionCapable")
 	b.WriteString("</dict>\n</plist>\n")
 	return []byte(b.String())

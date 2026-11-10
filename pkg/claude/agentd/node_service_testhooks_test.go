@@ -135,3 +135,11 @@ func PerformRestartForTest() (exited bool, code int, err error) {
 	err = performSelfUpdateRestart()
 	return exited, code, err
 }
+
+// SetOperatorTokenStoreForTest sets where the daemon says it keeps its
+// operator token (file, keychain, ephemeral).
+func SetOperatorTokenStoreForTest(store string) func() {
+	prev, _ := operatorTokenStore.Load().(string)
+	operatorTokenStore.Store(store)
+	return func() { operatorTokenStore.Store(prev) }
+}

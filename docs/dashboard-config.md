@@ -369,12 +369,42 @@ dashboard. The CLI is `tclaude service launcher status|install|uninstall`
   date.
 - **Start agentd if it is not running** (on by default) starts it first:
   - through the autostart unit, when **Start on login** installed one;
-  - otherwise as `tclaude agentd serve` with the launch profile's flags,
+  - otherwise (or when that unit does not start) as `tclaude agentd serve`,
     logging to `~/.tclaude/data/launcher-agentd.log`.
 
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop
   notification says why.
+- **Serve flags.** These are the flags the launcher starts `agentd serve`
+  with. They come from the first of these that is set:
+  1. the launch profile's flags (the profile overrides the rest);
+  2. the launcher's own setting, `service.launcher.serve_args` (CLI:
+     `--serve-args "..."`; `--default-serve-args` goes back to the
+     defaults);
+  3. tclaude's defaults:
+     - `--persist-operator-token`: the dashboard sign-in survives restarts;
+     - `--dashboard-port=<port>`: a fixed port, so bookmarks and open tabs keep
+       working. It is the running daemon's fixed port, or 7878;
+     - `--no-print-human-token`: a launcher has no terminal, so the token
+       would only end up in the log.
+
+  The tray stays on, and the dashboard stays on loopback. The status names
+  the source of the flags in effect. The flags are written into the
+  launcher, and a change to the profile or the setting rewrites it. A peer
+  without full access may set only `--persist-operator-token`,
+  `--dashboard-port`, `--no-print-human-token` and `--no-tray`.
+- **Signing in.** The launcher opens the dashboard as you. To prove that, it
+  needs the operator token, and it has no `TCLAUDE_HUMAN_TOKEN` in its
+  environment, so it reads the persisted token instead: the 0600
+  `~/.tclaude/data/operator_token` file, or the OS keychain under
+  `--persist-operator-token-keychain`.
+  - **The running agentd keeps its token in memory only:** every click is
+    refused as "unconfirmed caller". The status warns about this. Restart
+    agentd with `--persist-operator-token`, or set
+    `agent.persist_operator_token`.
+  - **The launcher's own serve flags do not persist the token:** the status
+    warns as well, because a daemon the launcher starts would have the same
+    problem.
 - **Remove…** deletes only a launcher tclaude wrote. A launcher you made
   yourself at the same path is reported and left alone.
 - Peers with `node.update.settings` can install and remove the launcher on

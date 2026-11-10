@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -130,11 +131,94 @@ func TestNodeLauncherPeerAccess(t *testing.T) {
 	require.Empty(t, fs.Files)
 
 	grant(agentd.PermNodeUpdateSettings)
-	code, body = call("POST", "/api/node/launcher/install", map[string]any{"start_daemon": true})
+	code, body = call("POST", "/api/node/launcher/install", map[string]any{"serve_args": []string{"--dashboard-port=8123", "--pprof"}})
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, "local_only_setting")
+	code, body = call("POST", "/api/node/launcher/install", map[string]any{"start_daemon": true, "serve_args": []string{"--dashboard-port=8123", "--no-tray", "--persist-operator-token"}})
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, `"access":"manage"`)
 	require.True(t, strings.Contains(body, `"managed":true`), body)
 	code, body = call("POST", "/api/node/launcher/uninstall", map[string]any{})
 	require.Equal(t, 200, code, body)
 	require.Empty(t, fs.Files)
+}
+
+// The serve flags the launcher starts agentd with: tclaude's defaults, the
+// launcher's own setting, or the launch profile, which overrides it.
+func TestNodeLauncherServeArgs(t *testing.T) {
+	f := newFlow(t)
+	l, fs, _ := testAppLauncher("linux")
+	t.Cleanup(agentd.SetAppLauncherForTest(l))
+	script := func() string {
+		b, err := fs.ReadFile(l.Paths.Script)
+		require.NoError(t, err)
+		return string(b)
+	}
+	install := func(body map[string]any) agentd.NodeAppLauncher {
+		t.Helper()
+		rec := fedHuman(t, f, "POST", "/v1/node/launcher/install", body)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var st agentd.NodeAppLauncher
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+		return st
+	}
+
+	st := install(map[string]any{})
+	require.Equal(t, "default", st.ServeArgsSource)
+	require.Equal(t, []string{"--persist-operator-token", "--dashboard-port=7878", "--no-print-human-token"}, st.ServeArgs)
+	require.Equal(t, st.ServeArgs, st.DefaultServeArgs)
+	require.Equal(t, st.ServeArgs, st.InstalledServeArgs)
+	require.Contains(t, script(), "--start-daemon -- '--persist-operator-token' '--dashboard-port=7878' '--no-print-human-token'")
+
+	st = install(map[string]any{"serve_args": []string{"--dashboard-port=8123", "--no-tray"}})
+	require.Equal(t, "launcher", st.ServeArgsSource)
+	require.Equal(t, []string{"--dashboard-port=8123", "--no-tray"}, st.InstalledServeArgs)
+	require.True(t, containsSubstring(st.Warnings, "do not persist the operator token"), "%v", st.Warnings)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, []string{"--dashboard-port=8123", "--no-tray"}, cfg.AppLauncherServeArgs())
+
+	// Omitted keeps the setting.
+	st = install(map[string]any{"start_daemon": true})
+	require.Equal(t, "launcher", st.ServeArgsSource)
+
+	for _, bad := range [][]string{{"--bogus"}, {"--tui"}, {"positional"}, {"--terminal=x'; evil; '"}, {"--print-human-token=always"}} {
+		rec := fedHuman(t, f, "POST", "/v1/node/launcher/install", map[string]any{"serve_args": bad})
+		require.Equal(t, 400, rec.Code, "%q: %s", bad, rec.Body.String())
+	}
+
+	// A launch profile overrides it; changing the profile rewrites the launcher.
+	rec := fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": map[string]any{"flags": []string{"--persist-operator-token", "--dashboard-port=9000"}, "env": []any{}, "inherit_env": []string{}}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, script(), "'--dashboard-port=9000'", "the profile change rewrote the launcher")
+	rec = fedHuman(t, f, "GET", "/v1/node/launcher", nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	require.Equal(t, "profile", st.ServeArgsSource)
+	require.False(t, st.Stale)
+	st = install(map[string]any{"serve_args": []string{"--no-tray"}})
+	require.True(t, containsSubstring(st.Warnings, "launch profile is set"), "%v", st.Warnings)
+
+	// null goes back to the defaults once the profile is gone.
+	rec = fedHuman(t, f, "PUT", "/v1/node/service/launch", map[string]any{"profile": nil})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	st = install(map[string]any{"serve_args": nil})
+	require.Equal(t, "default", st.ServeArgsSource)
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.Nil(t, cfg.AppLauncherServeArgs())
+}
+
+func TestNodeLauncherWarnsAboutAnInMemoryOperatorToken(t *testing.T) {
+	f := newFlow(t)
+	l, _, _ := testAppLauncher("linux")
+	t.Cleanup(agentd.SetAppLauncherForTest(l))
+	t.Cleanup(agentd.SetOperatorTokenStoreForTest("ephemeral"))
+	rec := fedHuman(t, f, "GET", "/v1/node/launcher", nil)
+	var st agentd.NodeAppLauncher
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	require.Equal(t, "ephemeral", st.OperatorTokenStore)
+	require.True(t, containsSubstring(st.Warnings, "--persist-operator-token"), "%v", st.Warnings)
+	agentd.SetOperatorTokenStoreForTest("file")
+	rec = fedHuman(t, f, "GET", "/v1/node/launcher", nil)
+	require.NotContains(t, rec.Body.String(), "in memory only")
 }

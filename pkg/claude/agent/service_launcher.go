@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"github.com/tofutools/tclaude/pkg/launcher"
+	"github.com/zalando/go-keyring"
 )
 
 // `tclaude service launcher`: the app launcher (a desktop entry on Linux,
@@ -35,9 +36,11 @@ type serviceLauncherParams struct {
 }
 
 type serviceLauncherInstallParams struct {
-	NoStartDaemon bool   `long:"no-start-daemon" help:"Only open the dashboard; do not start agentd when it is not running"`
-	Node          string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read and node.update.settings grants)"`
-	JSON          bool   `long:"json" help:"Output JSON"`
+	NoStartDaemon    bool   `long:"no-start-daemon" help:"Only open the dashboard; do not start agentd when it is not running"`
+	ServeArgs        string `long:"serve-args" optional:"true" help:"The agentd serve flags the launcher starts agentd with, space-separated, one token per flag (e.g. \"--persist-operator-token --dashboard-port=8123 --no-print-human-token\"); kept until changed. A launch profile overrides them"`
+	DefaultServeArgs bool   `long:"default-serve-args" help:"Go back to tclaude's default serve flags (--persist-operator-token --dashboard-port=<port> --no-print-human-token)"`
+	Node             string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node (needs the peer's node.read and node.update.settings grants)"`
+	JSON             bool   `long:"json" help:"Output JSON"`
 }
 
 type serviceLauncherOpenParams struct {
@@ -47,7 +50,10 @@ type serviceLauncherOpenParams struct {
 // appLauncherStatus mirrors agentd.NodeAppLauncher.
 type appLauncherStatus struct {
 	launcher.AppLauncherStatus
-	Access string `json:"access"`
+	ServeArgs        []string `json:"serve_args"`
+	ServeArgsSource  string   `json:"serve_args_source"`
+	DefaultServeArgs []string `json:"default_serve_args"`
+	Access           string   `json:"access"`
 }
 
 func launcherPath(node, tail string) string {
@@ -78,8 +84,18 @@ func serviceLauncherCmd() *cobra.Command {
 					"macOS: writes ~/Applications/tclaude.app, a script bundle (no signing needed) marked as native on Apple Silicon, and registers it with Launch Services so Spotlight finds it. " +
 					"The launcher runs the tclaude binary the daemon runs; agentd rewrites it when that binary moves or is updated. A launcher tclaude did not write is never overwritten.",
 				ParamEnrich: common.DefaultParamEnricher(),
-				RunFunc: func(p *serviceLauncherInstallParams, _ *cobra.Command, _ []string) {
-					os.Exit(runServiceLauncher(http.MethodPost, launcherPath(p.Node, "/install"), map[string]any{"start_daemon": !p.NoStartDaemon}, p.JSON, "App launcher installed", cliStdout, cliStderr))
+				RunFunc: func(p *serviceLauncherInstallParams, cmd *cobra.Command, _ []string) {
+					body := map[string]any{"start_daemon": !p.NoStartDaemon}
+					switch {
+					case p.DefaultServeArgs && cmd.Flags().Changed("serve-args"):
+						fmt.Fprintln(cliStderr, "Error: --default-serve-args conflicts with --serve-args")
+						os.Exit(rcInvalidArg)
+					case p.DefaultServeArgs:
+						body["serve_args"] = nil
+					case cmd.Flags().Changed("serve-args"):
+						body["serve_args"] = append([]string{}, strings.Fields(p.ServeArgs)...)
+					}
+					os.Exit(runServiceLauncher(http.MethodPost, launcherPath(p.Node, "/install"), body, p.JSON, "App launcher installed", cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[serviceLauncherParams]{
@@ -91,11 +107,13 @@ func serviceLauncherCmd() *cobra.Command {
 				},
 			}.ToCobra(),
 			boa.CmdT[serviceLauncherOpenParams]{
-				Use:         "open",
-				Short:       "Open the dashboard, starting agentd first with --start-daemon (what the app launcher runs)",
+				Use:         "open [-- serve flags...]",
+				Short:       "Open the dashboard, starting agentd first with --start-daemon and the serve flags after -- (what the app launcher runs)",
 				ParamEnrich: common.DefaultParamEnricher(),
-				RunFunc: func(p *serviceLauncherOpenParams, _ *cobra.Command, _ []string) {
-					os.Exit(runLauncherOpen(p.StartDaemon, productionOpenDeps(), cliStdout, cliStderr))
+				RunFunc: func(p *serviceLauncherOpenParams, _ *cobra.Command, args []string) {
+					d := productionOpenDeps()
+					d.ServeArgs = args
+					os.Exit(runLauncherOpen(p.StartDaemon, d, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 		},
@@ -142,6 +160,10 @@ func printAppLauncher(st appLauncherStatus, w io.Writer) {
 		fmt.Fprintf(w, "  runs:          %s\n", termtext.Cell(st.Exe))
 		fmt.Fprintf(w, "  start agentd:  %v\n", st.Options.StartDaemon)
 	}
+	source := map[string]string{"profile": "from the launch profile", "launcher": "the launcher's own setting", "default": "tclaude's defaults"}[st.ServeArgsSource]
+	if source != "" {
+		fmt.Fprintf(w, "  serve flags:   %s (%s)\n", termtext.Cell(strings.Join(st.ServeArgs, " ")), source)
+	}
 	if st.Stale {
 		fmt.Fprintf(w, "  out of date:   %s (agentd rewrites it at its next start; `tclaude service launcher install` does it now)\n", termtext.Cell(st.StaleReason))
 	}
@@ -159,19 +181,26 @@ type openDeps struct {
 	GOOS string
 	UID  int
 	// Exe is this tclaude binary, which starts agentd when no unit does.
-	Exe        string
+	Exe string
+	// ServeArgs are the serve flags a detached start uses.
+	ServeArgs  []string
 	DaemonUp   func() bool
 	Dashboard  func(stderr io.Writer) int
 	Autostart  launcher.Autostart
 	Run        launcher.Runner
 	StartServe func(argv, env []string, logFile string) error
-	Profile    func() (*config.LaunchProfile, error)
-	Environ    []string
-	LogFile    string
-	Notify     func(msg string)
-	Sleep      func(time.Duration)
+	// Profile is read for the launch profile's explicit environment; its
+	// flags are already in ServeArgs.
+	Profile func() (*config.LaunchProfile, error)
+	Environ []string
+	LogFile string
+	Notify  func(msg string)
+	Sleep   func(time.Duration)
 	// WaitFor bounds the wait for a started agentd to answer.
 	WaitFor time.Duration
+	// UseKeychainToken makes a keychain-persisted operator token the
+	// dashboard request's credential when no other is at hand.
+	UseKeychainToken func()
 }
 
 func productionOpenDeps() openDeps {
@@ -199,18 +228,20 @@ func productionOpenDeps() openDeps {
 			}
 			return cfg.ServiceLaunch(), nil
 		},
-		Environ: os.Environ(),
-		LogFile: filepath.Join(home, ".tclaude", "data", "launcher-agentd.log"),
-		Notify:  desktopNotify,
-		Sleep:   time.Sleep,
-		WaitFor: 30 * time.Second,
+		Environ:          os.Environ(),
+		LogFile:          filepath.Join(home, ".tclaude", "data", "launcher-agentd.log"),
+		Notify:           desktopNotify,
+		UseKeychainToken: useKeychainOperatorToken,
+		Sleep:            time.Sleep,
+		WaitFor:          30 * time.Second,
 	}
 }
 
 // runLauncherOpen opens the dashboard. With startDaemon, an agentd that does
 // not answer is started first: through the tclaude autostart unit when one
-// is installed (so it runs as the service would), else as a detached
-// `tclaude agentd serve` with the launch profile's flags. A failure is shown
+// is installed (so it runs as the service would), else (or when the unit
+// does not start) as a detached `tclaude agentd serve` with the serve flags
+// the launcher was written with. A failure is shown
 // as a desktop notification too, since a launcher has no terminal.
 func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int {
 	fail := func(msg string) int {
@@ -231,13 +262,16 @@ func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int
 		for step := 250 * time.Millisecond; !d.DaemonUp(); deadline -= step {
 			if deadline <= 0 {
 				where := d.LogFile
-				if how != "detached" {
+				if !strings.HasPrefix(how, "detached") {
 					where = "the " + how + " log"
 				}
 				return fail(fmt.Sprintf("tclaude agentd did not answer within %s after starting it (%s); see %s.", d.WaitFor, how, where))
 			}
 			d.Sleep(step)
 		}
+	}
+	if d.UseKeychainToken != nil {
+		d.UseKeychainToken()
 	}
 	var errBuf bytes.Buffer
 	if rc := d.Dashboard(io.MultiWriter(stderr, &errBuf)); rc != rcOK {
@@ -255,35 +289,26 @@ func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int
 func startDaemonForLauncher(d openDeps) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	var unitErr error
 	if st := d.Autostart.Status(ctx); st.Installed && st.Managed {
-		if d.GOOS == "darwin" {
-			target := "gui/" + strconv.Itoa(d.UID)
-			if _, err := d.Run(ctx, "launchctl", "kickstart", target+"/"+launcher.LaunchdLabel); err == nil {
-				return "launchd", nil
-			}
-			// Not loaded (installed since login, or booted out): load it;
-			// RunAtLoad starts it.
-			if _, err := d.Run(ctx, "launchctl", "bootstrap", target, d.Autostart.Paths.Unit); err != nil {
-				return "", fmt.Errorf("launchctl bootstrap %s: %w", d.Autostart.Paths.Unit, err)
-			}
-			return "launchd", nil
+		how, err := startAutostartUnit(ctx, d)
+		if err == nil {
+			return how, nil
 		}
-		if _, err := d.Run(ctx, "systemctl", "--user", "start", launcher.SystemdUnitName); err != nil {
-			return "", fmt.Errorf("systemctl --user start %s: %w", launcher.SystemdUnitName, err)
-		}
-		return "systemd", nil
+		// A unit left behind where its supervisor no longer runs (no user
+		// systemd, say): start agentd directly rather than not at all.
+		unitErr = err
 	}
 	if d.Exe == "" {
 		return "", fmt.Errorf("cannot tell which tclaude binary to run")
 	}
-	argv := []string{d.Exe, "agentd", "serve"}
+	argv := append([]string{d.Exe, "agentd", "serve"}, d.ServeArgs...)
 	env := append([]string(nil), d.Environ...)
 	profile, err := d.Profile()
 	if err != nil {
 		return "", fmt.Errorf("config.json could not be read, so the launch profile is unknown: %w", err)
 	}
 	if profile != nil {
-		argv = append(argv, profile.Flags...)
 		// The profile's inherited variables come from this environment,
 		// which the launcher script gave PATH; explicit ones override.
 		for _, e := range profile.Env {
@@ -291,9 +316,34 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 		}
 	}
 	if err := d.StartServe(argv, env, d.LogFile); err != nil {
+		if unitErr != nil {
+			return "", fmt.Errorf("%v; then starting it directly: %w", unitErr, err)
+		}
 		return "", err
 	}
+	if unitErr != nil {
+		return "detached, after the autostart unit failed: " + unitErr.Error(), nil
+	}
 	return "detached", nil
+}
+
+func startAutostartUnit(ctx context.Context, d openDeps) (string, error) {
+	if d.GOOS == "darwin" {
+		target := "gui/" + strconv.Itoa(d.UID)
+		if _, err := d.Run(ctx, "launchctl", "kickstart", target+"/"+launcher.LaunchdLabel); err == nil {
+			return "launchd", nil
+		}
+		// Not loaded (installed since login, or booted out): load it;
+		// RunAtLoad starts it.
+		if _, err := d.Run(ctx, "launchctl", "bootstrap", target, d.Autostart.Paths.Unit); err != nil {
+			return "", fmt.Errorf("launchctl bootstrap %s: %w", d.Autostart.Paths.Unit, err)
+		}
+		return "launchd", nil
+	}
+	if _, err := d.Run(ctx, "systemctl", "--user", "start", launcher.SystemdUnitName); err != nil {
+		return "", fmt.Errorf("systemctl --user start %s: %w", launcher.SystemdUnitName, err)
+	}
+	return "systemd", nil
 }
 
 // desktopNotify shows msg as a desktop notification, best effort. The
@@ -306,4 +356,33 @@ func desktopNotify(msg string) {
 		return
 	}
 	_, _ = launcher.ExecRunner(ctx, "notify-send", "--app-name=tclaude", "tclaude", msg)
+}
+
+// useKeychainOperatorToken sets TCLAUDE_HUMAN_TOKEN from the OS keychain
+// when neither it nor the token file holds the operator token, so a daemon
+// that persists its token in the keychain (--persist-operator-token-keychain)
+// can be signed in to from the launcher, which has no terminal environment.
+// Only `service launcher open` reads the keychain; other commands keep the
+// env-or-file lookup. Bounded: a keychain with no desktop session to answer
+// must not hang the launcher.
+func useKeychainOperatorToken() {
+	if OperatorToken() != "" {
+		return
+	}
+	ch := make(chan string, 1)
+	go func() {
+		// agentd's keychainService / keychainUser; keep them in sync.
+		tok, err := keyring.Get("tclaude", "operator_token")
+		if err != nil {
+			tok = ""
+		}
+		ch <- strings.TrimSpace(tok)
+	}()
+	select {
+	case tok := <-ch:
+		if tok != "" {
+			_ = os.Setenv(HumanTokenEnvVar, tok)
+		}
+	case <-time.After(5 * time.Second):
+	}
 }

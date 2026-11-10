@@ -10,7 +10,8 @@ import (
 
 var launcherSpec = AppLauncherSpec{
 	Exe: "/home/u/.local/bin/tclaude", Version: "v1.42.0", PATH: "/home/u/.local/bin:/usr/bin",
-	Options: AppLauncherOptions{StartDaemon: true},
+	ServeArgs: []string{"--persist-operator-token", "--dashboard-port=7878", "--terminal=my term"},
+	Options:   AppLauncherOptions{StartDaemon: true},
 }
 
 func newTestAppLauncher(goos string) (AppLauncher, memFS, *fakeRun) {
@@ -43,7 +44,7 @@ func TestAppLauncherLinuxRoundTrip(t *testing.T) {
 	}
 	script := string(fs[l.Paths.Script])
 	for _, want := range []string{"#!/bin/sh\n", ManagedMarker, "PATH='/home/u/.local/bin:/usr/bin'\nexport PATH",
-		`exec '/home/u/.local/bin/tclaude' service launcher open --start-daemon "$@"`} {
+		`exec '/home/u/.local/bin/tclaude' service launcher open --start-daemon -- '--persist-operator-token' '--dashboard-port=7878' '--terminal=my term'` + "\n"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script lacks %q:\n%s", want, script)
 		}
@@ -55,9 +56,16 @@ func TestAppLauncherLinuxRoundTrip(t *testing.T) {
 		t.Errorf("calls: %v", run.calls)
 	}
 	st := l.Status()
-	if !st.Installed || !st.Managed || st.Stale || st.Exe != launcherSpec.Exe || !st.Options.StartDaemon || len(st.Files) != 3 {
+	if !st.Installed || !st.Managed || st.Stale || st.Exe != launcherSpec.Exe || !st.Options.StartDaemon || len(st.Files) != 3 ||
+		strings.Join(st.InstalledServeArgs, "|") != "--persist-operator-token|--dashboard-port=7878|--terminal=my term" {
 		t.Fatalf("after install: %+v", st)
 	}
+	// Other configured serve flags make it stale.
+	l.Current.ServeArgs = []string{"--no-tray"}
+	if st := l.Status(); !st.Stale || !strings.Contains(st.StaleReason, "serve flags") {
+		t.Fatalf("serve flags: %+v", st)
+	}
+	l.Current.ServeArgs = launcherSpec.ServeArgs
 
 	// A moved binary makes it stale; an install without start_daemon drops the flag.
 	l.Current.Exe = "/opt/tclaude/bin/tclaude"
@@ -97,7 +105,6 @@ func TestAppLauncherMacOSBundle(t *testing.T) {
 		"<key>CFBundleShortVersionString</key>\n\t<string>1.42.0</string>",
 		"<key>CFBundleIconFile</key>\n\t<string>tclaude.icns</string>",
 		"<key>LSArchitecturePriority</key>\n\t<array>\n\t\t<string>arm64</string>\n\t\t<string>x86_64</string>\n\t</array>",
-		"<key>LSRequiresNativeExecution</key>\n\t<true/>",
 		"<key>NSHighResolutionCapable</key>\n\t<true/>",
 		"<key>LSMinimumSystemVersion</key>"} {
 		if !strings.Contains(plist, want) {
@@ -166,10 +173,19 @@ func TestAppLauncherRejectsUnsafeText(t *testing.T) {
 		{Exe: "/bin/tclaude\nexec evil"},
 		{Exe: "/bin/$(evil)"},
 		{Exe: "/bin/tclaude", PATH: "/usr/bin:'; evil; '"},
+		{Exe: "/bin/tclaude", ServeArgs: []string{"--x='; evil; '"}},
+		{Exe: "/bin/tclaude", ServeArgs: []string{"--x\nevil"}},
+		{Exe: "/bin/tclaude", ServeArgs: []string{""}},
 	} {
 		if err := ValidateAppLauncherSpec(spec); err == nil {
 			t.Errorf("accepted %+v", spec)
 		}
+	}
+	// A data directory a desktop entry cannot carry is refused, not written.
+	bad, fs, _ := newTestAppLauncher("linux")
+	bad.Paths = AppLauncherPathsFor("linux", "/home/u", `/home/u/da"ta`)
+	if err := bad.Install(context.Background(), launcherSpec); err == nil || len(fs) != 0 {
+		t.Fatalf("install under a quoted path: %v %v", err, fs)
 	}
 	l, _, _ := newTestAppLauncher("windows")
 	if st := l.Status(); st.Supported {

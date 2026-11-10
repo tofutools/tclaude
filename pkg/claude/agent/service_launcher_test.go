@@ -115,11 +115,12 @@ func TestLauncherOpenStartsThroughTheManagedUnit(t *testing.T) {
 	}
 }
 
-func TestLauncherOpenStartsDetachedWithTheLaunchProfile(t *testing.T) {
+func TestLauncherOpenStartsDetachedWithTheBakedFlags(t *testing.T) {
 	// A hand-made unit is not tclaude's to start.
 	f := newOpenFixture("linux", []byte("[Service]\nExecStart=/mine\n"))
+	f.deps.ServeArgs = []string{"--no-tray"}
 	f.deps.Profile = func() (*config.LaunchProfile, error) {
-		return &config.LaunchProfile{Flags: []string{"--no-tray"}, Env: []config.LaunchEnv{{Key: "LANG", Value: "C.UTF-8"}}}, nil
+		return &config.LaunchProfile{Flags: []string{"--ignored-here"}, Env: []config.LaunchEnv{{Key: "LANG", Value: "C.UTF-8"}}}, nil
 	}
 	if rc := runLauncherOpen(true, f.deps, io.Discard, io.Discard); rc != rcOK {
 		t.Fatal(rc)
@@ -160,5 +161,27 @@ func TestLauncherOpenFailuresNotify(t *testing.T) {
 	f.deps.Dashboard = func(w io.Writer) int { _, _ = io.WriteString(w, "Error: no browser\n"); return rcIOFailure }
 	if rc := runLauncherOpen(true, f.deps, io.Discard, io.Discard); rc == rcOK || len(f.notified) != 1 || !strings.Contains(f.notified[0], "no browser") {
 		t.Fatalf("notified %v", f.notified)
+	}
+}
+
+// A managed unit whose supervisor does not run: start agentd directly.
+func TestLauncherOpenFallsBackWhenTheUnitFails(t *testing.T) {
+	f := newOpenFixture("linux", []byte("# "+launcher.ManagedMarker+"\n"))
+	run := f.deps.Run
+	failStart := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "start "+launcher.SystemdUnitName) {
+			f.calls = append(f.calls, "failed start")
+			return nil, errors.New("Failed to connect to bus")
+		}
+		return run(ctx, name, args...)
+	}
+	f.deps.Run, f.deps.Autostart.Run = failStart, failStart
+	f.deps.ServeArgs = []string{"--persist-operator-token"}
+	var stdout bytes.Buffer
+	if rc := runLauncherOpen(true, f.deps, &stdout, io.Discard); rc != rcOK {
+		t.Fatal(rc)
+	}
+	if len(f.served) != 1 || f.opened != 1 || !strings.Contains(stdout.String(), "Failed to connect to bus") {
+		t.Fatalf("served %v out %q calls %v", f.served, stdout.String(), f.calls)
 	}
 }
