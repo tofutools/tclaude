@@ -7,7 +7,7 @@ import { Dialog } from './ui-dialog.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
 import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
 import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
-import { configNodeName } from './config-access.js';
+import { configNodeName, setSecretEditHook } from './config-access.js';
 
 const html = htm.bind(h);
 
@@ -44,6 +44,7 @@ export function ConfigApp({ state, dependencies = {} }) {
       confirmDiff: dependencies.confirmDiff || state.confirmDiff,
     });
     configureConfigLifecycle(state.lifecycle);
+    setSecretEditHook((panel) => state.markDirty(panel));
     const unbind = bindConfigActivation();
     document.addEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
     return () => {

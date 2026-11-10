@@ -9379,7 +9379,8 @@ label.cfg-label { cursor: pointer; }
 /* The controls are a <fieldset> so a read-only row on a peer's page
    (config-access.js) disables every control in it at once. */
 fieldset.cfg-row-ctl { border: 0; margin: 0; padding: 0; min-width: 0; }
-fieldset.cfg-row-ctl[disabled] { opacity: .6; }
+fieldset.cfg-row-ctl[disabled], fieldset.cfg-peer-local-only[disabled] { opacity: .6; }
+fieldset.cfg-peer-local-only { border: 0; margin: 0; padding: 0; min-width: 0; }
 .cfg-access-note { margin-top: 4px; font-size: 11px; color: #d29922; }
 .cfg-secret { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .cfg-secret-state { font-size: 11px; color: #7d8590; }

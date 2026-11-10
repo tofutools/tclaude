@@ -10,7 +10,7 @@ import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 import { shellConfirm } from './shell-state.js';
-import { clearedSecrets, configNodeName, setConfigAccess } from './config-access.js';
+import { clearedSecrets, configNodeName, setConfigAccess, withholdUnreplaced } from './config-access.js';
 import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
@@ -1832,8 +1832,18 @@ async function loadConfigTab() {
 async function reportConfigHTTPError(resp) {
   if (resp.status === 400) {
     const d = await resp.json().catch(() => ({}));
-    showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+    // A peer answers {code, error} for a refusal that is not validation.
+    showConfigErrors(d.errors && d.errors.length ? d.errors : [d.error || 'Config rejected by the server.']);
     configLifecycle.failed?.(new Error('Config rejected by the server.'));
+    return true;
+  }
+  if (resp.status === 403) {
+    // A peer refuses a change it does not allow, naming each key and what
+    // it takes (config_remote.go).
+    const d = await resp.json().catch(() => ({}));
+    const denied = Array.isArray(d.denied) ? d.denied.map(x => `${x.path} — needs ${x.requires}`) : [];
+    showConfigErrors(denied.length ? ['The node refused this change:', ...denied] : [d.error || 'The node refused this change.']);
+    configLifecycle.failed?.(new Error(d.error || 'refused'));
     return true;
   }
   if (resp.status === 409) {
@@ -1857,7 +1867,8 @@ async function saveConfig() {
   clearConfigErrors();
   let edited;
   try {
-    edited = assembleConfig();
+    // A withheld secret goes out only when the viewer chose Replace.
+    edited = withholdUnreplaced(assembleConfig());
   } catch (e) {
     showConfigErrors([e.message || String(e)]);
     configLifecycle.failed?.(e);

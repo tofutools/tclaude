@@ -87,27 +87,55 @@ export function secretOf(k, model = configAccess.value) {
   return model.redacted.find(r => paths.includes(r.path)) || null;
 }
 
-export function replaceSecret(path) {
+// onSecretEdit is told of each Replace, Clear or Keep, with the row's panel:
+// the Config island marks the form dirty, as an edit does.
+let onSecretEdit = () => {};
+export function setSecretEditHook(fn) { onSecretEdit = typeof fn === 'function' ? fn : () => {}; }
+
+export function replaceSecret(path, panel) {
   const { replace, clear } = secretEdits.value;
   const nextClear = { ...clear };
   delete nextClear[path];
   secretEdits.value = { replace: { ...replace, [path]: true }, clear: nextClear };
+  onSecretEdit(panel);
 }
 
-export function clearSecret(path) {
+export function clearSecret(path, panel) {
   const { replace, clear } = secretEdits.value;
   const nextReplace = { ...replace };
   delete nextReplace[path];
   secretEdits.value = { replace: nextReplace, clear: { ...clear, [path]: true } };
+  onSecretEdit(panel);
 }
 
-export function keepSecret(path) {
+export function keepSecret(path, panel) {
   const { replace, clear } = secretEdits.value;
   const nextReplace = { ...replace };
   const nextClear = { ...clear };
   delete nextReplace[path];
   delete nextClear[path];
   secretEdits.value = { replace: nextReplace, clear: nextClear };
+  onSecretEdit(panel);
+}
+
+// withholdUnreplaced removes from an assembled config every withheld secret
+// the viewer did not choose to replace: whatever its control holds (a value
+// typed before Keep or Clear), the save sends it empty, which keeps it (or,
+// with clear, removes it). Only plain dotted paths are form fields.
+export function withholdUnreplaced(cfg, model = configAccess.value) {
+  if (!remoteAccess(model) || !cfg) return cfg;
+  const { replace } = secretEdits.value;
+  for (const { path } of model.redacted) {
+    if (replace[path] || /[[*]/.test(path)) continue;
+    const segs = path.split('.');
+    let node = cfg;
+    for (const seg of segs.slice(0, -1)) {
+      node = node?.[seg];
+      if (!node || typeof node !== 'object') break;
+    }
+    if (node && typeof node === 'object') delete node[segs[segs.length - 1]];
+  }
+  return cfg;
 }
 
 // clearedSecrets are the paths a save asks the peer to clear.

@@ -22,7 +22,7 @@ function restricted(classes) {
   return { level: 'restricted', classes: { general: 'read', agents: 'read', network: 'read', credentials: 'read', installation: 'read', local: 'read', ...classes }, slugs: SLUGS, keys: KEYS };
 }
 
-async function mountConfig(t, response, { node = null } = {}) {
+async function mountConfig(t, response, { node = null, onPost = null } = {}) {
   const harness = await createPreactHarness(t);
   if (node) {
     globalThis.__tclaudeRemoteNode = { id: node.id };
@@ -40,6 +40,7 @@ async function mountConfig(t, response, { node = null } = {}) {
   const fetchImpl = async (path, init = {}) => {
     if (path.startsWith('/api/config') && init.method === 'POST') {
       posts.push({ path, body: JSON.parse(init.body) });
+      if (onPost) return onPost(path, JSON.parse(init.body));
       return { ok: true, status: 200, json: async () => ({ ...response, raw: response.raw, secrets_changed: ['notifications.notification_command'] }) };
     }
     if (path.startsWith('/api/config')) return { ok: true, status: 200, json: async () => response };
@@ -53,7 +54,7 @@ async function mountConfig(t, response, { node = null } = {}) {
   await adapter.loadConfigTab();
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve)); });
   const row = (k) => mounted.container.querySelector(`[data-cfg-key="${k}"]`);
-  return { harness, adapter, root: mounted.container, row, posts, confirms };
+  return { harness, adapter, state, root: mounted.container, row, posts, confirms };
 }
 
 const locked = (fieldset) => fieldset.hasAttribute('disabled');
@@ -118,4 +119,53 @@ test('this node’s own page keeps every row as it was', async (t) => {
   }
   assert.equal(root.querySelector('.cfg-rail-access'), null);
   assert.equal(root.querySelector('.cfg-secret'), null);
+});
+
+test('Keep after typing a new secret sends nothing for it: the value is kept', async (t) => {
+  const { row, harness, adapter, posts } = await mountConfig(t, {
+    raw: RAW, version: 'v1', access: restricted({ general: 'write', local: 'write' }),
+    redacted: [{ path: 'notifications.notification_command', set: true }],
+  });
+  const cmd = () => row('notifications.notification_command');
+  await harness.act(() => cmd().querySelector('[data-cfg-secret-act="replace"]').click());
+  await harness.act(() => cmd().querySelector('.cfg-list-add').click());
+  const input = cmd().querySelector('.cfg-list input');
+  input.value = 'curl https://example.invalid';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  await harness.act(() => cmd().querySelector('[data-cfg-secret-act="keep"]').click());
+  await adapter.saveConfig();
+  assert.ok(posts.length >= 1);
+  assert.equal(posts[0].body.config.notifications?.notification_command, undefined, 'a kept secret is sent empty');
+  assert.equal(posts[0].body.clear, undefined);
+});
+
+test('Replace and Clear mark the form dirty, like an edit', async (t) => {
+  const { row, harness, state } = await mountConfig(t, {
+    raw: RAW, version: 'v1', access: restricted({ general: 'write', local: 'write' }),
+    redacted: [{ path: 'notifications.notification_command', set: true }],
+  });
+  assert.equal(state.dirty.value, false);
+  await harness.act(() => row('notifications.notification_command').querySelector('[data-cfg-secret-act="clear"]').click());
+  assert.equal(state.dirty.value, true);
+  assert.deepEqual(state.dirtyPanels.value, ['notifications']);
+});
+
+test('a refusal from the node names each key and what it needs', async (t) => {
+  const { adapter, root } = await mountConfig(t, {
+    raw: RAW, version: 'v1', access: restricted({ general: 'write', agents: 'write' }), redacted: [],
+  }, {
+    onPost: () => ({ ok: false, status: 403, json: async () => ({ code: 'permission_denied', error: 'not yours', denied: [{ path: 'agent.default_permissions (roles.manage)', class: 'agents', requires: 'the node itself' }] }) }),
+  });
+  await adapter.saveConfig();
+  assert.match(root.textContent, /agent\.default_permissions \(roles\.manage\) — needs the node itself/);
+});
+
+test('the terminal attach row is gated like every other row', async (t) => {
+  const { row } = await mountConfig(t, {
+    raw: RAW, version: 'v1', access: { ...restricted({}), keys: [...KEYS, { path: 'dashboard.terminal_attach.mode', class: 'general' }] }, redacted: [],
+  });
+  const attach = row('dashboard.terminal_attach');
+  assert.equal(attach.dataset.cfgAccess, 'read');
+  assert.equal(locked(attach.querySelector('fieldset.cfg-row-ctl')), true);
+  assert.match(attach.querySelector('.cfg-access-note').textContent, /node\.config\.write/);
 });
