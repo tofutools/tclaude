@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -90,6 +91,10 @@ const defaultLauncherDashboardPort = 7878
 // operatorTokenStore is where the running daemon keeps its operator token:
 // file, keychain or ephemeral (set by serve; empty when unknown).
 var operatorTokenStore atomic.Value
+
+// launcherInstallMu keeps a launcher write and the setting it bakes in
+// together against a concurrent install or rewrite.
+var launcherInstallMu sync.Mutex
 
 // dashboardFixedPort is the running daemon's fixed dashboard port, 0 when
 // it picked a random one (set by serve).
@@ -300,14 +305,23 @@ func serveNodeLauncher(w http.ResponseWriter, r *http.Request, actor, access str
 			return
 		}
 		spec.Options.StartDaemon = req.StartDaemon == nil || *req.StartDaemon
-		args, _, argWarnings, status, code, err := applyLauncherServeArgs(req.ServeArgs, access)
+		change, args, argWarnings, status, code, err := planLauncherServeArgs(req.ServeArgs, access)
 		if err != nil {
 			writeError(w, status, code, err.Error())
 			return
 		}
 		spec.ServeArgs = args
 		specWarnings = append(specWarnings, argWarnings...)
-		if err := l.Install(r.Context(), spec); err != nil {
+		launcherInstallMu.Lock()
+		err = l.Install(r.Context(), spec)
+		if err == nil {
+			err = storeLauncherServeArgs(change)
+			if err != nil {
+				err = fmt.Errorf("the launcher was written, but its serve flags could not be saved to config.json: %w", err)
+			}
+		}
+		launcherInstallMu.Unlock()
+		if err != nil {
 			writeLauncherError(w, err)
 			return
 		}
@@ -348,6 +362,8 @@ func writeLauncherError(w http.ResponseWriter, err error) {
 // options. It never installs one that is not there, and leaves a launcher
 // alone when this daemon runs from a throwaway build (go run, a test).
 func refreshStaleAppLauncher(ctx context.Context) {
+	launcherInstallMu.Lock()
+	defer launcherInstallMu.Unlock()
 	l := appLauncher()
 	st := l.Status()
 	if !st.Managed || !st.Stale || l.Current.Exe == "" || throwawayBinary(l.Current.Exe) {
@@ -367,58 +383,81 @@ func throwawayBinary(exe string) bool {
 	return strings.HasPrefix(exe, tmp) || strings.Contains(exe, string(filepath.Separator)+"go-build")
 }
 
-// applyLauncherServeArgs stores a requested serve-flag setting (see
-// AppLauncherRequest.ServeArgs) and returns the flags now in effect.
-func applyLauncherServeArgs(raw json.RawMessage, access string) (args []string, source string, warnings []string, status int, code string, err error) {
-	if len(raw) > 0 {
-		var set []string
-		clear := strings.TrimSpace(string(raw)) == "null"
-		if !clear {
-			if err := json.Unmarshal(raw, &set); err != nil {
-				return nil, "", nil, http.StatusBadRequest, "invalid_arg", errors.New("serve_args must be an array of flags or null")
-			}
-			if set == nil {
-				set = []string{}
-			}
-			if err := validateLauncherServeArgs(set, access); err != nil {
-				var denied errLauncherFlagNotAllowed
-				if errors.As(err, &denied) {
-					return nil, "", nil, http.StatusForbidden, "local_only_setting", err
-				}
-				return nil, "", nil, http.StatusBadRequest, "invalid_flag", err
+// launcherServeArgsChange is a requested serve-flag setting (see
+// AppLauncherRequest.ServeArgs), validated but not yet stored.
+type launcherServeArgsChange struct {
+	given bool
+	clear bool
+	set   []string
+}
+
+func (c launcherServeArgsChange) apply(cfg *config.Config) {
+	if !c.given {
+		return
+	}
+	if c.clear {
+		if cfg.Service != nil {
+			cfg.Service.Launcher = nil
+			if *cfg.Service == (config.ServiceConfig{}) {
+				cfg.Service = nil
 			}
 		}
-		if _, err := config.Update(func(cfg *config.Config, loadErr error) error {
-			if loadErr != nil {
-				return loadErr
+		return
+	}
+	if cfg.Service == nil {
+		cfg.Service = &config.ServiceConfig{}
+	}
+	cfg.Service.Launcher = &config.AppLauncherConfig{ServeArgs: c.set}
+}
+
+// planLauncherServeArgs validates a requested setting and returns the serve
+// flags in effect with it applied. Nothing is stored: the caller stores it
+// once the launcher is written, so a refused install changes nothing.
+func planLauncherServeArgs(raw json.RawMessage, access string) (change launcherServeArgsChange, args []string, warnings []string, status int, code string, err error) {
+	if len(raw) > 0 {
+		change.given = true
+		change.clear = strings.TrimSpace(string(raw)) == "null"
+		if !change.clear {
+			if err := json.Unmarshal(raw, &change.set); err != nil {
+				return change, nil, nil, http.StatusBadRequest, "invalid_arg", errors.New("serve_args must be an array of flags or null")
 			}
-			if clear {
-				if cfg.Service != nil {
-					cfg.Service.Launcher = nil
-					if *cfg.Service == (config.ServiceConfig{}) {
-						cfg.Service = nil
-					}
+			if change.set == nil {
+				change.set = []string{}
+			}
+			if err := validateLauncherServeArgs(change.set, access); err != nil {
+				var denied errLauncherFlagNotAllowed
+				if errors.As(err, &denied) {
+					return change, nil, nil, http.StatusForbidden, "local_only_setting", err
 				}
-				return nil
+				return change, nil, nil, http.StatusBadRequest, "invalid_flag", err
 			}
-			if cfg.Service == nil {
-				cfg.Service = &config.ServiceConfig{}
-			}
-			cfg.Service.Launcher = &config.AppLauncherConfig{ServeArgs: set}
-			return nil
-		}); err != nil {
-			return nil, "", nil, http.StatusInternalServerError, "config_write_failed", err
 		}
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, "", nil, http.StatusInternalServerError, "config_read_failed", fmt.Errorf("config.json could not be read, so the launcher's serve flags are unknown: %w", err)
+		return change, nil, nil, http.StatusInternalServerError, "config_read_failed", fmt.Errorf("config.json could not be read, so the launcher's serve flags are unknown: %w", err)
 	}
-	args, source = launcherServeArgs(cfg)
-	if len(raw) > 0 && source == serveArgsFromProfile {
+	change.apply(cfg)
+	args, source := launcherServeArgs(cfg)
+	if change.given && source == serveArgsFromProfile {
 		warnings = append(warnings, "The launch profile is set, so the launcher starts agentd with the profile's flags; the launcher's own flags apply once the profile is cleared.")
 	}
-	return args, source, warnings, 0, "", nil
+	return change, args, warnings, 0, "", nil
+}
+
+// storeLauncherServeArgs stores a planned setting.
+func storeLauncherServeArgs(change launcherServeArgsChange) error {
+	if !change.given {
+		return nil
+	}
+	_, err := config.Update(func(cfg *config.Config, loadErr error) error {
+		if loadErr != nil {
+			return loadErr
+		}
+		change.apply(cfg)
+		return nil
+	})
+	return err
 }
 
 // serveFlagNames lists flag names only, as the launch profile's audit does.

@@ -74,7 +74,12 @@ func TestNodeLauncherRefusesHandMadeLauncher(t *testing.T) {
 		require.Equal(t, 409, rec.Code, rec.Body.String())
 		require.Contains(t, rec.Body.String(), "launcher_not_managed")
 	}
-	rec := fedHuman(t, f, "GET", "/v1/node/launcher", nil)
+	rec := fedHuman(t, f, "POST", "/v1/node/launcher/install", map[string]any{"serve_args": []string{"--no-tray"}})
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Nil(t, cfg.AppLauncherServeArgs(), "a refused install stores no setting")
+	rec = fedHuman(t, f, "GET", "/v1/node/launcher", nil)
 	require.Contains(t, rec.Body.String(), `"installed":true,"managed":false`)
 	got, err := fs.ReadFile(l.Paths.Desktop)
 	require.NoError(t, err)

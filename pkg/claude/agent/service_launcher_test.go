@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
@@ -183,5 +184,50 @@ func TestLauncherOpenFallsBackWhenTheUnitFails(t *testing.T) {
 	}
 	if len(f.served) != 1 || f.opened != 1 || !strings.Contains(stdout.String(), "Failed to connect to bus") {
 		t.Fatalf("served %v out %q calls %v", f.served, stdout.String(), f.calls)
+	}
+}
+
+// The launcher script always passes the serve flags after --.
+func TestLauncherOpenTakesServeFlagsAfterDash(t *testing.T) {
+	open, _, err := serviceLauncherCmd().Find([]string{"open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := open.ParseFlags([]string{"--start-daemon", "--", "--persist-operator-token", "--dashboard-port=7878"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := open.ValidateArgs(open.Flags().Args()); err != nil {
+		t.Fatalf("serve flags after -- refused: %v", err)
+	}
+	open, _, _ = serviceLauncherCmd().Find([]string{"open"})
+	if err := open.ParseFlags([]string{"stray"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := open.ValidateArgs(open.Flags().Args()); err == nil {
+		t.Fatal("a positional argument before -- was accepted")
+	}
+}
+
+// The keychain token goes only to the default socket, and never to an agent.
+func TestKeychainTokenOnlyForTheOperatorOnTheDefaultSocket(t *testing.T) {
+	read := 0
+	prev := keychainOperatorToken
+	keychainOperatorToken = func(string, string) (string, error) { read++; return "tok-from-keychain", nil }
+	t.Cleanup(func() { keychainOperatorToken = prev })
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(HumanTokenEnvVar, "")
+
+	t.Setenv(agentipc.AgentHintEnvVar, "1")
+	useKeychainOperatorToken()
+	t.Setenv(agentipc.AgentHintEnvVar, "")
+	t.Setenv(agentipc.SocketEnv, "/tmp/someone-elses.sock")
+	useKeychainOperatorToken()
+	if read != 0 || os.Getenv(HumanTokenEnvVar) != "" {
+		t.Fatalf("keychain read %d times; token %q", read, os.Getenv(HumanTokenEnvVar))
+	}
+	t.Setenv(agentipc.SocketEnv, "")
+	useKeychainOperatorToken()
+	if read != 1 || os.Getenv(HumanTokenEnvVar) != "tok-from-keychain" {
+		t.Fatalf("keychain read %d times; token %q", read, os.Getenv(HumanTokenEnvVar))
 	}
 }

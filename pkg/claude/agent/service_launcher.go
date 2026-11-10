@@ -18,6 +18,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/termtext"
@@ -107,7 +108,15 @@ func serviceLauncherCmd() *cobra.Command {
 				},
 			}.ToCobra(),
 			boa.CmdT[serviceLauncherOpenParams]{
-				Use:         "open [-- serve flags...]",
+				Use: "open [-- serve flags...]",
+				// The serve flags come after --, which the launcher script
+				// always writes; nothing else is positional.
+				Args: func(cmd *cobra.Command, args []string) error {
+					if dash := cmd.ArgsLenAtDash(); len(args) > 0 && dash != 0 {
+						return fmt.Errorf("serve flags go after --")
+					}
+					return nil
+				},
 				Short:       "Open the dashboard, starting agentd first with --start-daemon and the serve flags after -- (what the app launcher runs)",
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *serviceLauncherOpenParams, _ *cobra.Command, args []string) {
@@ -358,21 +367,26 @@ func desktopNotify(msg string) {
 	_, _ = launcher.ExecRunner(ctx, "notify-send", "--app-name=tclaude", "tclaude", msg)
 }
 
+// keychainOperatorToken reads the OS keychain; tests swap it.
+var keychainOperatorToken = keyring.Get
+
 // useKeychainOperatorToken sets TCLAUDE_HUMAN_TOKEN from the OS keychain
 // when neither it nor the token file holds the operator token, so a daemon
 // that persists its token in the keychain (--persist-operator-token-keychain)
 // can be signed in to from the launcher, which has no terminal environment.
 // Only `service launcher open` reads the keychain; other commands keep the
-// env-or-file lookup. Bounded: a keychain with no desktop session to answer
-// must not hang the launcher.
+// env-or-file lookup. Bounded, so a keychain that never answers does not
+// hang the launcher.
 func useKeychainOperatorToken() {
-	if OperatorToken() != "" {
+	// Never for an agent, and never toward a socket someone else named:
+	// the token would go to whatever listens there.
+	if hasAgentHint() || agentipc.ExplicitSocketPath() != "" || OperatorToken() != "" {
 		return
 	}
 	ch := make(chan string, 1)
 	go func() {
 		// agentd's keychainService / keychainUser; keep them in sync.
-		tok, err := keyring.Get("tclaude", "operator_token")
+		tok, err := keychainOperatorToken("tclaude", "operator_token")
 		if err != nil {
 			tok = ""
 		}
@@ -383,6 +397,8 @@ func useKeychainOperatorToken() {
 		if tok != "" {
 			_ = os.Setenv(HumanTokenEnvVar, tok)
 		}
-	case <-time.After(5 * time.Second):
+	// Long enough to answer a keychain prompt; a keychain with no session
+	// fails at once rather than waiting.
+	case <-time.After(30 * time.Second):
 	}
 }
