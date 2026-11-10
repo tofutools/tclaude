@@ -227,11 +227,14 @@ in a terminal outside any sandbox. There are four ways to keep it running:
 - **App launcher.** `tclaude service launcher install` adds tclaude to your
   desktop's app menu (a `.desktop` entry on Linux, `~/Applications/tclaude.app`
   on macOS). Picking it starts agentd if it is not running, through the login
-  unit when there is one, and opens the dashboard. To sign you in, it needs a
-  persisted operator token, in the file or the keychain (see
-  [The operator token](#4-the-operator-token)). `tclaude service launcher
-  status` and `install` warn when the running daemon's token is not
-  persisted, or when the flags the launcher would start agentd with lack
+  unit when there is one, and opens the dashboard. Without a unit it runs
+  `tclaude agentd serve` with the launch profile's flags, or by default
+  `--persist-operator-token --dashboard-port=<port> --no-print-human-token`
+  (the running daemon's fixed port, or 7878); `install --serve-args "…"`
+  sets your own. To sign you in, it needs a persisted operator token, in the file or
+  the keychain (see [The operator token](#4-the-operator-token)).
+  `tclaude service launcher status` and `install` warn when the running
+  daemon's token is not persisted, or when the launcher's flags lack
   `--persist-operator-token`. See
   [App launcher](dashboard-config.md#app-launcher).
 - **A service on a server.** For a headless machine, see
