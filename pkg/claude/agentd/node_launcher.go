@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,12 +60,55 @@ func currentAppLauncherSpec() (launcher.AppLauncherSpec, []string) {
 		}
 		keep = append(keep, dir)
 	}
+	keep = withLauncherFallbackPATH(runtime.GOOS, keep, dirExists)
+	if lookPathIn("tmux", keep, fileExecutable) == "" {
+		warnings = append(warnings, "tmux is not on the PATH the launcher gives agentd: an agentd it starts cannot reach your agents. "+
+			"Reinstall the launcher from an agentd started in a terminal where tmux works.")
+	}
 	spec := launcher.AppLauncherSpec{
 		Exe:     exe,
 		Version: buildversion.AppVersion(),
 		PATH:    strings.Join(keep, string(os.PathListSeparator)),
 	}
 	return spec, warnings
+}
+
+// launcherFallbackDirs are where macOS package managers put tmux and the
+// harnesses. A launcher installed from an agentd that itself had the bare
+// app PATH would otherwise bake in a PATH without them.
+var launcherFallbackDirs = map[string][]string{
+	"darwin": {"/opt/homebrew/bin", "/usr/local/bin"},
+}
+
+// withLauncherFallbackPATH appends the existing fallback dirs PATH lacks.
+func withLauncherFallbackPATH(goos string, dirs []string, isDir func(string) bool) []string {
+	out := append([]string(nil), dirs...)
+	for _, d := range launcherFallbackDirs[goos] {
+		if !slices.Contains(out, d) && isDir(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// lookPathIn is exec.LookPath over dirs instead of $PATH.
+func lookPathIn(name string, dirs []string, isExec func(string) bool) string {
+	for _, d := range dirs {
+		if p := filepath.Join(d, name); filepath.IsAbs(p) && isExec(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+func fileExecutable(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0
 }
 
 // appLauncher is the AppLauncher with the serve flags an install now bakes

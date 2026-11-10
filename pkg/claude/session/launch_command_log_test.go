@@ -199,3 +199,28 @@ func TestRedactPaneCommandPassesThroughWhenThereIsNoEnvironment(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "claude --resume abc", got)
 }
+
+// A withheld command says which proof failed, so the log line points at the
+// launch path to look at, without any value.
+func TestRedactPaneCommandWhyNamesTheFailedProof(t *testing.T) {
+	const secret = "sk-authored-profile-secret"
+	const envExports = "export K='" + secret + "'; "
+	for _, tc := range []struct {
+		command string
+		secrets PaneCommandSecrets
+		why     string
+	}{
+		{"claude --model opus", PaneCommandSecrets{}, withheldPrefixNotFound},
+		{envExports + "sh -c '" + nestOnce(envExports+"claude") + "'", PaneCommandSecrets{}, withheldPrefixRepeated},
+		{envExports + "codex -c k=" + secret, PaneCommandSecrets{Values: []string{secret}}, withheldValueSurvives},
+		{envExports + "codex -c shell_environment_policy.set.K=x", PaneCommandSecrets{Markers: []string{"shell_environment_policy.set.K="}}, withheldMarkerSurvives},
+		{envExports + "claude", PaneCommandSecrets{}, ""},
+	} {
+		got, why := RedactPaneCommandWhy(tc.command, envExports, tc.secrets)
+		assert.Equal(t, tc.why, why, tc.command)
+		assert.NotContains(t, why, secret)
+		if why != "" {
+			assert.Empty(t, got)
+		}
+	}
+}

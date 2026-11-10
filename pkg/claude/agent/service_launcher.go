@@ -125,8 +125,26 @@ func serviceLauncherCmd() *cobra.Command {
 					os.Exit(runLauncherOpen(p.StartDaemon, d, cliStdout, cliStderr))
 				},
 			}.ToCobra(),
+			serviceLauncherShellEnvCmd(),
 		},
 	}.ToCobra()
+}
+
+// serviceLauncherShellEnvCmd is what `open` runs inside the user's login
+// shell to learn the environment a terminal would give agentd.
+func serviceLauncherShellEnvCmd() *cobra.Command {
+	c := boa.CmdT[struct{}]{
+		Use:         "shell-env",
+		Short:       "Print this process's environment for `service launcher open` (internal)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			if err := launcher.PrintShellEnv(cliStdout); err != nil {
+				os.Exit(rcIOFailure)
+			}
+		},
+	}.ToCobra()
+	c.Hidden = true
+	return c
 }
 
 func runServiceLauncher(method, path string, body any, asJSON bool, done string, stdout, stderr io.Writer) int {
@@ -202,6 +220,15 @@ type openDeps struct {
 	// flags are already in ServeArgs.
 	Profile func() (*config.LaunchProfile, error)
 	Environ []string
+	// LoginEnv returns the environment the user's login shell has, which
+	// a detached agentd starts with (merged over Environ); nil or an error
+	// keeps Environ alone.
+	LoginEnv func(environ []string) ([]string, error)
+	// Locale is where a missing UTF-8 locale is chosen from.
+	Locale launcher.LocaleSources
+	// LogNote appends a line to LogFile, which is where a launcher's
+	// output can be read.
+	LogNote func(msg string)
 	LogFile string
 	Notify  func(msg string)
 	Sleep   func(time.Duration)
@@ -237,12 +264,21 @@ func productionOpenDeps() openDeps {
 			}
 			return cfg.ServiceLaunch(), nil
 		},
-		Environ:          os.Environ(),
+		Environ: os.Environ(),
+		LoginEnv: func(environ []string) ([]string, error) {
+			return loginShellEnv(exe, name, environ)
+		},
+		Locale: launcher.SystemLocaleSources(runtime.GOOS),
+		LogNote: func(msg string) {
+			appendLauncherLog(filepath.Join(home, ".tclaude", "data", "launcher-agentd.log"), msg)
+		},
 		LogFile:          filepath.Join(home, ".tclaude", "data", "launcher-agentd.log"),
 		Notify:           desktopNotify,
 		UseKeychainToken: useKeychainOperatorToken,
 		Sleep:            time.Sleep,
-		WaitFor:          30 * time.Second,
+		// agentd started by the LaunchAgent may first wait for the login
+		// shell, up to ShellEnvTimeout.
+		WaitFor: 30*time.Second + launcher.ShellEnvTimeout,
 	}
 }
 
@@ -313,6 +349,34 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 	}
 	argv := append([]string{d.Exe, "agentd", "serve"}, d.ServeArgs...)
 	env := append([]string(nil), d.Environ...)
+	var envNote string
+	if d.LoginEnv != nil {
+		// A launcher has the desktop's bare environment; agentd, and every
+		// agent it starts, should have what a terminal has.
+		if login, err := d.LoginEnv(env); err != nil {
+			envNote = "; without the login shell's environment: " + err.Error()
+			if d.LogNote != nil {
+				d.LogNote("ERROR tclaude launcher: starting agentd" + envNote)
+			}
+			// Nobody watches a launcher's terminal: say it on the desktop,
+			// and have agentd say it in the dashboard's Messages.
+			d.Notify("tclaude: your login shell did not give agentd its environment within " +
+				launcher.ShellEnvTimeout.String() + ". agentd started anyway; agents may not start or may show offline. See Messages in the dashboard.")
+			env = append(env, launcher.LoginEnvErrorVar+"="+err.Error())
+		} else {
+			env = launcher.MergeLoginEnv(env, login)
+		}
+		// The terminal app, not the profile, usually sets the locale; give
+		// agentd the user's own UTF-8 one when neither the launcher nor the
+		// login shell has it.
+		value, source := launcher.ChooseLocale(env, nil, d.Locale)
+		if value != "" {
+			env = launcher.WithLocale(env, value)
+			if d.LogNote != nil {
+				d.LogNote("tclaude launcher: no UTF-8 locale; agentd gets " + value + " (from " + source + ")")
+			}
+		}
+	}
 	profile, err := d.Profile()
 	if err != nil {
 		return "", fmt.Errorf("config.json could not be read, so the launch profile is unknown: %w", err)
@@ -331,9 +395,25 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 		return "", err
 	}
 	if unitErr != nil {
-		return "detached, after the autostart unit failed: " + unitErr.Error(), nil
+		return "detached, after the autostart unit failed: " + unitErr.Error() + envNote, nil
 	}
-	return "detached", nil
+	return "detached" + envNote, nil
+}
+
+// loginShellEnv asks the user's login shell for its environment by
+// running exe's `service launcher shell-env` in it.
+func loginShellEnv(exe, username string, environ []string) ([]string, error) {
+	if exe == "" {
+		return nil, fmt.Errorf("cannot tell which tclaude binary to run")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), launcher.ShellEnvTimeout+5*time.Second)
+	defer cancel()
+	shell := launcher.LoginShell(ctx, runtime.GOOS, environ, username, launcher.ExecRunner)
+	argv, err := launcher.LoginShellCommand(shell, []string{exe, "service", "launcher", "shell-env"})
+	if err != nil {
+		return nil, err
+	}
+	return launcher.LoginShellEnv(ctx, argv, environ)
 }
 
 func startAutostartUnit(ctx context.Context, d openDeps) (string, error) {

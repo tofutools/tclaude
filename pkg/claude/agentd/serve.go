@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -60,6 +61,14 @@ func serveCmd() *cobra.Command {
 		Short:       "Run the agent daemon in the foreground",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
+			// Returns only when no re-exec happened. It must stay here,
+			// before runServe: an exec after systray.Run (Cocoa), the
+			// singleton lock, the sockets or the DB would carry them into
+			// the new image broken (a re-exec after Cocoa init loses the
+			// tray icon). Only the root pre-run (config read, log setup)
+			// precedes it, and Go opens those files close-on-exec.
+			// TestLaunchdLoginEnvReExecsBeforeServeStarts pins this.
+			adoptLaunchdLoginEnv(productionLoginEnvDeps())
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				if errors.Is(err, errAgentdAlreadyRunning) {
@@ -362,6 +371,7 @@ func runServe(p *serveParams) error {
 		return err
 	}
 	defer releaseSingleton()
+	warnTmuxMissing(out, exec.LookPath)
 	// Log each dropped alias as it happens, but hold the operator-facing line
 	// until the listening banner: these fire before the SQLite migration
 	// narration, which can run for minutes, and an indented sub-bullet stranded
@@ -807,6 +817,10 @@ func runServe(p *serveParams) error {
 	// Tells the operator when an external steward's credential runs out with its
 	// workers still running. Shares the daemon-wide stop channel.
 	startExternalStewardExpiryWatch(cronStop)
+
+	// Says in Messages when agentd started without the login shell's
+	// environment (serve_login_env.go).
+	reportLoginEnvFailure()
 
 	// One cross-repository PR poll feeds the footer and every Groups PR badge.
 	// The GraphQL response carries open/recent state plus CI rollups into the
@@ -1812,4 +1826,18 @@ func (r *statusRec) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("statusRec: underlying ResponseWriter does not implement http.Hijacker")
 	}
 	return h.Hijack()
+}
+
+// warnTmuxMissing says loudly when tmux is not on agentd's PATH. Every
+// agent lives in tclaude's tmux server, so without it no agent can be
+// started or reached and all of them show offline; a daemon started with a
+// bare environment (an app launcher installed from one) used to show that
+// with no word of why.
+func warnTmuxMissing(out io.Writer, lookPath func(string) (string, error)) {
+	if _, err := lookPath("tmux"); err == nil {
+		return
+	}
+	path := os.Getenv("PATH")
+	slog.Error("agentd: tmux is not on PATH; agents cannot be started or reached, and all show offline", "PATH", path)
+	fmt.Fprintf(out, "WARNING: tmux is not on agentd's PATH (%s): agents cannot be started or reached, and all show offline.\n", path)
 }

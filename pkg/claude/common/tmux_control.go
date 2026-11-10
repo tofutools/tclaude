@@ -285,9 +285,15 @@ func execListSessionEntries(command func(args ...string) *exec.Cmd) ([]sessionLi
 		// "nothing is running" state, not a probe failure.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
+			warnTmuxListFailure(string(exitErr.Stderr))
 			return nil, nil
 		}
+		warnTmuxListFailure(err.Error())
 		return nil, err
 	}
-	return parseSessionList(strings.Split(string(out), "\n"))
+	entries, err := parseSessionList(strings.Split(string(out), "\n"))
+	if err != nil {
+		warnTmuxListFailure(err.Error())
+	}
+	return entries, err
 }
