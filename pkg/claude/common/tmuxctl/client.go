@@ -457,21 +457,25 @@ func CommandLine(args ...string) (string, error) {
 	return b.String(), nil
 }
 
-// Quote quotes one argument for tmux's command parser. Single quotes are
-// literal in tmux (no escapes, no ~ or $ expansion, no ; or # meaning); an
-// argument containing a single quote is double-quoted with \, " and $
-// escaped. A newline or carriage return would end the command line and is
-// refused.
+// Quote quotes one argument for tmux's command parser: always in double
+// quotes, with \, " and $ escaped and a leading ~ escaped (inside double
+// quotes tmux expands $VARIABLE, a leading ~ and backslash escapes; nothing
+// else is special there, so ;, #, { and ' are literal). A newline or carriage return would end the command
+// line and is refused.
 func Quote(s string) (string, error) {
 	if strings.ContainsAny(s, "\n\r") {
 		return "", fmt.Errorf("%w: argument contains a line break", ErrInvalidCommand)
 	}
-	if !strings.Contains(s, "'") {
-		return "'" + s + "'", nil
+	q := quoteEscaper.Replace(s)
+	// A word that starts with ~ is home-directory expanded, quoted or not;
+	// \~ keeps it literal.
+	if strings.HasPrefix(q, "~") {
+		q = `\` + q
 	}
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`)
-	return `"` + r.Replace(s) + `"`, nil
+	return `"` + q + `"`, nil
 }
+
+var quoteEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`)
 
 // ---- one connection ----
 

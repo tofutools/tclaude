@@ -235,7 +235,7 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 		}
 	}
 
-	for _, v := range []string{`plain`, `it's`, `a "q" b`, `$HOME ~ \e \\ ; # {x}`, `#{session_name}`, "tab\tx", `'`, `it's $HOME ~ \e \\ "x" ; #{y}`} {
+	for _, v := range []string{`plain`, `~/start`, `~`, `it's`, `a "q" b`, `$HOME ~ \e \\ ; # {x}`, `#{session_name}`, "tab\tx", `'`, `it's $HOME ~ \e \\ "x" ; #{y}`} {
 		if err := TmuxRun("set-option", "-t", "=r:", "@probe", v); err != nil {
 			t.Fatalf("set %q: %v", v, err)
 		}

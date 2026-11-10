@@ -171,7 +171,7 @@ func TestArgumentsAreQuoted(t *testing.T) {
 			t.Fatal("command never reached the server")
 		}
 	}
-	want := `display-message '-p' 'a; kill-server' "it's \$HOME"`
+	want := `display-message "-p" "a; kill-server" "it's \$HOME"`
 	if last != want {
 		t.Fatalf("wire line = %s, want %s", last, want)
 	}
@@ -328,9 +328,11 @@ func TestStartupRefusalIsAnError(t *testing.T) {
 
 func TestQuote(t *testing.T) {
 	cases := map[string]string{
-		"":        "''",
-		"plain":   "'plain'",
-		"#{x} ;":  "'#{x} ;'",
+		"":        `""`,
+		"plain":   `"plain"`,
+		"#{x} ;'": `"#{x} ;'"`,
+		"~/x":     `"\~/x"`,
+		"a~":      `"a~"`,
 		`a'b\c"$`: `"a'b\\c\"\$"`,
 	}
 	for in, want := range cases {
