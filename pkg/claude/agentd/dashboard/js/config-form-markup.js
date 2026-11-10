@@ -14,7 +14,7 @@ import { ExternalStewardManager } from './config-external-stewards.js';
 import { RelaunchPolicyTable } from './relaunch-policy-table.js';
 import { RemoteAdminPanel } from './remote-admin.js';
 import { ServicePanel } from './config-service.js';
-import { UpdatesPart } from './config-installation.js';
+import { UpdatesPart, afterRender } from './config-installation.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -478,10 +478,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
   // shown is the rail section: an alias route (/config/service) shows its
   // section and scrolls to its part.
   const shown = configSection(active);
-  useEffect(() => {
-    if (!Object.hasOwn(CONFIG_PANEL_ALIASES, active)) return;
-    globalThis.document?.getElementById(`cfg-install-${active}`)?.scrollIntoView?.({ block: 'start' });
-  }, [active]);
+  const scrollToPart = () => {
+    if (!Object.hasOwn(CONFIG_PANEL_ALIASES, configPanel.peek())) return;
+    globalThis.document?.getElementById(`cfg-install-${configPanel.peek()}`)?.scrollIntoView?.({ block: 'start' });
+  };
+  useEffect(scrollToPart, [active]);
   const select = (id) => {
     if (!setConfigPanel(id)) return;
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
@@ -1235,7 +1236,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="installation" active=${shown}>
-      <${ServicePanel} open=${shown === 'installation'} />
+      <${ServicePanel} open=${shown === 'installation'} onRead=${() => afterRender(scrollToPart)} />
       <${UpdatesPart}>
         <${UpdatesPanel} open=${shown === 'installation'} />
       <//>

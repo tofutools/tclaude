@@ -289,6 +289,14 @@ test('the Updates part says whether tclaude updates itself, and its action edits
     assert.equal(adapter.assembleConfig().updates.self.update_on_start, undefined);
     assert.equal(adapter.assembleConfig().updates.self.schedule.frequency, 'off');
     assert.equal(state(), 'off');
+
+    // A method that cannot run here needs attention, and never folds as healthy.
+    await load({ updates: { self: { method: 'source_checkout', schedule: { frequency: 'daily' } } } });
+    const deadline = Date.now() + 5000;
+    while (state() !== 'warn' && Date.now() < deadline) await harness.act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    assert.equal(state(), 'warn');
+    assert.match(status(), /Build from a checkout cannot run here: needs git/);
+    assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), false);
   } finally {
     await unmount();
   }

@@ -36,19 +36,29 @@ export function InstallPart({ id, title, state = 'unknown', status, actions = nu
   </div>`;
 }
 
-// useFold is a part's fold: null follows `healthy` as it was when `epoch`
-// last changed (the part's data was read), so an edit never folds the part
-// away under the operator; a toggle fixes it until the next read.
-export function useFold(healthy, epoch) {
+// useFold is a part's fold: null follows `healthy` as it was once the part's
+// data was read (`epoch` changed) and is `ready` to judge, so an edit never
+// folds the part away under the operator; a toggle fixes it until the next
+// read.
+export function useFold(healthy, epoch, ready = true) {
   const [auto, setAuto] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [decided, setDecided] = useState(0);
   useEffect(() => {
-    if (!epoch) return;
+    if (!epoch || !ready || decided === epoch) return;
+    setDecided(epoch);
     setAuto(!!healthy);
     setExpanded(null);
-  }, [epoch]);
+  }, [epoch, ready]);
   const collapsed = expanded === null ? auto : !expanded;
   return [collapsed, () => setExpanded(collapsed), () => setExpanded(true)];
+}
+
+// afterRender runs fn once a state change has been painted, so a control
+// just unfolded can be scrolled to and focused.
+export function afterRender(fn) {
+  const raf = globalThis.requestAnimationFrame;
+  if (raf) raf(() => fn()); else globalThis.setTimeout(fn, 0);
 }
 
 function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
@@ -113,8 +123,10 @@ function UpdatesActions({ action, expand }) {
     return html`<${Button} variant="primary" size="sm" id="cfg-install-updates-choose" onClick=${(e) => {
       expand();
       const select = formControl(e.currentTarget, 'cfg-selfupdate-method');
-      select?.scrollIntoView?.({ block: 'center' });
-      select?.focus?.();
+      afterRender(() => {
+        select?.scrollIntoView?.({ block: 'center' });
+        select?.focus?.();
+      });
     }}>Choose an update method…<//>`;
   }
   if (action === 'schedule') {
@@ -135,7 +147,10 @@ function UpdatesActions({ action, expand }) {
 // form's updates.self inputs, passed as children).
 export function UpdatesPart({ children }) {
   const s = updatesStatus(selfUpdateDraft.value, selfUpdateMeta.value);
-  const [collapsed, toggle, expand] = useFold(s.state === 'on', selfUpdateLoads.value);
+  // Judged once the install detection is in too: it says whether the
+  // method can run here, and a method that cannot must not fold as healthy.
+  const meta = selfUpdateMeta.value;
+  const [collapsed, toggle, expand] = useFold(s.state === 'on', selfUpdateLoads.value, meta !== null && !meta.error);
   return html`<${InstallPart} id="updates" title="Updates" state=${s.state} collapsed=${collapsed} onToggle=${toggle}
     status=${html`<span>${s.text}</span> <span class="muted">Changes here are saved with Save changes.</span>`}
     actions=${html`<${UpdatesActions} action=${s.action} expand=${expand} />`}>

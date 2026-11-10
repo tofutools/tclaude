@@ -119,10 +119,11 @@ function Row({ label, children }) {
 
 // ServicePanel reads the service state while open and drives restart and
 // autostart. base names the node (NODE_BASE, or a peer's base); a read-only
-// caller (access "read") gets no buttons. fetchImpl/confirm/toast/copy/timers
+// caller (access "read") gets no buttons. onRead is told after each read,
+// once the part has its height. fetchImpl/confirm/toast/copy/timers
 // are injectable for tests.
 export function ServicePanel({
-  open = true, base = NODE_BASE, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
+  open = true, base = NODE_BASE, onRead = () => {}, fetchImpl = (...a) => globalThis.fetch(...a), confirm = shellConfirm, toast = shellToast,
   copy = writeClipboard, timers = globalThis,
 }) {
   const [service, setService] = useState(null);
@@ -159,6 +160,7 @@ export function ServicePanel({
       setService(s);
       setError(null);
       setReads((n) => n + 1);
+      onRead();
     } catch (e) {
       if (alive.current) setError(e);
     }
