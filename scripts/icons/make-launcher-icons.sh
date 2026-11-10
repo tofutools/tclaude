@@ -6,7 +6,8 @@
 #   tclaude.icns  the macOS bundle icon (PNG-backed ic07..ic14 entries)
 #
 # The outputs are committed; nothing runs this at build time. It needs
-# Google Chrome (headless rendering) and python3 (packing the .icns).
+# Google Chrome (headless rendering) and Go (scripts/icons/pack downscales
+# and packs the .icns).
 # Usage: scripts/icons/make-launcher-icons.sh
 set -euo pipefail
 
@@ -37,21 +38,11 @@ EOF
 		--screenshot="$png" "file://$work/icon.html" >/dev/null 2>&1
 }
 
-render 256 0 "$out/tclaude.png"
-for s in 16 32 64 128 256 512 1024; do
-	render "$s" 10 "$work/$s.png"
-done
-
-python3 -I - "$work" "$out/tclaude.icns" <<'EOF'
-import struct, sys
-work, dst = sys.argv[1], sys.argv[2]
-# OSType -> pixel size of its PNG payload.
-entries = [("ic07", 128), ("ic08", 256), ("ic09", 512), ("ic10", 1024),
-           ("ic11", 32), ("ic12", 64), ("ic13", 256), ("ic14", 512)]
-body = b""
-for ostype, size in entries:
-    data = open(f"{work}/{size}.png", "rb").read()
-    body += ostype.encode() + struct.pack(">I", len(data) + 8) + data
-open(dst, "wb").write(b"icns" + struct.pack(">I", len(body) + 8) + body)
-EOF
+# Render the logo once, large, and downscale every raster from that one
+# image: per-size Chrome renders at small window sizes came back truncated
+# (the 128 px .icns entry held only the top of the circle).
+render 1024 0 "$work/full.png"
+render 1024 10 "$work/padded.png"
+(cd "$root" && go run ./scripts/icons/pack -png 256 "$work/full.png" "$out/tclaude.png")
+(cd "$root" && go run ./scripts/icons/pack -icns "$work/padded.png" "$out/tclaude.icns")
 echo "wrote $out/tclaude.svg, tclaude.png, tclaude.icns"
