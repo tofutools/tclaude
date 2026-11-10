@@ -53,7 +53,7 @@ func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 	if fableStart < 0 {
 		t.Fatal("pinned Copilot model fixture is missing the newest released Fable suggestion")
 	}
-	want = slices.Insert(want, fableStart, "claude-fable-5.5")
+	want = slices.Insert(want, fableStart, "claude-fable-5.2")
 	opusStart := slices.Index(want, "claude-opus-5")
 	if opusStart < 0 {
 		t.Fatal("pinned Copilot model fixture is missing the newest released Opus suggestion")

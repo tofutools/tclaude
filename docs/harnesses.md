@@ -268,12 +268,13 @@ catalog has none; see OpenCode below). Copilot's `claude-haiku-5.5`
 suggestion is prepared ahead of its pinned CLI catalog; Copilot determines
 availability and reports cost in native usage credits.
 
-Fable 5.5 (`claude-fable-5-5`) is prepared ahead of release. The `fable`
-alias resolves to whatever Claude Code ships, and the full ID passes through
-unchanged; Claude Code reports its own cost. Where tclaude prices tokens
-itself (the model gateway, and OpenCode's fallback below), Fable 5.5 and
-Mythos 5.5 use the 5.1 rates until Anthropic publishes their pricing. Copilot's
-`claude-fable-5.5` suggestion is likewise prepared ahead of its catalog.
+Fable 5.2 (`claude-fable-5-2`, and `claude-mythos-5-2` for verified
+organizations) needs nothing special in Claude Code: the `fable` alias
+resolves to whatever Claude Code ships, the full ID passes through unchanged,
+and Claude Code reports its own cost. Where tclaude prices tokens itself (the
+model gateway, and OpenCode's fallback below), both use Anthropic's published
+5.2 rates. Copilot's `claude-fable-5.2` suggestion is prepared ahead of its
+pinned CLI catalog.
 
 **Sandbox.** Claude Code's own OS sandbox is configured in `settings.json`,
 not a launch flag, so tclaude's `--sandbox` delivers a per-session settings

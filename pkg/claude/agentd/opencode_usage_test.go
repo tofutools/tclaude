@@ -329,7 +329,7 @@ func TestOpenCodeModelCatalogFallsBackToAnthropicAPIRates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/config/providers", r.URL.Path)
 		_, _ = w.Write([]byte(`{"providers":[{"id":"anthropic","models":{` +
-			`"claude-fable-5-5":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1000000}},` +
+			`"claude-fable-5-2":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1000000}},` +
 			`"claude-haiku-5-5":{"limit":{"context":1000000}},` +
 			`"claude-opus-5-5":{"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":1.5}},"limit":{"context":1000000}},` +
 			`"claude-opus-9":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1000000}}}}]}`))
@@ -343,8 +343,8 @@ func TestOpenCodeModelCatalogFallsBackToAnthropicAPIRates(t *testing.T) {
 	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), runtime)
 	require.NoError(t, err)
 
-	fable := prices["anthropic/claude-fable-5-5"]
-	assert.Equal(t, openCodeModelPrice{Input: 10, Output: 50, Cache: openCodeCachePrice{Read: 0.25, Write: 12.5}}, fable)
+	fable := prices["anthropic/claude-fable-5-2"]
+	assert.Equal(t, openCodeModelPrice{Input: 8, Output: 40, Cache: openCodeCachePrice{Read: 0.2, Write: 10}}, fable)
 	assert.Equal(t, openCodeModelPrice{Input: 1, Output: 2, Cache: openCodeCachePrice{Read: 0.1, Write: 1.5}},
 		prices["anthropic/claude-opus-5-5"], "nonzero native rates stay authoritative")
 	assert.Equal(t, openCodeModelPrice{}, prices["anthropic/claude-opus-9"],
@@ -358,11 +358,11 @@ func TestOpenCodeModelCatalogFallsBackToAnthropicAPIRates(t *testing.T) {
 
 	zero := 0.0
 	projected := projectOpenCodeMessageCost(openCodeContextUsage{
-		MessageID: "msg", ProviderID: "anthropic", ModelID: "claude-fable-5-5", ReportedCost: &zero,
+		MessageID: "msg", ProviderID: "anthropic", ModelID: "claude-fable-5-2", ReportedCost: &zero,
 		Input: 1_000, Output: 100, Reasoning: 50, CacheRead: 200, CacheWrite: 10,
 	}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, projected.eligible)
-	assert.InDelta(t, 0.017675, projected.usd, 1e-12)
+	assert.InDelta(t, 0.01414, projected.usd, 1e-12)
 
 	long := projectOpenCodeMessageCost(openCodeContextUsage{
 		MessageID: "msg-long", ProviderID: "anthropic", ModelID: "claude-haiku-5-5", ReportedCost: &zero,

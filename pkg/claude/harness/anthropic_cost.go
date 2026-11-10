@@ -33,12 +33,9 @@ type AnthropicModelPricing struct {
 // https://platform.claude.com/docs/en/about-claude/pricing, keyed by model
 // ID without a date suffix. Unknown models stay unpriced rather than
 // borrowing another model's rate.
-//
-// Fable 5.5 and Mythos 5.5 are entered ahead of release with the 5.1 rates,
-// an assumption until Anthropic publishes their pricing.
 var anthropicModelPrices = map[string]AnthropicModelPricing{
-	"claude-fable-5-5":  {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
-	"claude-mythos-5-5": {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
+	"claude-fable-5-2":  {Short: AnthropicModelPrice{8, 10, 16, 0.20, 40}},
+	"claude-mythos-5-2": {Short: AnthropicModelPrice{8, 10, 16, 0.20, 40}},
 	"claude-fable-5-1":  {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
 	"claude-mythos-5-1": {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
 	"claude-fable-5":    {Short: AnthropicModelPrice{10, 12.50, 20, 1, 50}},
