@@ -255,6 +255,9 @@ func TestCustomMethodUnchangedBinaryIsUpToDate(t *testing.T) {
 	require.Equal(t, "succeeded", job.State, job.Error)
 	require.False(t, job.RestartRequired)
 	require.Contains(t, strings.Join(job.Warnings, "\n"), "already up to date")
+	backups, err := filepath.Glob(filepath.Join(s.dir, "backup-*"))
+	require.NoError(t, err)
+	require.Empty(t, backups, "an up-to-date run keeps no backup copy")
 }
 
 // A new binary that speaks another federation protocol still fails.

@@ -369,11 +369,14 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 			if hash, err := fileHash(e.Binary.Path); err == nil && hash != e.BeforeHash {
 				e.AfterHash = hash
 				manifest.Entries = append(manifest.Entries, e)
+				continue
 			}
+			// Unchanged: nothing to roll back, so its copy is not kept.
+			_ = os.Remove(e.Backup)
 		}
 	}
 	if len(manifest.Entries) == 0 {
-		_ = os.Remove(backupDir)
+		_ = os.RemoveAll(backupDir)
 	}
 	if len(manifest.Entries) == 0 && changed {
 		// A package manager replaced the binaries; the older backup no

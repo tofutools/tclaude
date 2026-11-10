@@ -407,7 +407,9 @@ function SelfUpdateTryIt({ open }) {
   const name = configNodeName();
   // The Config form's own fetch, which the adapter configures.
   const actions = useMemo(() => createNodeUpdateActions({ fetchImpl: (...a) => selfUpdateDeps.fetchImpl(...a) }), []);
-  if (!open) return null;
+  // A fused view editing a peer hides this panel (the peer's own page has
+  // it): read nothing for it here.
+  if (!open || configPeerTarget()) return null;
   return html`<${UpdateNowPanel} actions=${actions} node=${{ id: name || 'self', label: name || 'this node', local: true }}
     method=${meta && !meta.error ? saved : undefined} methodLabel=${info?.label || saved} notifyOnly=${!!info?.notify_only}
     unsaved=${!!selfUpdateDraft.value.unsaved} confirm=${shellConfirm} toast=${shellToast} idp="cfg-" />`;
