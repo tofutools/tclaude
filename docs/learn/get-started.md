@@ -57,7 +57,22 @@ command comes from you, the operator, rather than from an agent. Copy that
 line and run it in the terminal you will work in.
 
 The token is new each time the daemon starts. `--persist-operator-token`
-keeps it across restarts.
+keeps it across restarts, in a private file that the CLI reads itself, so
+you no longer need the export:
+
+```bash
+tclaude agentd serve --persist-operator-token
+```
+
+Once you are happy with tclaude, have it start when you log in:
+**Config › Installation › Start on login…** in the dashboard, or
+`tclaude service install`.
+
+!!! info "Go deeper"
+    [Installation → Run the daemon](../index.md#3-run-the-daemon) covers
+    starting on login, the app launcher and the recommended flags, and
+    [The operator token](../index.md#4-the-operator-token) covers where to
+    find the token and how to rotate it.
 
 ## 4. Open the dashboard
 
@@ -120,7 +135,8 @@ them. The Learn path uses the dashboard.
 ## What you learned
 
 - `tclaude setup` installs the hooks and agent extras.
-- `tclaude agentd serve` runs the daemon; keep it running.
+- `tclaude agentd serve` runs the daemon; keep it running, or have it start
+  on login from **Config › Installation**.
 - `tclaude agent dashboard` opens the dashboard.
 - **Diagnostics › Doctor** tells you what your install still needs.
 
