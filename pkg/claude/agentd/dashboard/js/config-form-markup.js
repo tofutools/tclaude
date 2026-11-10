@@ -1,6 +1,6 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { pickDirectory } from './helpers.js';
@@ -8,7 +8,7 @@ import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNo
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
-import { clearSecret, configAccess, configPeerTarget, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
+import { clearSecret, configAccess, configNodeName, configPeerTarget, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
 import { nodeHref } from './fleet-model.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
@@ -18,6 +18,8 @@ import { RemoteAdminPanel } from './remote-admin.js';
 import { ServicePanel } from './config-service.js';
 import { LauncherPanel } from './config-launcher.js';
 import { UpdatesPart, afterRender } from './config-installation.js';
+import { UpdateNowPanel, createNodeUpdateActions } from './node-update.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -26,7 +28,7 @@ import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 import { KEYBINDINGS_LIST, shortcutText } from './keybindings.js';
 import { SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
 import { KeyboardShortcutList, Keys } from './shortcut-keys.js';
-import { CUSTOM_TIMEOUT_DEFAULT, INSTALL_DIR_DEFAULT, LastScheduledRun, MethodOptions, PackageManagerNote, SETUP_FLAGS, SETUP_HARNESSES, ScheduleNote, SelfUpdateDetected, SelfUpdateMetaLoader, SelfUpdateMethodNote, SetupPreview, ShadowNote, ShowWhen, WEEKDAYS, needsPackageManagerAck } from './config-self-update.js';
+import { CUSTOM_TIMEOUT_DEFAULT, INSTALL_DIR_DEFAULT, LastScheduledRun, methodInfo, selfUpdateDeps, selfUpdateDraft, selfUpdateMeta, MethodOptions, PackageManagerNote, SETUP_FLAGS, SETUP_HARNESSES, ScheduleNote, SelfUpdateDetected, SelfUpdateMetaLoader, SelfUpdateMethodNote, SetupPreview, ShadowNote, ShowWhen, WEEKDAYS, needsPackageManagerAck } from './config-self-update.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -394,6 +396,25 @@ const PanelContext = createContext('');
 // UpdatesPanel is Config › Installation › Updates: updates.self. The inputs are ordinary
 // uncontrolled Config fields; the notes around them read the daemon's
 // install detection (config-self-update.js) and the adapter's draft mirror.
+// SelfUpdateTryIt is the Updates part's Check now / Test method / Update now
+// row (node-update.js UpdateNowPanel) for the node this page edits: this
+// node, or on a peer's own page that peer through its proxied /api routes.
+// It acts on the saved settings, so unsaved method edits hold it back.
+function SelfUpdateTryIt({ open }) {
+  const meta = selfUpdateMeta.value;
+  const saved = meta?.settings?.method || '';
+  const info = methodInfo(saved, meta);
+  const name = configNodeName();
+  // The Config form's own fetch, which the adapter configures.
+  const actions = useMemo(() => createNodeUpdateActions({ fetchImpl: (...a) => selfUpdateDeps.fetchImpl(...a) }), []);
+  // A fused view editing a peer hides this panel (the peer's own page has
+  // it): read nothing for it here.
+  if (!open || configPeerTarget()) return null;
+  return html`<${UpdateNowPanel} actions=${actions} node=${{ id: name || 'self', label: name || 'this node', local: true }}
+    method=${meta && !meta.error ? saved : undefined} methodLabel=${info?.label || saved} notifyOnly=${!!info?.notify_only}
+    unsaved=${!!selfUpdateDraft.value.unsaved} confirm=${shellConfirm} toast=${shellToast} idp="cfg-" />`;
+}
+
 function UpdatesPanel({ open }) {
   const showSchedule = (d) => d.frequency !== 'off';
   return html`<${SelfUpdateMetaLoader} open=${open} />
@@ -403,10 +424,15 @@ function UpdatesPanel({ open }) {
       </${Setting}>
       <${Setting} title="Update method" forId="cfg-selfupdate-method" k="updates.self.method"
         summary="How tclaude updates itself. Package-manager methods are opt-in and ask you to confirm."
-        more=${html`<strong>Release download</strong> fetches the GitHub release archive and verifies its checksum. <strong>Build with go install</strong> builds the release tag with your Go toolchain. <strong>Build from a checkout</strong> fetches the release tag (or a branch) in a git checkout you name and builds it; it refuses a checkout with uncommitted changes. <strong>Custom command</strong> runs your own command. <strong>Let tclaude run …</strong> asks that package manager to upgrade tclaude. <strong>Notify me</strong> only checks and tells you. Every method that installs is checked afterwards: the new binary must report the expected version.`}>
+        more=${html`<strong>Release download</strong> fetches the GitHub release archive and verifies its checksum. <strong>Build with go install</strong> builds the release tag with your Go toolchain. <strong>Build from a checkout</strong> fetches the release tag (or a branch) in a git checkout you name and builds it; it refuses a checkout with uncommitted changes. <strong>Custom command</strong> runs your own command, and accepts whatever version it installs. <strong>Let tclaude run …</strong> asks that package manager to upgrade tclaude. <strong>Notify me</strong> only checks and tells you. Every method that installs is checked afterwards: the new binary must report the expected version (a custom command's binary must still run as tclaude and speak the same federation protocol).`}>
         <${ConfigSelect} id="cfg-selfupdate-method" aria-label="Update method"><${MethodOptions} /></${ConfigSelect}>
       </${Setting}>
       <div class="cfg-su-noterow"><${SelfUpdateMethodNote} /></div>
+      <${Setting} title="Try it" wide
+        summary="Check for a newer release, test the saved method without installing anything, or update now."
+        more=${html`<strong>Check now</strong> asks GitHub for the latest release (a checkout that follows a branch checks for new commits). <strong>Test method</strong> is a dry run: it says whether the method can run here and what it would run, and checks write access, the tools on PATH and the checkout, without fetching, building or running anything. <strong>Update now</strong> applies an update with the saved method and restarts agentd if a binary changed; agent sessions keep running. CLI: <code>tclaude update --check</code> · <code>--dry-run</code> · <code>--apply</code>.`}>
+        <${SelfUpdateTryIt} open=${open} />
+      </${Setting}>
       <${ShowWhen} test=${(d) => d.method === 'source_checkout'}>
         <${Setting} title="Checkout" forId="cfg-selfupdate-checkout-path" k="updates.self.source_checkout.path" child
           summary="A git checkout of tclaude. Updating refuses if it has uncommitted changes.">
@@ -419,8 +445,9 @@ function UpdatesPanel({ open }) {
       </${ShowWhen}>
       <${ShowWhen} test=${(d) => d.method === 'custom'}>
         <${Setting} title="Update command" forId="cfg-selfupdate-custom-command" k="updates.self.custom.command" child wide
-          summary=${html`Run with <code>/bin/sh -c</code>, with <code>TCLAUDE_UPDATE_*</code> variables naming the target version. Afterwards tclaude checks the new binary reports that version, and fails the update if not.`}>
-          <${ConfigTextarea} id="cfg-selfupdate-custom-command" rows="3" spellcheck="false" aria-label="Update command" placeholder="~/bin/update-tclaude.sh" />
+          summary=${html`tclaude runs this with <code>/bin/sh -c</code> and restarts agentd if it installed a new binary. It may use <code>TCLAUDE_UPDATE_VERSION</code> (the latest release) and <code>TCLAUDE_UPDATE_BINARIES</code>; it doesn't have to. Afterwards tclaude checks the binary still runs and speaks the same federation protocol.`}
+          more=${html`For example <code>cd ~/git/tclaude && git pull && go install .</code>. Any version it installs is accepted; one other than the latest release is noted as a warning. A command that changes nothing means already up to date. Update now always runs it; scheduled and start-up runs run it only when this node is not already on the latest release.`}>
+          <${ConfigTextarea} class="ui-textarea" id="cfg-selfupdate-custom-command" rows="3" spellcheck="false" aria-label="Update command" placeholder="~/bin/update-tclaude.sh" />
         </${Setting}>
         <${Setting} title="Timeout (seconds)" forId="cfg-selfupdate-custom-timeout" k="updates.self.custom.timeout_seconds" child>
           <${ConfigInput} type="number" id="cfg-selfupdate-custom-timeout" min="1" max="86400" placeholder=${String(CUSTOM_TIMEOUT_DEFAULT)} aria-label="Update command timeout in seconds" />

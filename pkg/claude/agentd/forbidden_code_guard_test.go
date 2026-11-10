@@ -41,13 +41,14 @@ var forbiddenGenericCodeSites = map[string]int{
 	"node_run.go":                   2,
 	"node_service.go":               3,
 	"node_service_launch.go":        1,
-	"node_update.go":                1,
-	"node_update_settings.go":       2,
-	"node_update_scripts.go":        1,
-	"managed_instructions.go":       2,
-	"launch_identity.go":            3,
-	"lifecycle_spawn_request.go":    1,
-	"spawn_relaunch_overrides.go":   1,
+	// The peer update status, jobs, apply and preflight (Test method).
+	"node_update.go":              2,
+	"node_update_settings.go":     2,
+	"node_update_scripts.go":      1,
+	"managed_instructions.go":     2,
+	"launch_identity.go":          3,
+	"lifecycle_spawn_request.go":  1,
+	"spawn_relaunch_overrides.go": 1,
 }
 
 func TestForbiddenResponsesDoNotUseAGenericCode(t *testing.T) {

@@ -444,7 +444,7 @@ func Methods(bins []Binary) []MethodInfo {
 		pm(MethodMise, ManagerMise, "mise", "Let tclaude run mise"),
 		pm(MethodApt, ManagerDpkg, "apt-get", "Let tclaude run apt-get (sudo -n)"),
 		pm(MethodDnf, ManagerRpm, "dnf", "Let tclaude run dnf (sudo -n)"),
-		{ID: MethodCustom, Label: "Run my own update command", Description: "Run an operator-written /bin/sh command, then verify the installed version and protocol.", Available: true},
+		{ID: MethodCustom, Label: "Run my own update command", Description: "Run your own command with /bin/sh -c. It may use TCLAUDE_UPDATE_VERSION (the latest release); it does not have to. Afterwards tclaude checks the binaries still run and speak the same federation protocol.", Available: true},
 		{ID: MethodManual, Label: "Notify me only", Description: "Check for updates and notify; never install.", Available: true, NotifyOnly: true},
 	}
 }

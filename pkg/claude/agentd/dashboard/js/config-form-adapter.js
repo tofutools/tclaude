@@ -880,6 +880,22 @@ function setSelfUpdateSelect(select, value) {
 
 function setupFlagInputs() { return $$('[data-cfg-setup-flag]'); }
 
+// methodFields are the form values Update now and Test method act on (the
+// method, its inputs, the post-update setup); not the schedule, which only
+// says when automatic runs happen. selfUpdateLoadedFields is their loaded
+// state, so the draft knows whether those buttons would act on what is shown.
+let selfUpdateLoadedFields = '';
+function methodFields() {
+  return JSON.stringify([
+    $('#cfg-selfupdate-method').value,
+    $('#cfg-selfupdate-checkout-path').value.trim(), $('#cfg-selfupdate-checkout-ref').value.trim(),
+    $('#cfg-selfupdate-custom-command').value.trim(), $('#cfg-selfupdate-custom-timeout').value.trim(),
+    $('#cfg-selfupdate-install-dir').value.trim(), $('#cfg-selfupdate-pm-ack').checked,
+    $('#cfg-selfupdate-setup-enabled').checked, $('#cfg-selfupdate-setup-harness').value,
+    setupFlagInputs().filter((input) => input.checked).map((input) => input.getAttribute('data-cfg-setup-flag')),
+  ]);
+}
+
 function syncSelfUpdateDraft() {
   selfUpdateDraft.value = {
     method: $('#cfg-selfupdate-method').value,
@@ -893,6 +909,7 @@ function syncSelfUpdateDraft() {
     windowEnd: $('#cfg-selfupdate-window-end').value.trim(),
     onStart: $('#cfg-selfupdate-on-start').checked,
     ack: $('#cfg-selfupdate-pm-ack').checked,
+    unsaved: methodFields() !== selfUpdateLoadedFields,
   };
 }
 
@@ -920,6 +937,7 @@ function populateSelfUpdate(su) {
   const flags = new Set(selfUpdateLoadedFlags);
   for (const input of setupFlagInputs()) input.checked = flags.has(input.getAttribute('data-cfg-setup-flag'));
   setSelfUpdateSelect($('#cfg-selfupdate-setup-harness'), setup.harness || '');
+  selfUpdateLoadedFields = methodFields();
   syncSelfUpdateDraft();
   selfUpdateLoads.value++;
 }

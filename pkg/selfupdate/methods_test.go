@@ -208,31 +208,82 @@ func TestPackageManagerMethodRunsFixedCommandAndVerifies(t *testing.T) {
 	require.Nil(t, s2.PendingPostSetup(), "setup runs once")
 }
 
-func TestCustomMethodMustInstallTheReleaseVersion(t *testing.T) {
+// customService is a service with one tclaude binary at bin (reporting
+// v1.0.0) whose latest release is v1.1.0; run is the custom command.
+func customService(t *testing.T, run func(argv, env []string) ([]byte, error)) (*Service, *fakeHost, string) {
+	t.Helper()
 	dir := testutil.CanonicalTempDir(t)
 	bin := filepath.Join(dir, "bin", "tclaude")
 	writeBin(t, bin, "v1.0.0")
-	h := &fakeHost{path: map[string]string{"tclaude": bin}}
-	var env []string
-	h.run = func(argv, e []string) ([]byte, error) {
-		env = e
-		writeBin(t, bin, "v1.0.5")
-		return nil, nil
-	}
+	h := &fakeHost{path: map[string]string{"tclaude": bin}, run: run}
 	h.install(t)
-	s := versionedService(t, dir, []Binary{{Name: "tclaude", Path: bin, Version: "v1.0.0", Method: "unrecognized"}}, "v1.1.0")
-	job, err := s.StartWith(Request{Action: "apply"}, "operator", func() bool { return true }, ApplyOptions{Method: MethodCustom, CustomCommand: "my-installer"})
+	return versionedService(t, dir, []Binary{{Name: "tclaude", Path: bin, Version: "v1.0.0", Method: "unrecognized"}}, "v1.1.0"), h, bin
+}
+
+func applyCustom(t *testing.T, s *Service, opts ApplyOptions) Job {
+	t.Helper()
+	opts.Method, opts.CustomCommand = MethodCustom, "my-installer"
+	job, err := s.StartWith(Request{Action: "apply"}, "operator", func() bool { return true }, opts)
 	require.NoError(t, err)
-	job = waitJob(t, s, job.ID)
-	require.Equal(t, "failed", job.State)
-	require.Contains(t, job.Error, "expected v1.1.0")
+	return waitJob(t, s, job.ID)
+}
+
+// The TCLAUDE_UPDATE_* variables are information: a custom command that
+// builds a branch (a devel or lower-sorting version) succeeds, with a
+// warning naming the latest release.
+func TestCustomMethodAcceptsAnyVersionWithAWarning(t *testing.T) {
+	var env []string
+	var bin string
+	s, h, bin := customService(t, func(argv, e []string) ([]byte, error) {
+		env = e
+		writeBin(t, bin, "v0.0.0-20261110120000-abcdef123456")
+		return nil, nil
+	})
+	job := applyCustom(t, s, ApplyOptions{})
+	require.Equal(t, "restarting", job.State, job.Error)
 	require.Equal(t, []string{"/bin/sh", "-c", "my-installer"}, h.ran[0])
 	require.Contains(t, env, "TCLAUDE_UPDATE_VERSION=v1.1.0")
-
-	h.run = func(argv, e []string) ([]byte, error) { writeBin(t, bin, "v1.1.0"); return nil, nil }
-	job, err = s.StartWith(Request{Action: "apply"}, "operator", func() bool { return true }, ApplyOptions{Method: MethodCustom, CustomCommand: "my-installer"})
-	require.NoError(t, err)
-	job = waitJob(t, s, job.ID)
-	require.Equal(t, "restarting", job.State, job.Error)
+	require.Contains(t, strings.Join(job.Warnings, "\n"), "installed tclaude v0.0.0-20261110120000-abcdef123456; the latest release is v1.1.0")
 	require.True(t, s.Status().RollbackAvailable, "an in-place custom install is backed up")
+}
+
+// A custom command that changes nothing found nothing to install: the job
+// succeeds as already up to date and nothing restarts.
+func TestCustomMethodUnchangedBinaryIsUpToDate(t *testing.T) {
+	s, _, _ := customService(t, func([]string, []string) ([]byte, error) { return []byte("Already up to date."), nil })
+	job := applyCustom(t, s, ApplyOptions{})
+	require.Equal(t, "succeeded", job.State, job.Error)
+	require.False(t, job.RestartRequired)
+	require.Contains(t, strings.Join(job.Warnings, "\n"), "already up to date")
+	backups, err := filepath.Glob(filepath.Join(s.dir, "backup-*"))
+	require.NoError(t, err)
+	require.Empty(t, backups, "an up-to-date run keeps no backup copy")
+}
+
+// A new binary that speaks another federation protocol still fails.
+func TestCustomMethodProtocolMismatchFails(t *testing.T) {
+	var bin string
+	s, _, bin := customService(t, func([]string, []string) ([]byte, error) { writeBin(t, bin, "v1.1.0"); return nil, nil })
+	s.SetFakesForTest(TestFakes{Inspect: func(_ context.Context, path string) (buildversion.Info, error) {
+		return buildversion.Info{Version: "v1.1.0", ProtocolVersion: s.status.ProtocolVersion + 1}, nil
+	}})
+	job := applyCustom(t, s, ApplyOptions{})
+	require.Equal(t, "failed", job.State)
+	require.Contains(t, job.Error, "federation protocol")
+}
+
+// At the latest release an automatic run skips the custom command; the
+// operator's own Update now (RunWhenCurrent) runs it, since it may track a
+// branch.
+func TestCustomMethodRunsAtLatestOnlyWhenAsked(t *testing.T) {
+	var bin string
+	s, h, bin := customService(t, func([]string, []string) ([]byte, error) { return nil, nil })
+	writeBin(t, bin, "v1.1.0")
+	s.binaries[0].Version = "v1.1.0"
+	job := applyCustom(t, s, ApplyOptions{})
+	require.Equal(t, "succeeded", job.State, job.Error)
+	require.Empty(t, h.ran, "an automatic run at the latest release runs nothing")
+	job = applyCustom(t, s, ApplyOptions{RunWhenCurrent: true})
+	require.Equal(t, "succeeded", job.State, job.Error)
+	require.Equal(t, [][]string{{"/bin/sh", "-c", "my-installer"}}, h.ran)
 }

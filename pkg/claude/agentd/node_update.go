@@ -60,7 +60,46 @@ func registerNodeUpdateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("POST /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("GET /api/node/update/jobs/{id}", handleDashboardNodeUpdate)
+	mux.HandleFunc("GET /api/node/update/preflight", handleDashboardNodeUpdatePreflight)
 	registerNodeUpdateSettingsRoutes(mux)
+}
+
+// GET <base>/preflight is a dry run of Update now under the node's saved
+// update settings: whether the method may run here, what it would run, and
+// the local preconditions checked without installing (selfupdate.Plan).
+func handleDashboardNodeUpdatePreflight(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	serveNodeUpdatePreflight(w, r, false)
+}
+func handleLocalNodeUpdatePreflight(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "test the tclaude update method") {
+		return
+	}
+	serveNodeUpdatePreflight(w, r, false)
+}
+
+// servePeerNodeUpdatePreflight serves a peer holding node.update, as the
+// update status read is. The custom command is the operator's free text: only
+// an unrestricted peer sees it, as with the settings view.
+func servePeerNodeUpdatePreflight(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !peerNodeUpdateAllowed(v, rule) {
+		writeError(w, 403, "permission_denied", "node.update is not shared")
+		return
+	}
+	serveNodeUpdatePreflight(w, r, !v.unrestricted())
+}
+
+func serveNodeUpdatePreflight(w http.ResponseWriter, r *http.Request, redact bool) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	service, err := localUpdateService()
+	if err != nil {
+		writeError(w, 503, "update_unavailable", err.Error())
+		return
+	}
+	plan := service.Plan(r.Context(), selfUpdateApplyOptions(loadSelfUpdateSettings()), selfupdate.PlanOptions{RedactCommand: redact})
+	writeJSON(w, 200, plan)
 }
 func handleDashboardNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -117,6 +156,9 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 			// A check needs the method too: a source checkout that follows a
 			// branch checks for new commits, not a newer release.
 			opts = selfUpdateApplyOptions(loadSelfUpdateSettings())
+			// The operator asked for this update: a custom command runs
+			// even at the latest release (automatic runs do not).
+			opts.RunWhenCurrent = true
 		}
 		if req.Action != "check" {
 			opts.Launch = selfUpdateLaunchPlan()

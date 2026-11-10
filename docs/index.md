@@ -334,7 +334,12 @@ tclaude update config set method release    # or go_install, source_checkout, â€
 tclaude update config set schedule daily    # or weekly, with weekday and window
 tclaude update config set update-on-start true
 tclaude update config set post-setup on     # rerun tclaude setup with the new version
+tclaude update --dry-run                    # test the saved method; installs nothing
+tclaude update --apply                      # update now
 ```
+
+The Updates part has the same Check now, Test method and Update now
+buttons.
 
 An update replaces the binaries, checks that they report the expected
 version, and restarts agentd gracefully. Agents keep running in tmux.
