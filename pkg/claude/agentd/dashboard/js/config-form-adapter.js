@@ -10,6 +10,7 @@ import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 import { shellConfirm } from './shell-state.js';
+import { clearedSecrets, setConfigAccess } from './config-access.js';
 import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
@@ -1792,7 +1793,11 @@ async function loadConfigTab() {
     configBaseRaw = data.raw || '{}';
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = !!data.malformed;
-    if (data.path) $('#cfg-path').textContent = data.path;
+    // A restricted peer does not name its home directory.
+    $('#cfg-path').textContent = data.path || 'the node’s config.json';
+    // What the viewer may change, before the form renders it (a peer's page:
+    // read-only rows and withheld secrets, config-access.js).
+    setConfigAccess(data);
     populateConfigForm(configObj);
     configLoaded = true;
     const notices = [];
@@ -1859,7 +1864,10 @@ async function saveConfig() {
   }
   // The body carries the edited config plus the canonical baseline
   // the form loaded — the server 409s if the file drifted since.
-  const body = JSON.stringify({ config: edited, base: configBaseRaw });
+  // On a peer's page, the withheld secrets the viewer chose to clear; one it
+  // sends back empty is kept.
+  const clear = clearedSecrets();
+  const body = JSON.stringify(clear.length ? { config: edited, base: configBaseRaw, clear } : { config: edited, base: configBaseRaw });
   const post = (query) => configDependencies.fetchImpl('/api/config' + query, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body,
@@ -1873,16 +1881,20 @@ async function saveConfig() {
     const dry = await post('?dry_run=1');
     if (bindingEpoch !== configBindingEpoch) return;
     if (await reportConfigHTTPError(dry)) return;
-    const after = (await dry.json()).raw || '';
+    const preview = await dry.json();
+    const after = preview.raw || '';
+    // A peer's preview withholds secrets too, so the ones the save sets or
+    // clears are named beside the diff.
+    const secrets = Array.isArray(preview.secrets_changed) ? preview.secrets_changed : [];
     if (bindingEpoch !== configBindingEpoch) return;
     // When the on-disk file is corrupt the diff baseline is "defaults",
     // so after===base can hold even though the save still meaningfully
     // replaces the corrupt file — don't skip it then.
-    if (after === configBaseRaw && !configFileMalformed) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
+    if (after === configBaseRaw && !configFileMalformed && !secrets.length) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
 
     // Phase 2: human confirms the diff before the real write.
     const ok = await configDependencies.confirmDiff(
-      configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent,
+      configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent, secrets,
     );
     if (bindingEpoch !== configBindingEpoch) return;
     if (!ok) { configDependencies.toast('Save cancelled'); configLifecycle.ready?.(); return; }
@@ -1896,6 +1908,7 @@ async function saveConfig() {
     configBaseRaw = data.raw || configBaseRaw;
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = false; // the file is canonical after a save
+    setConfigAccess(data);
     populateConfigForm(configObj);
     invalidateSelfUpdateMeta();
     // The saved file is canonical now — any load-time notice (a

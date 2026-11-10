@@ -16,6 +16,21 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
   `agentd restart`, `refresh` (next dashboard refresh), `next launch`, `Claude Code`
   (that harness only), `deprecated`, `irreversible`.
 
+## On a peer's page
+
+A trusted peer's per-node page has a Config tab when that peer shares
+`node.config.read` with you. It edits the peer's settings through the
+[remote Config tab](federation-admin.md#remote-config-tab) API:
+
+- A row you may not change is read-only, and says what it needs: a grant
+  such as `node.config.agents`, or **Change on the node itself** for the keys
+  only the node changes (shell commands, the hub link, audit retention). The
+  rail marks a section **partial** or **read-only**.
+- A secret shows only as **set** or **not set**. The peer never sends its
+  value, not even under unrestricted trust. Where you may change it,
+  **Replace** takes a new value and **Clear** removes it. The save
+  confirmation names the secrets it sets or clears.
+
 ## Appearance
 
 `/config/appearance`: how the dashboard looks.

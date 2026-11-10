@@ -309,7 +309,7 @@ keys.
 ## Remote Config tab
 
 A trusted peer administers this node's Config tab through the peer view:
-`GET`, `POST` and `PATCH /api/peer/{instance_id}/api/config` answer as this
+`GET`, `POST` and `PATCH /api/peer/{instance_id}/config` answer as this
 node's own `/api/config` does, so the dashboard's tab works the same against
 either node.
 

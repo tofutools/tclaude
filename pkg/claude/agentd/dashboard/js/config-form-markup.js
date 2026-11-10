@@ -8,6 +8,7 @@ import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNo
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
+import { clearSecret, configAccess, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
@@ -249,8 +250,19 @@ function Badge({ kind }) {
 // each control inline. `wide` stacks the controls under the text for lists
 // and tables that need the full width.
 function Setting({ title, summary, more, k, badges = [], forId, wide = false, child = false, children }) {
-  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child'].filter(Boolean).join(' ');
-  return html`<div class=${cls} data-cfg-key=${k || undefined}>
+  const panel = useContext(PanelContext);
+  registerPanelKey(panel, k);
+  const model = configAccess.value;
+  // On a peer's page, a row the viewer may not change is read-only and says
+  // why (config-access.js); the panel's own components gate Installation.
+  const access = !k && panel === 'installation' ? { state: 'write', note: '' } : rowAccess(k, model);
+  const secret = secretOf(k, model);
+  const edits = secretEdits.value;
+  const replacing = secret && edits.replace[secret.path];
+  const clearing = secret && edits.clear[secret.path];
+  const readOnly = remoteAccess(model) && (access.state !== 'write' || (secret && !replacing));
+  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child', remoteAccess(model) && access.state !== 'write' && 'cfg-row-readonly'].filter(Boolean).join(' ');
+  return html`<div class=${cls} data-cfg-key=${k || undefined} data-cfg-access=${remoteAccess(model) ? access.state : undefined}>
     <div class="cfg-row-text">
       <div class="cfg-row-title">
         ${forId ? html`<label class="cfg-label" for=${forId}>${title}</label>` : html`<span class="cfg-label">${title}</span>`}
@@ -261,10 +273,37 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
         ${k && html`<code class="cfg-key">${k}</code>`}
         ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint ui-hint">${more}</div></details>`}
       </div>`}
+      ${access.note && html`<div class="cfg-access-note ui-hint">🔒 ${access.note}</div>`}
+      ${secret && html`<${SecretState} secret=${secret} writable=${access.state === 'write'} replacing=${replacing} clearing=${clearing} />`}
     </div>
-    <div class="cfg-row-ctl">${children}</div>
+    <fieldset class="cfg-row-ctl" disabled=${readOnly}>${children}</fieldset>
   </div>`;
 }
+
+// SecretState is a withheld secret's row on a peer's page: whether it is
+// set, never its value, with Replace and Clear where the viewer may change
+// it. Replacing sends the new value; one left empty keeps the old.
+function SecretState({ secret, writable, replacing, clearing }) {
+  const state = clearing ? 'will be cleared' : replacing ? 'replacing' : secret.set ? 'set' : 'not set';
+  return html`<div class="cfg-secret" data-cfg-secret=${secret.path}>
+    <span class=${`ui-tag cfg-secret-state${secret.set && !clearing ? ' is-set' : ''}`} title="The node withholds this value from every peer">${state}</span>
+    ${writable && html`<span class="cfg-secret-actions">
+      ${!replacing && html`<${Button} size="sm" data-cfg-secret-act="replace" onClick=${() => replaceSecret(secret.path)}>Replace<//>`}
+      ${secret.set && !clearing && html`<${Button} size="sm" data-cfg-secret-act="clear" onClick=${() => clearSecret(secret.path)}>Clear<//>`}
+      ${(replacing || clearing) && html`<${Button} size="sm" data-cfg-secret-act="keep" onClick=${() => keepSecret(secret.path)}>Keep<//>`}
+    </span>`}
+  </div>`;
+}
+
+// PanelAccessTag marks a rail entry the viewer can only partly or not
+// change on a peer's page.
+function PanelAccessTag({ id }) {
+  const state = panelAccess(panelRowKeys(id), configAccess.value);
+  if (!state || state === 'write') return null;
+  return html`<span class=${`ui-tag cfg-rail-access cfg-rail-access-${state}`} title=${state === 'read' ? 'Read-only on this node' : 'Some settings are read-only on this node'}>${state === 'read' ? 'read-only' : 'partial'}</span>`;
+}
+
+const PanelContext = createContext('');
 
 // UpdatesPanel is Config › Installation › Updates: updates.self. The inputs are ordinary
 // uncontrolled Config fields; the notes around them read the daemon's
@@ -429,7 +468,7 @@ function Panel({ id, active, children }) {
       <h2 id=${`cfg-panel-title-${id}`}><span class="cfg-panel-icon" aria-hidden="true">${panel.icon}</span> ${panel.title}</h2>
       <p>${panel.lede}</p>
     </div>
-    ${children}
+    <${PanelContext.Provider} value=${id}>${children}<//>
   </div>`;
 }
 
@@ -463,6 +502,7 @@ function ConfigRail({ active, select, dirtyPanels }) {
         <span class="cfg-rail-icon" aria-hidden="true">${panel.icon}</span>
         <span class="cfg-rail-title">${panel.title}</span>
         <${RailDirtyDot} dirtyPanels=${dirtyPanels} id=${panel.id} />
+        <${PanelAccessTag} id=${panel.id} />
         <span class="cfg-rail-hits" data-cfg-hits=${panel.id}></span>
       </${ConfigButton}>`)}
     </div>

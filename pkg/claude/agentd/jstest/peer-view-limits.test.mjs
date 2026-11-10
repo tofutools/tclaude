@@ -13,7 +13,8 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   assert.equal(mod.subtabState('diagnostics', 'performance', pv), 'local');
   assert.equal(mod.subtabState('diagnostics', 'audit', { ...pv, included: ['agents.status'] }), 'omitted');
   assert.equal(mod.tabState('costs', pv), 'omitted');
-  assert.equal(mod.tabState('config', pv), 'local');
+  assert.equal(mod.tabState('config', pv), 'omitted', 'the Config tab takes node.config.read');
+  assert.equal(mod.tabState('config', { ...pv, included: [...pv.included, 'node.config'] }), 'shared');
   assert.equal(mod.tabState('map', pv), 'shared', 'the map is this operator\'s own fleet view');
   assert.equal(mod.tabState('terminals', pv), 'shared', 'a peer\'s agent opens in this browser\'s Terminals tab');
   assert.equal(mod.tabState('groups', null), 'shared', 'before the first answer the snapshot view is assumed');
@@ -151,7 +152,7 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.equal(mod.peerViewSubtabUsable('diagnostics', 'performance', { remote, peerView: null }), true, 'unrestricted trust may serve it: a deep link waits');
   assert.equal(mod.peerViewSubtabUsable('diagnostics', 'audit', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewSubtabUsable('diagnostics', 'logs', { remote: undefined }), true);
-  assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
+  assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
   assert.equal(mod.peerViewTabUsable('terminals', { remote, peerView: pv }), true);
@@ -348,7 +349,7 @@ test('under unrestricted trust a peer page runs every control as the node itself
   harness.fireEvent(doc.getElementById('attach'), 'click');
   assert.equal(opened.length, 2, 'an agent terminal still opens through the attach');
   assert.equal(mod.tabState('jobs', pv), 'shared');
-  assert.equal(mod.tabState('config', pv), 'local');
+  assert.equal(mod.tabState('config', { ...pv, included: [...(pv.included || []), 'node.config'] }), 'shared', 'unrestricted trust reads the Config tab');
   const sel = doc.getElementById('peer-view-limits-style').textContent.replace(/ \{[^}]*\}$/, '');
   doc.documentElement.classList.add('remote-node');
   assert.equal(doc.getElementById('links').matches(sel), false);

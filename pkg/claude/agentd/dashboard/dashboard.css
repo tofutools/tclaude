@@ -9376,6 +9376,17 @@ label.cfg-label { cursor: pointer; }
   flex-wrap: wrap; font-size: 12px; color: #c9d1d9;
 }
 .cfg-row-ctl:empty { display: none; }
+/* The controls are a <fieldset> so a read-only row on a peer's page
+   (config-access.js) disables every control in it at once. */
+fieldset.cfg-row-ctl { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.cfg-row-ctl[disabled] { opacity: .6; }
+.cfg-access-note { margin-top: 4px; font-size: 11px; color: #d29922; }
+.cfg-secret { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.cfg-secret-state { font-size: 11px; color: #7d8590; }
+.cfg-secret-state.is-set { color: #3fb950; }
+.cfg-secret-actions { display: inline-flex; gap: 4px; }
+.cfg-rail-access { font-size: 10px; padding: 0 5px; color: #7d8590; }
+.cfg-rail-access-partial { color: #d29922; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
 /* steward.dir: a path field that takes the row's width, with Browse… beside it. */
 .cfg-dir-picker { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 640px; }

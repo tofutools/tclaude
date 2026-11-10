@@ -23,6 +23,7 @@ function ConfigDiffModal({ model, close }) {
       onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}<//>`}>
     ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
     <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
+    ${model.secrets?.length ? html`<p id="config-diff-secrets" class="cfg-diff-sub">Withheld secrets this save sets or clears (their values are never shown): ${model.secrets.join(', ')}</p>` : null}
     <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
   <//>`;
 }
