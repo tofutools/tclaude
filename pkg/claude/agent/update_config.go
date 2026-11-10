@@ -69,7 +69,7 @@ var updateConfigKeys = []struct{ key, help string }{
 	{"setup-harness", "harness for setup --harness (empty clears)"},
 	{"checkout-path", "local tclaude git checkout for source_checkout"},
 	{"checkout-ref", "branch or tag to build (empty: the release tag)"},
-	{"custom-command", "/bin/sh command for the custom method"},
+	{"custom-command", "custom method: run with /bin/sh -c; may use TCLAUDE_UPDATE_VERSION (the latest release) and TCLAUDE_UPDATE_BINARIES, need not; any version it installs is accepted"},
 	{"custom-timeout", "custom command timeout in seconds"},
 	{"package-manager-ack", "true | false: install next to a package-managed binary, into install-dir"},
 	{"install-dir", "where to install next to a package-managed binary (default ~/.local/bin)"},

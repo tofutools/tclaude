@@ -38,6 +38,11 @@ type ApplyOptions struct {
 	Launch *LaunchPlan
 	// Force goes past a failed pre-flight check (Request.Force).
 	Force bool
+	// RunWhenCurrent runs the custom command even when every binary already
+	// reports the latest release: the operator asked for this update now
+	// (it may track a branch). Automatic runs leave it off, so they run
+	// the command only when this node is not on the latest release.
+	RunWhenCurrent bool
 }
 
 // CheckoutOptions is the source_checkout method's local git checkout.
@@ -149,8 +154,48 @@ type applyTarget struct {
 	created bool
 }
 
+// binaryRoute is how an apply under opts updates one binary: by an external
+// command (the custom command or its package manager), not at all (skipped
+// says why), or by staging it with how and writing it to dest.
+type binaryRoute struct {
+	external bool
+	skipped  string
+	how      string
+	dest     string
+}
+
+// routeBinary decides a binary's binaryRoute; apply and Plan share it.
+func (s *Service) routeBinary(b Binary, opts ApplyOptions) binaryRoute {
+	pm := managerFor(opts.Method)
+	how := opts.Method
+	switch {
+	case opts.Method == MethodCustom:
+		return binaryRoute{external: true}
+	case pm != "":
+		if b.ManagedBy == pm {
+			return binaryRoute{external: true}
+		}
+		if b.ManagedBy != "" || b.Method != MethodRelease && b.Method != MethodGoInstall {
+			return binaryRoute{skipped: fmt.Sprintf("%s is not managed by %s and was not installed from a release or go install; it was left as is", b.Name, pm)}
+		}
+		how = b.Method
+	case opts.Method == "":
+		how = MethodGoInstall
+		if b.Method == MethodRelease || s.hooks.ReleaseOnly {
+			how = MethodRelease
+		}
+	}
+	dest := b.Path
+	if b.ManagedBy != "" {
+		dest = filepath.Join(opts.InstallDir, b.Name)
+	}
+	return binaryRoute{how: how, dest: dest}
+}
+
 func (s *Service) apply(ctx context.Context, release Release, job *Job, authorize func() bool, pin string, opts ApplyOptions) error {
-	current := len(s.binaries) > 0
+	// An operator's custom update runs even at the latest release: it may
+	// track a branch, which release versions do not describe.
+	current := len(s.binaries) > 0 && (opts.Method != MethodCustom || !opts.RunWhenCurrent)
 	for _, b := range s.binaries {
 		current = current && b.Version == release.Tag
 	}
@@ -165,7 +210,6 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 		return err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	pm := managerFor(opts.Method)
 	targets := []applyTarget{}
 	external := []Binary{}
 	var checkout map[string]string
@@ -175,31 +219,17 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 			continue
 		}
 		seen[b.Name] = true
-		how := opts.Method
+		route := s.routeBinary(b, opts)
 		switch {
-		case opts.Method == MethodCustom:
+		case route.external:
 			external = append(external, b)
 			continue
-		case pm != "":
-			if b.ManagedBy == pm {
-				external = append(external, b)
-				continue
-			}
-			if b.ManagedBy != "" || b.Method != MethodRelease && b.Method != MethodGoInstall {
-				job.Warnings = append(job.Warnings, fmt.Sprintf("%s is not managed by %s and was not installed from a release or go install; it was left as is", b.Name, pm))
-				continue
-			}
-			how = b.Method
-		case opts.Method == "":
-			how = MethodGoInstall
-			if b.Method == MethodRelease || s.hooks.ReleaseOnly {
-				how = MethodRelease
-			}
+		case route.skipped != "":
+			job.Warnings = append(job.Warnings, route.skipped)
+			continue
 		}
-		t := applyTarget{binary: b, dest: b.Path}
-		if b.ManagedBy != "" {
-			t.dest = filepath.Join(opts.InstallDir, b.Name)
-		}
+		how := route.how
+		t := applyTarget{binary: b, dest: route.dest}
 		switch how {
 		case MethodRelease:
 			t.staged, err = s.stageRelease(ctx, release, b.Name, dir)
@@ -501,7 +531,10 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 		}
 		if path == b.Path && hash == before[b.Name] {
 			if opts.Method == MethodCustom {
-				return false, fmt.Errorf("the custom update command left %s unchanged", b.Name)
+				// The command found nothing to build or install: already
+				// up to date, not a failure.
+				job.Warnings = append(job.Warnings, fmt.Sprintf("the custom update command left %s unchanged: already up to date", b.Name))
+				continue
 			}
 			job.Warnings = append(job.Warnings, fmt.Sprintf("%s has no newer tclaude than %s yet", b.ManagedBy, b.Version))
 			continue
@@ -524,7 +557,10 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 		switch {
 		case info.Version == release.Tag:
 		case opts.Method == MethodCustom:
-			return false, fmt.Errorf("the custom update command installed %s %s, expected %s", b.Name, info.Version, release.Tag)
+			// A custom command may build from a branch: a devel or
+			// pseudo-version, even one semver sorts lower, is the
+			// operator's choice. Only identity and protocol must hold.
+			job.Warnings = append(job.Warnings, fmt.Sprintf("the custom update command installed %s %s; the latest release is %s", b.Name, info.Version, release.Tag))
 		case semver.IsValid(job.CurrentVersion) && semver.IsValid(info.Version) && semver.Compare(info.Version, job.CurrentVersion) < 0:
 			return false, fmt.Errorf("%s downgraded %s to %s", b.ManagedBy, b.Name, info.Version)
 		default:

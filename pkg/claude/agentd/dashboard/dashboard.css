@@ -9716,7 +9716,32 @@ fieldset.cfg-peer-local-only { border: 0; margin: 0; padding: 0; min-width: 0; }
 .cfg-su-cmd code { overflow-wrap: anywhere; }
 .cfg-su-flags { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 18px; width: 100%; }
 .cfg-su-flag { display: flex; flex-direction: column; line-height: 1.3; }
-#cfg-selfupdate-custom-command { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#cfg-selfupdate-custom-command { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+/* Update now / Test method (node-update.js UpdateNowPanel, UpdatePlanView,
+   UpdateJobView): Config › Installation › Updates and the Fleet node
+   dialog. Theme tokens only, so the wizard skin repaints them. */
+.update-now { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; font-size: 12.5px; }
+.update-now-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.update-now-version { margin-left: 4px; }
+.update-plan {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding: 8px 10px;
+  border: 1px solid var(--ui-line); border-radius: var(--ui-radius, 6px); background: var(--ui-field-bg);
+  font-size: 12px; line-height: 1.5; color: var(--ui-text);
+}
+.update-plan-checks, .update-plan-steps, .update-plan-unchecked ul, .update-job-warnings { margin: 0; padding-left: 20px; }
+.update-plan-checks { list-style: none; padding-left: 0; }
+.update-plan-mark { display: inline-block; width: 1.2em; text-align: center; }
+.update-plan-ok, .update-plan-mark.update-plan-ok { color: var(--ui-success-line); }
+.update-plan-mark.update-plan-warn { color: var(--ui-warn-text); }
+.update-plan-mark.update-plan-fail { color: var(--ui-danger-text); }
+.update-plan-steps li, .update-plan-checks li { overflow-wrap: anywhere; }
+.update-plan-sub { color: var(--ui-muted-text); margin-top: 2px; }
+.update-plan-unchecked > summary, .update-job-output > summary { cursor: pointer; color: var(--ui-muted-text); }
+.update-job-warnings { font-size: 12px; }
+.update-job-output pre {
+  margin: 4px 0 0; padding: 6px 8px; max-height: 200px; overflow: auto; white-space: pre-wrap;
+  background: var(--ui-field-bg); border: 1px solid var(--ui-line); border-radius: 4px; font-size: 11.5px;
+}
 /* Remote-access cert management (JOH-278). */
 .ra-msg {
   border: 1px solid #2a623d; background: #0f2417; border-radius: 6px;

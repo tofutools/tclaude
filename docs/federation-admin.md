@@ -57,8 +57,14 @@ when a newer release is known; its update…/installation… link opens that
 node's **Installation** dialog (the Fleet page's identity bar opens it for this
 node). It is the node's counterpart of Config › Installation. At the top it
 shows the version, install method, latest release, binaries and warnings, and
-offers Check now, Update to the latest and Roll back; update and rollback
-confirm that the binaries are replaced and the daemon restarts. It follows the
+offers Check now, Test method, Update to the latest and Roll back (with a
+custom update method, Update now runs the command even with no newer
+release); update and rollback confirm that the binaries are replaced and the
+daemon restarts. Test method is the dry run described under "Testing the
+method" below. Config › Installation › Updates has the same Check now, Test
+method and Update now under its method picker. They act on the saved
+settings, and say so: with unsaved method edits, Test and Update wait until
+you save. It follows the
 job through the status read, so the restart does not lose it. A peer that has
 not granted you `node.update` says so.
 
@@ -167,15 +173,25 @@ The recommendation is only a suggestion; your choice wins.
   CLI, or `confirm_package_manager` in the API. `apt` and `dnf` are offered
   only when passwordless `sudo -n` works. asdf installs have no in-place
   upgrade command, so they stay notify-only.
-- `custom`: your own `/bin/sh -c` command (`custom.command`, with
-  `custom.timeout_seconds`, default 1800). It gets `TCLAUDE_UPDATE_VERSION`,
+- `custom`: your own command (`custom.command`, with
+  `custom.timeout_seconds`, default 1800), for example
+  `cd ~/git/tclaude && git pull && go install .`. tclaude runs it with
+  `/bin/sh -c` and restarts agentd if it installed a new binary. It may use
+  `TCLAUDE_UPDATE_VERSION` (the latest release),
   `TCLAUDE_UPDATE_CURRENT_VERSION`, `TCLAUDE_UPDATE_JOB_ID` and
-  `TCLAUDE_UPDATE_BINARIES` (`name=path,…`), and must install exactly the
-  target version.
+  `TCLAUDE_UPDATE_BINARIES` (`name=path,…`); it doesn't have to, and it
+  doesn't need to print anything. Afterwards tclaude checks each binary still
+  runs as tclaude and speaks the same federation protocol. Any version is
+  accepted: one other than the latest release, a lower one included (a
+  branch build), is a warning. A command that leaves the binaries unchanged
+  means already up to date. Update now (`tclaude update --apply`, the
+  dashboard) always runs the command; scheduled and start-up runs run it
+  only when this node is not already on the latest release.
 - `manual`: check and notify only; applying is refused.
 
 Every method is verified afterwards. The resulting binaries must report the
-expected version and the same federation protocol before agentd restarts. A
+expected version and the same federation protocol before agentd restarts
+(the custom method checks the protocol only, see above). A
 package manager that lags the GitHub release only produces a warning, but a
 downgrade is refused. An update in place keeps a backup for `--rollback`.
 
@@ -191,12 +207,24 @@ comes before it on PATH; the settings warn when it is shadowed. A rollback
 removes the copy tclaude installed and restarts from the package-managed
 binary.
 
-**Explicit updates.** `tclaude update --apply` and the Fleet dialog's Update
-button use the chosen method. When none is chosen, they keep the per-binary
+**Explicit updates.** `tclaude update --apply`, Config › Installation ›
+Updates' Update now and the Fleet dialog's Update button use the chosen
+(saved) method. When none is chosen, they keep the per-binary
 behaviour described above. Under `manual` they return HTTP 409
 `update_method_notify_only`. A tclaude-driven method over a package-managed
 binary without the acknowledgement returns HTTP 409
 `update_package_manager_ack_required`.
+
+**Testing the method.** `tclaude update --dry-run` (`GET
+/v1/node/update/preflight`; Test method in the dashboard) dry-runs Update now
+under the saved settings without installing anything. It reports whether the
+method can run here and whether the apply would be refused, and what it would
+run or download. It also checks the local preconditions: write access to each
+binary's directory, go and git on PATH, and a clean checkout. Then it lists
+what only a real update finds out: network access, whether the build or
+command succeeds, and whether the new binary accepts agentd's flags. Check
+now (`--check`) asks GitHub whether a newer release exists. A peer needs
+`node.update` for both; only an unrestricted peer sees the custom command.
 
 **Schedule and update on start.** `schedule.frequency` can be `off`
 (default), `daily` or `weekly` (`schedule.weekday`). A run starts inside the

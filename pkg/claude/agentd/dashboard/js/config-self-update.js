@@ -69,7 +69,7 @@ export function managerName(id) { return MANAGER_NAMES[id] || id; }
 // when it failed, else the daemon's body.
 export const selfUpdateMeta = signal(null);
 // selfUpdateDraft mirrors the form values the notes below depend on.
-export const selfUpdateDraft = signal({ method: '', installDir: '', flags: [], harness: '', setupEnabled: false, frequency: 'off', weekday: 'monday', windowStart: '03:00', windowEnd: '05:00', onStart: false, ack: false });
+export const selfUpdateDraft = signal({ method: '', installDir: '', flags: [], harness: '', setupEnabled: false, frequency: 'off', weekday: 'monday', windowStart: '03:00', windowEnd: '05:00', onStart: false, ack: false, unsaved: false });
 // selfUpdateLoads counts the times the form loaded updates.self, so the
 // Installation section can fold its Updates part afresh after each read.
 export const selfUpdateLoads = signal(0);

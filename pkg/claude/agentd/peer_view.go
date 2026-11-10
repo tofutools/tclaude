@@ -204,6 +204,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["GET /api/node/update/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["POST /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdate}
+	rules["GET /api/node/update/preflight"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdatePreflight}
 	rules["GET /api/node/update/settings"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateSettings}
 	rules["PUT /api/node/update/settings"] = peerViewRule{feature: "node.update.settings", requires: PermNodeUpdateSettings, write: servePeerNodeUpdateSettings}
 	rules["GET /api/node/update-scripts"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateScripts}

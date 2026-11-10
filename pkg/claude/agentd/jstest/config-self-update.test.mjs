@@ -54,6 +54,9 @@ async function mountConfig(t, config, { detected = { method: 'release', recogniz
     if (path.startsWith('/api/node/update/settings')) {
       return { ok: true, status: 200, json: async () => ({ methods: METHODS, detected, setup_flags: [], ...settings }) };
     }
+    if (path === '/api/node/update') {
+      return { ok: true, status: 200, json: async () => ({ current_version: 'v0.42.0', latest_version: 'v0.42.0', update_available: false, chosen_method: 'custom' }) };
+    }
     return { ok: true, status: 200, json: async () => ({ raw: holder.raw }) };
   };
   const state = createConfigState({ activeTab: harness.signals.signal('config') });
@@ -299,5 +302,35 @@ test('the Updates part says whether tclaude updates itself, and its action edits
     assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), false);
   } finally {
     await unmount();
+  }
+});
+
+test('Try it acts on the saved method: a method edit asks to save first, a schedule edit does not', async (t) => {
+  const { harness, root, calls, settle, unmount } = await mountConfig(t, { updates: { self: { method: 'custom', custom: { command: 'make install' } } } },
+    { settings: { settings: { method: 'custom', custom: { command: 'make install' } } } });
+  try {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && /Reading/.test(root.querySelector('#cfg-update-now-version')?.textContent || 'Reading')) await settle();
+    assert.ok(calls.includes('/api/node/update'), 'the row reads the version through the Config fetch');
+    const note = () => root.querySelector('#cfg-update-now-note').textContent;
+    assert.match(note(), /saved method \(Custom command\)/);
+    assert.ok(!root.querySelector('#cfg-update-now-apply').hasAttribute('disabled'));
+
+    await selectValue(harness, root.querySelector('#cfg-selfupdate-frequency'), 'daily');
+    assert.ok(!root.querySelector('#cfg-update-now-apply').hasAttribute('disabled'), 'a schedule edit does not change what Update now runs');
+
+    const command = root.querySelector('#cfg-selfupdate-custom-command');
+    assert.ok(command.classList.contains('ui-textarea'), 'the command box takes the theme field styling');
+    command.value = 'git pull && go install .';
+    await harness.act(() => harness.fireEvent(command, 'input'));
+    assert.match(note(), /save changes first/);
+    assert.ok(root.querySelector('#cfg-update-now-apply').hasAttribute('disabled'));
+    assert.ok(root.querySelector('#cfg-update-now-test').hasAttribute('disabled'));
+
+    command.value = 'make install';
+    await harness.act(() => harness.fireEvent(command, 'input'));
+    assert.match(note(), /saved method/, 'putting it back is not an edit');
+  } finally {
+    unmount();
   }
 });
