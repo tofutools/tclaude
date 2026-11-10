@@ -138,7 +138,7 @@ func serviceLauncherShellEnvCmd() *cobra.Command {
 		Short:       "Print this process's environment for `service launcher open` (internal)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			if err := launcher.PrintShellEnv(os.Stdout); err != nil {
+			if err := launcher.PrintShellEnv(cliStdout); err != nil {
 				os.Exit(rcIOFailure)
 			}
 		},

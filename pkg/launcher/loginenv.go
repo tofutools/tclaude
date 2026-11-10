@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,7 +136,7 @@ func ParseShellEnv(out []byte) ([]string, error) {
 
 // PrintShellEnv writes this process's environment the way ParseShellEnv
 // reads it.
-func PrintShellEnv(w *os.File) error {
+func PrintShellEnv(w io.Writer) error {
 	data, err := json.Marshal(os.Environ())
 	if err != nil {
 		return err
