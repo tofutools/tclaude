@@ -999,3 +999,27 @@ func (c *Config) SpawnLabelFromNameEnabled() bool {
 	}
 	return c.Agent.SpawnLabelFromName
 }
+
+// BundledSkillDefaultPermissions are the low-risk permission slugs the bundled
+// agent-* skills exercise: what `tclaude setup
+// --install-default-agent-permissions` adds to agent.default_permissions, and
+// what a peer may add there besides read-only slugs (agentd config_remote.go).
+var BundledSkillDefaultPermissions = []string{
+	"self.rename",
+	"self.compact",
+	"self.interrupt",
+	"self.clone",
+	"self.schedule",
+	"self.remote-control",
+	"self.task",
+	"self.pr",
+	"self.tags",
+	"self.dir-repair",
+	"self.process",
+	"self.page",
+	"groups.pages.read",
+	"groups.pages.patch",
+	"process.templates.read",
+	"usage.read",
+	"costs.read",
+}

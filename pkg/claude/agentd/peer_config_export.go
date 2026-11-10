@@ -17,16 +17,19 @@ import (
 // peer is never handed less than it asked for without being told.
 
 // peerConfigExportSectionGrants are the peer grants that read each section
-// otherwise: any one of them. A section listed with none (your node's config
-// keys and default permissions), or not listed at all, is never a
-// restricted peer's.
+// otherwise: any one of them. A section not listed is never a restricted
+// peer's. The config keys and default permissions are what node.config.read
+// shows in the Config tab (config_remote.go); a bundle carries no secret
+// value (TestConfigBundleKeysCarryNoSecret).
 var peerConfigExportSectionGrants = map[string][]string{
-	"roles":             {PermNodeSpawnRead},
-	"profiles":          {PermNodeSpawnRead},
-	"sandbox-profiles":  {PermNodeSpawnRead},
-	"saved-prompts":     {PermNodeSpawnRead, PermPromptsManage},
-	"templates":         {PermTemplatesManage},
-	"process-templates": {PermProcessTemplatesRead},
+	"roles":               {PermNodeSpawnRead},
+	"profiles":            {PermNodeSpawnRead},
+	"sandbox-profiles":    {PermNodeSpawnRead},
+	"saved-prompts":       {PermNodeSpawnRead, PermPromptsManage},
+	"templates":           {PermTemplatesManage},
+	"process-templates":   {PermProcessTemplatesRead},
+	"default-permissions": {PermNodeConfigRead},
+	"config":              {PermNodeConfigRead},
 }
 
 // peerConfigExportReadable reports whether peer may read a bundle section.

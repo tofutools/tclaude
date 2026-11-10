@@ -217,6 +217,11 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/node/launcher"] = peerViewRule{feature: "node.service", requires: PermNodeRead, serve: servePeerNodeService}
 	rules["POST /api/node/launcher/install"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
 	rules["POST /api/node/launcher/uninstall"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	// The Config tab (config_remote.go): read under node.config.read, and
+	// each changed key under its class's grant, checked in the handler.
+	rules["GET /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, serve: servePeerConfig}
+	rules["POST /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, write: servePeerConfig}
+	rules["PATCH /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, write: servePeerConfig}
 	rules["GET /api/harnesses/availability"] = peerViewRule{feature: "node.harnesses", requires: PermNodeHarnessesRead, serve: servePeerHarnessAvailability}
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	// Usage sharing: any trusted peer may ask which gateways it may use here;

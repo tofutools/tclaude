@@ -269,7 +269,7 @@ func TestFederationPeerViewIncomingDispatcherAndRevocation(t *testing.T) {
 	require.NotContains(t, string(reply.Body), "hidden-name")
 	require.Contains(t, string(reply.Body), "peer_view")
 	// Cookie-like wire credentials never route the peer to local-human wrappers.
-	reply = exchange("/api/config")
+	reply = exchange("/api/dashboard/prefs")
 	require.Equal(t, 403, reply.Status, string(reply.Body))
 	require.Contains(t, string(reply.Body), "local")
 	// Trust is checked at dispatch, not only when the stream was opened.

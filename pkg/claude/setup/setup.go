@@ -34,25 +34,7 @@ import (
 // `self.clear` was removed from the slug registry entirely (along with
 // `tclaude agent clear`) because /clear rotates CC's conv ID and
 // orphans agent identity. Reincarnate replaces that path.
-var defaultPermsForBundledSkills = []string{
-	"self.rename",
-	"self.compact",
-	"self.interrupt",
-	"self.clone",
-	"self.schedule",
-	"self.remote-control",
-	"self.task",
-	"self.pr",
-	"self.tags",
-	"self.dir-repair",
-	"self.process",
-	"self.page",
-	"groups.pages.read",
-	"groups.pages.patch",
-	"process.templates.read",
-	"usage.read",
-	"costs.read",
-}
+var defaultPermsForBundledSkills = config.BundledSkillDefaultPermissions
 
 // Protocol version - bump this when the handler needs to be re-registered
 const protocolVersion = "3"

@@ -30,6 +30,9 @@ import (
 // (a keyed spawnFailure literal, a code in a variable, a split argument list)
 // is not seen; it is a drift tripwire, not a proof.
 var forbiddenGenericCodeSites = map[string]int{
+	// The peer Config tab (config_remote.go) answers peers, like the node
+	// update and service routes.
+	"config_remote.go":              3,
 	"federation_terminal.go":        4,
 	"federation_terminal_upload.go": 5,
 	"harness_availability.go":       2,
