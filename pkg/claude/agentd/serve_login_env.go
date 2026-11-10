@@ -35,6 +35,7 @@ type loginEnvDeps struct {
 	// Failed is told when agentd starts without the login environment.
 	Failed func(error)
 	Setenv func(key, value string) error
+	Locale launcher.LocaleSources
 	Exe    string
 	Args   []string
 }
@@ -72,7 +73,10 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 		}
 		env = launcher.MergeLoginEnv(env, own)
 	}
-	env = launcher.WithDefaultLocale(env)
+	if value, source := launcher.ChooseLocale(env, nil, d.Locale); value != "" {
+		env = launcher.WithLocale(env, value)
+		slog.Info("agentd: no UTF-8 locale from launchd or the login shell; restarting with the user's", "locale", value, "source", source)
+	}
 	env = append(env, loginEnvAppliedVar+"=1")
 	if err := d.Exec(d.Exe, d.Args, env); err != nil {
 		d.Failed(fmt.Errorf("restarting with it: %w", err))
@@ -80,13 +84,19 @@ func adoptLaunchdLoginEnv(d loginEnvDeps) {
 	}
 }
 
-// defaultLocale gives this process a UTF-8 LANG when launchd gave it no
-// locale and the login shell could not supply one. Without a UTF-8 locale
-// the tmux client escapes the tab in `list-sessions -F` output, and every
-// agent reads as offline.
+// defaultLocale gives this process the user's UTF-8 locale when launchd
+// gave it none and the login shell could not supply one. Without a UTF-8
+// locale the tmux client escapes the tab in `list-sessions -F` output, and
+// every agent reads as offline.
 func defaultLocale(d loginEnvDeps) {
-	if env := launcher.WithDefaultLocale(d.Environ); len(env) != len(d.Environ) {
-		_ = d.Setenv("LANG", envLookup(env, "LANG"))
+	value, source := launcher.ChooseLocale(d.Environ, nil, d.Locale)
+	if value == "" {
+		return
+	}
+	env := launcher.WithLocale(d.Environ, value)
+	key, _, _ := strings.Cut(env[len(env)-1], "=")
+	if err := d.Setenv(key, value); err == nil {
+		slog.Info("agentd: no UTF-8 locale from launchd; set the user's", "key", key, "value", value, "source", source)
 	}
 }
 
@@ -151,6 +161,7 @@ func productionLoginEnvDeps() loginEnvDeps {
 		Exec:   syscall.Exec,
 		Failed: loginEnvFailed,
 		Setenv: os.Setenv,
+		Locale: launcher.SystemLocaleSources("darwin"),
 		Exe:    filepath.Clean(exe),
 		Args:   os.Args,
 	}

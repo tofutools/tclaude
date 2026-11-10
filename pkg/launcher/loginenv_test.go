@@ -138,14 +138,3 @@ func TestLoginShellEnvRunsTheProfile(t *testing.T) {
 		t.Error("no dump, no error")
 	}
 }
-
-func TestWithDefaultLocale(t *testing.T) {
-	if got := WithDefaultLocale([]string{"PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin", "LANG=en_US.UTF-8"}) {
-		t.Errorf("none: %v", got)
-	}
-	for _, kv := range []string{"LANG=sv_SE.UTF-8", "LC_ALL=C.UTF-8", "LC_CTYPE=UTF-8"} {
-		if got := WithDefaultLocale([]string{kv}); !slices.Equal(got, []string{kv}) {
-			t.Errorf("%s: %v", kv, got)
-		}
-	}
-}

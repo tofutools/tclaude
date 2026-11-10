@@ -93,7 +93,9 @@ in what a terminal has: your profile's variables, `TMUX_TMPDIR`, proxies,
 and API keys. Without them, the job may run agents in another environment
 than a terminal-started agentd, or fail to reach their tmux server. The
 plist's own variables still win, and its `PATH` is kept after the shell's.
-When no locale is set anywhere, agentd gets `LANG=en_US.UTF-8`. If the shell
+When no UTF-8 locale is set anywhere, agentd gets your macOS locale
+(`defaults read -g AppleLocale`, for example `en_GB.UTF-8`), or
+`en_US.UTF-8` when that is not installed. If the shell
 gives no answer, or fails, agentd still starts, with the plist's
 environment. `output.log` has an error line, and a notice in the
 dashboard's Messages says agents may not start or may show offline, and how

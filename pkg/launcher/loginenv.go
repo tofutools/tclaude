@@ -202,19 +202,6 @@ func mergePATH(first, fallback string) string {
 	return strings.Join(dirs, string(os.PathListSeparator))
 }
 
-// WithDefaultLocale returns env with LANG set to a UTF-8 locale when it
-// names none (no LANG, LC_ALL or LC_CTYPE). On macOS the terminal app, not
-// the shell profile, sets the locale, so a login shell started from an app
-// usually has none, and harnesses then run in the C locale.
-func WithDefaultLocale(env []string) []string {
-	for _, k := range []string{"LANG", "LC_ALL", "LC_CTYPE"} {
-		if envValue(env, k) != "" {
-			return env
-		}
-	}
-	return append(env, "LANG=en_US.UTF-8")
-}
-
 func envValue(environ []string, key string) string {
 	for i := len(environ) - 1; i >= 0; i-- {
 		if k, v, ok := strings.Cut(environ[i], "="); ok && k == key {

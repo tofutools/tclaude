@@ -79,6 +79,11 @@ func newOpenFixture(goos string, unit []byte) *openFixture {
 		},
 		Profile: func() (*config.LaunchProfile, error) { return nil, nil },
 		Environ: []string{"PATH=/home/u/.local/bin:/usr/bin"},
+		Locale: launcher.LocaleSources{
+			GOOS:        "darwin",
+			AppleLocale: func() (string, error) { return "en_GB@rg=sezzzz", nil },
+			Installed:   func() ([]string, error) { return []string{"en_GB.UTF-8", "en_US.UTF-8"}, nil },
+		},
 		LogFile: "/home/u/.tclaude/data/launcher-agentd.log",
 		Notify:  func(msg string) { f.notified = append(f.notified, msg) },
 		Sleep:   func(time.Duration) {},
@@ -276,13 +281,15 @@ func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
 		t.Fatal(rc)
 	}
 	// macOS: no locale from anywhere, so a UTF-8 one is supplied.
-	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin\n"+launcher.LoginEnvErrorVar+"=/bin/zsh did not finish within 10s\nLANG=en_US.UTF-8" {
+	// No locale from anywhere: the user's own (AppleLocale), not en_US.
+	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin\n"+launcher.LoginEnvErrorVar+"=/bin/zsh did not finish within 10s\nLANG=en_GB.UTF-8" {
 		t.Errorf("env %v", f.servedEnv)
 	}
 	if !strings.Contains(out.String(), "without the login shell's environment: /bin/zsh did not finish") {
 		t.Errorf("out %q", out.String())
 	}
-	if len(logged) != 1 || !strings.Contains(logged[0], "/bin/zsh did not finish") {
+	if len(logged) != 2 || !strings.Contains(logged[0], "/bin/zsh did not finish") ||
+		!strings.Contains(logged[1], "en_GB.UTF-8 (from macOS AppleLocale)") {
 		t.Errorf("log %q", logged)
 	}
 	// Nobody reads a launcher's output: a desktop notification, and agentd

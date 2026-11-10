@@ -224,6 +224,8 @@ type openDeps struct {
 	// a detached agentd starts with (merged over Environ); nil or an error
 	// keeps Environ alone.
 	LoginEnv func(environ []string) ([]string, error)
+	// Locale is where a missing UTF-8 locale is chosen from.
+	Locale launcher.LocaleSources
 	// LogNote appends a line to LogFile, which is where a launcher's
 	// output can be read.
 	LogNote func(msg string)
@@ -266,6 +268,7 @@ func productionOpenDeps() openDeps {
 		LoginEnv: func(environ []string) ([]string, error) {
 			return loginShellEnv(exe, name, environ)
 		},
+		Locale: launcher.SystemLocaleSources(runtime.GOOS),
 		LogNote: func(msg string) {
 			appendLauncherLog(filepath.Join(home, ".tclaude", "data", "launcher-agentd.log"), msg)
 		},
@@ -363,8 +366,15 @@ func startDaemonForLauncher(d openDeps) (string, error) {
 		} else {
 			env = launcher.MergeLoginEnv(env, login)
 		}
-		if d.GOOS == "darwin" {
-			env = launcher.WithDefaultLocale(env)
+		// The terminal app, not the profile, usually sets the locale; give
+		// agentd the user's own UTF-8 one when neither the launcher nor the
+		// login shell has it.
+		value, source := launcher.ChooseLocale(env, nil, d.Locale)
+		if value != "" {
+			env = launcher.WithLocale(env, value)
+			if d.LogNote != nil {
+				d.LogNote("tclaude launcher: no UTF-8 locale; agentd gets " + value + " (from " + source + ")")
+			}
 		}
 	}
 	profile, err := d.Profile()

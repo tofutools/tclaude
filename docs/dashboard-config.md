@@ -417,7 +417,12 @@ and the API is `GET /api/node/launcher` and `POST
   agentd does this step itself (see [launchd](server/launchd.md)); a Linux
   systemd unit keeps its own environment. On macOS the locale usually comes
   from the terminal app rather than your profile. When neither the launcher nor the
-  login shell names one, agentd gets `LANG=en_US.UTF-8`.
+  login shell names a UTF-8 locale, agentd gets your own. On macOS that is
+  your system locale (`defaults read -g AppleLocale`, for example `en_GB`,
+  giving `en_GB.UTF-8`). On Linux it is `LANG` from `/etc/locale.conf` or
+  `/etc/default/locale`. If neither is set, it falls back to `en_US.UTF-8`
+  on macOS and `C.UTF-8` on Linux, and only to a locale that is installed.
+  agentd sets `LANG` when it has none, else `LC_CTYPE`.
 
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop

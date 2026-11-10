@@ -42,8 +42,13 @@ func newLoginEnvFixture(plist string) *loginEnvFixture {
 		},
 		Failed: func(err error) { f.failed = append(f.failed, err) },
 		Setenv: func(k, v string) error { f.setenv = append(f.setenv, k+"="+v); return nil },
-		Exe:    "/Users/u/go/bin/tclaude",
-		Args:   []string{"/Users/u/go/bin/tclaude", "agentd", "serve"},
+		Locale: launcher.LocaleSources{
+			GOOS:        "darwin",
+			AppleLocale: func() (string, error) { return "en_GB@rg=sezzzz", nil },
+			Installed:   func() ([]string, error) { return []string{"en_GB.UTF-8", "en_US.UTF-8"}, nil },
+		},
+		Exe:  "/Users/u/go/bin/tclaude",
+		Args: []string{"/Users/u/go/bin/tclaude", "agentd", "serve"},
 	}
 	return f
 }
@@ -67,7 +72,7 @@ func TestAdoptLaunchdLoginEnv(t *testing.T) {
 		"PATH=/Users/u/go/bin:/usr/bin:/opt/homebrew/bin",
 		"TMUX_TMPDIR=/Users/u/.tmux",
 		"ANTHROPIC_BASE_URL=http://from-plist",
-		"LANG=en_US.UTF-8",
+		"LANG=en_GB.UTF-8",
 		loginEnvAppliedVar + "=1",
 	} {
 		if !slices.Contains(f.execed, want) {
@@ -102,7 +107,7 @@ func TestAdoptLaunchdLoginEnvOnlyForTheLaunchAgentOnce(t *testing.T) {
 	}
 	// Still a UTF-8 locale: without one the tmux client escapes the tab in
 	// its list-sessions output and every agent reads as offline.
-	if !slices.Equal(f.setenv, []string{"LANG=en_US.UTF-8"}) {
+	if !slices.Equal(f.setenv, []string{"LANG=en_GB.UTF-8"}) {
 		t.Errorf("setenv %v", f.setenv)
 	}
 	// A locale launchd did give is left alone.
