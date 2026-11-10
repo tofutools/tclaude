@@ -89,6 +89,9 @@ var configKeyClasses = []struct {
 	{"log_level", configClassGeneral},
 	{"startup_timing", configClassGeneral},
 	{"record_hooks", configClassGeneral},
+	// How agentd reaches its own tmux server (control mode vs one process
+	// per command): the same commands either way, read at startup.
+	{"tmux.control_mode", configClassGeneral},
 	{"ratelimit", configClassGeneral},
 
 	{"agent", configClassAgents},
