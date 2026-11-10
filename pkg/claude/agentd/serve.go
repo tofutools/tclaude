@@ -337,6 +337,10 @@ func tokenBannerInTUI(p *serveParams) bool {
 }
 
 func runServe(p *serveParams) error {
+	// First, so every child (tmux, harnesses, hooks) gets it. See
+	// serve_locale.go.
+	ensureUTF8Locale(productionLocaleDeps())
+	syncTmuxServerLocale(os.Environ(), tmuxOutputWithTimeout)
 	if _, err := humanTokenOutputMode(p); err != nil {
 		return err
 	}
