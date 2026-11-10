@@ -303,8 +303,9 @@ inside the UI.
   yourself:
 
     ```bash
-    # macOS
-    export TCLAUDE_HUMAN_TOKEN="$(security find-generic-password -s tclaude -a operator_token -w)"
+    # macOS: the entry holds "go-keyring-base64:" plus the token in base64
+    export TCLAUDE_HUMAN_TOKEN="$(security find-generic-password -s tclaude -a operator_token -w \
+      | sed 's/^go-keyring-base64://' | base64 -D)"
     # Linux (Secret Service)
     export TCLAUDE_HUMAN_TOKEN="$(secret-tool lookup service tclaude username operator_token)"
     ```
