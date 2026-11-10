@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -358,6 +359,7 @@ func runServe(p *serveParams) error {
 		return err
 	}
 	defer releaseSingleton()
+	warnTmuxMissing(out, exec.LookPath)
 	// Log each dropped alias as it happens, but hold the operator-facing line
 	// until the listening banner: these fire before the SQLite migration
 	// narration, which can run for minutes, and an indented sub-bullet stranded
@@ -1803,4 +1805,18 @@ func (r *statusRec) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("statusRec: underlying ResponseWriter does not implement http.Hijacker")
 	}
 	return h.Hijack()
+}
+
+// warnTmuxMissing says loudly when tmux is not on agentd's PATH. Every
+// agent lives in tclaude's tmux server, so without it no agent can be
+// started or reached and all of them show offline; a daemon started with a
+// bare environment (an app launcher installed from one) used to show that
+// with no word of why.
+func warnTmuxMissing(out io.Writer, lookPath func(string) (string, error)) {
+	if _, err := lookPath("tmux"); err == nil {
+		return
+	}
+	path := os.Getenv("PATH")
+	slog.Error("agentd: tmux is not on PATH; agents cannot be started or reached, and all show offline", "PATH", path)
+	fmt.Fprintf(out, "WARNING: tmux is not on agentd's PATH (%s): agents cannot be started or reached, and all show offline.\n", path)
 }

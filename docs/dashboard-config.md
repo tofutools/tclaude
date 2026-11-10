@@ -391,7 +391,10 @@ and the API is `GET /api/node/launcher` and `POST
 - The launcher runs the tclaude binary that agentd runs, with agentd's
   `PATH`. When that binary moves, or an update changes it, agentd rewrites the
   launcher the next time it starts. The status shows a launcher that is out of
-  date.
+  date. On macOS, Homebrew's `/opt/homebrew/bin` and `/usr/local/bin` are
+  added to that `PATH` when they exist. An install warns when `tmux` is not on
+  the `PATH`, because an agentd without tmux cannot reach any agent. agentd
+  itself logs an error at start when it cannot find `tmux`.
 - **Start agentd if it is not running** (on by default) starts it first:
   - through the autostart unit, when **Start on login** installed one;
   - otherwise (or when that unit does not start) as `tclaude agentd serve`,
