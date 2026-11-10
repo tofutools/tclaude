@@ -236,7 +236,24 @@ func TestRemoteConfigGrantsSecretsAndDrift(t *testing.T) {
 	code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{"permissions.grant"}}})
 	require.Equal(t, http.StatusForbidden, code)
 	require.Equal(t, "permission_denied", refused.Code)
-	code, _, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{"agent.list"}}})
+	// Adding is an allowlist: the setup defaults and read-only slugs. A
+	// manager verb or a library manage could let a new agent grant itself
+	// more.
+	for _, slug := range []string{"roles.manage", "agent.spawn", "groups.create", "templates.manage", "human.inbox.read", "no.such.read"} {
+		code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{slug}}})
+		require.Equal(t, http.StatusForbidden, code, slug)
+		require.Equal(t, "the node itself", refused.Denied[0].Requires, slug)
+	}
+	code, _, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{"self.rename", agentd.PermAgentsStatusRead}}})
+	require.Equal(t, 200, code, body)
+	code, _, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.default_permissions": []string{}}})
+	require.Equal(t, 200, code, "a peer may always remove: "+body)
+
+	// The git proxy reaches only hosts the node already knows.
+	code, refused, _ = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.git_proxy.allowed_remotes": []string{"evil.example/x"}}})
+	require.Equal(t, http.StatusForbidden, code)
+	require.Contains(t, refused.Denied[0].Path, "evil.example/x")
+	code, _, body = call("PATCH", "/api/config", map[string]any{"version": get().Version, "set": map[string]any{"agent.git_proxy.allowed_remotes": []string{"github.com/tofutools"}}})
 	require.Equal(t, 200, code, body)
 
 	// An unrestricted peer changes every class but the node's own, and

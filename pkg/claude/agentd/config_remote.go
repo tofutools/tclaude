@@ -438,6 +438,7 @@ func computeConfigChange(current *config.Config, body configChangeBody, patch bo
 	if !c.local {
 		// Before the merge below, which rewrites curTree.
 		denied = configCredentialRefusals(curTree, submitted, kept)
+		denied = append(denied, configGitRemoteRefusals(curTree, submitted)...)
 	}
 	for _, leaf := range configLeafPaths() {
 		before, hadBefore := treeLookup(curTree, leaf)
@@ -683,10 +684,12 @@ func configCredentialRefusals(curTree, submitted map[string]any, kept map[string
 // starts with.
 var configPermissionLeaves = []string{"agent.default_permissions", "steward.default_permissions"}
 
-// configDefaultPermissionRefusals keeps a peer from handing this node's
-// agents what reaches past their own work: a risky slug, the human's
-// channels, federation administration or the power to grant. The node's
-// operator adds those; a peer may remove any.
+// configDefaultPermissionRefusals keeps a peer to an allowlist when it adds
+// to the permissions every new agent (or Steward) starts with: the low-risk
+// slugs `tclaude setup --install-default-agent-permissions` grants, and
+// read-only ones. Anything else (a manager verb, a library manage, creating
+// groups) could let a new agent grant itself more, so the node's operator
+// adds it. A peer may remove any slug, and one already present stays.
 func configDefaultPermissionRefusals(curTree, submitted map[string]any) []configDenied {
 	var denied []configDenied
 	for _, leaf := range configPermissionLeaves {
@@ -712,17 +715,58 @@ func configDefaultPermissionRefusals(curTree, submitted map[string]any) []config
 }
 
 func peerUnassignableSlug(slug string) bool {
-	base, _, _ := strings.Cut(slug, ":")
-	base = strings.TrimSpace(base)
-	if slices.Contains(riskySlugs, base) {
+	if slices.Contains(config.BundledSkillDefaultPermissions, slug) {
+		return false
+	}
+	if !readOnlySlug(slug) || slices.Contains(riskySlugs, slug) {
 		return true
 	}
-	for _, prefix := range []string{"human.", "federation.", "permissions.", "sudo", "*"} {
-		if strings.HasPrefix(base, prefix) {
+	// Reading the human's channels or the federation stays the node's.
+	for _, prefix := range []string{"human.", "federation.", "permissions.", "sudo"} {
+		if strings.HasPrefix(slug, prefix) {
 			return true
 		}
 	}
-	return false
+	return !slices.ContainsFunc(permissionRegistry, func(e PermSlug) bool { return e.Slug == slug })
+}
+
+// configGitRemoteRefusals keeps a peer from pointing the git proxy at a new
+// host: with ambient credentials, a credential helper could send stored
+// https credentials there. A peer adds remotes on a host the node already
+// knows (github.com, gitlab.com, its gitlab_hosts, or a host already
+// allowed), and may remove any.
+func configGitRemoteRefusals(curTree, submitted map[string]any) []configDenied {
+	const leaf = "agent.git_proxy.allowed_remotes"
+	host := func(pattern string) string {
+		h, _, _ := strings.Cut(strings.TrimSpace(pattern), "/")
+		return strings.ToLower(h)
+	}
+	known := map[string]bool{"github.com": true, "gitlab.com": true}
+	had := map[string]bool{}
+	cur, _ := treeLookup(curTree, leaf)
+	curList, _ := cur.([]any)
+	for _, v := range curList {
+		if p, ok := v.(string); ok {
+			had[p] = true
+			known[host(p)] = true
+		}
+	}
+	hosts, _ := treeLookup(curTree, "agent.git_proxy.gitlab_hosts")
+	hostMap, _ := hosts.(map[string]any)
+	for h := range hostMap {
+		known[strings.ToLower(h)] = true
+	}
+	var denied []configDenied
+	sub, _ := treeLookup(submitted, leaf)
+	subList, _ := sub.([]any)
+	for _, v := range subList {
+		p, _ := v.(string)
+		if had[p] || known[host(p)] {
+			continue
+		}
+		denied = append(denied, configDenied{Path: leaf + " (" + p + ")", Class: configClassCredentials, Requires: "the node itself (a new git host)"})
+	}
+	return denied
 }
 
 func deniedPaths(denied []configDenied) string {

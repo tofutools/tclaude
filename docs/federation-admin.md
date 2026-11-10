@@ -354,10 +354,18 @@ the awb `url` or `username`, or the git proxy's `gitlab_hosts` while the
 credential is kept is refused. To change one of these, send the secret again;
 a file credential is changed on this node itself.
 
+A peer adds git proxy `allowed_remotes` only on a host this node already
+knows: `github.com`, `gitlab.com`, its `gitlab_hosts`, or a host already
+allowed. A credential helper could otherwise send stored https credentials to
+a host the peer picks. Removing a remote is always allowed.
+
 **Agent permissions.** With `node.config.agents`, a peer removes any slug from
-`agent.default_permissions` or `steward.default_permissions`. It adds no
-risky slug, and no `human.*`, `federation.*`, `permissions.*` or sudo slug.
-This node's operator adds those. The node checks each changed key against its class. If any key
+`agent.default_permissions` or `steward.default_permissions`, and a slug
+already there stays. It adds only from an allowlist: the low-risk slugs
+`tclaude setup --install-default-agent-permissions` grants, and read-only
+slugs (never `human.*`, `federation.*` or `permissions.*`). Anything else, such
+as a manager verb, a library `manage` or `groups.create`, could let a new
+agent grant itself more. This node's operator adds those. The node checks each changed key against its class. If any key
 is refused, the whole change is refused with `403 permission_denied`, listing
 each refused key and the grant it needs. Nothing outside the changed keys is
 written. A change is validated as a local save is, and audited as
