@@ -397,6 +397,18 @@ and the API is `GET /api/node/launcher` and `POST
   - otherwise (or when that unit does not start) as `tclaude agentd serve`,
     logging to `~/.tclaude/data/launcher-agentd.log`.
 
+  An app starts with the desktop's bare environment. On macOS that means a
+  short `PATH`, no locale, and none of your shell profile's variables (API
+  keys, proxies). So before starting agentd itself, the launcher asks your
+  login shell for its environment. It runs `$SHELL -l -i` (or your account's
+  shell), which reads the same profile files a terminal does. agentd, and
+  every agent it starts, then gets what a terminal would give it. The
+  launcher's own `PATH` stays on the end as a fallback, and the launch
+  profile's variables still win. If the shell gives no answer within 10
+  seconds, agentd starts with the launcher's environment, and
+  `launcher-agentd.log` says so. The autostart unit is not changed: it keeps
+  its own environment.
+
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop
   notification says why.

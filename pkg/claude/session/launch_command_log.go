@@ -68,7 +68,23 @@ type PaneCommandSecrets struct {
 }
 
 func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (string, bool) {
-	redacted := command
+	redacted, why := RedactPaneCommandWhy(command, envExports, secrets)
+	return redacted, why == ""
+}
+
+// Why RedactPaneCommandWhy withheld a command. They name which proof
+// failed, never a value, so they are safe to log.
+const (
+	withheldPrefixNotFound = "environment prefix could not be located to redact"
+	withheldPrefixRepeated = "environment prefix appears more than once"
+	withheldValueSurvives  = "an authored environment value appears outside the prefix"
+	withheldMarkerSurvives = "a second channel renders authored environment values"
+)
+
+// RedactPaneCommandWhy is RedactPaneCommand, saying why it withheld the
+// command: why is empty when redacted can be logged.
+func RedactPaneCommandWhy(command, envExports string, secrets PaneCommandSecrets) (redacted, why string) {
+	redacted = command
 	if envExports != "" {
 		located := false
 		form := envExports
@@ -81,7 +97,7 @@ func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (
 			form = nestShellQuoting(form)
 		}
 		if !located {
-			return "", false
+			return "", withheldPrefixNotFound
 		}
 		// A wrapper that restates the command would leave a second copy. Check
 		// EVERY depth, not just the one that matched: the copies need not be at
@@ -90,7 +106,7 @@ func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (
 		form = envExports
 		for depth := 0; depth < maxShellQuoteNesting; depth++ {
 			if strings.Contains(redacted, form) {
-				return "", false
+				return "", withheldPrefixRepeated
 			}
 			form = nestShellQuoting(form)
 		}
@@ -102,7 +118,7 @@ func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (
 		form := value
 		for depth := 0; depth < maxShellQuoteNesting; depth++ {
 			if strings.Contains(redacted, form) {
-				return "", false
+				return "", withheldValueSurvives
 			}
 			form = nestShellQuoting(form)
 		}
@@ -111,10 +127,10 @@ func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (
 	// re-quoting changes them.
 	for _, marker := range secrets.Markers {
 		if marker != "" && strings.Contains(redacted, marker) {
-			return "", false
+			return "", withheldMarkerSurvives
 		}
 	}
-	return redacted, true
+	return redacted, ""
 }
 
 // nestShellQuoting re-encodes a string the way ShellQuoteArg does when the

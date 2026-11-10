@@ -231,3 +231,56 @@ func TestKeychainTokenOnlyForTheOperatorOnTheDefaultSocket(t *testing.T) {
 		t.Fatalf("keychain read %d times; token %q", read, os.Getenv(HumanTokenEnvVar))
 	}
 }
+
+// A detached agentd starts with the login shell's environment over the
+// launcher's own, the launcher's PATH kept as a fallback; when the shell
+// cannot be asked it starts anyway, and says so.
+func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
+	f := newOpenFixture("darwin", nil)
+	var asked []string
+	f.deps.LoginEnv = func(environ []string) ([]string, error) {
+		asked = environ
+		return []string{"PATH=/Users/u/.local/bin:/usr/bin", "ANTHROPIC_API_KEY=k", "LANG=en_US.UTF-8"}, nil
+	}
+	f.deps.Profile = func() (*config.LaunchProfile, error) {
+		return &config.LaunchProfile{Env: []config.LaunchEnv{{Key: "LANG", Value: "C.UTF-8"}}}, nil
+	}
+	var out bytes.Buffer
+	if rc := runLauncherOpen(true, f.deps, &out, io.Discard); rc != rcOK {
+		t.Fatal(rc)
+	}
+	if strings.Join(asked, "\n") != "PATH=/home/u/.local/bin:/usr/bin" {
+		t.Errorf("login shell asked with %v", asked)
+	}
+	env := strings.Join(f.servedEnv, "\n")
+	for _, want := range []string{"PATH=/Users/u/.local/bin:/usr/bin:/home/u/.local/bin", "ANTHROPIC_API_KEY=k"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("env lacks %s:\n%s", want, env)
+		}
+	}
+	// The launch profile's explicit variables still win.
+	if i, j := strings.LastIndex(env, "LANG=C.UTF-8"), strings.LastIndex(env, "LANG=en_US.UTF-8"); i < j {
+		t.Errorf("profile LANG lost:\n%s", env)
+	}
+	if strings.Contains(out.String(), "without") {
+		t.Errorf("out %q", out.String())
+	}
+
+	f = newOpenFixture("darwin", nil)
+	f.deps.LoginEnv = func([]string) ([]string, error) { return nil, errors.New("/bin/zsh did not finish within 10s") }
+	var logged []string
+	f.deps.LogNote = func(msg string) { logged = append(logged, msg) }
+	out.Reset()
+	if rc := runLauncherOpen(true, f.deps, &out, io.Discard); rc != rcOK {
+		t.Fatal(rc)
+	}
+	if strings.Join(f.servedEnv, "\n") != "PATH=/home/u/.local/bin:/usr/bin" {
+		t.Errorf("env %v", f.servedEnv)
+	}
+	if !strings.Contains(out.String(), "without the login shell's environment: /bin/zsh did not finish") {
+		t.Errorf("out %q", out.String())
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "/bin/zsh did not finish") {
+		t.Errorf("log %q", logged)
+	}
+}
