@@ -146,8 +146,8 @@ func createLaunchRow(in launchRowInput, undo *launchundo.Undo) (*SessionState, e
 		// Redacted: the command carries the whole forwarded environment, and
 		// output.log is not a place for the operator's API keys.
 		if launchPaneCommand := *in.paneCommand; launchPaneCommand != "" {
-			if redacted, ok := RedactPaneCommand(
-				launchPaneCommand, in.envExports, authoredPaneCommandSecrets(in.effectiveSandbox)); ok {
+			if redacted, why := RedactPaneCommandWhy(
+				launchPaneCommand, in.envExports, authoredPaneCommandSecrets(in.effectiveSandbox)); why == "" {
 				slog.Error("launch failed; rolling back its session row",
 					"session_id", in.sessionID, "tmux_session", in.tmuxSession,
 					"pane_command", redacted)
@@ -156,7 +156,7 @@ func createLaunchRow(in launchRowInput, undo *launchundo.Undo) (*SessionState, e
 				// command cannot be written at all.
 				slog.Error("launch failed; rolling back its session row",
 					"session_id", in.sessionID, "tmux_session", in.tmuxSession,
-					"pane_command", "<withheld: environment prefix could not be located to redact>")
+					"pane_command", "<withheld: "+why+">")
 			}
 		}
 		// Generation-conditional: a concurrent same-label launch that re-wrote

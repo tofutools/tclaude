@@ -30,3 +30,16 @@ func startDetachedServe(argv, env []string, logFile string) error {
 	}
 	return cmd.Process.Release()
 }
+
+// appendLauncherLog appends msg to the launcher's log, best effort.
+func appendLauncherLog(logFile, msg string) {
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(msg + "\n")
+}

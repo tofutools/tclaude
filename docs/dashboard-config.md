@@ -396,11 +396,38 @@ and the API is `GET /api/node/launcher` and `POST
 - The launcher runs the tclaude binary that agentd runs, with agentd's
   `PATH`. When that binary moves, or an update changes it, agentd rewrites the
   launcher the next time it starts. The status shows a launcher that is out of
-  date.
+  date. On macOS, Homebrew's `/opt/homebrew/bin` and `/usr/local/bin` are
+  added to that `PATH` when they exist. An install warns when `tmux` is not on
+  the `PATH`, because an agentd without tmux cannot reach any agent. agentd
+  itself logs an error at start when it cannot find `tmux`.
 - **Start agentd if it is not running** (on by default) starts it first:
   - through the autostart unit, when **Start on login** installed one;
   - otherwise (or when that unit does not start) as `tclaude agentd serve`,
     logging to `~/.tclaude/data/launcher-agentd.log`.
+
+  An app starts with the desktop's bare environment. On macOS that means a
+  short `PATH`, no locale, and none of your shell profile's variables (API
+  keys, proxies). So before starting agentd itself, the launcher asks your
+  login shell for its environment. It runs `$SHELL -l -i` (or your account's
+  shell), which reads the same profile files a terminal does. agentd, and
+  every agent it starts, then gets what a terminal would give it. The
+  launcher's own `PATH` stays on the end as a fallback, and the launch
+  profile's variables still win. The launcher waits only until the shell
+  answers, and at most 30 seconds. If the shell gives no answer by then, or
+  fails, agentd still starts, with the launcher's environment, so the
+  dashboard can tell you. A desktop notification says so. A notice in the
+  dashboard's Messages says agents may not start or may show offline, and
+  how to check (`time $SHELL -l -i -c true`). `launcher-agentd.log` has an
+  error line. On macOS, when the autostart unit (launchd) starts agentd,
+  agentd does this step itself (see [launchd](server/launchd.md)); a Linux
+  systemd unit keeps its own environment. On macOS the locale usually comes
+  from the terminal app rather than your profile. When neither the launcher nor the
+  login shell names a UTF-8 locale, agentd gets your own. On macOS that is
+  your system locale (`defaults read -g AppleLocale`, for example `en_GB`,
+  giving `en_GB.UTF-8`). On Linux it is `LANG` from `/etc/locale.conf` or
+  `/etc/default/locale`. If neither is set, it falls back to `en_US.UTF-8`
+  on macOS and `C.UTF-8` on Linux, and only to a locale that is installed.
+  agentd sets `LANG` when it has none, else `LC_CTYPE`.
 
   The launcher waits for agentd to answer before it opens the dashboard. If
   agentd does not start, or the dashboard does not open, a desktop

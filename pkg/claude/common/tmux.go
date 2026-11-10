@@ -2,10 +2,12 @@ package common
 
 import (
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"path"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
 )
@@ -59,9 +61,11 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 		// `tmux ls` exits non-zero when there is no server. Treat that
 		// as the empty set rather than an error — it is the normal
 		// "nothing is running" state, not a probe failure.
-		if _, ok := err.(*exec.ExitError); ok {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			warnTmuxListFailure(string(exitErr.Stderr))
 			return map[string]struct{}{}, nil
 		}
+		warnTmuxListFailure(err.Error())
 		return nil, err
 	}
 	alive := map[string]struct{}{}
@@ -74,6 +78,34 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 		alive[name] = struct{}{}
 	}
 	return alive, nil
+}
+
+// tmuxListWarned holds the tmux failures already logged, so a poll loop
+// logs each distinct one once.
+var tmuxListWarned sync.Map
+
+// warnTmuxListFailure logs why listing tclaude's tmux sessions failed,
+// unless it is only that no server runs. Every agent's liveness comes from
+// this listing, so any other failure (tmux missing, a socket directory
+// with the wrong owner or mode, a server of another tmux version) shows
+// every agent offline; without this line nothing said why.
+func warnTmuxListFailure(msg string) {
+	msg = strings.TrimSpace(msg)
+	if tmuxNoServer(msg) {
+		return
+	}
+	if _, seen := tmuxListWarned.LoadOrStore(msg, true); seen {
+		return
+	}
+	slog.Warn("tmux: listing tclaude's sessions failed; every agent shows offline", "error", msg)
+}
+
+// tmuxNoServer reports whether a failed `tmux ls` said only that no server
+// runs: tmux prints "no server running on <socket>", or "error connecting
+// to <socket> (No such file or directory)" when the socket does not exist.
+func tmuxNoServer(msg string) bool {
+	return strings.HasPrefix(msg, "no server running on ") ||
+		(strings.HasPrefix(msg, "error connecting to ") && strings.HasSuffix(msg, "(No such file or directory)"))
 }
 
 // tmuxCounterKey names a tmux invocation by its subcommand for the perfstats

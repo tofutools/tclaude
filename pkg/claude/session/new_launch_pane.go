@@ -62,15 +62,15 @@ func guardLaunchWithDirProof(params *NewParams, launchSandbox *sandboxpolicy.Sna
 // redacted, or a warning that it was withheld when the environment prefix
 // cannot be located to redact.
 func logLaunchPaneCommand(harnessCmd, envExports string, effectiveSandbox *sandboxpolicy.Snapshot, sessionID, tmuxSession string) {
-	if redacted, ok := RedactPaneCommand(
-		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
+	if redacted, why := RedactPaneCommandWhy(
+		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); why == "" {
 		slog.Debug("launching managed pane",
 			"session_id", sessionID, "tmux_session", tmuxSession,
 			"pane_command", redacted)
 	} else {
 		slog.Warn("launching managed pane; command withheld from the log",
 			"session_id", sessionID, "tmux_session", tmuxSession,
-			"reason", "environment prefix could not be located to redact")
+			"reason", why)
 	}
 }
 
