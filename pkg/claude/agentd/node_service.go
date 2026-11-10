@@ -358,6 +358,10 @@ func serviceStatusFor(st NodeService, access string) NodeService {
 
 func serveNodeService(w http.ResponseWriter, r *http.Request, actor, access string) {
 	w.Header().Set("Cache-Control", "private, no-store")
+	if strings.Contains(r.URL.Path, "/node/launcher") {
+		serveNodeLauncher(w, r, actor, access)
+		return
+	}
 	if strings.HasSuffix(r.URL.Path, "/launch") {
 		serveNodeServiceLaunch(w, r, actor, access)
 		return

@@ -942,6 +942,9 @@ func runServe(p *serveParams) error {
 	// After the restart hook: update_on_start may apply and restart.
 	startSelfUpdateScheduler()
 	defer stopSelfUpdateScheduler()
+	// A self-update or a moved binary leaves a managed app launcher naming
+	// the old one; rewrite it now that this binary runs.
+	go refreshStaleAppLauncher(context.Background())
 	// Fleet release metadata polling belongs to the federation runtime
 	// (fleet_metadata.go): a standalone daemon adds no network traffic, and
 	// explicit local update/install requests still work.

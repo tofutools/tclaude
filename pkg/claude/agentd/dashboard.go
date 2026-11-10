@@ -160,6 +160,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardPAFRoutes(mux)
 	registerNodeUpdateRoutes(mux)
 	registerNodeServiceRoutes(mux)
+	registerNodeLauncherRoutes(mux)
 	registerNodeUpdateScriptRoutes(mux)
 	registerNodeRunRoutes(mux)
 	registerHarnessAvailabilityRoutes(mux)
