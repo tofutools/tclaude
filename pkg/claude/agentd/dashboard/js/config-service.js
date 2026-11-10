@@ -268,9 +268,12 @@ export function ServicePanel({
   const configured = a?.installed ? a.argv : null;
   const differs = !!(configured && observed.length && !sameFlags(configured, observed));
   const byProfile = !!launch?.profile;
-  const customEmpty = !byProfile && argsMode === 'custom' && serveArgsOf(argsText).length === 0;
-  const any = busy || restarting;
   const readOnly = service.access === 'read';
+  // Only full access (this node, or an unrestricted peer) may name the
+  // unit's serve flags; a peer with manage access keeps the running ones.
+  const flagsEditable = !service.access || service.access === 'full';
+  const customEmpty = !byProfile && flagsEditable && argsMode === 'custom' && serveArgsOf(argsText).length === 0;
+  const any = busy || restarting;
   const status = serviceStatus(service);
   const actions = readOnly ? html`<span class="muted" id="${idp}svc-readonly">Read only: you may see how this node starts, not change it.</span>`
     : status.action === 'install' && (!a?.installed || a.managed)
@@ -319,12 +322,12 @@ export function ServicePanel({
           ${configured && html`<${Row} label="Unit environment"><${EnvList} env=${a.env} />${a.env_file ? html` <span class="muted">· from <code>${a.env_file}</code></span>` : ''}<//>`}
           ${(!a.installed || a.managed) && byProfile && html`<${Row} label="Flags and env"><span class="muted" id="${idp}svc-by-profile">from the launch profile above</span><//>`}
           ${!readOnly && (!a.installed || a.managed) && html`
-            ${!byProfile && html`<${Row} label="Serve flags"><span class="cfg-svc-args">
+            ${!byProfile && html`${flagsEditable && html`<${Row} label="Serve flags"><span class="cfg-svc-args">
               <label class="cfg-inline"><input type="radio" name="${idp}svc-args" value="keep" checked=${argsMode === 'keep'} onChange=${() => setArgsMode('keep')} /> keep the flags agentd runs with now</label>
               <label class="cfg-inline"><input type="radio" name="${idp}svc-args" value="custom" checked=${argsMode === 'custom'} onChange=${() => setArgsMode('custom')} /> use these:</label>
               <input type="text" class="ui-input ui-sm" id="${idp}svc-serve-args" spellcheck="false" autocomplete="off" aria-label="agentd serve flags"
                 placeholder="--no-tray --dashboard-port 7878" disabled=${argsMode !== 'custom'} value=${argsText} onInput=${(e) => setArgsText(e.currentTarget.value)} />
-            </span><//>
+            </span><//>`}
             <${Row} label="Environment"><label class="cfg-inline"><input type="checkbox" id="${idp}svc-keep-env" checked=${keepEnv} onChange=${(e) => setKeepEnv(e.currentTarget.checked)} /> keep the environment agentd runs with now (PATH and the rest)</label><//>`}
             <${Row} label=""><span class="cfg-svc-actions">
               <${Button} variant="primary" size="sm" id="${idp}svc-install" disabled=${!!any || customEmpty} title=${customEmpty ? 'Type the serve flags, or keep the ones agentd runs with now' : undefined} busy=${busy === 'install'} onClick=${() => { void autostart('install'); }}>${a.installed ? 'Rewrite unit…' : 'Start on login…'}<//>

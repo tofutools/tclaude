@@ -174,9 +174,10 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
       }}>Choose an update method…<//>`
     : st.action === 'schedule'
       ? html`<${Button} variant="primary" size="sm" id="fleet-install-updates-on" title="A daily update in the 03:00–05:00 window; change it below, then Save settings."
-          onClick=${() => set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'daily' }; })}>Update daily<//>`
+          onClick=${() => { expand(); set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'daily' }; }); }}>Update daily<//>`
       : html`<${Button} size="sm" id="fleet-install-updates-off" title="Turns off scheduled and start-up updates and keeps the method; then Save settings."
-          onClick=${() => set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'off' }; n.update_on_start = false; })}>Turn off<//>`;
+          onClick=${() => { expand(); set((n) => { n.schedule = { ...(n.schedule || {}), frequency: 'off' }; n.update_on_start = false; }); }}>Turn off<//>`;
+  // The main actions unfold the settings: Save settings is down there.
   const status = html`<span>${st.text}</span>${dirty ? html` <span class="fa-warn" id="fleet-install-updates-unsaved">Not saved yet: Save settings below.</span>` : ''}`;
   return part(st.state, status, mainAction, html`<div class="nus" id="fleet-node-update-settings">${head}
     ${access === 'settings' && html`<div class="nus-note">🔒 The checkout path, a custom command, the package-manager acknowledgement and switching to a package-manager, custom or checkout method can be set only on ${node.label} itself or by an unrestricted peer.</div>`}
