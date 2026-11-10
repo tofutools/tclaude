@@ -21,6 +21,7 @@ import { LockReason } from './lock-reason.js';
 import { nodeSnapshot } from './node-api.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { matchesShortcut } from './keybindings.js';
+import { configTarget, pickConfigNode, setConfigNodes } from './config-access.js';
 
 const html = htm.bind(h);
 
@@ -368,9 +369,10 @@ export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNo
 
 // MACHINE_TABS hold one machine's own settings, so a fused view keeps them on
 // this node. Their strip says how each ticked peer's own is reached: Access
-// opens on a peer's per-node view under unrestricted trust; Config is never
-// served to a peer (each node's is set on that node).
-const MACHINE_TABS = Object.freeze({ access: 'unrestricted', config: 'never' });
+// opens on a peer's per-node view under unrestricted trust. Config is not
+// listed: its strip is a node picker that edits a peer's config in place
+// (ConfigNodePicker).
+const MACHINE_TABS = Object.freeze({ access: 'unrestricted' });
 
 // peerTabReach is how the strip offers a ticked peer's own copy of a machine
 // tab: { href } to open it, or { why } it cannot be opened from here. theirs
@@ -378,7 +380,6 @@ const MACHINE_TABS = Object.freeze({ access: 'unrestricted', config: 'never' });
 // a peer known to grant less than unrestricted is locked; one not known yet
 // is offered, and its page says if it refuses.
 function peerTabReach(peer, tab, loc, theirs = '') {
-  if (MACHINE_TABS[tab] === 'never') return { why: `${peer.name}'s ${tab} is set on ${peer.name} itself` };
   if (!peer.online) return { why: `${peer.name} is offline` };
   if (theirs && theirs !== 'unrestricted') return { why: `${peer.name} does not share its ${tab} with you (needs unrestricted trust from ${peer.name})` };
   return { href: nodeHref(peer.id, { pathname: toPath({ tab }), search: withFused(loc?.search || '', null) }) };
@@ -391,7 +392,12 @@ function peerTabReach(peer, tab, loc, theirs = '') {
 export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis.location, peerSnapshot = nodeSnapshot }) {
   const current = state.view.value;
   const fleet = current.fleet;
-  if (!fleet || !current.fused || current.topLevel || FUSED_TABS.has(current.activeTab)) return null;
+  const shown = !!fleet && !!current.fused && !current.topLevel && !FUSED_TABS.has(current.activeTab);
+  const configNodes = shown && current.activeTab === 'config' ? tickedNodes(fleet, current.fused) : [];
+  useEffect(() => { setConfigNodes(configNodes.length > 1 ? configNodes : []); });
+  useEffect(() => () => setConfigNodes([]), []);
+  if (!shown) return null;
+  if (configNodes.length > 1) return html`<${ConfigNodePicker} nodes=${configNodes} />`;
   const self = fleet.self;
   const tab = current.activeTab;
   const label = doc?.querySelector?.(`nav [data-tab="${tab}"] .tab-label-regular`)?.textContent?.trim() || 'This tab';
@@ -406,6 +412,24 @@ export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis
         ? html`<a key=${peer.id} class="scope-pill scope-peer-link" style=${`--nc:${peer.color}`} href=${reach.href}>${peer.name}'s ${label} ↗</a>`
         : html`<span key=${peer.id} class="scope-pill scope-peer-locked" style=${`--nc:${peer.color}`}>${peer.name}<${LockReason} why=${reach.why} /></span>`;
     })}</span>` : null}
+  </div>`;
+}
+
+// ConfigNodePicker tops the Config tab in a fused view over several nodes:
+// the tab edits one of them at a time, this node by default, a peer through
+// its per-node remote mode (config-access.js). Switching with unsaved edits
+// asks first (config-island.js). An offline peer cannot be picked.
+function ConfigNodePicker({ nodes }) {
+  const target = configTarget.value;
+  return html`<div class="scope-banner scope-config-picker" role="group" aria-label="Node whose config to edit">
+    <span>Config of</span>
+    <span class="scope-peers scope-config-nodes">${nodes.map((n) => {
+      const on = target?.id === n.id;
+      const off = !n.local && !n.online && !on;
+      return html`<button key=${n.id} type="button" data-ui-exempt data-config-node=${n.id} class=${`scope-pill scope-config-node${on ? ' on' : ''}`} style=${`--nc:${n.color}`}
+        aria-pressed=${on ? 'true' : 'false'} disabled=${off} title=${off ? `${n.name} is offline` : `Edit ${n.name}'s config`}
+        onClick=${() => { if (!on) pickConfigNode(n.id); }}>${n.local ? '⌂ ' : ''}${n.name}${n.local ? ' (this node)' : ''}</button>`;
+    })}</span>
   </div>`;
 }
 

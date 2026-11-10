@@ -142,11 +142,39 @@ test('machine tabs in a fused view stay on this node and offer each peer\'s own 
   assert.equal(link.getAttribute('href'), '/access?wizard=1&node=inst_forge', "an unrestricted peer's Access opens on its own view, leaving the fused set");
   const locks = [...c.querySelectorAll('.scope-peer-locked .lock-why')].map((l) => l.dataset.why);
   assert.deepEqual(locks.sort(), ['ci does not share its access with you (needs unrestricted trust from ci)', 'lab is offline']);
-  await harness.act(() => { activeTab.value = 'config'; });
-  assert.equal(c.querySelector('.scope-peer-link'), null, "a peer's Config is never served");
-  assert.ok([...c.querySelectorAll('.scope-peer-locked .lock-why')].some((l) => l.dataset.why === "forge's config is set on forge itself"));
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(c.querySelector('.scope-peers'), null, 'other tabs keep the plain strip');
+  await mounted.unmount(); state.dispose();
+});
+
+test('Config in a fused view picks the node it edits, this node by default', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const access = await harness.importDashboardModule('js/config-access.js');
+  const activeTab = harness.signals.signal('config');
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
+  state.setStatus(three);
+  const asked = [];
+  access.setConfigSwitchHook(async (node) => { asked.push(node.name); return true; });
+  t.after(() => access.setConfigSwitchHook(null));
+  const mounted = await harness.mount(harness.html`<${island.ScopeBanner} state=${state} doc=${harness.document} />`);
+  const c = mounted.container;
+  const btn = (id) => c.querySelector(`[data-config-node="${id}"]`);
+  assert.deepEqual([...c.querySelectorAll('.scope-config-node')].map((b) => b.textContent), ['⌂ desk (this node)', 'forge', 'lab']);
+  assert.equal(btn('inst_self').getAttribute('aria-pressed'), 'true', 'this node is picked first');
+  assert.equal(access.configTarget.value.id, 'inst_self');
+  assert.equal(btn('inst_lab').disabled, true, 'an offline peer cannot be picked');
+  await harness.act(async () => { harness.fireEvent(btn('inst_forge'), 'click'); await new Promise((r) => setTimeout(r)); });
+  assert.deepEqual(asked, ['forge'], 'switching asks the Config tab first');
+  assert.equal(access.configTarget.value.id, 'inst_forge');
+  assert.equal(btn('inst_forge').getAttribute('aria-pressed'), 'true');
+  // The confirmation can refuse: the pick stays.
+  access.setConfigSwitchHook(async () => false);
+  await harness.act(async () => { harness.fireEvent(btn('inst_self'), 'click'); await new Promise((r) => setTimeout(r)); });
+  assert.equal(access.configTarget.value.id, 'inst_forge');
+  // Off the Config tab there is no picker, and Config edits this node again.
+  await harness.act(() => { activeTab.value = 'usage'; });
+  assert.equal(c.querySelector('.scope-config-node'), null);
+  assert.equal(access.configTarget.value, null);
   await mounted.unmount(); state.dispose();
 });
 

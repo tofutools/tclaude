@@ -8,7 +8,7 @@
 // withholds shows only whether it is set, with Replace and Clear where its
 // key is writable. On this node's own page every row stays as it was.
 
-import { signal } from '@preact/signals';
+import { computed, signal } from '@preact/signals';
 
 // configAccess is the loaded {access, redacted} block, or null before a load.
 export const configAccess = signal(null);
@@ -155,9 +155,62 @@ export function panelRowKeys(panel) {
   return [...(panelKeys.get(panel) || [])].filter(Boolean);
 }
 
-// configNodeName names the node a peer's page edits ('' on this node's own
-// page), so the header and the save confirmation say whose config it is.
-export function configNodeName(remote = globalThis.__tclaudeRemoteNode, doc = globalThis.document) {
+// The fused multi-node view keeps the Config tab on this node's page, with a
+// node picker over its ticked nodes (fleet-island.js ScopeBanner):
+// configNodes lists them ({ id, name, color, local }), [] outside a fused
+// view, and configTarget is the one the tab edits: the picked node while
+// listed, else this node. A peer is edited through this node's proxy in the
+// same remote mode as its own page; this node is the local tab.
+export const configNodes = signal([]);
+const configPick = signal('');
+
+export function setConfigNodes(list = []) {
+  const next = list.map(n => Object.freeze({ id: n.id, name: n.name || n.id.slice(0, 13), color: n.color || '', local: !!n.local }));
+  const key = (l) => l.map(n => [n.id, n.name, n.color, n.local].join('\u0000')).join('\u0001');
+  if (key(next) === key(configNodes.value)) return;
+  if (!next.length) configPick.value = '';
+  configNodes.value = Object.freeze(next);
+}
+
+export const configTarget = computed(() => {
+  const list = configNodes.value;
+  if (list.length < 2) return null;
+  return list.find(n => n.id === configPick.value) || list.find(n => n.local) || list[0];
+});
+
+// configPeerTarget is the fused view's picked peer, or null when the tab
+// edits the page's own node.
+export function configPeerTarget(target = configTarget.value) {
+  return target && !target.local ? target : null;
+}
+
+// pickConfigNode switches the tab to a listed node. The Config island asks
+// first when the form holds unsaved edits (setConfigSwitchHook) and reloads
+// the form for the new node.
+let confirmSwitch = async () => true;
+export function setConfigSwitchHook(fn) { confirmSwitch = typeof fn === 'function' ? fn : async () => true; }
+export async function pickConfigNode(id) {
+  const target = configTarget.value;
+  if (!target || id === target.id || !configNodes.value.some(n => n.id === id)) return false;
+  if (!(await confirmSwitch(configNodes.value.find(n => n.id === id)))) return false;
+  configPick.value = id;
+  return true;
+}
+
+// configNodeName names the node the tab edits when it is not plainly this
+// node's own page ('' there), so the header and the save confirmation say
+// whose config it is.
+export function configNodeName(remote = globalThis.__tclaudeRemoteNode, doc = globalThis.document, target = configTarget.value) {
+  if (target) return target.name;
   if (!remote?.id) return '';
   return doc?.documentElement?.dataset?.remoteNodeName || remote.id.slice(0, 13);
+}
+
+// configNodeLabel is the header's and the confirmation's name for the node:
+// "<node>'s config (remote)" for a peer, "(this node)" for this node in a
+// fused view, '' on this node's own plain page.
+export function configNodeLabel(remote = globalThis.__tclaudeRemoteNode, doc = globalThis.document, target = configTarget.value) {
+  const name = configNodeName(remote, doc, target);
+  if (!name) return '';
+  return target?.local ? `${name}’s config (this node)` : `${name}’s config (remote)`;
 }

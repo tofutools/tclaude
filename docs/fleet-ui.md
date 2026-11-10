@@ -70,10 +70,12 @@ which merges each node's newest page newest first, with a node pill on each
 row and the nodes that withhold theirs shown locked. **Logs** and
 **Performance** are one daemon's own, so they get a **node** switch instead:
 this node or one ticked peer, read through its routes when it trusts this
-node unrestricted (anything less shows why it is refused). On **Config** and **Access**, one
-machine's own settings, the strip also names each ticked peer. An
-unrestricted peer's Access opens on its own view from there. A peer's Config
-is always set on that node itself, so it is shown locked, with the reason.
+node unrestricted (anything less shows why it is refused). On **Access**, one
+machine's own settings, the strip also names each ticked peer, and an
+unrestricted peer's Access opens on its own view from there. On **Config**
+the strip is a node picker over the ticked nodes: the tab edits one at a
+time, this node first, and a picked peer in the same way as on its own page
+(see [On a peer's page](dashboard-config.md#on-a-peers-page)).
 **Plugins** and **Processes** keep each node's set intact: this node's as
 before, then a section per ticked peer under its node pill. A peer that
 trusts you unrestricted shows its plugins (check, run, install from its
