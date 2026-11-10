@@ -63,7 +63,9 @@ export const KNOWN_TABS = new Set([
 //   - Diagnostics: audit / logs / performance (formerly three top-level
 //     tabs, then the Activity tab).
 //   - Config: the settings rail's sections. Keep in step with CONFIG_PANELS
-//     in config-form-markup.js.
+//     in config-form-markup.js. 'service' and 'updates' were sections of
+//     their own and are now parts of Installation: they stay valid and open
+//     Installation at that part (CONFIG_PANEL_ALIASES in config-panel.js).
 //   - Fleet config (fleet-admin): its sections; the bare tab is the landing
 //     (the setup guide until setup is done, else Peers). Keep in step with
 //     SUB_PAGES in fleet-admin-island.js.
@@ -78,7 +80,7 @@ export const KNOWN_SUBTABS = {
   diagnostics: new Set(['audit', 'logs', 'performance', 'doctor']),
   config: new Set([
     'appearance', 'terminals', 'keyboard', 'notifications', 'agents', 'launch', 'context', 'costs',
-    'assistants', 'steward', 'voice', 'git', 'daemon', 'updates', 'service', 'logs', 'processes', 'experimental', 'advanced',
+    'assistants', 'steward', 'voice', 'git', 'daemon', 'installation', 'service', 'updates', 'logs', 'processes', 'experimental', 'advanced',
   ]),
   'fleet-admin': new Set([
     'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models', 'sharing',

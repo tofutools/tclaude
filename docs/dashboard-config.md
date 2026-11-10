@@ -270,39 +270,28 @@ Rows with the `agentd restart` badge need one.
 Certificate management is below the Remote access group. See
 [Operating remotely](remote.md).
 
-## Updates
+## Installation
 
-`/config/updates`: how tclaude updates itself (`updates.self`). Everything is
-opt-in: nothing updates on its own until you choose a method and turn on a
-schedule or start-up updates. The CLI is `tclaude update config show|set`.
+`/config/installation`: how tclaude is installed, started and updated on this
+machine. Its parts are stacked on one page: **Start automatically**, then
+**Updates**. Each opens with a status line, tagged On, Off or Needs
+attention, and its main action. A part that is set up and healthy folds its
+detail away; **Show details** opens it, and a settings search shows it
+anyway. `/config/service` and `/config/updates`, the sections these parts
+used to be, open Installation at that part.
 
-| Group | Label | Key | Default |
-|---|---|---|---|
-| Method | Update method | `updates.self.method` | not chosen |
-| Method | Checkout, Branch or tag (Build from a checkout) | `updates.self.source_checkout.path`, `.ref` | none; the release tag |
-| Method | Update command, Timeout (Custom command) | `updates.self.custom.command`, `.timeout_seconds` | none; 1800 s |
-| Method | Package manager acknowledgement, Install to | `updates.self.package_manager_ack`, `updates.self.install_dir` | off; `~/.local/bin` |
-| When | Scheduled updates | `updates.self.schedule.frequency` | off |
-| When | Day, Time window | `updates.self.schedule.weekday`, `.window_start`, `.window_end` | Monday; 03:00–05:00 |
-| When | Wait while agents are working | `updates.self.schedule.defer_while_agents_working` | off |
-| When | Update when the daemon starts | `updates.self.update_on_start` | off |
-| After an update | Run setup with the new version, Setup options | `updates.self.post_update_setup.enabled`, `.flags`, `.harness` | off |
+### Start automatically
 
-The section shows how this node's tclaude was installed, with the evidence.
-When a package manager (Homebrew, Nix, mise, asdf, apt or rpm) owns it, the
-section shows the command to update it yourself. **Notify me** is the safe
-choice there. A **Let tclaude run …** method asks you to confirm before it is
-picked. A method that installs the binary itself (release, go install,
-checkout, custom) needs you to acknowledge that the package manager still
-owns tclaude. That method installs to **Install to**, and the section warns
-when that directory comes after the package manager's copy on PATH. Methods
-that cannot run here are greyed out with the reason.
-## Service
+How agentd was started on this machine, what it should be started with, and
+starting it when you log in. The part reads the running daemon, and its
+buttons act at once, never through **Save changes…**. The CLI is
+`tclaude service status|install|uninstall` and `tclaude service launch`.
 
-`/config/service`: how agentd was started on this machine, what it should be
-started with, and starting it when you log in. The section reads the running
-daemon, and its buttons act at once, never through **Save changes…**. The CLI
-is `tclaude service status|install|uninstall` and `tclaude service launch`.
+The status line says whether agentd starts on its own: not at all (it stops
+when you log out or reboot), from a unit tclaude wrote, or from a unit
+tclaude did not write. **Start on login…** or **Remove…** is next to it. It
+needs attention when the unit is not enabled, or runs a different command
+from the running daemon.
 
 - **Launcher** shows what started agentd (a systemd user or system unit,
   launchd, a tmux pane or a shell), the command and environment it runs with
@@ -342,9 +331,6 @@ is `tclaude service status|install|uninstall` and `tclaude service launch`.
   only a unit tclaude wrote, and a unit you wrote yourself is shown read-only.
 - On Linux, agentd stops at logout unless lingering is on. That needs sudo, so
   the section shows the `loginctl enable-linger` command to run yourself.
-- **Update on boot** (`updates.self.update_on_start`) is the same setting as
-  **Update when the daemon starts** in [Updates](#updates), and is saved with
-  **Save changes…**.
 
 ### App launcher
 
@@ -361,8 +347,8 @@ dashboard. The CLI is `tclaude service launcher status|install|uninstall`
 - **macOS:** it writes `~/Applications/tclaude.app` and registers it with
   Launch Services, so Spotlight and Launchpad find it straight away. The
   bundle holds a shell script and is not signed. It is marked as native on
-  Apple Silicon (`LSArchitecturePriority` arm64 first, and
-  `LSRequiresNativeExecution`), so macOS does not offer Rosetta for it.
+  Apple Silicon (`LSArchitecturePriority` arm64 first), so macOS does not
+  offer Rosetta for it.
 - The launcher runs the tclaude binary that agentd runs, with agentd's
   `PATH`. When that binary moves, or an update changes it, agentd rewrites the
   launcher the next time it starts. The status shows a launcher that is out of
@@ -409,6 +395,40 @@ dashboard. The CLI is `tclaude service launcher status|install|uninstall`
   yourself at the same path is reported and left alone.
 - Peers with `node.update.settings` can install and remove the launcher on
   this node. With `node.read` they can see it.
+
+### Updates
+
+How tclaude updates itself (`updates.self`). Everything is opt-in: nothing
+updates on its own until you choose a method and turn on a schedule or
+start-up updates. The CLI is `tclaude update config show|set`.
+
+The status line says whether tclaude updates itself, with what and when.
+Its button picks a method when none is chosen, turns on a daily update when a
+method is chosen but nothing runs, and **Turn off** stops scheduled and
+start-up updates while keeping the method. These buttons edit the form, so
+they are saved with **Save changes…** like the rows below.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Method | Update method | `updates.self.method` | not chosen |
+| Method | Checkout, Branch or tag (Build from a checkout) | `updates.self.source_checkout.path`, `.ref` | none; the release tag |
+| Method | Update command, Timeout (Custom command) | `updates.self.custom.command`, `.timeout_seconds` | none; 1800 s |
+| Method | Package manager acknowledgement, Install to | `updates.self.package_manager_ack`, `updates.self.install_dir` | off; `~/.local/bin` |
+| When | Scheduled updates | `updates.self.schedule.frequency` | off |
+| When | Day, Time window | `updates.self.schedule.weekday`, `.window_start`, `.window_end` | Monday; 03:00–05:00 |
+| When | Wait while agents are working | `updates.self.schedule.defer_while_agents_working` | off |
+| When | Update when the daemon starts | `updates.self.update_on_start` | off |
+| After an update | Run setup with the new version, Setup options | `updates.self.post_update_setup.enabled`, `.flags`, `.harness` | off |
+
+The part shows how this node's tclaude was installed, with the evidence.
+When a package manager (Homebrew, Nix, mise, asdf, apt or rpm) owns it, the
+part shows the command to update it yourself. **Notify me** is the safe
+choice there. A **Let tclaude run …** method asks you to confirm before it is
+picked. A method that installs the binary itself (release, go install,
+checkout, custom) needs you to acknowledge that the package manager still
+owns tclaude. That method installs to **Install to**, and the part warns
+when that directory comes after the package manager's copy on PATH. Methods
+that cannot run here are greyed out with the reason.
 
 ## Logs & housekeeping
 

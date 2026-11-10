@@ -9631,6 +9631,23 @@ label.cfg-label { cursor: pointer; }
 .cfg-remote-status.warn { color: #e3b341; }
 
 /* Config › Service: the launcher and autostart readout (not config.json). */
+/* Config › Installation: each part is a status card (title, state tag, one
+   status line, its main action) over its detail, which folds away when the
+   part is set up and healthy, but never while a settings search is on. */
+.cfg-inst-part { display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px; scroll-margin-top: 12px; }
+.cfg-inst-head { display: flex; flex-direction: column; gap: 8px; }
+.cfg-inst-title { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: #e6edf3; }
+.ui-tag.cfg-inst-state { font-size: 11px; font-weight: 500; }
+.ui-tag.cfg-inst-state[data-state=on] { border-color: #2e7d32; color: #7ee787; }
+.ui-tag.cfg-inst-state[data-state=off] { color: var(--ui-muted-text); }
+.ui-tag.cfg-inst-state[data-state=warn] { border-color: #9e6a03; color: var(--ui-warn-text); }
+.cfg-inst-status { font-size: 13px; line-height: 1.5; }
+.cfg-inst-status .muted { font-size: 12px; }
+.cfg-inst-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cfg-inst-body { display: flex; flex-direction: column; gap: 14px; }
+.cfg-inst-body[data-collapsed] { display: none; }
+.cfg-layout[data-cfg-searching] .cfg-inst-body[data-collapsed] { display: flex; }
+.cfg-layout[data-cfg-searching] .cfg-inst-toggle { display: none; }
 .cfg-svc { display: flex; flex-direction: column; gap: 14px; }
 .cfg-svc-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; font-size: 12.5px; padding: 6px 0; }
 .cfg-svc-k { color: var(--ui-muted-text); }

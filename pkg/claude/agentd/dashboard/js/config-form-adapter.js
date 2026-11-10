@@ -10,7 +10,7 @@ import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 import { shellConfirm } from './shell-state.js';
-import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateMeta } from './config-self-update.js';
+import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
 const fallbackLists = new Map();
@@ -837,7 +837,7 @@ function populateConfigForm(cfg) {
 }
 
 // ===================================================================
-// Config › Updates — updates.self. The inputs load and save like every other
+// Config › Installation › Updates — updates.self. The inputs load and save like every other
 // field; selfUpdateDraft mirrors the ones the panel's notes depend on, and
 // the daemon's install detection (GET /api/node/update/settings) is read
 // alongside each config load.
@@ -871,6 +871,10 @@ function syncSelfUpdateDraft() {
     harness: $('#cfg-selfupdate-setup-harness').value,
     setupEnabled: $('#cfg-selfupdate-setup-enabled').checked,
     frequency: $('#cfg-selfupdate-frequency').value,
+    weekday: $('#cfg-selfupdate-weekday').value,
+    windowStart: $('#cfg-selfupdate-window-start').value.trim(),
+    windowEnd: $('#cfg-selfupdate-window-end').value.trim(),
+    onStart: $('#cfg-selfupdate-on-start').checked,
     ack: $('#cfg-selfupdate-pm-ack').checked,
   };
 }
@@ -894,13 +898,13 @@ function populateSelfUpdate(su) {
   $('#cfg-selfupdate-window-end').value = sched.window_end || SCHEDULE_DEFAULTS.window_end;
   $('#cfg-selfupdate-defer').checked = !!sched.defer_while_agents_working;
   $('#cfg-selfupdate-on-start').checked = !!su.update_on_start;
-  $('#cfg-selfupdate-on-start-svc').checked = !!su.update_on_start;
   $('#cfg-selfupdate-setup-enabled').checked = !!setup.enabled;
   selfUpdateLoadedFlags = Array.isArray(setup.flags) ? [...setup.flags] : [];
   const flags = new Set(selfUpdateLoadedFlags);
   for (const input of setupFlagInputs()) input.checked = flags.has(input.getAttribute('data-cfg-setup-flag'));
   setSelfUpdateSelect($('#cfg-selfupdate-setup-harness'), setup.harness || '');
   syncSelfUpdateDraft();
+  selfUpdateLoads.value++;
 }
 
 // setOrDefault writes key unless the value is blank, or is the default and
@@ -1006,16 +1010,9 @@ async function confirmSelfUpdateMethod(select) {
   syncSelfUpdateDraft();
 }
 
-// ON_START_TOGGLES are the one updates.self.update_on_start setting, shown
-// in both Config › Updates and Config › Service; they mirror each other.
-const ON_START_TOGGLES = ['cfg-selfupdate-on-start', 'cfg-selfupdate-on-start-svc'];
-
 function handleSelfUpdateEvent(event) {
   const target = event.target;
-  if (ON_START_TOGGLES.includes(target.id)) {
-    for (const id of ON_START_TOGGLES) if (id !== target.id) $('#' + id).checked = target.checked;
-  }
-  if (!target.closest?.('[data-cfg-panel="updates"]')) return;
+  if (!target.closest?.('[data-cfg-install-part="updates"]')) return;
   syncSelfUpdateDraft();
   if (event.type === 'change' && target.id === 'cfg-selfupdate-method') void confirmSelfUpdateMethod(target);
   if (target.id === 'cfg-selfupdate-install-dir' && event.type === 'input') {
