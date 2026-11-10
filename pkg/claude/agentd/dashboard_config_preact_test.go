@@ -64,7 +64,9 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 	}
 	terminals := strings.Index(markup, `<${Panel} id="terminals"`)
 	windowFocus := strings.Index(markup, `id="cfg-focus-window-title"`)
-	terminalAttach := strings.Index(markup, `cfg-terminal-attach-field"`)
+	// The row is its own component (TerminalAttachRow, gated on a peer's
+	// page like a Setting); where it is placed is what groups it.
+	terminalAttach := strings.Index(markup, `<${TerminalAttachRow} />`)
 	notifications := strings.Index(markup, `<${Panel} id="notifications"`)
 	if terminals < 0 || windowFocus < terminals || terminalAttach < windowFocus || notifications < terminalAttach {
 		t.Error("web terminal attachment controls are not grouped after Window focus inside the Terminals panel")
