@@ -20,6 +20,12 @@ func TestLookupAnthropicModelPricing(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, p.Long)
 	require.EqualValues(t, 100000, p.LongAbove)
+	for _, model := range []string{"claude-fable-5-2", "claude-fable-5-2[1m]", "claude-mythos-5-2"} {
+		p, ok = LookupAnthropicModelPricing(model)
+		require.True(t, ok, model)
+		require.Equal(t, AnthropicModelPrice{8, 10, 16, 0.20, 40}, p.Short, model)
+		require.Nil(t, p.Long, model)
+	}
 	for _, unknown := range []string{"", "claude-opus-9", "claude-opus-5-5-fast", "gpt-6-sol"} {
 		_, ok := LookupAnthropicModelPricing(unknown)
 		require.False(t, ok, unknown)

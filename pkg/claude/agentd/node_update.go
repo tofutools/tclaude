@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -209,10 +210,12 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 
 var updateRestartState struct {
 	sync.Mutex
-	stop      func()
-	path      string
-	requested bool
-	plan      restartPlan
+	stop func()
+	// path is the binary a restart starts; startPath the one this process
+	// started from (a self-update may move path away from it).
+	path, startPath string
+	requested       bool
+	plan            restartPlan
 }
 
 // restartPlan is how performSelfUpdateRestart restarts; the zero value
@@ -240,6 +243,7 @@ func configureSelfUpdateRestart(stop func()) {
 	updateRestartState.Lock()
 	updateRestartState.stop = stop
 	updateRestartState.path = path
+	updateRestartState.startPath = path
 	updateRestartState.requested = false
 	updateRestartState.Unlock()
 }
@@ -268,7 +272,7 @@ func requestSelfUpdateRestart() error {
 }
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
-	requested, path, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.plan
+	requested, path, startPath, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan
 	exit, exitCode := plan.exit, plan.exitCode
 	updateRestartState.stop = nil
 	updateRestartState.Unlock()
@@ -291,6 +295,14 @@ func performSelfUpdateRestart() error {
 	// The environment this process started with, not os.Environ(): what
 	// startup exported into it is derived again from the same flags.
 	argv := os.Args
+	if plan.relaunch && relaunchHandBack(path, startPath) {
+		// The waiting helper that started this daemon starts it again; a
+		// helper of our own would nest a second one in the shell job.
+		// Exiting also takes the tray icon down with this PID.
+		slog.Info("agentd restart: handing back to the relaunch helper", "helper_pid", relaunchHelperPID)
+		restartExit(relaunchHandBackExit)
+		return nil
+	}
 	if plan.relaunch {
 		helper, ok := relaunchHelperArgv(path, os.Args, plan.detach)
 		switch {
@@ -301,6 +313,12 @@ func performSelfUpdateRestart() error {
 		default:
 			argv = helper
 		}
+	}
+	if runtime.GOOS == "darwin" && trayShown.Load() {
+		// The exec keeps this PID, and with it the old tray icon's slot in
+		// the menu bar: a waiting helper would show it blank for the rest
+		// of the shell job.
+		releaseTrayStatusItem()
 	}
 	err := execSelfUpdate(path, argv, launchEnviron)
 	if err != nil {

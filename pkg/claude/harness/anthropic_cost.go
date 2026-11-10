@@ -34,6 +34,8 @@ type AnthropicModelPricing struct {
 // ID without a date suffix. Unknown models stay unpriced rather than
 // borrowing another model's rate.
 var anthropicModelPrices = map[string]AnthropicModelPricing{
+	"claude-fable-5-2":  {Short: AnthropicModelPrice{8, 10, 16, 0.20, 40}},
+	"claude-mythos-5-2": {Short: AnthropicModelPrice{8, 10, 16, 0.20, 40}},
 	"claude-fable-5-1":  {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
 	"claude-mythos-5-1": {Short: AnthropicModelPrice{10, 12.50, 20, 0.25, 50}},
 	"claude-fable-5":    {Short: AnthropicModelPrice{10, 12.50, 20, 1, 50}},
