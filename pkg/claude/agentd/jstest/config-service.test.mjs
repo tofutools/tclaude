@@ -1,4 +1,5 @@
-// Tests for Config › Service: the launcher readout, a restart that waits for
+// Tests for Config › Installation › Start automatically: its status line and
+// main action, the launcher readout, a restart that waits for
 // the daemon to answer again, and installing or removing the autostart unit.
 
 import test from 'node:test';
@@ -19,16 +20,19 @@ const SYSTEMD = {
   },
 };
 
-function daemon(initial, { getFails = 0, pendingReads = 0, launch = null } = {}) {
+function daemon(initial, { getFails = 0, pendingReads = 0, launch = null, base = '/api/node' } = {}) {
   const calls = [];
   let state = structuredClone(initial);
   let failing = 0;
   let pending = 0;
   // Every answer is a fresh object, as a real response is.
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => structuredClone(body) });
-  const fetchImpl = async (path, options = {}) => {
+  const fetchImpl = async (rawPath, options = {}) => {
+    // Every route is under the panel's base; anything else is a wrong node.
+    if (!rawPath.startsWith(`${base}/`)) return reply(418, { error: `not under ${base}: ${rawPath}` });
+    const path = `/api/node/${rawPath.slice(base.length + 1)}`;
     const body = options.body ? JSON.parse(options.body) : null;
-    calls.push({ path, method: options.method || 'GET', body });
+    calls.push({ path: rawPath, method: options.method || 'GET', body });
     if ((options.method || 'GET') === 'GET') {
       // The launch profile (config-service-launch.js): absent unless given.
       if (path === '/api/node/service/launch') return launch ? reply(200, launch) : reply(404, {});
@@ -53,15 +57,15 @@ function daemon(initial, { getFails = 0, pendingReads = 0, launch = null } = {})
   return { calls, fetchImpl };
 }
 
-async function setup(t, initial, { confirm = async () => true, getFails = 0, pendingReads = 0, launch = null } = {}) {
+async function setup(t, initial, { confirm = async () => true, getFails = 0, pendingReads = 0, launch = null, base = undefined } = {}) {
   const harness = await createPreactHarness(t);
   const { ServicePanel } = await harness.importDashboardModule('js/config-service.js');
-  const fake = daemon(initial, { getFails, pendingReads, launch });
+  const fake = daemon(initial, { getFails, pendingReads, launch, base });
   const toasts = [];
   const confirms = [];
   const copied = [];
   const timers = { setTimeout: (fn, ms) => setTimeout(fn, ms > 1000 ? ms : 0), clearTimeout };
-  const mounted = await harness.mount(harness.html`<${ServicePanel} fetchImpl=${fake.fetchImpl}
+  const mounted = await harness.mount(harness.html`<${ServicePanel} base=${base} fetchImpl=${fake.fetchImpl}
     confirm=${async (o) => { confirms.push(o); return confirm(o); }} toast=${(m, bad) => toasts.push({ m, bad })}
     copy=${async (text) => { copied.push(text); }} timers=${timers} />`);
   const root = mounted.container;
@@ -253,6 +257,71 @@ test('the launch profile reads again after an install, so its comparison is of w
     const before = reads();
     await click('#cfg-svc-install');
     await until(() => reads() > before, 'the launch profile read again');
+  } finally {
+    await unmount();
+  }
+});
+
+const SHELL = {
+  launcher: { kind: 'shell', process_argv: ['tclaude', 'agentd', 'serve'], restart_method: 'self', warnings: [] },
+  autostart: { supported: true, kind: 'systemd-user', path: '~/.config/systemd/user/tclaude-agentd.service', installed: false, managed: false, enabled: false,
+    linger: { enabled: true } },
+};
+
+test('not set up: the status says agentd stops at logout, and Start on login is right there', async (t) => {
+  const { root, calls, confirms, click, until, unmount } = await setup(t, SHELL);
+  try {
+    assert.equal(root.querySelector('#cfg-install-service-state').getAttribute('data-state'), 'off');
+    assert.match(root.querySelector('#cfg-install-service-status').textContent, /Not started automatically\. agentd runs under a shell; it stops when you log out or reboot/);
+    assert.equal(root.querySelector('#cfg-install-service-body').hasAttribute('data-collapsed'), false, 'not set up: the detail is open');
+    await click('#cfg-install-service-on');
+    await until(() => root.querySelector('#cfg-install-service-state').getAttribute('data-state') === 'on', 'the unit to be installed');
+    assert.equal(confirms[0].title, 'Start agentd on login?');
+    assert.deepEqual(calls.find((c) => c.method === 'POST').body, { action: 'install', keep_env: true });
+    assert.ok(root.querySelector('#cfg-install-service-off'), 'set up: Remove is the main action');
+    assert.equal(root.querySelector('#cfg-install-service-body').hasAttribute('data-collapsed'), false, 'acting never folds the detail away');
+  } finally {
+    await unmount();
+  }
+});
+
+test('set up and healthy: the status names the unit and the detail folds', async (t) => {
+  const healthy = structuredClone(SYSTEMD);
+  healthy.autostart.argv = healthy.launcher.argv;
+  const { root, click, unmount } = await setup(t, healthy);
+  try {
+    assert.equal(root.querySelector('#cfg-install-service-state').getAttribute('data-state'), 'on');
+    assert.match(root.querySelector('#cfg-install-service-status').textContent,
+      /Starts on login with the systemd user unit ~\/\.config\/systemd\/user\/tclaude-agentd\.service, written by tclaude\. It stops when you log out/);
+    assert.equal(root.querySelector('#cfg-install-service-body').hasAttribute('data-collapsed'), true);
+    await click('#cfg-install-service-toggle');
+    assert.equal(root.querySelector('#cfg-install-service-body').hasAttribute('data-collapsed'), false);
+    assert.equal(root.querySelector('#cfg-install-service-toggle').getAttribute('aria-expanded'), 'true');
+  } finally {
+    await unmount();
+  }
+});
+
+test('a unit whose command differs from what runs needs attention', async (t) => {
+  const { root, unmount } = await setup(t, SYSTEMD);
+  try {
+    assert.equal(root.querySelector('#cfg-install-service-state').getAttribute('data-state'), 'warn');
+    assert.match(root.querySelector('#cfg-install-service-status').textContent, /its command differs from what agentd runs with now/);
+    assert.equal(root.querySelector('#cfg-install-service-body').hasAttribute('data-collapsed'), false);
+  } finally {
+    await unmount();
+  }
+});
+
+test('a peer node is read under its base, and read access shows no buttons', async (t) => {
+  const base = '/api/peer/p1/node';
+  const { root, calls, unmount } = await setup(t, { ...SHELL, access: 'read' }, { base });
+  try {
+    assert.ok(calls.length > 0 && calls.every((c) => c.path.startsWith(`${base}/service`)), 'every read is under the peer base');
+    assert.ok(calls.some((c) => c.path === `${base}/service/launch`), 'the launch profile too');
+    assert.match(root.querySelector('#cfg-install-service-status').textContent, /Not started automatically/);
+    for (const id of ['#cfg-install-service-on', '#cfg-svc-install', '#cfg-svc-restart']) assert.equal(root.querySelector(id), null, `${id} is hidden`);
+    assert.ok(root.querySelector('#cfg-svc-readonly'));
   } finally {
     await unmount();
   }

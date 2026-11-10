@@ -1,4 +1,4 @@
-// config-self-update.js — what the Config › Updates panel knows beyond
+// config-self-update.js — what Config › Installation › Updates knows beyond
 // config.json: how this node's tclaude was installed, which update methods
 // can run here, and the scheduler's last and next run. It comes from GET
 // /api/node/update/settings and is display-only: the settings themselves are
@@ -69,7 +69,10 @@ export function managerName(id) { return MANAGER_NAMES[id] || id; }
 // when it failed, else the daemon's body.
 export const selfUpdateMeta = signal(null);
 // selfUpdateDraft mirrors the form values the notes below depend on.
-export const selfUpdateDraft = signal({ method: '', installDir: '', flags: [], harness: '', setupEnabled: false, frequency: 'off', ack: false });
+export const selfUpdateDraft = signal({ method: '', installDir: '', flags: [], harness: '', setupEnabled: false, frequency: 'off', weekday: 'monday', windowStart: '03:00', windowEnd: '05:00', onStart: false, ack: false });
+// selfUpdateLoads counts the times the form loaded updates.self, so the
+// Installation section can fold its Updates part afresh after each read.
+export const selfUpdateLoads = signal(0);
 
 // methodInfo is a method's daemon entry, or its built-in fallback.
 export function methodInfo(id, meta = selfUpdateMeta.value) {

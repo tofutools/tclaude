@@ -1,6 +1,7 @@
-// config-service-launch.js — Config › Service › Launch profile: what tclaude
-// starts agentd with when it writes the autostart unit, and what an update
-// compares the restarted daemon against (docs/dashboard-config.md, "Service").
+// config-service-launch.js — Config › Installation › Start automatically ›
+// Launch profile: what tclaude starts agentd with when it writes the
+// autostart unit, and what an update compares the restarted daemon against
+// (docs/dashboard-config.md, "Start automatically").
 //
 // It reads GET <url> ({ profile, suggested, missing, owned, launcher,
 // comparison, access, redacted, version }) and saves with PUT

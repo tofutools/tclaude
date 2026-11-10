@@ -1,4 +1,4 @@
-// Tests for Config › Updates: updates.self. Its fields load and save with
+// Tests for Config › Installation › Updates: updates.self. Its fields load and save with
 // the rest of the Config form, an untouched form adds no keys, the notes
 // follow the daemon's install detection, a package-manager method is opt-in
 // behind a confirmation, and a tclaude-driven method next to a
@@ -45,7 +45,7 @@ async function mountConfig(t, config, { detected = { method: 'release', recogniz
     harness.importDashboardModule('js/config-form-adapter.js'),
     harness.importDashboardModule('js/config-panel.js'),
   ]);
-  setConfigPanel('updates');
+  setConfigPanel('installation');
   const holder = { raw: JSON.stringify(config) };
   const calls = [];
   const confirms = [];
@@ -257,21 +257,38 @@ test('a schedule or harness value this build does not list is kept on save', asy
   }
 });
 
-test('update on start is one setting, shown in both Updates and Service', async (t) => {
-  const { harness, adapter, root, unmount } = await mountConfig(t, { updates: { self: { method: 'release', update_on_start: true } } });
+test('the Updates part says whether tclaude updates itself, and its action edits the form', async (t) => {
+  const { harness, adapter, root, load, unmount } = await mountConfig(t, {});
   try {
-    const updates = root.querySelector('#cfg-selfupdate-on-start');
-    const service = root.querySelector('#cfg-selfupdate-on-start-svc');
-    assert.equal(service.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'service');
-    assert.equal(service.checked, true, 'loaded into both');
-    service.checked = false;
-    await harness.act(() => harness.fireEvent(service, 'change'));
-    assert.equal(updates.checked, false, 'turning it off in Service turns it off in Updates');
-    assert.deepEqual(adapter.assembleConfig().updates.self, { method: 'release' });
-    updates.checked = true;
-    await harness.act(() => harness.fireEvent(updates, 'change'));
-    assert.equal(service.checked, true);
-    assert.equal(adapter.assembleConfig().updates.self.update_on_start, true);
+    const status = () => root.querySelector('#cfg-install-updates-status').textContent;
+    const state = () => root.querySelector('#cfg-install-updates-state').getAttribute('data-state');
+    assert.equal(root.querySelector('#cfg-selfupdate-on-start-svc'), null, 'update on start is shown once');
+    assert.equal(state(), 'off');
+    assert.match(status(), /No update method is chosen/);
+    assert.ok(root.querySelector('#cfg-install-updates-choose'), 'not set up: the main action picks a method');
+    assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), false, 'not set up: the detail is open');
+
+    await load({ updates: { self: { method: 'release' } } });
+    assert.equal(state(), 'off');
+    assert.match(status(), /method is Release download, but no schedule/);
+    await harness.act(() => root.querySelector('#cfg-install-updates-on').click());
+    assert.equal(root.querySelector('#cfg-selfupdate-frequency').value, 'daily', 'Update daily edits the form');
+    assert.deepEqual(adapter.assembleConfig().updates.self, { method: 'release', schedule: { frequency: 'daily' } });
+    assert.equal(state(), 'on');
+    assert.match(status(), /Updates itself with Release download: daily 03:00–05:00/);
+    assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), false, 'an edit never folds the detail away');
+
+    await load({ updates: { self: { method: 'release', update_on_start: true, schedule: { frequency: 'weekly', weekday: 'friday' } } } });
+    assert.match(status(), /every Friday 03:00–05:00 and when agentd starts/);
+    assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), true, 'set up: the detail folds');
+    await harness.act(() => root.querySelector('#cfg-install-updates-toggle').click());
+    assert.equal(root.querySelector('#cfg-install-updates-body').hasAttribute('data-collapsed'), false, 'Show details opens it');
+    await harness.act(() => root.querySelector('#cfg-install-updates-off').click());
+    assert.equal(root.querySelector('#cfg-selfupdate-on-start').checked, false);
+    assert.equal(adapter.assembleConfig().updates.self.method, 'release', 'Turn off keeps the method');
+    assert.equal(adapter.assembleConfig().updates.self.update_on_start, undefined);
+    assert.equal(adapter.assembleConfig().updates.self.schedule.frequency, 'off');
+    assert.equal(state(), 'off');
   } finally {
     await unmount();
   }
