@@ -1,7 +1,8 @@
 // Package launcher detects how the running agentd process was started
-// (a systemd unit, a launchd job, a tmux pane, an interactive shell, or
-// something else) and knows how to restart it through that supervisor, so a
-// restart keeps the supervisor's own arguments and environment.
+// (a systemd unit, a launchd job, a tmux pane, an interactive shell, a
+// detached background process, or something else) and knows how to restart
+// it through that supervisor, so a restart keeps the supervisor's own
+// arguments and environment.
 //
 // Every external command goes through an injected Runner; tests never reach
 // the real systemctl or launchctl.
@@ -26,7 +27,11 @@ const (
 	KindLaunchd       = "launchd"
 	KindTmux          = "tmux"
 	KindShell         = "shell"
-	KindUnknown       = "unknown"
+	// KindDetached: no supervisor, no terminal, and no parent waiting on it
+	// (reparented to init/launchd): what the app launcher starts, or a
+	// `nohup ... &` whose shell has gone.
+	KindDetached = "detached"
+	KindUnknown  = "unknown"
 )
 
 // Restart methods.
@@ -42,6 +47,15 @@ const (
 	// ExecStart (a wrapper re-resolves its arguments). Used where tclaude may
 	// not restart the unit itself (a system unit, not root).
 	RestartExit = "exit"
+	// RestartRelaunch stops gracefully and starts agentd again in a fresh
+	// process (a new PID) with the same argv and environment, through a
+	// thin helper the old process re-executes into. Used on macOS while the
+	// tray icon shows: a Cocoa status item does not come back after an exec
+	// in place, which keeps the PID the window server knew the old image by.
+	// For a detached daemon the helper starts it detached and exits; anywhere
+	// else it stays as the foreground job, forwarding signals and exiting
+	// with agentd's status, so the shell and Ctrl+C behave as before.
+	RestartRelaunch = "relaunch"
 )
 
 // ManagedMarker is written into every unit file or plist tclaude writes. A
@@ -161,6 +175,13 @@ type Env struct {
 	ReadFile func(string) ([]byte, error)
 	// StdinTTY reports whether stdin is a terminal.
 	StdinTTY bool
+	// PPID is the parent process id; 1 means nothing waits on this process.
+	PPID int
+	// ControllingTTY reports whether the process has a controlling terminal.
+	// nil, or an error, means it cannot tell.
+	ControllingTTY func() (bool, error)
+	// Tray reports whether agentd shows a system tray icon.
+	Tray bool
 	// TmuxServerPID probes the tclaude tmux server: its pid, or 0 when none
 	// runs. nil, or an error, means it cannot tell.
 	TmuxServerPID func() (int, error)
@@ -178,7 +199,7 @@ func FromProcess(goos string) Env {
 	return Env{
 		GOOS: goos, PID: os.Getpid(), UID: os.Getuid(), EUID: os.Geteuid(),
 		Args: append([]string(nil), os.Args...), Getenv: os.Getenv, ReadFile: os.ReadFile,
-		StdinTTY: tty, CgroupProcs: ProcCgroupProcs,
+		StdinTTY: tty, PPID: os.Getppid(), ControllingTTY: hasControllingTTY, CgroupProcs: ProcCgroupProcs,
 	}
 }
 
@@ -318,6 +339,19 @@ func Detect(ctx context.Context, env Env, run Runner) Info {
 }
 
 func detectInteractive(env Env, info *Info) {
+	if !env.StdinTTY && env.ControllingTTY != nil {
+		// TERM, SHLVL and TMUX are inherited by everything a shell starts,
+		// a daemon it detached included: with no controlling terminal the
+		// process is not in a shell or a pane, whatever its environment says.
+		if ctty, err := env.ControllingTTY(); err == nil && !ctty {
+			if env.PPID == 1 {
+				info.Kind = KindDetached
+			} else {
+				info.Kind = KindUnknown
+			}
+			return
+		}
+	}
 	switch {
 	case env.Getenv("TMUX") != "":
 		info.Kind = KindTmux
@@ -416,6 +450,9 @@ func restartMethod(env Env, info *Info) (string, int) {
 		return RestartExec, 0
 	case KindLaunchd:
 		return RestartSupervisor, 0
+	}
+	if env.GOOS == "darwin" && env.Tray {
+		return RestartRelaunch, 0
 	}
 	return RestartExec, 0
 }

@@ -285,3 +285,56 @@ func TestNodeServiceExitRestartRechecksTheUnitBeforeExiting(t *testing.T) {
 	require.False(t, exited, "exiting would stop the new process with the unit")
 	require.Error(t, err, "the in-place re-exec of the test's fake path fails, proving it was the path taken")
 }
+
+// macTrayEnv is agentd on macOS with the tray icon showing, outside launchd:
+// no controlling terminal, reparented to launchd when ppid is 1.
+func macTrayEnv(ppid int, ctty bool) launcher.Env {
+	vars := map[string]string{"TERM": "xterm-256color", "SHLVL": "1"}
+	return launcher.Env{GOOS: "darwin", PID: 3596, PPID: ppid, UID: 501, EUID: 501, Tray: true,
+		Args:           []string{"/Users/u/go/bin/tclaude", "agentd", "serve", "--dashboard-port=8123"},
+		Getenv:         func(k string) string { return vars[k] },
+		ReadFile:       func(string) ([]byte, error) { return nil, os.ErrNotExist },
+		ControllingTTY: func() (bool, error) { return ctty, nil },
+		StdinTTY:       ctty,
+	}
+}
+
+func TestNodeServiceRestartRelaunchesDetachedMacTrayDaemonInFreshProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    launcher.Env
+		kind   string
+		detach bool
+	}{
+		{name: "detached", env: macTrayEnv(1, false), kind: launcher.KindDetached, detach: true},
+		{name: "shell", env: macTrayEnv(812, true), kind: launcher.KindShell, detach: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			// Not a launchd job: launchctl knows no such pid.
+			probe := &recordedRunner{fail: errors.New("not a launchd job")}
+			restart := &recordedRunner{}
+			stopped := make(chan struct{}, 1)
+			t.Cleanup(agentd.SetLauncherForTest(tc.env, probe.run, restart.run, func() { stopped <- struct{}{} }))
+
+			rec := fedHuman(t, f, "GET", "/v1/node/service", nil)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), `"kind":"`+tc.kind+`"`)
+			require.Contains(t, rec.Body.String(), `"restart_method":"relaunch"`)
+
+			rec = fedHuman(t, f, "POST", "/v1/node/service/restart", nil)
+			require.Equal(t, 202, rec.Code, rec.Body.String())
+			select {
+			case <-stopped:
+			case <-time.After(5 * time.Second):
+				t.Fatal("daemon never stopped for the relaunch")
+			}
+			relaunch, detach := agentd.RelaunchRestartPlannedForTest()
+			require.True(t, relaunch, "a tray daemon on macOS must not exec in place")
+			require.Equal(t, tc.detach, detach)
+			require.Empty(t, restart.called(), "no supervisor is asked")
+			rec = fedHuman(t, f, "GET", "/v1/node/service", nil)
+			require.Contains(t, rec.Body.String(), `"restart_pending":"relaunch"`)
+		})
+	}
+}

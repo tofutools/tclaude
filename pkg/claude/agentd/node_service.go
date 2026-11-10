@@ -31,6 +31,7 @@ var (
 	launcherProcessEnv                    = func() launcher.Env {
 		env := launcher.FromProcess(runtime.GOOS)
 		env.TmuxServerPID = tmuxServerPIDForLauncher
+		env.Tray = trayShown.Load()
 		return env
 	}
 )
@@ -127,16 +128,21 @@ func requestDaemonRestart(reason string, inPlace bool) (string, error) {
 		return method, nil
 	}
 	name, args, supervised := launcher.RestartCommand(info)
-	if inPlace {
+	if inPlace && info.RestartMethod != launcher.RestartRelaunch {
+		// A relaunch starts the moved binary too.
 		info.RestartMethod, supervised = launcher.RestartExec, false
 	}
 	if !supervised {
 		method := launcher.RestartExec
 		var err error
-		if info.RestartMethod == launcher.RestartExit {
+		switch info.RestartMethod {
+		case launcher.RestartExit:
 			method = launcher.RestartExit
 			err = scheduleExitRestart(info.RestartExitCode)
-		} else {
+		case launcher.RestartRelaunch:
+			method = launcher.RestartRelaunch
+			err = scheduleRelaunchRestart(info.Kind == launcher.KindDetached)
+		default:
 			err = scheduleExecRestart()
 		}
 		if err != nil {
@@ -209,21 +215,27 @@ func pendingRestart() string {
 
 // scheduleExecRestart arms the graceful stop + in-place re-exec that
 // performSelfUpdateRestart carries out once serve returns.
-func scheduleExecRestart() error { return armRestart(false, 0) }
+func scheduleExecRestart() error { return armRestart(restartPlan{}) }
+
+// scheduleRelaunchRestart arms the graceful stop + relaunch in a fresh
+// process (launcher.RestartRelaunch); detach starts it detached.
+func scheduleRelaunchRestart(detach bool) error {
+	return armRestart(restartPlan{relaunch: true, detach: detach})
+}
 
 // scheduleExitRestart arms the graceful stop + exit with code, after which
 // the unit's Restart= policy starts agentd again through its own ExecStart.
 // A self-update has already made its job durable before it asks.
-func scheduleExitRestart(code int) error { return armRestart(true, code) }
+func scheduleExitRestart(code int) error { return armRestart(restartPlan{exit: true, exitCode: code}) }
 
-func armRestart(exit bool, code int) error {
+func armRestart(plan restartPlan) error {
 	updateRestartState.Lock()
 	defer updateRestartState.Unlock()
-	if updateRestartState.stop == nil || (!exit && updateRestartState.path == "") {
+	if updateRestartState.stop == nil || (!plan.exit && updateRestartState.path == "") {
 		return fmt.Errorf("restart hook unavailable; restart agentd manually")
 	}
 	updateRestartState.requested = true
-	updateRestartState.exit, updateRestartState.exitCode = exit, code
+	updateRestartState.plan = plan
 	time.AfterFunc(restartDelay, updateRestartState.stop)
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -169,11 +170,24 @@ var updateRestartState struct {
 	stop      func()
 	path      string
 	requested bool
+	plan      restartPlan
+}
+
+// restartPlan is how performSelfUpdateRestart restarts; the zero value
+// re-executes in place.
+type restartPlan struct {
 	// exit: end the process with exitCode instead of re-executing, for the
 	// supervisor's Restart= to start it again (launcher.RestartExit).
 	exit     bool
 	exitCode int
+	// relaunch: start agentd in a fresh process through the relaunch helper
+	// (launcher.RestartRelaunch); detach starts it detached.
+	relaunch, detach bool
 }
+
+// trayShown: this serve shows a tray icon, so on macOS a restart must start
+// a fresh process rather than exec in place (launcher.RestartRelaunch).
+var trayShown atomic.Bool
 
 // restartExit ends the process for an exit restart; tests swap it.
 var restartExit = os.Exit
@@ -212,8 +226,8 @@ func requestSelfUpdateRestart() error {
 }
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
-	requested, path := updateRestartState.requested, updateRestartState.path
-	exit, exitCode := updateRestartState.exit, updateRestartState.exitCode
+	requested, path, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.plan
+	exit, exitCode := plan.exit, plan.exitCode
 	updateRestartState.stop = nil
 	updateRestartState.Unlock()
 	if !requested {
@@ -234,7 +248,19 @@ func performSelfUpdateRestart() error {
 	}
 	// The environment this process started with, not os.Environ(): what
 	// startup exported into it is derived again from the same flags.
-	err := execSelfUpdate(path, os.Args, launchEnviron)
+	argv := os.Args
+	if plan.relaunch {
+		helper, ok := relaunchHelperArgv(path, os.Args, plan.detach)
+		switch {
+		case !ok:
+			slog.Warn("agentd restart: cannot relaunch from this command line; re-executing in place")
+		case !relaunchAvailable(path, helper):
+			slog.Warn("agentd restart: the binary has no relaunch helper; re-executing in place", "path", path)
+		default:
+			argv = helper
+		}
+	}
+	err := execSelfUpdate(path, argv, launchEnviron)
 	if err != nil {
 		nodeUpdates.Lock()
 		service := nodeUpdates.service

@@ -992,6 +992,8 @@ func runServe(p *serveParams) error {
 			trayDisabled = true
 		}
 	}
+	// A restart on macOS must not exec in place once the tray has run.
+	trayShown.Store(!trayDisabled)
 
 	// Terminal UI (--tui): the simplified in-terminal dashboard. It runs on
 	// its own goroutine — the main goroutine still belongs to the tray loop —

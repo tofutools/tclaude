@@ -143,3 +143,11 @@ func SetOperatorTokenStoreForTest(store string) func() {
 	operatorTokenStore.Store(store)
 	return func() { operatorTokenStore.Store(prev) }
 }
+
+// RelaunchRestartPlannedForTest reports whether the armed restart relaunches
+// in a fresh process, and whether detached.
+func RelaunchRestartPlannedForTest() (relaunch, detach bool) {
+	updateRestartState.Lock()
+	defer updateRestartState.Unlock()
+	return updateRestartState.plan.relaunch, updateRestartState.plan.detach
+}
