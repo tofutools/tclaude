@@ -36,6 +36,15 @@ A trusted peer's per-node page has a Config tab when that peer shares
   **Replace** takes a new value and **Clear** removes it. The save
   confirmation names the secrets it sets or clears.
 
+### In a fused view
+
+When a fused view spans several nodes, **Config of** at the top of the tab
+picks the node it edits. It starts on this node. A peer is edited as on its
+own page, through this node, and the header and the save confirmation name
+the node. Switching nodes with unsaved changes asks first. The sections read
+from this node itself (Installation and the remote-access setup) and the
+settings with no key link to the peer's own page instead.
+
 ## Appearance
 
 `/config/appearance`: how the dashboard looks.

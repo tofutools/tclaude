@@ -8,7 +8,8 @@ import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNo
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
-import { clearSecret, configAccess, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
+import { clearSecret, configAccess, configPeerTarget, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
+import { nodeHref } from './fleet-model.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
@@ -251,6 +252,9 @@ function Badge({ kind }) {
 // and tables that need the full width.
 function Setting({ title, summary, more, k, badges = [], forId, wide = false, child = false, children }) {
   const row = useRowAccess(k);
+  // In a fused view editing a peer, a row without a config key is its own
+  // component reading this node: it links to the peer's own page instead.
+  const elsewhere = !k && row.peer;
   // A row without a key explains itself only when it has controls to grey.
   const ctl = useRef(null);
   const [hasControls, setHasControls] = useState(true);
@@ -271,7 +275,8 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
       </div>`}
       <${RowAccessNote} row=${row} hasControls=${hasControls} />
     </div>
-    <${RowControls} row=${row} domRef=${ctl}>${children}<//>
+    ${elsewhere && html`<${OnPeerPage} peer=${row.peer} panel=${row.panel} />`}
+    <${RowControls} row=${row} domRef=${ctl} hidden=${elsewhere}>${children}<//>
   </div>`;
 }
 
@@ -289,14 +294,14 @@ function useRowAccess(k) {
   const replacing = !!(secret && edits.replace[secret.path]);
   const clearing = !!(secret && edits.clear[secret.path]);
   const readOnly = remote && (access.state !== 'write' || (secret && !replacing));
-  return { k, panel, remote, access, secret, replacing, clearing, readOnly };
+  return { k, panel, remote, access, secret, replacing, clearing, readOnly, peer: configPeerTarget() };
 }
 
 // RowAccessNote says why a row is read-only, and shows a withheld secret.
 // A row without a config key that has controls says it is not changed from
 // a peer's page; one that only shows a status says nothing.
 function RowAccessNote({ row, hasControls = true }) {
-  const note = row.access.note || (row.remote && row.readOnly && !row.k && hasControls ? 'Not changed from a peer’s page' : '');
+  const note = row.access.note || (row.remote && row.readOnly && !row.k && hasControls && !row.peer ? 'Not changed from a peer’s page' : '');
   return html`${note && html`<div class="cfg-access-note ui-hint">🔒 ${note}</div>`}
     ${row.secret && html`<${SecretState} secret=${row.secret} panel=${row.panel} writable=${row.access.state === 'write'} replacing=${row.replacing} clearing=${row.clearing} />`}`;
 }
@@ -304,13 +309,23 @@ function RowAccessNote({ row, hasControls = true }) {
 // RowControls holds a row's controls in a <fieldset>, so a read-only row
 // disables them all at once: the form's own enable/disable code cannot
 // undo it.
-function RowControls({ row, domRef, children }) {
-  return html`<fieldset class="cfg-row-ctl" ref=${domRef} disabled=${row.readOnly}>${children}</fieldset>`;
+function RowControls({ row, domRef, hidden = false, children }) {
+  return html`<fieldset class="cfg-row-ctl" ref=${domRef} disabled=${row.readOnly || hidden} hidden=${hidden}>${children}</fieldset>`;
+}
+
+// OnPeerPage stands in, in a fused view editing a peer, for a part of the
+// form that reads this node directly: it opens on the peer's own page.
+function OnPeerPage({ peer, panel }) {
+  const href = nodeHref(peer.id, { pathname: `/config/${panel || ''}`, search: '' });
+  return html`<div class="cfg-on-peer-page ui-hint">Shown on <a href=${href}>${peer.name}’s own page ↗</a></div>`;
 }
 
 // PeerLocalOnly greys a part of the form that acts on this machine itself
 // (remote access setup) on a peer's page.
 function PeerLocalOnly({ children }) {
+  // The parts stay mounted, hidden: the form reads its fields by id.
+  const peer = configPeerTarget();
+  if (peer) return html`<${OnPeerPage} peer=${peer} panel="daemon" /><div hidden>${children}</div>`;
   const remote = remoteAccess(configAccess.value);
   if (!remote) return children;
   return html`<div class="cfg-access-note ui-hint">🔒 Set up on the node itself</div>
@@ -539,7 +554,7 @@ function Panel({ id, active, children }) {
       <h2 id=${`cfg-panel-title-${id}`}><span class="cfg-panel-icon" aria-hidden="true">${panel.icon}</span> ${panel.title}</h2>
       <p>${panel.lede}</p>
     </div>
-    <${PanelContext.Provider} value=${id}>${children}<//>
+    <${PanelContext.Provider} value=${id}>${id === 'installation' && configPeerTarget() ? html`<${OnPeerPage} peer=${configPeerTarget()} panel=${id} /><div hidden>${children}</div>` : children}<//>
   </div>`;
 }
 

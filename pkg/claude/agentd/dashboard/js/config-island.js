@@ -5,9 +5,11 @@ import { Button } from './ui-components.js';
 import { DiffLines } from './diff-lines.js';
 import { Dialog } from './ui-dialog.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
-import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
+import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent, loadConfigTab, refreshConfigHeader } from './config-form-adapter.js';
 import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
-import { configNodeName, setSecretEditHook } from './config-access.js';
+import { configNodeName, configPeerTarget, configTarget, setConfigSwitchHook, setSecretEditHook } from './config-access.js';
+import { effect } from '@preact/signals';
+import { shellConfirm } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -19,7 +21,8 @@ function ConfigDiffModal({ model, close }) {
   const dels = diff.filter(line => line.t === 'del').length;
   const sign = { add: '+', del: '-', ctx: ' ' };
   const node = configNodeName();
-  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title=${node ? `Confirm config changes on ${node} (remote)` : 'Confirm config changes'}
+  const where = configTarget.value && !configPeerTarget() ? 'this node' : 'remote';
+  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title=${node ? `Confirm config changes on ${node} (${where})` : 'Confirm config changes'}
     initialFocusRef=${confirmRef} onClose=${() => close(false)} cancel="Cancel"
     footer=${html`<${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
       onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : node ? `Save to ${node}` : 'Save to config.json'}<//>`}>
@@ -45,9 +48,29 @@ export function ConfigApp({ state, dependencies = {} }) {
     });
     configureConfigLifecycle(state.lifecycle);
     setSecretEditHook((panel) => state.markDirty(panel));
+    // A fused view's node picker (config-access.js) asks before it drops
+    // unsaved edits, and the form reloads for the node picked.
+    const confirm = dependencies.confirm || shellConfirm;
+    setConfigSwitchHook(async (node) => !state.dirty.value || confirm({
+      title: `Switch to ${node.name}'s config?`,
+      body: 'This form has unsaved changes. Switching to another node drops them.',
+      okLabel: 'Drop changes and switch',
+    }));
+    // This node, picked or with no picker shown, is one target: ticking a
+    // node into the fused view does not reload this node's form.
+    const targetOf = (t) => (t && !t.local ? t.id : '');
+    let shown = targetOf(configTarget.peek());
+    const stopFollowing = effect(() => {
+      const id = targetOf(configTarget.value);
+      if (id === shown) { refreshConfigHeader(); return; }
+      shown = id;
+      loadConfigTab();
+    });
     const unbind = bindConfigActivation();
     document.addEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
     return () => {
+      stopFollowing();
+      setConfigSwitchHook(null);
       document.removeEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
       unbind?.();
       state.cancelDiff(false);

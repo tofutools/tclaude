@@ -9382,6 +9382,7 @@ fieldset.cfg-row-ctl { border: 0; margin: 0; padding: 0; min-width: 0; }
 fieldset.cfg-row-ctl[disabled], fieldset.cfg-peer-local-only[disabled] { opacity: .6; }
 fieldset.cfg-peer-local-only { border: 0; margin: 0; padding: 0; min-width: 0; }
 .cfg-access-note { margin-top: 4px; font-size: 11px; color: #d29922; }
+.cfg-on-peer-page { font-size: 12px; padding: 4px 0; }
 .cfg-secret { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .cfg-secret-state { font-size: 11px; color: #7d8590; }
 .cfg-secret-state.is-set { color: #3fb950; }
@@ -19434,3 +19435,7 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .drawing-board-attach-preview img { max-width: 100%; max-height: 218px; object-fit: contain; }
 .drawing-board-attach-existing { margin: 0 0 8px; }
 #drawing-board-attach-comment { width: 100%; margin-top: 6px; }
+.scope-config-picker .scope-config-nodes { margin-left: 8px; }
+.scope-config-node { cursor: pointer; opacity: .65; }
+.scope-config-node.on { opacity: 1; box-shadow: 0 0 0 1px var(--nc); }
+.scope-config-node:disabled { cursor: not-allowed; opacity: .4; }

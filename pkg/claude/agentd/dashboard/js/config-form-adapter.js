@@ -10,7 +10,8 @@ import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 import { shellConfirm } from './shell-state.js';
-import { clearedSecrets, configNodeName, setConfigAccess, withholdUnreplaced } from './config-access.js';
+import { clearedSecrets, configNodeLabel, configPeerTarget, setConfigAccess, withholdUnreplaced } from './config-access.js';
+import { nodeFetch } from './node-api.js';
 import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
@@ -33,6 +34,16 @@ export function configureConfigAdapter(dependencies = {}) {
 }
 const latestSnapshot = () => dashboardState.snapshot.value || {};
 
+// configFetch reaches the node the tab edits: a fused view's picked peer
+// through this node's proxy (config-access.js), else the page's own node.
+function configFetch() {
+  const peer = configPeerTarget();
+  return peer ? nodeFetch(peer.id, { fetchImpl: configDependencies.fetchImpl }) : configDependencies.fetchImpl;
+}
+// configTargetID names the node a load or save was made for, so an answer
+// that arrives after the fused view switched node is dropped.
+const configTargetID = () => configPeerTarget()?.id || '';
+
 // ===================================================================
 // Config tab — visual editor for ~/.tclaude/config.json
 //
@@ -49,8 +60,13 @@ const latestSnapshot = () => dashboardState.snapshot.value || {};
 let configObj = null;     // last loaded full config object (clone source)
 let configBaseRaw = '';   // canonical JSON of the config currently on disk
 let configLoaded = false;
+// configLoadedFor is the node the form holds (configTargetID): a save while
+// a picked node's config is still loading is refused, so one node's form
+// (and its secrets) never goes to another.
+let configLoadedFor = '';
 let configFileMalformed = false; // on-disk file is corrupt → form shows defaults
 let configBindingEpoch = 0;
+let configPath = '';      // the loaded config's file path ('' when the node does not name it)
 
 function cfgInt(id, fallback) {
   const v = parseInt($('#' + id).value, 10);
@@ -1761,13 +1777,14 @@ function applyConfigFilter() {
 // row: the one control and the new base, so other unsaved edits stay and the next
 // Save isn't refused as drift.
 async function followSourceChoice() {
-  if (!configLoaded) return;
+  const target = configTargetID();
+  if (!configLoaded || configLoadedFor !== target) return;
   const bindingEpoch = configBindingEpoch;
   try {
-    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
+    const r = await configFetch()('/api/config', { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
-    if (bindingEpoch !== configBindingEpoch || !data.raw) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID() || !data.raw) return;
     configBaseRaw = data.raw;
     configObj = JSON.parse(configBaseRaw);
     setSelectValue($('#cfg-steward-source-download'), (configObj.steward || {}).source_download || 'ask');
@@ -1776,6 +1793,7 @@ async function followSourceChoice() {
 
 async function loadConfigTab() {
   const bindingEpoch = configBindingEpoch;
+  const target = configTargetID();
   // Refresh the slug / group datalists from the latest snapshot.
   const snap = latestSnapshot();
   replaceOptions($('#cfg-slug-list'), (snap.slugs || []).map(slug => [slug.slug, '']));
@@ -1785,22 +1803,24 @@ async function loadConfigTab() {
   clearConfigErrors();
   renderConfigNotice([]);
   try {
-    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
-    if (bindingEpoch !== configBindingEpoch) return;
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const r = await configFetch()('/api/config', { credentials: 'same-origin' });
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
+    if (!r.ok) throw new Error(r.status === 403 ? 'this node does not share its Config tab with you (node.config.read)' : 'HTTP ' + r.status);
     const data = await r.json();
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configBaseRaw = data.raw || '{}';
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = !!data.malformed;
-    // On a peer's page, name the node, so nobody saves into the wrong one.
-    const node = configNodeName();
-    $('#cfg-path').textContent = node ? `${node}’s config (remote)` : data.path || 'config.json';
+    // A peer's page, or a fused view, names the node, so nobody saves into
+    // the wrong one.
+    configPath = data.path || '';
+    $('#cfg-path').textContent = configHeader(configPath);
     // What the viewer may change, before the form renders it (a peer's page:
     // read-only rows and withheld secrets, config-access.js).
     setConfigAccess(data);
     populateConfigForm(configObj);
     configLoaded = true;
+    configLoadedFor = target;
     const notices = [];
     if (data.warning) notices.push(data.warning);
     if (data.unknown_keys && data.unknown_keys.length) {
@@ -1814,8 +1834,9 @@ async function loadConfigTab() {
       : 'loaded — edits stay in this form until you Save';
     configLifecycle.loaded?.(data);
   } catch (e) {
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configLoaded = false;
+    $('#cfg-path').textContent = configHeader('');
     $('#cfg-status').textContent = 'failed to load';
     showConfigErrors(['Could not load config: ' + (e.message || e)]);
     configLifecycle.failed?.(e);
@@ -1823,6 +1844,20 @@ async function loadConfigTab() {
   // Re-apply any standing filter — a Reload rebuilds the inner lists, and
   // the operator may have a query typed; keep what's hidden hidden.
   applyConfigFilter();
+}
+
+// configHeader is what the header calls the file the tab edits.
+// refreshConfigHeader renames the header when the fused view's picker comes
+// or goes over this node's loaded form, which does not reload.
+export function refreshConfigHeader() {
+  const el = $('#cfg-path');
+  if (el && configLoaded) el.textContent = configHeader(configPath);
+}
+
+function configHeader(path) {
+  const label = configNodeLabel();
+  if (!label) return path || 'config.json';
+  return configPeerTarget() || !path ? label : `${label} · ${path}`;
 }
 
 // reportConfigHTTPError surfaces a non-OK /api/config response and
@@ -1863,7 +1898,7 @@ async function reportConfigHTTPError(resp) {
 
 async function saveConfig() {
   const bindingEpoch = configBindingEpoch;
-  if (!configLoaded) { configDependencies.toast('Config not loaded yet', true); return; }
+  if (!configLoaded || configLoadedFor !== configTargetID()) { configDependencies.toast('Config not loaded yet', true); return; }
   clearConfigErrors();
   let edited;
   try {
@@ -1880,7 +1915,9 @@ async function saveConfig() {
   // sends back empty is kept.
   const clear = clearedSecrets();
   const body = JSON.stringify(clear.length ? { config: edited, base: configBaseRaw, clear } : { config: edited, base: configBaseRaw });
-  const post = (query) => configDependencies.fetchImpl('/api/config' + query, {
+  const target = configTargetID();
+  const fetchConfig = configFetch();
+  const post = (query) => fetchConfig('/api/config' + query, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body,
   });
@@ -1891,14 +1928,14 @@ async function saveConfig() {
     // Phase 1: dry-run — server validates and returns the canonical
     // "after" without writing anything.
     const dry = await post('?dry_run=1');
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (await reportConfigHTTPError(dry)) return;
     const preview = await dry.json();
     const after = preview.raw || '';
     // A peer's preview withholds secrets too, so the ones the save sets or
     // clears are named beside the diff.
     const secrets = Array.isArray(preview.secrets_changed) ? preview.secrets_changed : [];
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     // When the on-disk file is corrupt the diff baseline is "defaults",
     // so after===base can hold even though the save still meaningfully
     // replaces the corrupt file — don't skip it then.
@@ -1906,20 +1943,19 @@ async function saveConfig() {
 
     // Phase 2: human confirms the diff before the real write. A peer's page
     // names the node again: the fleet may have named it since the load.
-    const node = configNodeName();
-    if (node) $('#cfg-path').textContent = `${node}’s config (remote)`;
+    if (configNodeLabel()) $('#cfg-path').textContent = configHeader(configPath);
     const ok = await configDependencies.confirmDiff(
       configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent, secrets,
     );
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (!ok) { configDependencies.toast('Save cancelled'); configLifecycle.ready?.(); return; }
 
     // replace_malformed acknowledges wiping a corrupt on-disk file.
     const res = await post(configFileMalformed ? '?replace_malformed=1' : '');
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (await reportConfigHTTPError(res)) return;
     const data = await res.json();
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configBaseRaw = data.raw || configBaseRaw;
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = false; // the file is canonical after a save
@@ -1934,7 +1970,7 @@ async function saveConfig() {
     configDependencies.toast('Config saved to ' + $('#cfg-path').textContent);
     configLifecycle.saved?.(data);
   } catch (e) {
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     showConfigErrors(['Save failed: ' + (e.message || e)]);
     configLifecycle.failed?.(e);
   } finally {
