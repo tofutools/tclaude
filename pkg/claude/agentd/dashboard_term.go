@@ -127,7 +127,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		defer cleanupScript()
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+	cmd := fmt.Sprintf("tmux -u -L %s %s new-session -A -s %s -c %s%s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(name))
 	runPTYOverWS(w, r, cmd, name, "", nil, config.TerminalTabAgentTerminal)
 }
@@ -298,7 +298,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+	cmd := fmt.Sprintf("tmux -u -L %s %s new-session -A -s %s -c %s%s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(sessName))
 	runPTYOverWS(w, r, cmd, sessName, "", nil, config.TerminalTabGroupTerminal)
 }

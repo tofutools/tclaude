@@ -85,7 +85,7 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 		clientFlags = strings.Join(args, " ") + " "
 	}
 	command := fmt.Sprintf(
-		"exec tmux -L %s %sattach-session -t %s",
+		"exec tmux -u -L %s %sattach-session -t %s",
 		shellSingleQuote(clcommon.TmuxSocketName),
 		clientFlags,
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),

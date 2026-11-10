@@ -64,9 +64,18 @@ func TmuxCommand(args ...string) *exec.Cmd {
 	return Default.Command(args...)
 }
 
-// TmuxArgs prepends -L tclaude to the given tmux arguments.
+// TmuxUTF8Flag makes a tmux client handle its I/O as UTF-8 whatever its
+// locale. Without it, a client whose LC_ALL / LC_CTYPE / LANG names no UTF-8
+// locale, and which is not itself inside tmux, escapes control characters
+// in what it prints. agentd under launchd has no locale, so the tab in
+// `list-sessions -F '#{session_name}\t#{pane_dead}'` came out as '_', no
+// session name matched, and every agent read as offline. Every tclaude tmux
+// client passes it, including commands built as shell text.
+const TmuxUTF8Flag = "-u"
+
+// TmuxArgs prepends -u -L tclaude to the given tmux arguments.
 func TmuxArgs(args ...string) []string {
-	return append([]string{"-L", TmuxSocketName}, args...)
+	return append([]string{TmuxUTF8Flag, "-L", TmuxSocketName}, args...)
 }
 
 // TmuxHyperlinksFeature is the tmux terminal-feature name for OSC 8 hyperlink
